@@ -28,6 +28,7 @@ use crate::query::QueryFacadeAdapter;
 use crate::query::aql::executor::AqlExecutor;
 use crate::query::aql::sources::document::DocumentAqlSource;
 use crate::query::aql::sources::graph::GraphAqlSource;
+use crate::query::aql::sources::memory::MemoryAqlSource;
 use crate::query::aql::sources::observability::ObservabilityAqlSource;
 use crate::query::aql::sources::vector::VectorAqlSource;
 use serde::{Deserialize, Serialize};
@@ -1323,7 +1324,9 @@ pub fn create_router(state: AppState) -> axum::Router {
                 create_graph_router().with_state(graph_state.clone()),
             )
             .nest("/api/v2", create_graph_router().with_state(graph_state));
-        info!("✅ Graph API routing via port-based handler (proximadb-api) — mounted at /api/v1/graph (legacy) + /api/v2 (canonical)");
+        info!(
+            "✅ Graph API routing via port-based handler (proximadb-api) — mounted at /api/v1/graph (legacy) + /api/v2 (canonical)"
+        );
     }
 
     // Collection and vector routes via port-backed handlers (proximadb-api).
@@ -1496,11 +1499,70 @@ pub fn create_router(state: AppState) -> axum::Router {
             )),
         );
 
+        // Agent-memory read surface (TD-100, ADR-022): scoped + fused + audited.
+        // Converges on the existing scoped vector search + BM25 + RRF fusion —
+        // no new storage path. The lexical leg reuses the same in-process
+        // HybridFullTextIndexMap as /api/v1/hybrid.
+        {
+            let mem_indexes = state.fulltext_indexes.clone().unwrap_or_else(|| {
+                Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()))
+            });
+            let mem_vector_port: Arc<dyn proximadb_runtime::VectorOpsPort> =
+                state.request_handlers.vector_operations_service.clone();
+            let lexical = Arc::new(
+                crate::network::rest::v1::rank_backend::ProductionHybridBackend::new(
+                    mem_vector_port,
+                    mem_indexes,
+                ),
+            );
+            executor.register_source(
+                "memory".to_string(),
+                Arc::new(
+                    MemoryAqlSource::new(state.request_handlers.vector_operations_service.clone())
+                        .with_lexical_backend(lexical),
+                ),
+            );
+        }
+
         let aql_state = AqlApiState::new(executor);
         aql::create_router().with_state(aql_state)
     };
     router = router.nest("/api/v1/aql", aql_router);
     info!("✅ AQL (RUBICON) API endpoints enabled at /api/v1/aql");
+
+    // Agent-memory write surface (TD-101) — POST /api/v1/memory/ingest.
+    // Always mounted; the engine is built only when an LLM backend is present
+    // (extraction + consolidation need it). Reuses VectorOperationsService +
+    // the in-process EmbeddingService — no new storage path (ADR-022).
+    {
+        use crate::network::rest::v1::memory::{self, MemoryApiState};
+        use crate::services::agent_memory::{
+            EmbeddingServiceEmbedder, LlmConsolidationAgent, LlmExtractionAgent, MemoryWriteEngine,
+            VectorMemoryStore,
+        };
+        let memory_engine = state.llm_engine.as_ref().map(|llm| {
+            let extractor = Arc::new(LlmExtractionAgent::new(llm.clone()));
+            let consolidator = Arc::new(LlmConsolidationAgent::new(llm.clone()));
+            let store = Arc::new(VectorMemoryStore::new(
+                state.request_handlers.vector_operations_service.clone(),
+                Arc::new(EmbeddingServiceEmbedder),
+            ));
+            Arc::new(MemoryWriteEngine::new(extractor, consolidator, store))
+        });
+        let mounted = memory_engine.is_some();
+        let memory_state = MemoryApiState::new(memory_engine);
+        router = router.nest(
+            "/api/v1/memory",
+            memory::create_router().with_state(memory_state),
+        );
+        if mounted {
+            info!("✅ Agent-memory write endpoint at /api/v1/memory/ingest (TD-101)");
+        } else {
+            info!(
+                "✅ Agent-memory write endpoint mounted at /api/v1/memory/ingest but inactive (no LLM backend)"
+            );
+        }
+    }
 
     // Natural Language Query Translation (AV-SQL) — TD-048
     if let Some(llm) = &state.llm_engine {

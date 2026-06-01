@@ -48,7 +48,7 @@ impl VectorAqlSource {
         (collection, query_vector, top_k)
     }
 
-    fn sql_data_to_aql(val: &SqlValueData) -> AqlValue {
+    pub(crate) fn sql_data_to_aql(val: &SqlValueData) -> AqlValue {
         match val {
             SqlValueData::StringValue(s) => AqlValue::String(s.clone()),
             SqlValueData::Int64Value(i) => AqlValue::Int(*i),
