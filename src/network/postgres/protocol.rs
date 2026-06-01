@@ -74,7 +74,85 @@ pub struct PostgresProtocol {
     graph_service: Option<Arc<GraphService>>,
     /// Observability service for logs/metrics/traces
     observability_service: Option<Arc<ObservabilityService>>,
+    /// Slice 6.3: primary-pod write router. Same shape as the gRPC v2
+    /// and Arrow Flight gates — when present, `execute_insert/update/
+    /// delete_via_dml_service` consult the registry post-parse and
+    /// pre-execute, rejecting misrouted DML with SQLSTATE 57P03
+    /// (cannot_connect_now) so pgwire clients see "wrong server,
+    /// retry elsewhere" semantics.
+    primary_pod_gate: Option<PgwirePrimaryPodGate>,
+    /// TD-102: when set, `send_row_description` is a no-op. The extended-query
+    /// path (`handle_execute`) reports columns once at Describe(statement)
+    /// time, so the per-statement `execute_*` RowDescription emitted during
+    /// Execute would be a duplicate the client rejects (`UnexpectedMessage`).
+    /// Set only around the extended Execute call; the simple-query path leaves
+    /// it false and emits RowDescription as before.
+    suppress_row_description: bool,
 }
+
+/// Slice 6.3 gate-input bundle. Distinct type per surface for module
+/// privacy; the wire contract (gate logic + error semantics) is the
+/// same as gRPC v2 and Arrow Flight.
+#[derive(Clone)]
+struct PgwirePrimaryPodGate {
+    registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+    self_pod_id: String,
+}
+
+/// Slice 6.3 gate consultation result. Surfaces the misrouted target
+/// pod up to the caller so the pgwire ERROR message can include it —
+/// pgwire clients can read the message in `psql` output and rebuild
+/// their connection string.
+enum PgwireGateOutcome {
+    Allow,
+    Misrouted { target_pod: String },
+}
+
+/// Slice 6.3 testable helper. Pure function so unit tests can call
+/// it without spinning up a TCP listener / Session. Mirrors the
+/// gRPC v2 and Arrow Flight gate semantics — `None` gate is a
+/// no-op (legacy/embedded paths still pass through unchanged).
+fn check_pgwire_primary_pod_gate(
+    gate: &Option<PgwirePrimaryPodGate>,
+    tenant_id: &str,
+    collection_id: &str,
+) -> PgwireGateOutcome {
+    let Some(gate) = gate else {
+        return PgwireGateOutcome::Allow;
+    };
+    match crate::cluster::primary_pod_registry::consult_for_write(
+        &gate.registry,
+        &gate.self_pod_id,
+        tenant_id,
+        collection_id,
+    ) {
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
+            if gate.registry.is_assigned(tenant_id, collection_id) {
+                crate::metrics::primary_pod_metrics::record_allowed_bound(tenant_id);
+            } else {
+                crate::metrics::primary_pod_metrics::record_allowed_unbounded(tenant_id);
+            }
+            PgwireGateOutcome::Allow
+        }
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Misrouted { target_pod } => {
+            crate::metrics::primary_pod_metrics::record_misrouted(tenant_id);
+            tracing::warn!(
+                target = "proximadb.primary_pod.misroute",
+                self_pod = %gate.self_pod_id,
+                target_pod = %target_pod,
+                tenant_id = %tenant_id,
+                collection_id = %collection_id,
+                "pgwire DML misrouted — client should reconnect to the primary pod"
+            );
+            PgwireGateOutcome::Misrouted { target_pod }
+        }
+    }
+}
+
+// Note: DmlStatement::target_table_name() (defined in
+// src/services/dml/mod.rs) already returns the target table for all
+// 6 variants (Insert/Update/Delete/Upsert/InsertSelect/InsertOverwrite),
+// so the gate just calls that — no local helper needed here.
 
 /// Prepared statement
 struct PreparedStatement {
@@ -298,6 +376,8 @@ impl PostgresProtocol {
             document_service,
             graph_service,
             observability_service,
+            primary_pod_gate: None,
+            suppress_row_description: false,
         }
     }
 
@@ -328,6 +408,8 @@ impl PostgresProtocol {
             document_service: None,
             graph_service: None,
             observability_service: None,
+            primary_pod_gate: None,
+            suppress_row_description: false,
         }
     }
 
@@ -370,7 +452,27 @@ impl PostgresProtocol {
             document_service: None,
             graph_service: None,
             observability_service: None,
+            primary_pod_gate: None,
+            suppress_row_description: false,
         }
+    }
+
+    /// Slice 6.3: attach the primary-pod write router. Once set,
+    /// `execute_insert/update/delete_via_dml_service` consult the
+    /// registry post-parse and reject misrouted writes with SQLSTATE
+    /// 57P03 (cannot_connect_now) before any catalog state changes.
+    /// SharedServices passes the same `Arc<PrimaryPodRegistry>` /
+    /// pod_id pair the REST and gRPC v2 paths hold.
+    pub fn with_primary_pod_gate(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) -> Self {
+        self.primary_pod_gate = Some(PgwirePrimaryPodGate {
+            registry,
+            self_pod_id,
+        });
+        self
     }
 
     /// Attach catalog-backed DDL/DML services to an existing protocol handler.
@@ -984,76 +1086,76 @@ impl PostgresProtocol {
             && let Some(ddl_service) = self.ddl_service.clone()
         {
             let parser = SqlFrontendParser::new();
-                match parser.parse_ddl(query) {
-                    Ok(Some(statement)) => {
-                        // Capture the canonical_embedding_precision
-                        // WITH-option from the DDL statement BEFORE
-                        // moving it into ddl_service.execute, so the
-                        // matching backing-collection write below
-                        // sees the same precision the DDL row gets.
-                        // Without this, REST GET reads the backing
-                        // collection and sees fp32 even though the
-                        // relational schema row got the operator's
-                        // chosen precision.
-                        let backing_precision: Option<String> = match &statement {
-                            crate::services::DdlStatement::CreateTable { properties, .. } => {
-                                properties.get("canonical_embedding_precision").cloned()
-                            }
-                            _ => None,
-                        };
-                        match ddl_service.execute(statement).await {
-                            Ok(result) => {
-                                if upper.starts_with("CREATE TABLE")
-                                    && let Some(table_name) = self.extract_create_table_name(query)
-                                {
-                                    self.ensure_relational_backing_collection(
-                                        &table_name,
-                                        backing_precision.as_deref(),
-                                    )
-                                    .await?;
-                                }
-                                let tag = if upper.starts_with("CREATE TABLE") {
-                                    "CREATE TABLE"
-                                } else if upper.starts_with("CREATE INDEX") {
-                                    "CREATE INDEX"
-                                } else if upper.starts_with("ALTER TABLE") {
-                                    "ALTER TABLE"
-                                } else if upper.starts_with("DROP TABLE") {
-                                    "DROP TABLE"
-                                } else if upper.starts_with("DROP INDEX") {
-                                    "DROP INDEX"
-                                } else {
-                                    "OK"
-                                };
-                                info!(message = %result.message, "DDL executed via catalog service");
-                                return self.send_command_complete(tag).await;
-                            }
-                            Err(e) => {
-                                warn!("DdlService execution failed: {}", e);
-                                return self
-                                    .send_error("ERROR", "42P01", &format!("DDL failed: {}", e))
-                                    .await;
-                            }
+            match parser.parse_ddl(query) {
+                Ok(Some(statement)) => {
+                    // Capture the canonical_embedding_precision
+                    // WITH-option from the DDL statement BEFORE
+                    // moving it into ddl_service.execute, so the
+                    // matching backing-collection write below
+                    // sees the same precision the DDL row gets.
+                    // Without this, REST GET reads the backing
+                    // collection and sees fp32 even though the
+                    // relational schema row got the operator's
+                    // chosen precision.
+                    let backing_precision: Option<String> = match &statement {
+                        crate::services::DdlStatement::CreateTable { properties, .. } => {
+                            properties.get("canonical_embedding_precision").cloned()
                         }
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        let legacy_create_table = upper.starts_with("CREATE TABLE")
-                            && (upper.contains(" USING VECTOR")
-                                || upper.contains(" USING DOCUMENT")
-                                || upper.contains(" USING GRAPH")
-                                || upper.contains(" USING OBSERVABILITY")
-                                || upper.contains(" USING TIMESERIES"));
-                        if !legacy_create_table
-                            && (upper.starts_with("CREATE TABLE")
-                                || upper.starts_with("CREATE INDEX")
-                                || upper.starts_with("ALTER TABLE"))
-                        {
+                        _ => None,
+                    };
+                    match ddl_service.execute(statement).await {
+                        Ok(result) => {
+                            if upper.starts_with("CREATE TABLE")
+                                && let Some(table_name) = self.extract_create_table_name(query)
+                            {
+                                self.ensure_relational_backing_collection(
+                                    &table_name,
+                                    backing_precision.as_deref(),
+                                )
+                                .await?;
+                            }
+                            let tag = if upper.starts_with("CREATE TABLE") {
+                                "CREATE TABLE"
+                            } else if upper.starts_with("CREATE INDEX") {
+                                "CREATE INDEX"
+                            } else if upper.starts_with("ALTER TABLE") {
+                                "ALTER TABLE"
+                            } else if upper.starts_with("DROP TABLE") {
+                                "DROP TABLE"
+                            } else if upper.starts_with("DROP INDEX") {
+                                "DROP INDEX"
+                            } else {
+                                "OK"
+                            };
+                            info!(message = %result.message, "DDL executed via catalog service");
+                            return self.send_command_complete(tag).await;
+                        }
+                        Err(e) => {
+                            warn!("DdlService execution failed: {}", e);
                             return self
-                                .send_error("ERROR", "42601", &format!("Parse error: {}", e))
+                                .send_error("ERROR", "42P01", &format!("DDL failed: {}", e))
                                 .await;
                         }
                     }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    let legacy_create_table = upper.starts_with("CREATE TABLE")
+                        && (upper.contains(" USING VECTOR")
+                            || upper.contains(" USING DOCUMENT")
+                            || upper.contains(" USING GRAPH")
+                            || upper.contains(" USING OBSERVABILITY")
+                            || upper.contains(" USING TIMESERIES"));
+                    if !legacy_create_table
+                        && (upper.starts_with("CREATE TABLE")
+                            || upper.starts_with("CREATE INDEX")
+                            || upper.starts_with("ALTER TABLE"))
+                    {
+                        return self
+                            .send_error("ERROR", "42601", &format!("Parse error: {}", e))
+                            .await;
+                    }
+                }
             }
         }
 
@@ -1363,6 +1465,27 @@ impl PostgresProtocol {
         Self::write_intent_overrides_from_params(&session.parameters)
     }
 
+    /// Slice 6.3: resolve the tenant identifier for the primary-pod
+    /// gate. Reads the same session-parameter convention used by
+    /// `write_intent_overrides_from_session` (operators set tenant via
+    /// `SET proximadb.write.tenant_id = '...'`). Falls back to the
+    /// empty string when no explicit tenant is configured — matches
+    /// the gRPC v2 / REST v2 / Arrow Flight behaviour of treating
+    /// "no tenant" as a distinct shard from any named tenant.
+    async fn pgwire_resolve_tenant_id(&self) -> String {
+        let session = self.session.read().await;
+        let normalized: HashMap<String, String> = session
+            .parameters
+            .iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v.clone()))
+            .collect();
+        normalized
+            .get("proximadb.write.tenant_id")
+            .or_else(|| normalized.get("proximadb.write_tenant_id"))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     fn write_intent_overrides_from_params(
         params: &HashMap<String, String>,
     ) -> WriteIntentOverrides {
@@ -1504,9 +1627,19 @@ impl PostgresProtocol {
         // Get top_k from LIMIT clause, default to 10
         let top_k = self.extract_limit(query).unwrap_or(10);
 
+        // TD-100: push the WHERE metadata predicate into the search so
+        // mem0-style `WHERE payload->>'type'='fact'` queries actually filter.
+        // (Previously this path passed `None`, returning unfiltered results.)
+        // NOTE: parameter-bound vector/metadata values (`$1`) are not yet bound
+        // here; that is tracked as a TD-102 follow-up.
+        let metadata_filter =
+            crate::network::postgres::pgvector_params::extract_metadata_filter_from_where(query);
+
         debug!(
-            "Executing vector search on {} with top_k={}",
-            table_name, top_k
+            "Executing vector search on {} with top_k={} filter={}",
+            table_name,
+            top_k,
+            metadata_filter.is_some()
         );
 
         if let Some(ref vector) = query_vector {
@@ -1517,8 +1650,8 @@ impl PostgresProtocol {
                     &table_name,
                     vector.clone(),
                     top_k,
-                    None, // No metadata filter
-                    None, // Default config
+                    metadata_filter, // TD-100: mem0 metadata-scoped WHERE pushdown
+                    None,            // Default config
                 )
                 .await
             {
@@ -3102,21 +3235,45 @@ impl PostgresProtocol {
         let parser = SqlFrontendParser::new();
 
         match parser.parse_dml(query) {
-            Ok(Some(statement)) => match dml_service.execute(statement).await {
-                Ok(result) => {
-                    info!(
-                        rows_affected = result.rows_affected,
-                        "INSERT executed via DmlService"
-                    );
-                    self.send_command_complete(&format!("INSERT 0 {}", result.rows_affected))
-                        .await
+            Ok(Some(statement)) => {
+                // Slice 6.3: gate runs post-parse so the (tenant_id,
+                // target_table) pair is known; pre-execute so a
+                // misroute never touches the catalog or WAL on this
+                // pod.
+                let tenant_id = self.pgwire_resolve_tenant_id().await;
+                let table = statement.target_table_name().to_string();
+                match check_pgwire_primary_pod_gate(&self.primary_pod_gate, &tenant_id, &table) {
+                    PgwireGateOutcome::Allow => {}
+                    PgwireGateOutcome::Misrouted { target_pod } => {
+                        return self
+                            .send_error(
+                                "ERROR",
+                                "57P03",
+                                &format!(
+                                    "misdirected_write: INSERT for table '{}' must go to pod '{}' (reconnect to that pod and retry)",
+                                    table, target_pod
+                                ),
+                            )
+                            .await;
+                    }
                 }
-                Err(e) => {
-                    warn!("DmlService INSERT failed: {}", e);
-                    self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
-                        .await
+
+                match dml_service.execute(statement).await {
+                    Ok(result) => {
+                        info!(
+                            rows_affected = result.rows_affected,
+                            "INSERT executed via DmlService"
+                        );
+                        self.send_command_complete(&format!("INSERT 0 {}", result.rows_affected))
+                            .await
+                    }
+                    Err(e) => {
+                        warn!("DmlService INSERT failed: {}", e);
+                        self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
+                            .await
+                    }
                 }
-            },
+            }
             Ok(None) => {
                 // Not a DML statement (shouldn't happen for INSERT)
                 self.send_error("ERROR", "42601", "Invalid INSERT statement")
@@ -3160,21 +3317,42 @@ impl PostgresProtocol {
         let parser = SqlFrontendParser::new();
 
         match parser.parse_dml(query) {
-            Ok(Some(statement)) => match dml_service.execute(statement).await {
-                Ok(result) => {
-                    info!(
-                        rows_affected = result.rows_affected,
-                        "DELETE executed via DmlService"
-                    );
-                    self.send_command_complete(&format!("DELETE {}", result.rows_affected))
-                        .await
+            Ok(Some(statement)) => {
+                // Slice 6.3: gate before DELETE — symmetric with INSERT.
+                let tenant_id = self.pgwire_resolve_tenant_id().await;
+                let table = statement.target_table_name().to_string();
+                match check_pgwire_primary_pod_gate(&self.primary_pod_gate, &tenant_id, &table) {
+                    PgwireGateOutcome::Allow => {}
+                    PgwireGateOutcome::Misrouted { target_pod } => {
+                        return self
+                            .send_error(
+                                "ERROR",
+                                "57P03",
+                                &format!(
+                                    "misdirected_write: DELETE for table '{}' must go to pod '{}' (reconnect to that pod and retry)",
+                                    table, target_pod
+                                ),
+                            )
+                            .await;
+                    }
                 }
-                Err(e) => {
-                    warn!("DmlService DELETE failed: {}", e);
-                    self.send_error("ERROR", "42P01", &format!("Delete failed: {}", e))
-                        .await
+
+                match dml_service.execute(statement).await {
+                    Ok(result) => {
+                        info!(
+                            rows_affected = result.rows_affected,
+                            "DELETE executed via DmlService"
+                        );
+                        self.send_command_complete(&format!("DELETE {}", result.rows_affected))
+                            .await
+                    }
+                    Err(e) => {
+                        warn!("DmlService DELETE failed: {}", e);
+                        self.send_error("ERROR", "42P01", &format!("Delete failed: {}", e))
+                            .await
+                    }
                 }
-            },
+            }
             Ok(None) => {
                 self.send_error("ERROR", "42601", "Invalid DELETE statement")
                     .await
@@ -3213,6 +3391,25 @@ impl PostgresProtocol {
 
         match parser.parse_dml(query) {
             Ok(Some(statement)) => {
+                // Slice 6.3: gate before UPDATE — symmetric with INSERT/DELETE.
+                let tenant_id = self.pgwire_resolve_tenant_id().await;
+                let table = statement.target_table_name().to_string();
+                match check_pgwire_primary_pod_gate(&self.primary_pod_gate, &tenant_id, &table) {
+                    PgwireGateOutcome::Allow => {}
+                    PgwireGateOutcome::Misrouted { target_pod } => {
+                        return self
+                            .send_error(
+                                "ERROR",
+                                "57P03",
+                                &format!(
+                                    "misdirected_write: UPDATE for table '{}' must go to pod '{}' (reconnect to that pod and retry)",
+                                    table, target_pod
+                                ),
+                            )
+                            .await;
+                    }
+                }
+
                 match dml_service.execute(statement).await {
                     Ok(result) => {
                         info!(
@@ -3787,6 +3984,16 @@ impl PostgresProtocol {
             param_types.push(PgType::from_oid(oid));
         }
 
+        // TD-102: when the client supplies no explicit parameter OIDs
+        // (tokio_postgres and psycopg/mem0 both do this, letting the server
+        // infer), derive the parameter arity + best-effort types from the
+        // `$N` placeholders. Without this `ParameterDescription` reports 0
+        // parameters and the client aborts Bind with `Parameters(expected, 0)`.
+        if param_types.is_empty() {
+            param_types =
+                crate::network::postgres::pgvector_params::infer_param_types(&query);
+        }
+
         // Translate and store prepared statement
         match self.translator.translate(&query) {
             Ok(translated) => {
@@ -3943,8 +4150,14 @@ impl PostgresProtocol {
             portal_name, portal.bound_query
         );
 
-        // Use the same query execution path as simple query
-        self.execute_query(&portal.bound_query).await
+        // Use the same query execution path as simple query, but suppress the
+        // RowDescription it emits: the extended protocol already reported the
+        // result columns at Describe(statement) time, so a second descriptor
+        // here is a duplicate the client rejects (TD-102).
+        self.suppress_row_description = true;
+        let result = self.execute_query(&portal.bound_query).await;
+        self.suppress_row_description = false;
+        result
     }
 
     /// Handle Describe message
@@ -3958,16 +4171,26 @@ impl PostgresProtocol {
 
         match describe_type {
             'S' => {
-                // Describe statement - clone param_types to avoid borrow conflict
-                if let Some(param_types) = self
+                // Describe statement - clone the query + param_types to avoid
+                // a borrow conflict with the &mut self sends below.
+                if let Some((stmt_query, param_types)) = self
                     .prepared_statements
                     .get(&name)
-                    .map(|s| s.param_types.clone())
+                    .map(|s| (s.query.clone(), s.param_types.clone()))
                 {
-                    // Send parameter description
+                    // Send parameter description (TD-102: now carries the
+                    // inferred arity so the client binds the right count).
                     self.send_parameter_description(&param_types).await?;
-                    // Send row description (empty for now)
-                    self.send_row_description(&[]).await?;
+                    // TD-102: report the result columns this statement will
+                    // return so the client's column read matches the DataRows
+                    // streamed during Execute. A vector-search SELECT returns
+                    // (id, distance, metadata); other statements report no
+                    // columns (NoData-equivalent empty descriptor) as before.
+                    let fields =
+                        crate::network::postgres::pgvector_params::described_result_fields(
+                            &stmt_query,
+                        );
+                    self.send_row_description(&fields).await?;
                 } else {
                     self.send_error("ERROR", "26000", "Prepared statement does not exist")
                         .await?;
@@ -4077,6 +4300,11 @@ impl PostgresProtocol {
 
     /// Send row description
     async fn send_row_description(&mut self, fields: &[FieldDescription]) -> Result<()> {
+        // TD-102: extended Execute path already described columns at
+        // Describe(statement) time; skip the duplicate emitted here.
+        if self.suppress_row_description {
+            return Ok(());
+        }
         let mut len = 4 + 2; // Length + field count
         for field in fields {
             len += field.name.len() + 1 + 18; // name + null + fixed data
@@ -4208,6 +4436,9 @@ mod tests {
         assert_eq!(FrontendMessage::Query as u8, b'Q');
         assert_eq!(FrontendMessage::Terminate as u8, b'X');
     }
+
+    // pgvector WHERE-filter + extended-protocol param tests (TD-100/TD-102)
+    // live in `super::super::pgvector_params` where the logic now resides.
 
     #[test]
     fn test_store_type_detection_vector() {
@@ -5292,5 +5523,87 @@ mod tests {
         assert_eq!(parts[0].trim(), "a");
         assert_eq!(parts[1].trim(), "'b, c'");
         assert_eq!(parts[2].trim(), "d");
+    }
+
+    // ── Slice 6.3: primary-pod gate ─────────────────────────────────
+
+    use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
+
+    fn make_pgwire_gate(
+        registry: Arc<PrimaryPodRegistry>,
+        self_pod_id: &str,
+    ) -> Option<PgwirePrimaryPodGate> {
+        Some(PgwirePrimaryPodGate {
+            registry,
+            self_pod_id: self_pod_id.to_string(),
+        })
+    }
+
+    #[test]
+    fn pgwire_gate_unconfigured_allows_writes() {
+        let outcome = check_pgwire_primary_pod_gate(&None, "tenant-a", "users");
+        assert!(matches!(outcome, PgwireGateOutcome::Allow));
+    }
+
+    #[test]
+    fn pgwire_gate_allows_when_no_binding_exists() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        let g = make_pgwire_gate(registry, "pod-self");
+        assert!(matches!(
+            check_pgwire_primary_pod_gate(&g, "tenant-a", "users"),
+            PgwireGateOutcome::Allow
+        ));
+    }
+
+    #[test]
+    fn pgwire_gate_allows_when_binding_matches_self_pod() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "users", "pod-self", AssignmentReason::Create);
+        let g = make_pgwire_gate(registry, "pod-self");
+        assert!(matches!(
+            check_pgwire_primary_pod_gate(&g, "tenant-a", "users"),
+            PgwireGateOutcome::Allow
+        ));
+    }
+
+    #[test]
+    fn pgwire_gate_returns_misrouted_with_target_pod() {
+        // The pgwire surface conveys the target pod by surfacing it
+        // in the SQLSTATE-57P03 error MESSAGE rather than trailing
+        // metadata (pgwire has no equivalent). The structured outcome
+        // here is what feeds that format!() call, so locking it in
+        // protects the operator-visible psql error text.
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "users", "pod-other", AssignmentReason::Operator);
+        let g = make_pgwire_gate(registry, "pod-self");
+
+        match check_pgwire_primary_pod_gate(&g, "tenant-a", "users") {
+            PgwireGateOutcome::Misrouted { target_pod } => {
+                assert_eq!(target_pod, "pod-other");
+            }
+            PgwireGateOutcome::Allow => panic!("expected misrouted, got allow"),
+        }
+    }
+
+    #[test]
+    fn pgwire_gate_scopes_per_tenant_collection_pair() {
+        // Same scoping invariant as the other gate surfaces — bindings
+        // don't bleed across (tenant_id, collection_id) pairs.
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "users", "pod-other", AssignmentReason::Operator);
+        let g = make_pgwire_gate(registry, "pod-self");
+
+        assert!(matches!(
+            check_pgwire_primary_pod_gate(&g, "tenant-a", "orders"),
+            PgwireGateOutcome::Allow
+        ));
+        assert!(matches!(
+            check_pgwire_primary_pod_gate(&g, "tenant-b", "users"),
+            PgwireGateOutcome::Allow
+        ));
+        assert!(matches!(
+            check_pgwire_primary_pod_gate(&g, "tenant-a", "users"),
+            PgwireGateOutcome::Misrouted { .. }
+        ));
     }
 }

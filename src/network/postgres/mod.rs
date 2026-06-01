@@ -7,6 +7,9 @@
 //
 // Protocol: PostgreSQL Protocol v3.0
 
+/// Pure pgvector helpers: WHERE metadata-filter extraction (TD-100) and
+/// extended-protocol parameter inference + result-column description (TD-102).
+pub mod pgvector_params;
 /// PostgreSQL Protocol v3.0 message parsing and encoding
 pub mod protocol;
 /// Bridge to the new relational pipeline (algebra → planner →
@@ -86,6 +89,13 @@ pub struct PostgresServer {
     /// SQL `CREATE RANK PROFILE` / `DROP RANK PROFILE` reach the same
     /// `RankServices` instance the REST / gRPC / Arrow Flight paths share.
     rank_pipeline: Option<PgwireRankPipeline>,
+    /// Slice 6.3: when both are set, every per-connection
+    /// `PostgresProtocol` is built with `with_primary_pod_gate` so
+    /// pgwire INSERT/UPDATE/DELETE consults the same registry the REST
+    /// and gRPC v2 paths consult. Held as a pair so `handle_connection`
+    /// can decide once whether to wire the gate.
+    primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
+    self_pod_id: Option<String>,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -120,8 +130,24 @@ impl PostgresServer {
             observability_service,
             direct_write_services: None,
             rank_pipeline: None,
+            primary_pod_registry: None,
+            self_pod_id: None,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Slice 6.3: attach the primary-pod write router so each
+    /// connection's `PostgresProtocol` consults the gate on DML.
+    /// Passing both as a pair makes "partially wired" unrepresentable
+    /// — `handle_connection` only applies the gate when BOTH are set.
+    pub fn with_primary_pod_gate(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) -> Self {
+        self.primary_pod_registry = Some(registry);
+        self.self_pod_id = Some(self_pod_id);
+        self
     }
 
     /// Attach the process-wide rank-pipeline so each per-connection
@@ -176,6 +202,12 @@ impl PostgresServer {
                     let observability_service = self.observability_service.clone();
                     let direct_write_services = self.direct_write_services.clone();
                     let rank_pipeline = self.rank_pipeline.clone();
+                    // Slice 6.3 capture: same `Arc<PrimaryPodRegistry>`
+                    // + pod-id pair the REST / gRPC v2 / Arrow Flight
+                    // surfaces hold, so pgwire DML sees the identical
+                    // routing decisions.
+                    let primary_pod_registry = self.primary_pod_registry.clone();
+                    let self_pod_id = self.self_pod_id.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -190,6 +222,8 @@ impl PostgresServer {
                             observability_service,
                             direct_write_services,
                             rank_pipeline,
+                            primary_pod_registry,
+                            self_pod_id,
                         )
                         .await
                         {
@@ -226,6 +260,8 @@ impl PostgresServer {
         observability_service: Option<Arc<ObservabilityService>>,
         direct_write_services: Option<DirectPgwireWriteServices>,
         rank_pipeline: Option<PgwireRankPipeline>,
+        primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
+        self_pod_id: Option<String>,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
@@ -252,6 +288,12 @@ impl PostgresServer {
         };
         if let Some(pipeline) = rank_pipeline {
             protocol = protocol.with_rank_pipeline(pipeline.services, pipeline.store);
+        }
+        // Slice 6.3: pair-wise wiring — only apply the gate when both
+        // sides are present so a partial wiring fails closed (no
+        // gate, legacy behavior) rather than silently misconfigured.
+        if let (Some(registry), Some(pod_id)) = (primary_pod_registry, self_pod_id) {
+            protocol = protocol.with_primary_pod_gate(registry, pod_id);
         }
 
         // Run protocol loop

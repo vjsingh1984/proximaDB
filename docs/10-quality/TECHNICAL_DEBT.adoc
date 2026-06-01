@@ -1307,4 +1307,85 @@ physical layouts.
 | Surfaced 2026-05-30 during the connector-conformance sprint. The Hadoop connector's `ProximaRecordReader::next_record()` is a sync `-> bool` API that Hadoop's InputFormat contract calls in a loop to drain records from a split. The v2 OpenAPI spec has NO endpoint that scans records (only POST `/search` with `top_k` for similarity search, GET `/records/{id}` for point reads, POST `/records/batch` for inserts). RecordReader.next_record() was left as a sync scaffold in commit `8cbe28290` (C6 of the sprint) — the wire-call surface for it doesn't exist yet. A POST `/search` with caller-controlled `top_k` would only approximate scan via similarity ordering, which is wrong for an unindexed table scan.
 | 2-3 days (spec) + 1 week (server impl)
 | Acceptance: (1) Spec out POST `/api/v2/collections/{collection_id}/records/scan` in `docs/openapi/proximadb-openapi.yaml` (operationId `scanRecords`) with pagination shape `{cursor?, limit?, filter?}` → `{records, next_cursor?}`. (2) Wire the server route to expose the existing iteration path used for compaction or for VIPER cold reads. (3) Reimplement `ProximaRecordReader::next_record()` (and `initialize()`) to dial the new endpoint with a cursor held on the reader state; convert to async if Hadoop's calling convention allows, else block on a runtime handle. (4) Add a contract gate test mirroring the DuckDB / Hadoop pattern.
+
+| TD-100
+| Agent memory read surface (mem0/agentmemory-aligned)
+| P5
+| MEDIUM
+| Landed (v0.2) — P1 read surface
+| Surfaced 2026-05-30. Per link:../12-design/adr/ADR-022-agent-memory-layer.adoc[ADR-022] + AGENT_MEMORY_LAYER_HLD. P1 of the agent-memory layer: scoped memory retrieval over existing surfaces — AQL `Find/From/Where` filtered by `tenant_id` / `session_id` (`props`) / `memory_type`, fanning into hybrid fusion (`src/core/search/hybrid/fusion.rs`) + RRF, with a RUBICON audit frame per query. No new storage path. **Landed 2026-05-30**: `MemoryAqlSource` (`src/query/aql/sources/memory.rs`) — pushes tenant/session into `unified_search_v1`, RRF-fuses semantic + BM25 legs via `ResultFuser`, post-filters `memory_type`, restricts to the scoped candidate set, emits audit frames; registered as the `"memory"` AQL source in `handlers.rs`. Part B: pgwire `execute_vector_search` now parses the WHERE clause into a `FilterExpression` and pushes it into `unified_search_native` (was `None`) so mem0 metadata-scoped queries filter (`src/network/postgres/protocol.rs`). 11 inline unit tests green (5 scope/assembly + 6 WHERE-parse) + 1 pgwire e2e (`tests/mem0_pgwire_filter_e2e.rs`, simple-query protocol). Follow-ups: strict row-level pgwire filter semantics depend on the v2-INSERT metadata gap; ONNX-profile rerank beyond RRF and inline text→embedding are documented as later work.
+| 1-2 weeks
+| Acceptance: (1) Memory query path returns scoped, fused, re-ranked results with an emitted AQL audit frame — DONE (unit-tested). (2) mem0 PGVector provider performs a similarity query against port 5433: WHERE-filter pushdown landed + unit-tested; full INSERT→search round trip blocked on the v2-INSERT metadata gap (documented). (3) Integration test over a seeded multi-session memory collection — assembly path unit-tested; pgwire e2e green (`mem0_pgwire_filter_e2e`, simple-query protocol).
+
+| TD-101
+| Agent memory write surface (extraction + consolidation)
+| P5
+| MEDIUM
+| In progress (v0.2) — Slice 1 + embedder/route/e2e sub-slice landed
+| P2 of the agent-memory layer. Extraction wrapper reusing `LLMIntegrationEngine` (`src/ai/llm_integration/engine.rs`) + the AV-SQL agent pattern (`src/query/nl/`) to distill salient facts from agent turns; consolidation step that retrieves top-s similar memories and uses an LLM `ADD/UPDATE/DELETE/NOOP` decision before writing a `ProximaRecord`. No new LLM-provider abstraction. **Slice 1 landed 2026-05-30** (`src/services/agent_memory.rs`): trait-seam orchestrator `MemoryWriteEngine.ingest` (extract→retrieve→consolidate→apply) over `ExtractionAgent`/`ConsolidationAgent`/`MemoryStore`/`MemoryEmbedder` traits; LLM-backed agents (reuse `query_with_fallback`); `VectorMemoryStore` adapter (retrieve via `unified_search_v1`+scope filter, add/update via `insert_batch_with_tenant_context`, delete via `delete_records_with_tenant_context`); pure parse/prompt/`build_memory_record` fns. Embedding abstracted behind `MemoryEmbedder` (no model wired this slice, per decision). Module compiles clean; **5 unit tests green** (orchestrator action-per-fact ordering via mocks; `parse_extraction_response` valid/garbage/unknown-type; `parse_consolidation_response` all 4 actions; `build_memory_record` field mapping). (Earlier blocked by an unrelated `dual_store_ivf.rs` ADR-023 WIP break — resolved by the owner.)
+| 2-3 weeks
+| Acceptance: (1) message pair → write/update/dedupe deterministically under fixed mocks — DONE (orchestrator + parse + record-build unit tests green). (2) Consolidation decisions auditable — applied-action list returned; EventLog persistence is a sub-slice. (3) Records carry `memory_type`/`tenant_id`/`actor`/`props["session_id"]` — DONE (`build_memory_record` unit test green). **Sub-slice landed 2026-05-31**: `EmbeddingServiceEmbedder` (real text→vector via the in-process `EmbeddingService::try_global`+`embed_sync`, reusing `crates/modalities/proximadb-embedding`); `MemoryEmbedder` widened to carry `tenant_id`; `POST /api/v1/memory/ingest` (`src/network/rest/v1/memory.rs`) always-mounted with a 501 availability guard when no LLM backend, engine built in `handlers.rs` only when `llm_engine` present. 7 unit tests + 1 booted e2e (`tests/agent_memory_ingest_e2e.rs`: route mounted + 501 guard; LLM happy-path gated on an env key) green. The embedder lives in proximaDB, NOT anvaiops (anvaiops is the Python operator/SaaS consumer). Remaining: consolidation-decision EventLog audit persistence.
+
+| TD-102
+| mem0 / agentmemory framework adapters
+| P5
+| LOW
+| Open
+| P3 of the agent-memory layer. A mem0 `VectorStoreBase` provider (registered in `VectorStoreFactory`) targeting ProximaDB, and an optional mem0g graph-store mapping onto the native graph engine (collapsing the Qdrant+Neo4j pair into one backend). Document agentmemory's `CLIENT_TYPE=POSTGRES` path. Conformance tests against mem0's interface. **Carry-over from TD-100**: bind pgwire parameter placeholders (`$1`) in `execute_vector_search` (vector + metadata values) — TD-100 landed literal-value WHERE pushdown only; mem0's PGVector provider parameterizes its queries.
+| 1-2 weeks
+| Acceptance: (1) mem0 configured with the ProximaDB provider round-trips add/search/update/delete. (2) mem0g graph ops succeed against the native graph engine, or the gap is documented. (3) Adapter conformance test in CI.
+
+| TD-103
+| Agent memory session scoping
+| P5
+| LOW
+| Open — deferred field
+| Session scope starts as `props["session_id"]` (no record-shape change). Promote to a first-class `ProximaRecord.session_id` field ONLY if a query-path need is proven after TD-101. Tracked to avoid silently adding a record field for a property `props` already carries.
+| 2-3 days (if promoted)
+| Acceptance: (1) Memory queries can filter by session. (2) Decision recorded (keep in `props` vs promote) with the query-path justification.
+
+| TD-104
+| Complete Phase 9 handler/service extraction (seam S1)
+| P2
+| MEDIUM
+| Open — convergence
+| Per link:../12-design/CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30] S1. Real `UnifiedHandlers` (~250 methods) lives in `src/api_handlers/request_handlers.rs`; `crates/platform/proximadb-runtime/src/handlers.rs` is a stub. Finish extraction so handler bodies live in the platform crate and the root crate composes ports only.
+| 2-3 sprints
+| Acceptance: (1) Handler groups migrated endpoint-group at a time (commit per group — linter displaces unstaged files). (2) Root crate has no duplicate handler bodies. (3) Build + API consistency tests green.
+
+| TD-105
+| Remove deprecated gRPC shims (seam S2)
+| P3
+| LOW
+| Open — target v0.2
+| CONVERGENCE_AUDIT S2. `src/network/grpc/{entity,document,graph,security,hybrid_search,streaming,observability}_service.rs` carry `// DEPRECATED … removed in version 0.3.0` markers over the migrated impls in `crates/platform/proximadb-api/src/grpc/v1/`. Land in v0.2: pull the removal forward and update/remove the stale `0.3.0` markers.
+| 1 week (v0.2)
+| Acceptance: (1) Shims deleted in v0.2; the `0.3.0` removal markers updated/removed. (2) No remaining importers. (3) gRPC tests green against the platform-crate impls.
+
+| TD-106
+| Migrate proto-v1 internal mirrors to canonical types (seam S3)
+| P2
+| MEDIUM
+| Open — convergence
+| CONVERGENCE_AUDIT S3. `VectorRecord` / `SqlValue` / `SqlObject` (proto v1) are still used internally; canonical is `ProximaRecord` / `ProximaValue` / `ProximaType`. Keep proto v1 for the wire only; migrate internal usage one handler file at a time, leaving parse→convert edge adapters in place.
+| 2-3 sprints
+| Acceptance: (1) Internal code paths use canonical types; proto v1 confined to wire adapters. (2) No internal `VectorRecord`/`SqlValue` construction outside edge adapters. (3) Tests green.
+
+| TD-107
+| Consolidate CDC/cluster configs into proximadb-config (seam S4)
+| P3
+| LOW
+| Open — convergence
+| CONVERGENCE_AUDIT S4. CDC (`src/cdc/`, ~8 structs) and cluster (`src/cluster/`, ~9 structs) define config types outside the canonical `crates/foundation/proximadb-config`. Move them into domain modules there; re-export from original locations to avoid call-site churn. Preserve any legitimate engine-specific specialization.
+| 1 sprint
+| Acceptance: (1) CDC + cluster config structs defined in `proximadb-config`. (2) Original paths re-export. (3) No behavior change; build green.
+
+| TD-108
+| Delete residual catalog re-export shims (seam S6)
+| P3
+| LOW
+| Open — convergence
+| CONVERGENCE_AUDIT S6. All 8 catalog backends live in `crates/control/proximadb-catalog`; several `src/catalog/*.rs` files remain as pure re-export shims. Delete the re-export-only files and repoint importers; keep any file that still adds transitional integration glue (budget guard, tier). Verify file-by-file before deleting.
+| 1 week
+| Acceptance: (1) Pure re-export shims removed; importers point at the crate. (2) Files with real glue retained. (3) Build green.
 |===
