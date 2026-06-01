@@ -68,6 +68,7 @@ jobs:
       java_sdk: ${{ steps.filter.outputs.java_sdk }}
       openapi_spec: ${{ steps.filter.outputs.openapi_spec }}
       src_connectors: ${{ steps.filter.outputs.src_connectors }}
+      spark_jni: ${{ steps.filter.outputs.spark_jni }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -138,6 +139,10 @@ jobs:
               - 'tests/connectors_openapi_contract.rs'
               - 'tests/connectors_flight_contract.rs'
               - 'tests/openapi_helpers.rs'
+            spark_jni:
+              - 'crates/binding/proximadb-spark-jni/**'
+              - 'clients/jvm/spark-connector/**'
+              - 'src/connectors/spark.rs'
 
   # ============================================================================
   # QUALITY CHECKS - Run in parallel, fast feedback
@@ -544,6 +549,47 @@ jobs:
         if: matrix.kind == 'flight'
         run: |
           cargo test --test connectors_flight_contract -- --nocapture
+
+  # ===========================================================================
+  # SPARK CONNECTOR JNI SMOKE (added 2026-05-31, TD-097 follow-up)
+  #
+  # End-to-end gate for the Spark connector JNI wire layer:
+  #   1. Build the `proximadb-spark-jni` cdylib
+  #   2. javac the Java JNI shim + smoke harness
+  #   3. java -Djava.library.path=target/debug … NativeProximaDBTest
+  #
+  # The smoke harness exits non-zero on any failure. Covers all 9 jni_*
+  # exports for type-correctness; placeholder return shapes are part of
+  # the contract (TD-097 follow-up replaces them with real
+  # ConnectorStorageAdapter calls).
+  #
+  # Triggers when either the Rust JNI crate, the JVM test harness, or
+  # the underlying scaffolds in src/connectors/spark.rs change.
+  # ===========================================================================
+  spark-jni-smoke:
+    name: Spark Connector JNI Smoke (TD-097)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.spark_jni == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '19'
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-spark-jni-smoke"
+          workspaces: ". -> target"
+      - name: Run JNI smoke harness
+        run: |
+          chmod +x clients/jvm/spark-connector/run-smoke.sh
+          clients/jvm/spark-connector/run-smoke.sh
 
   sdk-security-scan:
     name: SDK Security Scan
@@ -1154,6 +1200,7 @@ jobs:
       - sdk-security-scan
       - sdk-contract-gates
       - connectors-contract-gates
+      - spark-jni-smoke
     if: always()
     steps:
       - name: Check Results
