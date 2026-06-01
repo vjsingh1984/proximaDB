@@ -2909,6 +2909,156 @@ mod tests {
         );
     }
 
+    // ─── ADR-023 T-F: Stage-1-only (ColdBinaryOnly) recall floor ─────────────
+
+    /// Deterministic synthetic clustered corpus (splitmix64, no external deps),
+    /// so the measured recall floor is reproducible in CI. Well-separated
+    /// cluster centers + small intra-cluster noise → IVF clustering and the
+    /// rotated-residual 1-bit codes are both discriminative.
+    fn synth_clustered_corpus(
+        dim: usize,
+        n_clusters: usize,
+        per_cluster: usize,
+    ) -> Vec<(String, Vec<f32>)> {
+        let mut state: u64 = 0xC0FF_EE12_3456_789A;
+        let mut next = move || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^= z >> 31;
+            // u64 → f32 in [-1, 1).
+            ((z >> 40) as f32 / (1u32 << 24) as f32) * 2.0 - 1.0
+        };
+        let mut out = Vec::with_capacity(n_clusters * per_cluster);
+        for c in 0..n_clusters {
+            // Large center amplitude so clusters separate; small noise keeps
+            // each point near its center (a real NN lives in the same cluster).
+            let center: Vec<f32> = (0..dim).map(|_| next() * 8.0).collect();
+            for j in 0..per_cluster {
+                let v: Vec<f32> = center.iter().map(|&cc| cc + next() * 0.6).collect();
+                out.push((format!("c{c}_v{j}"), v));
+            }
+        }
+        out
+    }
+
+    /// Measures the recall lost by serving Hamming-only (rotated-residual 1-bit,
+    /// no fp32 rerank — the `ColdBinaryOnly` state) versus the exact two-stage
+    /// path. This is the honest envelope T-E discloses and the input to the R4
+    /// MID-tier go/no-go gate.
+    ///
+    /// MEASURED (dim=64, n=800, 16 clusters, well-separated; deterministic):
+    /// ```text
+    ///   n_probe   recall@10
+    ///     1         0.512   <- best: prune to the true cluster, rank within it
+    ///     2         0.358
+    ///     4         0.243
+    ///     8         0.177
+    ///    16         0.145   <- merge all frames: worse than random (10/50=0.20)
+    /// ```
+    /// Two findings: (1) the 1-bit floor (~0.51) clears the 0.40 go/no-go bar but
+    /// sits BELOW AQR-HNSW's ~0.75 naive-1-bit prior on this pathologically tight
+    /// within-cluster ranking task — so 1-bit cold serving is marginal and the R4
+    /// 2-bit MID tier stays warranted (or fall back to FullEager) until a real
+    /// corpus says otherwise. (2) recall INVERTS with n_probe — the opposite of
+    /// the warm path. Raw Hamming is only valid within ONE residual frame (rotated
+    /// to that cluster's centroid); merging probed clusters drops the coarse
+    /// centroid-distance term, so cross-cluster ordering is mis-ranked. The cold
+    /// path must therefore probe minimally (n_probe=1) OR compose coarse+residual
+    /// distance (the RaBitQ estimator) before multi-probe is honest. The assertion
+    /// guards the single-probe floor.
+    #[tokio::test]
+    async fn cold_stage1_only_recall_floor_is_measured_and_disclosed() {
+        let _ = proximadb_hardware::hardware_capabilities();
+        let dim = 64;
+        let n_clusters = 16;
+        let per_cluster = 50;
+        let data = synth_clustered_corpus(dim, n_clusters, per_cluster);
+
+        // FullTwoStage reference. recall_target 1.0 (from binary_ivf_config) +
+        // n_probe = n_clusters → exact brute-force top-k (the ground truth).
+        let mut full =
+            UnifiedIvfIndex::new("cold_floor".to_string(), binary_ivf_config(dim, n_clusters))
+                .unwrap();
+        full.train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            full.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+
+        // Cold-start replica: COLD tier only → ColdBinaryOnly (Hamming, no fp32).
+        let cold_tier = full.export_cold_tier().await.unwrap();
+        let mut cold =
+            UnifiedIvfIndex::new("cold_floor".to_string(), cold_tier.config.to_config()).unwrap();
+        cold.restore_cold_only(cold_tier).await.unwrap();
+        assert_eq!(cold.serving_state(), IvfServingState::ColdBinaryOnly);
+
+        // Queries: deterministically jitter existing vectors so each has a real
+        // nearest neighbour in the corpus.
+        let k = 10;
+        let n_queries = 60;
+        let queries: Vec<Vec<f32>> = {
+            let mut qstate: u64 = 0x1234_5678_9ABC_DEF0;
+            let mut jitter = move || {
+                qstate = qstate.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut z = qstate;
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                z ^= z >> 31;
+                ((z >> 40) as f32 / (1u32 << 24) as f32) * 2.0 - 1.0
+            };
+            (0..n_queries)
+                .map(|qi| {
+                    let base = &data[(qi * 13) % data.len()].1;
+                    base.iter().map(|&x| x + jitter() * 0.3).collect()
+                })
+                .collect()
+        };
+
+        // Ground truth is brute-force exact (probe ALL clusters, full rerank).
+        // The cold replica's centroids are resident fp32, so it prunes to the
+        // nearest clusters EXACTLY, then Hamming-ranks only within them — sweep
+        // n_probe to separate the 1-bit quantization floor (n_probe=1, the true
+        // cluster only) from cross-cluster Hamming contamination (n_probe high,
+        // where incomparable per-centroid residual frames merge and degrade).
+        let mut floor_at_1 = 0.0f64;
+        for &probe in &[1usize, 2, 4, 8, n_clusters] {
+            let mut total = 0.0f64;
+            for query in &queries {
+                let exact = full.search(query, k, Some(n_clusters)).await.unwrap();
+                let stage1 = cold
+                    .search_with_binary_acceleration(query, k, Some(probe))
+                    .await
+                    .unwrap();
+                let truth: std::collections::HashSet<&String> =
+                    exact.iter().map(|(id, _)| id).collect();
+                let hit = stage1.iter().filter(|(id, _)| truth.contains(id)).count();
+                total += hit as f64 / k as f64;
+            }
+            let recall = total / n_queries as f64;
+            println!(
+                "ADR-023 T-F Stage-1-only recall@{k} = {recall:.3} @ n_probe={probe} (dim={dim}, n={}, clusters={n_clusters})",
+                data.len()
+            );
+            if probe == 1 {
+                floor_at_1 = recall;
+            }
+        }
+
+        // The honest envelope T-E discloses: at n_probe=1 (exact-centroid prune
+        // to the true cluster, then Hamming-rank ~50 candidates) the 1-bit floor
+        // must clear random selection (k/per_cluster) by a clear margin. This is
+        // the R4 MID-tier go/no-go input — if it cannot clear ~0.40, a 2-bit MID
+        // tier is warranted; if it clears it comfortably, 1-bit cold serving is
+        // honest to disclose.
+        assert!(
+            floor_at_1 >= 0.40,
+            "Stage-1-only recall@1-probe {floor_at_1:.3} is below the 0.40 \
+             go/no-go bar; the cold envelope is too weak to disclose without R4"
+        );
+    }
+
     // ─── TD-087 Slice B: serialization round-trip ───────────────────────────
 
     #[tokio::test]
