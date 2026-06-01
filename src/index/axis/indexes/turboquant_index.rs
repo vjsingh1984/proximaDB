@@ -286,7 +286,7 @@ impl AxisVectorIndex for TurboQuantAxisIndex {
                     format!(
                         "TurboQuant mask-pushed search failed (top_k={top_k}, \
                          mask_slots={})",
-                        mask_set.slot_count(),
+                        mask_set.n_slots(),
                     )
                 })?;
             return Ok(self.translate_hits(hits));
@@ -328,21 +328,30 @@ impl AxisVectorIndex for TurboQuantAxisIndex {
 
     fn stats(&self) -> AxisIndexStats {
         // Vector count is authoritative from the inner index. Memory
-        // estimate is `IdMapIndex::stats()` worth + the maps.
-        let inner_stats = self.inner.stats();
+        // estimate sums the inner-index footprint (codes + scales) plus
+        // an approximation of the bidirectional id maps. The id-map
+        // approximation uses 64 bytes per entry — a deliberate
+        // over-estimate (typical 8-byte u64 + average ~16-byte String
+        // + DashMap overhead) so operator dashboards don't under-report.
+        let n = self.inner.len();
+        let dim = self.inner.dim();
+        let bit_width = self.inner.bit_width();
+        // bytes per vector code = ceil(dim * bit_width / 8) + 4 (RaBitQ
+        // scale). Same formula as `UnifiedQuantizationLevel::bytes_per_vector`
+        // in the modality crate — kept here as a local constant so a
+        // future divergence is loud.
+        let bytes_per_vec = (dim * bit_width as usize).div_ceil(8) + 4;
+        let inner_bytes = n * bytes_per_vec;
         let map_bytes =
             self.string_to_u64.len() * 64 + self.u64_to_string.len() * 64;
+        let label = match self.inner.calibration_mode() {
+            CalibrationMode::Identity => "identity",
+            CalibrationMode::TqPlus => "tq_plus",
+        };
         AxisIndexStats {
-            vector_count: inner_stats.n_vectors,
-            memory_usage_bytes: inner_stats.total_bytes + map_bytes,
-            index_type: format!(
-                "TurboQuant({}bit, {})",
-                inner_stats.bit_width,
-                match inner_stats.calibration_mode {
-                    CalibrationMode::Identity => "identity",
-                    CalibrationMode::TqPlus => "tq_plus",
-                },
-            ),
+            vector_count: n,
+            memory_usage_bytes: inner_bytes + map_bytes,
+            index_type: format!("TurboQuant({}bit, {})", bit_width, label),
         }
     }
 
