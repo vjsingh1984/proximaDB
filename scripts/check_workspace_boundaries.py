@@ -530,6 +530,8 @@ def crate_layer(member_path: Path, name: str) -> str:
         return "platform"
     if parts[:2] == ("crates", "integrations"):
         return "integration"
+    if parts[:2] == ("crates", "binding"):
+        return "binding"
     if parts and parts[0] == "apps":
         return "application"
     if parts and parts[0] in {"bindings", "clients"}:
