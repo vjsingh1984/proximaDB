@@ -376,6 +376,178 @@ pub fn derive_rotation_seed(collection_id: &str) -> u64 {
 }
 
 // ============================================================================
+// QuantizationMethod trait (Phase A — Quantization Trait Convergence Plan)
+// ============================================================================
+//
+// A metadata-only trait that collapses the 13 enum-match dispatch sites
+// across the codebase (planner, router, EXPLAIN builder, Prometheus label
+// emitter, lifecycle checker) into a single trait-method call.
+//
+// Encode / decode / score deliberately stay variant-specific — their state
+// shapes diverge too far to unify cheaply (PQ needs a mutable Codebook,
+// TurboQuant needs rotation_seed + frozen calibration, Binary is stateless).
+// See the plan document at `~/.claude/plans/dreamy-finding-clover.md` §"Design
+// rationale" for the load-bearing reasoning. Encode/decode unification is
+// deferred to a future phase once a second read-time codec lands and the trait
+// shape can be derived from two concrete examples rather than one.
+
+/// Lifecycle classification for a quantization method.
+///
+/// Drives the routing decision between cached codes (WORM-friendly write-time
+/// quantization) and on-the-fly encoding (adhoc / research workload friendly
+/// read-time quantization). The progressive-search dispatcher (`Phase C`) and
+/// the VIPER storage writer use this to pick between persisting codes or
+/// skipping the columnar path. See ADR-021 §"Authority mode" and
+/// `EMBEDDING_PRECISION_LLD_2026_05_22.adoc` Q12.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuantizationLifecycle {
+    /// Codes are encoded at write/flush/compaction time, persisted to
+    /// storage, and scored read-time without re-encoding. Optimal for stable
+    /// WORM corpora. Examples: Binary, Scalar/INT8, ProductQuantization.
+    WriteTime,
+    /// Codes are computed at read time from a durable per-collection rotation
+    /// seed + frozen calibration. Optimal for adhoc / research workloads
+    /// where re-encoding on every epoch bump beats persisting stale codes.
+    /// Today only TurboQuant uses this lifecycle.
+    ReadTime,
+    /// FP32 / FP16 — no quantization applied. The "natural" arm so trait
+    /// dispatch doesn't need a separate fast path.
+    Identity,
+}
+
+impl fmt::Display for QuantizationLifecycle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WriteTime => write!(f, "write_time"),
+            Self::ReadTime => write!(f, "read_time"),
+            Self::Identity => write!(f, "identity"),
+        }
+    }
+}
+
+/// Durable state every collection needs to recover its quantization at
+/// restart. Filled in by the variant; `None` for stateless methods (Binary,
+/// FP32). Persisted in xCatalog (`Phase E` of the convergence plan).
+///
+/// The string-typed `seed_or_codebook_id` and `calibration` fields are
+/// deliberately opaque — they let every variant tunnel its own discriminator
+/// through the same shape without forcing the catalog to learn variant
+/// semantics. PQ uses `seed_or_codebook_id = Some(codebook_id)` and
+/// `calibration = Some(training_epoch.to_string())`; TurboQuant uses
+/// `seed_or_codebook_id = Some(format!("{:#x}", rotation_seed))` and
+/// `calibration = Some(calibration_mode.to_string())`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DurableQuantState {
+    /// Per-collection rotation seed (TurboQuant) or codebook identifier
+    /// (PQ). `None` for stateless methods.
+    pub seed_or_codebook_id: Option<String>,
+    /// Calibration mode discriminator (TurboQuant) or training-epoch tag
+    /// (PQ). `None` for stateless methods.
+    pub calibration: Option<String>,
+    /// Precision epoch this code was encoded under. Mismatch with the
+    /// collection's current epoch triggers repair from the canonical
+    /// `ProximaRecord` per `EMBEDDING_PRECISION_LLD` Q12.
+    pub encoded_epoch: u64,
+}
+
+/// Metadata-only trait every quantization variant implements.
+///
+/// Routes, planners, EXPLAIN builders, and metric label emitters call these
+/// methods instead of matching the enum directly. Encode / decode / score
+/// remain per-variant — see the module-level comment for the load-bearing
+/// reasoning.
+///
+/// Object-safe: every method takes `&self`, no associated types, no generics.
+/// Both modality-side parameter structs (`BinaryQuantization`,
+/// `TurboQuantization`, ...) and the enum wrappers (`QuantizationLevel`,
+/// `UnifiedQuantizationLevel`) implement it via blanket-style delegation.
+pub trait QuantizationMethod: Send + Sync + std::fmt::Debug {
+    /// Canonical foundation-crate identifier. The one place every other
+    /// dispatch site asks "what variant is this?".
+    fn quantization_type(&self) -> QuantizationType;
+
+    /// Bits per coordinate (1 for Binary, 8 for INT8, 2/4 for TurboQuant,
+    /// 32 for FP32). Used by Prometheus labels, EXPLAIN, and the
+    /// storage-size estimator that today lives in
+    /// `UnifiedQuantizationLevel::bytes_per_vector`.
+    fn bit_width(&self) -> u8;
+
+    /// Read-time vs write-time vs identity. Drives the dispatch in
+    /// `progressive_search` (`Phase C`) and the storage-engine writer in
+    /// `viper/pipeline.rs` (which today skips TurboQuant blindly).
+    fn lifecycle(&self) -> QuantizationLifecycle;
+
+    /// Durable state needed to recover after process restart. `None` for
+    /// stateless methods. Persisted in xCatalog (`Phase E`).
+    fn durable_state(&self) -> Option<DurableQuantState>;
+
+    /// Whether this method's scoring kernel can consume a packed bitmap
+    /// allowlist directly (the TurboQuant `CandidateMaskSet` path). Default
+    /// `false` — only TurboQuant overrides to `true` today. Drives the AXIS
+    /// adapter dispatch (`Phase D`): when `true`, the adapter routes a
+    /// `CandidateSet` straight into the kernel; when `false`, it falls back
+    /// to the existing post-filter path.
+    fn supports_candidate_mask(&self) -> bool {
+        false
+    }
+
+    /// Stable lowercase identifier for Prometheus labels.
+    /// `quantization_type().to_string()` would do this too, but pinning it
+    /// here means changing label values requires a trait-method change
+    /// (loud) rather than a Display impl change (silent).
+    fn metric_label(&self) -> &'static str;
+}
+
+// ----------------------------------------------------------------------------
+// QuantizationType inherent methods (no full trait impl — bit_width and
+// durable_state need a configured method, not just a type tag).
+//
+// These let any code path that holds only the bare enum tag still query the
+// lifecycle / metric label without re-matching. Variant structs in the
+// modality crate provide the full `QuantizationMethod` impl with bit_width
+// and durable_state populated.
+// ----------------------------------------------------------------------------
+
+impl QuantizationType {
+    /// Lifecycle classification answerable from the type tag alone.
+    pub fn lifecycle(&self) -> QuantizationLifecycle {
+        match self {
+            Self::None => QuantizationLifecycle::Identity,
+            Self::Scalar | Self::Product | Self::Binary => QuantizationLifecycle::WriteTime,
+            #[cfg(feature = "experimental-turboquant")]
+            Self::TurboQuant => QuantizationLifecycle::ReadTime,
+        }
+    }
+
+    /// Stable Prometheus label.
+    pub fn metric_label(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Scalar => "scalar",
+            Self::Product => "product",
+            Self::Binary => "binary",
+            #[cfg(feature = "experimental-turboquant")]
+            Self::TurboQuant => "turboquant",
+        }
+    }
+
+    /// Whether the canonical kernel for this type accepts a packed-bitmap
+    /// allowlist. Mirrors `QuantizationMethod::supports_candidate_mask` at
+    /// the bare-tag level.
+    pub fn supports_candidate_mask(&self) -> bool {
+        #[cfg(feature = "experimental-turboquant")]
+        {
+            return matches!(self, Self::TurboQuant);
+        }
+        #[cfg(not(feature = "experimental-turboquant"))]
+        {
+            false
+        }
+    }
+}
+
+// ============================================================================
 // Legacy Type Conversions (for migration)
 // ============================================================================
 
@@ -678,5 +850,164 @@ mod tests {
         // Spot-check that an empty collection id still produces a stable
         // (non-zero) seed.
         assert_ne!(derive_rotation_seed(""), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // QuantizationMethod trait + QuantizationType inherent surface
+    // (Phase A — Quantization Trait Convergence Plan)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn quantization_lifecycle_display_round_trips_each_arm() {
+        // Display must match the serde rename ("snake_case") because the
+        // metric label and EXPLAIN hint both rely on the same encoding.
+        assert_eq!(QuantizationLifecycle::WriteTime.to_string(), "write_time");
+        assert_eq!(QuantizationLifecycle::ReadTime.to_string(), "read_time");
+        assert_eq!(QuantizationLifecycle::Identity.to_string(), "identity");
+    }
+
+    #[test]
+    fn quantization_lifecycle_serde_snake_case() {
+        let s = serde_json::to_string(&QuantizationLifecycle::ReadTime).unwrap();
+        assert_eq!(s, "\"read_time\"");
+        let back: QuantizationLifecycle = serde_json::from_str("\"write_time\"").unwrap();
+        assert_eq!(back, QuantizationLifecycle::WriteTime);
+    }
+
+    #[test]
+    fn quantization_type_lifecycle_classifies_each_variant() {
+        // The lifecycle classification is load-bearing: progressive_search
+        // (Phase C) routes write-time vs read-time vs identity differently.
+        assert_eq!(
+            QuantizationType::None.lifecycle(),
+            QuantizationLifecycle::Identity,
+        );
+        assert_eq!(
+            QuantizationType::Scalar.lifecycle(),
+            QuantizationLifecycle::WriteTime,
+        );
+        assert_eq!(
+            QuantizationType::Product.lifecycle(),
+            QuantizationLifecycle::WriteTime,
+        );
+        assert_eq!(
+            QuantizationType::Binary.lifecycle(),
+            QuantizationLifecycle::WriteTime,
+        );
+        #[cfg(feature = "experimental-turboquant")]
+        assert_eq!(
+            QuantizationType::TurboQuant.lifecycle(),
+            QuantizationLifecycle::ReadTime,
+        );
+    }
+
+    #[test]
+    fn quantization_type_metric_label_is_stable_lowercase() {
+        // Label values are wire-stable. Changing them breaks every
+        // Prometheus query, so this test pins them by literal.
+        assert_eq!(QuantizationType::None.metric_label(), "none");
+        assert_eq!(QuantizationType::Scalar.metric_label(), "scalar");
+        assert_eq!(QuantizationType::Product.metric_label(), "product");
+        assert_eq!(QuantizationType::Binary.metric_label(), "binary");
+        #[cfg(feature = "experimental-turboquant")]
+        assert_eq!(QuantizationType::TurboQuant.metric_label(), "turboquant");
+    }
+
+    #[test]
+    fn quantization_type_supports_candidate_mask_only_turboquant_today() {
+        // Only TurboQuant's kernel consumes a packed-bitmask allowlist;
+        // everything else falls back to post-filter. AXIS Phase D dispatches
+        // on this method.
+        assert!(!QuantizationType::None.supports_candidate_mask());
+        assert!(!QuantizationType::Scalar.supports_candidate_mask());
+        assert!(!QuantizationType::Product.supports_candidate_mask());
+        assert!(!QuantizationType::Binary.supports_candidate_mask());
+        #[cfg(feature = "experimental-turboquant")]
+        assert!(QuantizationType::TurboQuant.supports_candidate_mask());
+    }
+
+    #[test]
+    fn durable_quant_state_round_trips_through_serde() {
+        // The wire shape is what xCatalog persists (Phase E). Lock the JSON
+        // key names so a future struct rename doesn't silently break
+        // catalog round-trips.
+        let s = DurableQuantState {
+            seed_or_codebook_id: Some("0xdeadbeef".to_string()),
+            calibration: Some("tq_plus".to_string()),
+            encoded_epoch: 7,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("seed_or_codebook_id"));
+        assert!(json.contains("calibration"));
+        assert!(json.contains("encoded_epoch"));
+        let back: DurableQuantState = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn durable_quant_state_stateless_variant_uses_nones() {
+        // Binary and FP32 have no per-collection state. We still serialize
+        // the struct (with nones) so the catalog row shape is uniform.
+        let s = DurableQuantState {
+            seed_or_codebook_id: None,
+            calibration: None,
+            encoded_epoch: 0,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: DurableQuantState = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+        assert!(back.seed_or_codebook_id.is_none());
+        assert!(back.calibration.is_none());
+    }
+
+    /// Minimal `QuantizationMethod` impl used to verify the trait is
+    /// object-safe and behaves correctly under dynamic dispatch. The real
+    /// impls live in the modality crate alongside the variant structs.
+    #[derive(Debug)]
+    struct FakeMethod {
+        kind: QuantizationType,
+        bits: u8,
+        lifecycle: QuantizationLifecycle,
+        mask: bool,
+    }
+
+    impl QuantizationMethod for FakeMethod {
+        fn quantization_type(&self) -> QuantizationType {
+            self.kind
+        }
+        fn bit_width(&self) -> u8 {
+            self.bits
+        }
+        fn lifecycle(&self) -> QuantizationLifecycle {
+            self.lifecycle
+        }
+        fn durable_state(&self) -> Option<DurableQuantState> {
+            None
+        }
+        fn supports_candidate_mask(&self) -> bool {
+            self.mask
+        }
+        fn metric_label(&self) -> &'static str {
+            self.kind.metric_label()
+        }
+    }
+
+    #[test]
+    fn quantization_method_is_object_safe_and_works_under_dyn_dispatch() {
+        // If the trait grows an associated type or a generic method, this
+        // test stops compiling. That's the point — object-safety is the
+        // load-bearing contract for routers that hold `&dyn`.
+        let m: Box<dyn QuantizationMethod> = Box::new(FakeMethod {
+            kind: QuantizationType::Scalar,
+            bits: 8,
+            lifecycle: QuantizationLifecycle::WriteTime,
+            mask: false,
+        });
+        assert_eq!(m.quantization_type(), QuantizationType::Scalar);
+        assert_eq!(m.bit_width(), 8);
+        assert_eq!(m.lifecycle(), QuantizationLifecycle::WriteTime);
+        assert!(!m.supports_candidate_mask());
+        assert_eq!(m.metric_label(), "scalar");
+        assert!(m.durable_state().is_none());
     }
 }
