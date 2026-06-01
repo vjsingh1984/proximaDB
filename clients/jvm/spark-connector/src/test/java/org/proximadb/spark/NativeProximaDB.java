@@ -33,14 +33,50 @@ public final class NativeProximaDB {
         // utility class; not instantiable
     }
 
-    /**
-     * Fetch the table schema for {@code tableName} via the Rust-side
-     * `jni_get_table_schema`. Returns a JSON-encoded schema string
-     * matching the Spark `StructType` JSON shape; today the Rust impl
-     * is a scaffold that returns {@code {"type":"struct","fields":[]}}.
-     *
-     * Wiring to the underlying `ConnectorStorageAdapter.get_schema()`
-     * is tracked under TD-097.
-     */
+    /** Fetch the table schema. Scaffold returns {@code {"type":"struct","fields":[]}}. */
     public static native String getTableSchema(String tableName);
+
+    /**
+     * Plan input partitions for a Spark DataSource V2 scan.
+     * Returns a JSON array of partition descriptors. Scaffold returns {@code []}.
+     */
+    public static native String planInputPartitions(
+            String tableName, String filtersJson, int numPartitions);
+
+    /**
+     * Open a partition reader and return an opaque native handle. Pass
+     * the handle to {@link #readNextBatch(long)} and {@link
+     * #closePartitionReader(long)}. Scaffold returns 0.
+     */
+    public static native long createPartitionReader(String partitionJson);
+
+    /**
+     * Read the next Arrow IPC RecordBatch from the partition reader.
+     * Returns an empty byte array when the reader is exhausted.
+     * Scaffold always returns empty.
+     */
+    public static native byte[] readNextBatch(long readerHandle);
+
+    /** Release the partition reader. Safe to call multiple times. */
+    public static native void closePartitionReader(long readerHandle);
+
+    /**
+     * Open a data writer for the given table + Spark partition.
+     * Returns an opaque native handle. Pass to {@link #writeBatch(long, byte[])}
+     * and {@link #commitWriter(long)} / {@link #abortWriter(long)}. Scaffold returns 0.
+     */
+    public static native long createDataWriter(
+            String tableName, String schemaJson, int partitionId);
+
+    /** Write one Arrow IPC RecordBatch to the data writer. Scaffold is a no-op. */
+    public static native void writeBatch(long writerHandle, byte[] arrowBatch);
+
+    /**
+     * Commit the data writer's pending writes and return commit metadata as JSON.
+     * Scaffold returns {@code {"partition_id":0,"records_written":0,"bytes_written":0,"files_created":[]}}.
+     */
+    public static native String commitWriter(long writerHandle);
+
+    /** Abort the data writer, rolling back any pending writes. Scaffold no-op. */
+    public static native void abortWriter(long writerHandle);
 }

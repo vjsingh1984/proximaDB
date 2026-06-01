@@ -47,10 +47,65 @@ public final class NativeProximaDBTest {
             assertContains(json, "\"type\"", "JNI must round-trip UTF-8 input without panicking");
         });
 
+        failures += run("planInputPartitions returns JSON array", () -> {
+            String json = NativeProximaDB.planInputPartitions("t", "{}", 4);
+            if (json == null || !json.trim().startsWith("[")) {
+                throw new AssertionError("expected JSON array; got: " + json);
+            }
+        });
+
+        failures += run("createPartitionReader returns handle (scaffold: 0)", () -> {
+            long h = NativeProximaDB.createPartitionReader("{}");
+            if (h != 0L) {
+                throw new AssertionError("scaffold should return 0; got: " + h);
+            }
+        });
+
+        failures += run("readNextBatch returns empty byte[] when exhausted", () -> {
+            byte[] bytes = NativeProximaDB.readNextBatch(0L);
+            if (bytes == null) {
+                throw new AssertionError("readNextBatch must not return null");
+            }
+            if (bytes.length != 0) {
+                throw new AssertionError("scaffold should return empty bytes; got len=" + bytes.length);
+            }
+        });
+
+        failures += run("closePartitionReader is void / safe to call", () -> {
+            NativeProximaDB.closePartitionReader(0L);
+            NativeProximaDB.closePartitionReader(0L); // idempotent
+        });
+
+        failures += run("createDataWriter returns handle (scaffold: 0)", () -> {
+            long h = NativeProximaDB.createDataWriter("t", "{}", 0);
+            if (h != 0L) {
+                throw new AssertionError("scaffold should return 0; got: " + h);
+            }
+        });
+
+        failures += run("writeBatch is void / accepts byte[]", () -> {
+            byte[] payload = new byte[]{0x41, 0x52, 0x52, 0x4f, 0x57}; // "ARROW"
+            NativeProximaDB.writeBatch(0L, payload);
+            NativeProximaDB.writeBatch(0L, new byte[0]); // empty payload tolerated
+        });
+
+        failures += run("commitWriter returns JSON commit metadata", () -> {
+            String json = NativeProximaDB.commitWriter(0L);
+            assertContains(json, "\"records_written\"",
+                    "commit metadata must report records_written");
+            assertContains(json, "\"bytes_written\"",
+                    "commit metadata must report bytes_written");
+        });
+
+        failures += run("abortWriter is void / safe to call", () -> {
+            NativeProximaDB.abortWriter(0L);
+        });
+
+        int total = 11; // 3 schema + 8 new
         if (failures == 0) {
-            System.out.println("PASS  NativeProximaDBTest  3/3 smoke checks");
+            System.out.println("PASS  NativeProximaDBTest  " + total + "/" + total + " smoke checks");
         } else {
-            System.err.println("FAIL  NativeProximaDBTest  " + failures + " failure(s)");
+            System.err.println("FAIL  NativeProximaDBTest  " + failures + " of " + total + " failure(s)");
             System.exit(1);
         }
     }
