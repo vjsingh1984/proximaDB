@@ -21,9 +21,13 @@
 
 use crate::index::axis::filterable_metadata::FilterableHnswMetadata;
 use crate::index::axis::{
-    AxisHnswConfig, AxisHnswIndex, ColdPathLoadPolicy, SerializableIvfColdTier,
-    SerializableIvfState, SerializableIvfStateV1, SerializableIvfWarmTier, UnifiedIvfIndex,
+    AxisHnswConfig, AxisHnswIndex, SerializableIvfColdTier, SerializableIvfState,
+    SerializableIvfStateV1, SerializableIvfWarmTier, UnifiedIvfIndex,
 };
+// pub-use so dual_store_ivf.rs's own tests can import ColdPathLoadPolicy
+// from this module path (TD: that test should import from its own
+// module instead — the indirection is the other-agent's WIP).
+pub use crate::index::axis::ColdPathLoadPolicy;
 use bincode;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -438,6 +442,22 @@ impl IndexSerializer {
         // (fp32 vectors). A cold-first loader range-reads `[header][COLD]` and
         // serves Stage-1 without the fp32. `metadata.checksum` covers the COLD
         // blob; `profile.warm_checksum` covers the WARM blob.
+        // ADR-023 R3: group the WARM fp32 vectors by IVF cluster (cluster_id from
+        // the binary tier) so warm-apply can install one cluster at a time.
+        let warm_clusters = {
+            let id_cluster: std::collections::HashMap<&str, u32> = state
+                .binary_tier
+                .iter()
+                .map(|(id, _, c)| (id.as_str(), *c))
+                .collect();
+            let mut by_cluster: std::collections::BTreeMap<u32, Vec<(String, Vec<f32>)>> =
+                std::collections::BTreeMap::new();
+            for (id, v) in state.vectors {
+                let c = id_cluster.get(id.as_str()).copied().unwrap_or(0);
+                by_cluster.entry(c).or_default().push((id, v));
+            }
+            by_cluster.into_iter().collect::<Vec<_>>()
+        };
         let cold = SerializableIvfColdTier {
             version: IVF_TIER_VERSION,
             config: state.config.clone(),
@@ -446,7 +466,7 @@ impl IndexSerializer {
         };
         let warm = SerializableIvfWarmTier {
             version: IVF_TIER_VERSION,
-            vectors: state.vectors,
+            clusters: warm_clusters,
         };
         let cold_bytes = bincode::serialize(&cold)?;
         let warm_bytes = bincode::serialize(&warm)?;
@@ -553,7 +573,7 @@ impl IndexSerializer {
             let warm: SerializableIvfWarmTier = bincode::deserialize(warm_bytes)?;
             let mut index = Self::new_cold_index(&header, cold).await?;
             index
-                .restore_warm_tier(warm.vectors)
+                .restore_warm_tier(warm.into_flat())
                 .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
             info!("Deserialized IVF index with {} vectors", header.metadata.num_vectors);
             return Ok((index, header.metadata));
@@ -663,11 +683,19 @@ impl IndexSerializer {
         }
     }
 
-    /// Decode the deferred WARM bytes from a cold-first load into the fp32 vectors
-    /// to hand to `UnifiedIvfIndex::restore_warm_tier` (ADR-023 T-E).
+    /// Decode the deferred WARM bytes into a flat fp32 list (ADR-023 T-E
+    /// FullEager / whole-tier `restore_warm_tier`).
     pub fn decode_warm_tier(warm_bytes: &[u8]) -> Result<Vec<(String, Vec<f32>)>> {
         let warm: SerializableIvfWarmTier = bincode::deserialize(warm_bytes)?;
-        Ok(warm.vectors)
+        Ok(warm.into_flat())
+    }
+
+    /// Decode the deferred WARM bytes into per-cluster fp32 extents (ADR-023 R3):
+    /// `(cluster_id, [(id, fp32)])`. The background warm-apply installs these one
+    /// cluster at a time so the fill interleaves with serving.
+    pub fn decode_warm_clusters(warm_bytes: &[u8]) -> Result<Vec<(u32, Vec<(String, Vec<f32>)>)>> {
+        let warm: SerializableIvfWarmTier = bincode::deserialize(warm_bytes)?;
+        Ok(warm.clusters)
     }
 
     /// Persist a trained IVF index to `path` (creates parent dirs). Disk wrapper

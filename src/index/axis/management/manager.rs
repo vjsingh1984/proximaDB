@@ -555,31 +555,39 @@ impl AxisManager {
                     .write()
                     .await
                     .remove(collection_id);
-                // ADR-023 T-E: apply the deferred WARM tier off the critical path.
+                // ADR-023 T-E / R3: apply the deferred WARM tier off the critical
+                // path, ONE CLUSTER AT A TIME under the index READ lock so the
+                // O(n·dim) fill interleaves with serving; only the final
+                // FullTwoStage flip takes the (instant) write lock.
                 if let Some(warm_bytes) = warm {
                     let coll = collection_id.to_string();
                     tokio::spawn(async move {
-                        match IndexSerializer::decode_warm_tier(&warm_bytes) {
-                            Ok(vectors) => {
-                                let mut g = index_arc.write().await;
-                                match g.restore_warm_tier(vectors) {
-                                    Ok(()) => tracing::info!(
-                                        "🔥 AXIS: warm tier applied for '{}' → FullTwoStage",
-                                        coll
-                                    ),
-                                    Err(e) => tracing::warn!(
-                                        "AXIS: warm-tier upgrade failed for '{}': {}",
-                                        coll,
-                                        e
-                                    ),
-                                }
+                        let clusters = match IndexSerializer::decode_warm_clusters(&warm_bytes) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!("AXIS: decode warm tier failed for '{}': {}", coll, e);
+                                return;
                             }
-                            Err(e) => tracing::warn!(
-                                "AXIS: decode warm tier failed for '{}': {}",
-                                coll,
-                                e
-                            ),
+                        };
+                        for (_cluster_id, vectors) in &clusters {
+                            let g = index_arc.read().await;
+                            if let Err(e) = g.restore_warm_cluster(vectors) {
+                                tracing::warn!(
+                                    "AXIS: warm cluster install failed for '{}': {}",
+                                    coll,
+                                    e
+                                );
+                                return;
+                            }
+                            // Drop the read lock between clusters so serving and
+                            // any other readers proceed (LIOS-style overlap).
                         }
+                        index_arc.write().await.mark_full_two_stage();
+                        tracing::info!(
+                            "🔥 AXIS: warm tier applied for '{}' ({} clusters) → FullTwoStage",
+                            coll,
+                            clusters.len()
+                        );
                     });
                 }
                 tracing::info!(
@@ -3008,12 +3016,21 @@ impl AxisManager {
     /// The advisor scales `ef ∝ k`, so a workload that consistently
     /// runs `k=100` and supplies `top_k=10` would get an under-sized
     /// graph.
+    ///
+    /// `max_ef_search` is the optional latency-budget cap. When
+    /// provided (typically from the collection's `max_ef_search:`
+    /// tag), the rebuilt graph is sized with the same clamping
+    /// behaviour the route-health and recall-tune surfaces apply —
+    /// the resulting `HnswSizingOutput.clamped_by_max_ef` flag tells
+    /// the caller whether the cap was hit so it can surface the
+    /// projected recall to the operator.
     pub async fn rebuild_and_swap_hnsw_index_for_recall_target(
         &self,
         collection_id: &str,
         records: &[ProximaRecord],
         recall_target: f32,
         top_k: u32,
+        max_ef_search: Option<u32>,
     ) -> Result<Option<crate::index::axis::management::HnswSizingOutput>> {
         use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::index_factory::AxisVectorIndex;
@@ -3054,6 +3071,7 @@ impl AxisManager {
             recall_target,
             dimension: dimension as u32,
             distance_metric: metric,
+            max_ef_search,
         });
 
         let config = AxisHnswConfig {
@@ -5086,7 +5104,7 @@ mod hot_swap_ef_tests {
         }
 
         let advised = manager
-            .rebuild_and_swap_hnsw_index_for_recall_target("c_rebuild", &records, 0.95, 10)
+            .rebuild_and_swap_hnsw_index_for_recall_target("c_rebuild", &records, 0.95, 10, None)
             .await
             .unwrap()
             .expect("rebuild should return advisor output");
@@ -5124,7 +5142,7 @@ mod hot_swap_ef_tests {
     async fn rebuild_for_recall_target_with_no_records_returns_none() {
         let manager = make_manager().await;
         let advised = manager
-            .rebuild_and_swap_hnsw_index_for_recall_target("c_empty", &[], 0.95, 10)
+            .rebuild_and_swap_hnsw_index_for_recall_target("c_empty", &[], 0.95, 10, None)
             .await
             .unwrap();
         assert!(advised.is_none(), "no records → no rebuild");

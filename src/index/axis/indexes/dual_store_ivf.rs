@@ -2354,16 +2354,33 @@ pub struct SerializableIvfColdTier {
     pub binary_tier: Vec<(String, Vec<u8>, u32)>,
 }
 
-/// WARM-tier payload (ADR-023 T-C): the fp32 vectors for Stage-2 rerank, written
-/// as a SEPARATE blob AFTER the COLD blob so the cold-first loader can range-read
-/// the COLD tier without pulling the fp32.
+/// WARM-tier payload (ADR-023 T-C; R3 per-cluster extents): the fp32 vectors for
+/// Stage-2 rerank, written as a SEPARATE blob AFTER the COLD blob so the
+/// cold-first loader serves Stage-1 without pulling the fp32. Grouped by IVF
+/// cluster (R3) so the background warm-apply can install one cluster at a time —
+/// concurrent with serving — instead of one big lock-holding pass (and so a
+/// future object-store loader can range-read a single probed cluster's extent).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableIvfWarmTier {
     /// Format version (shares `IVF_STATE_VERSION`).
     pub version: u32,
-    /// `(id, fp32)` vectors — installed into a `ColdBinaryOnly` index to upgrade
-    /// it to `FullTwoStage`.
-    pub vectors: Vec<(String, Vec<f32>)>,
+    /// Per-cluster fp32 extents: `(cluster_id, [(id, fp32)])`. Installed into a
+    /// `ColdBinaryOnly` index — cluster by cluster — to upgrade it to
+    /// `FullTwoStage`.
+    pub clusters: Vec<(u32, Vec<(String, Vec<f32>)>)>,
+}
+
+impl SerializableIvfWarmTier {
+    /// Total fp32 vector count across all cluster extents.
+    pub fn vector_count(&self) -> usize {
+        self.clusters.iter().map(|(_, v)| v.len()).sum()
+    }
+
+    /// Flatten the per-cluster extents into a single `(id, fp32)` list (the
+    /// FullEager / whole-tier restore path).
+    pub fn into_flat(self) -> Vec<(String, Vec<f32>)> {
+        self.clusters.into_iter().flat_map(|(_, v)| v).collect()
+    }
 }
 
 /// ADR-023 T-C cold-load policy: how an IVF index is read from object storage.
@@ -2568,30 +2585,48 @@ impl UnifiedIvfIndex {
         Ok(())
     }
 
-    /// Install the WARM fp32 tier and upgrade a `ColdBinaryOnly` index to
-    /// `FullTwoStage` (ADR-023 T-C/T-E). Centroids, posting-list membership, and
-    /// binary codes are already present (from `restore_cold_only`); this only
-    /// populates the fp32 store that Stage-2 rerank reads. Idempotent-safe to call
-    /// once after the cold-first load completes the warm fetch.
-    pub fn restore_warm_tier(&mut self, vectors: Vec<(String, Vec<f32>)>) -> Result<()> {
-        {
-            let collection = self
-                .vectors
-                .entry(self.collection_id.clone())
-                .or_insert_with(|| {
-                    let cfg = CollectionConfig::fp32(self.config.dimension);
-                    Arc::new(RwLock::new(ZeroOverheadCollection::with_capacity(
-                        cfg,
-                        vectors.len().max(1),
-                    )))
-                });
-            let mut coll = collection
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            for (id, v) in &vectors {
-                coll.add_fp32(id.clone(), v)?;
-            }
+    /// Install fp32 vectors into the rerank store. `&self` — only the
+    /// interior-mutable vector store is touched (no index field), so this can run
+    /// under a shared read lock, concurrent with serving (ADR-023 R3 background
+    /// warm-apply). Does NOT change the serving state.
+    pub fn install_warm_vectors(&self, vectors: &[(String, Vec<f32>)]) -> Result<()> {
+        let collection = self
+            .vectors
+            .entry(self.collection_id.clone())
+            .or_insert_with(|| {
+                let cfg = CollectionConfig::fp32(self.config.dimension);
+                Arc::new(RwLock::new(ZeroOverheadCollection::with_capacity(
+                    cfg,
+                    vectors.len().max(1),
+                )))
+            })
+            .clone();
+        let mut coll = collection
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for (id, v) in vectors {
+            coll.add_fp32(id.clone(), v)?;
         }
+        Ok(())
+    }
+
+    /// ADR-023 R3: install one cluster's fp32 extent (no state change). The
+    /// background warm-apply calls this per cluster under the index read lock so
+    /// the O(n·dim) fill interleaves with serving instead of blocking it.
+    pub fn restore_warm_cluster(&self, vectors: &[(String, Vec<f32>)]) -> Result<()> {
+        self.install_warm_vectors(vectors)
+    }
+
+    /// Flip a fully-warmed index to `FullTwoStage` (ADR-023 R3, after all cluster
+    /// extents are installed). Brief write-lock vs the whole warm pass.
+    pub fn mark_full_two_stage(&mut self) {
+        self.serving_state = IvfServingState::FullTwoStage;
+    }
+
+    /// Install the full WARM fp32 tier and upgrade `ColdBinaryOnly` → `FullTwoStage`
+    /// in one pass (ADR-023 T-C/T-E FullEager path).
+    pub fn restore_warm_tier(&mut self, vectors: Vec<(String, Vec<f32>)>) -> Result<()> {
+        self.install_warm_vectors(&vectors)?;
         self.serving_state = IvfServingState::FullTwoStage;
         Ok(())
     }
@@ -3036,6 +3071,51 @@ mod tests {
                 .unwrap();
         assert_eq!(eager.index.serving_state(), IvfServingState::FullTwoStage);
         assert!(eager.warm.is_none());
+    }
+
+    #[tokio::test]
+    async fn warm_tier_is_per_cluster_and_chunked_apply_upgrades() {
+        // ADR-023 R3: WARM is grouped per cluster; applying clusters one at a time
+        // (no flip) keeps the index ColdBinaryOnly until the final mark — then
+        // exact search works. This is what lets warm-apply overlap with serving.
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        use crate::index::axis::ColdPathLoadPolicy;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut full = UnifiedIvfIndex::new("c_r3".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        full.train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            full.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bytes = IndexSerializer::serialize_ivf(&full, "c_r3").await.unwrap();
+        let mut loaded =
+            IndexSerializer::load_ivf_with_policy(&bytes, ColdPathLoadPolicy::BinaryFirstThenRerank)
+                .await
+                .unwrap();
+        let warm_bytes = loaded.warm.take().unwrap();
+
+        // WARM is split into per-cluster extents covering every vector.
+        let clusters = IndexSerializer::decode_warm_clusters(&warm_bytes).unwrap();
+        assert!(!clusters.is_empty(), "warm is grouped into >=1 cluster extent");
+        let total: usize = clusters.iter().map(|(_, v)| v.len()).sum();
+        assert_eq!(total, data.len(), "every vector lands in some cluster extent");
+        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+
+        // Chunked apply: install each cluster (no flip) — still cold until marked.
+        for (_cid, vecs) in &clusters {
+            loaded.index.restore_warm_cluster(vecs).unwrap();
+        }
+        assert_eq!(
+            loaded.index.serving_state(),
+            IvfServingState::ColdBinaryOnly,
+            "still cold until the explicit flip"
+        );
+        loaded.index.mark_full_two_stage();
+        assert_eq!(loaded.index.serving_state(), IvfServingState::FullTwoStage);
+        let q = data[0].1.clone();
+        assert_eq!(loaded.index.search(&q, 1, None).await.unwrap()[0].0, "v0");
     }
 
     #[tokio::test]
