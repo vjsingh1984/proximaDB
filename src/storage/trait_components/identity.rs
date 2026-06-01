@@ -51,6 +51,28 @@ pub trait StorageIdentity: Send + Sync {
         }
     }
 
+    // ── Format-vocabulary aliases (engines → formats convergence) ───────────
+    // Canonical `format_*` names delegating to the legacy `engine_*` methods, so
+    // new code can use the format vocabulary without a call-site sweep (the
+    // legacy names are required methods on a `*Format` trait shared by unrelated
+    // types, so a mechanical rename is unsafe). Override only the `engine_*`
+    // methods; these aliases follow. See `docs/12-design/NAMING_CONVENTIONS.adoc`.
+
+    /// Canonical alias for [`Self::engine_name`].
+    fn format_name(&self) -> &'static str {
+        self.engine_name()
+    }
+
+    /// Canonical alias for [`Self::engine_version`].
+    fn format_version(&self) -> &'static str {
+        self.engine_version()
+    }
+
+    /// Canonical alias for [`Self::engine_type`].
+    fn format_type(&self) -> StorageEngineType {
+        self.engine_type()
+    }
+
     /// Check if engine supports collection-level operations
     ///
     /// Engines that return false operate on the entire database.
@@ -85,5 +107,32 @@ pub trait StorageIdentity: Send + Sync {
             "background_operations" => self.supports_background_operations(),
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod format_alias_tests {
+    use super::*;
+
+    struct Mock;
+    impl StorageIdentity for Mock {
+        fn engine_name(&self) -> &'static str {
+            "SST"
+        }
+        fn engine_version(&self) -> &'static str {
+            "1.0.0"
+        }
+        fn strategy(&self) -> StorageFormatStrategy {
+            StorageFormatStrategy::Sst
+        }
+    }
+
+    #[test]
+    fn format_aliases_delegate_to_engine_methods() {
+        let m = Mock;
+        assert_eq!(m.format_name(), m.engine_name());
+        assert_eq!(m.format_version(), m.engine_version());
+        assert_eq!(m.format_type(), m.engine_type());
+        assert_eq!(m.format_name(), "SST");
     }
 }
