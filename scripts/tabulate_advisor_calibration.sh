@@ -56,57 +56,93 @@ echo "  dir        : $DIR"
 echo "  N, k       : $N, $K"
 echo "  denom      : $DENOM  (= k · log₂(N) · log₂(N/1000))"
 echo "----------------------------------------------------------------"
-printf '%-30s %6s %10s %12s   %s\n' \
-  "cell" "ef" "recall" "obs_factor" "matches_recall_target_around"
+printf '%-30s %4s %6s %10s %12s   %s\n' \
+  "cell" "algo" "knob" "recall" "obs_factor" "matches_recall_target_around"
 
 for f in "$DIR"/*.txt; do
   [ -f "$f" ] || continue
   name=$(basename "$f" .txt)
   recall=$(grep -A1 "AXIS vs force_exact" "$f" 2>/dev/null | tail -1 \
            | awk -F'mean: ' '{print $2}' | awk '{print $1}')
-  # Try strategy-spec ef first (matrix bench), then axis_diag.
-  ef=$(grep "site=insert_into_hnsw" "$f" 2>/dev/null | head -1 \
-       | sed -nE 's/.*ef_search=([0-9]+).*/\1/p')
-  if [ -z "$ef" ]; then
-    ef=$(grep "site=insert_hmgi" "$f" 2>/dev/null | head -1 \
-         | sed -nE 's/.*ef_search=([0-9]+).*/\1/p')
+
+  # Detect algorithm + extract its tunable knob.
+  # Priority: HNSW (insert_into_hnsw) → HMGI (insert_hmgi) → IVF (insert_into_ivf).
+  algo=""
+  knob=""
+  if grep -q "site=insert_into_hnsw" "$f" 2>/dev/null; then
+    algo="hnsw"
+    knob=$(grep "site=insert_into_hnsw" "$f" 2>/dev/null | head -1 \
+           | sed -nE 's/.*ef_search=([0-9]+).*/\1/p')
+  elif grep -q "site=insert_hmgi" "$f" 2>/dev/null; then
+    algo="hmgi"
+    knob=$(grep "site=insert_hmgi" "$f" 2>/dev/null | head -1 \
+           | sed -nE 's/.*ef_search=([0-9]+).*/\1/p')
+  elif grep -q "site=insert_into_ivf" "$f" 2>/dev/null; then
+    algo="ivf"
+    knob=$(grep "site=insert_into_ivf" "$f" 2>/dev/null | head -1 \
+           | sed -nE 's/.*n_probe=([0-9]+).*/\1/p')
   fi
-  if [ -z "$recall" ] || [ -z "$ef" ]; then
-    printf '%-30s %6s %10s %12s   %s\n' "$name" "?" "(running)" "" ""
+
+  if [ -z "$recall" ] || [ -z "$knob" ]; then
+    printf '%-30s %4s %6s %10s %12s   %s\n' \
+      "$name" "${algo:-?}" "?" "(running)" "" ""
     continue
   fi
 
-  obs_factor=$(python3 -c "print(round($ef / $DENOM, 3))")
-
-  # Map obs_factor → which recall_target in the advisor's TABLE
-  # produces this factor. Pinned from
-  # src/index/axis/management/hnsw_param_advisor.rs.
-  target=$(python3 -c "
-table = [
-    (0.75, 0.12), (0.80, 0.14), (0.85, 0.16), (0.90, 0.18),
-    (0.92, 0.25), (0.95, 0.37), (0.975, 0.55),
-    (0.99, 0.82), (0.995, 1.10),
-]
-obs = $obs_factor
-# Find the two table entries that bracket obs and linearly interpolate
-# the recall they correspond to.
-if obs <= table[0][1]:
-    print(f'≤{table[0][0]:.3f}')
-elif obs >= table[-1][1]:
-    print(f'≥{table[-1][0]:.3f}')
-else:
-    for i in range(len(table) - 1):
-        lo_r, lo_f = table[i]
-        hi_r, hi_f = table[i+1]
-        if lo_f <= obs <= hi_f:
-            t = (obs - lo_f) / (hi_f - lo_f) if hi_f > lo_f else 0.0
-            interp = lo_r + t * (hi_r - lo_r)
-            print(f'{interp:.3f}')
-            break
+  # Per-algorithm factor + target computation. Constants are
+  # pinned from the corresponding Rust modules — keep these in
+  # sync with hnsw_param_advisor.rs / ivf_param_advisor.rs.
+  case "$algo" in
+    hnsw|hmgi)
+      # HNSW factor = ef / (k · log₂(N) · log₂(N/1000)). Recall
+      # target lookup uses the closed-form formula at m=32 (the
+      # mid-band tier — most operational recall_targets land here).
+      obs_factor=$(python3 -c "print(round($knob / $DENOM, 3))")
+      target=$(python3 -c "
+import math
+ef = $knob
+denom = $DENOM
+# Formula at m=32: recall = 1.0 - 0.195 · exp(-3.7 · ef / denom)
+factor = ef / denom
+predicted_recall = max(0.0, min(1.0, 1.0 - 0.195 * math.exp(-3.7 * factor)))
+print(f'{predicted_recall:.3f}')
 ")
+      ;;
+    ivf)
+      # IVF factor = nprobe / nlist (operationally meaningful —
+      # 'fraction of clusters probed'). Recall target via the
+      # P2-calibrated formula: ceiling - A · exp(-γ · nprobe).
+      # Default to ceiling=0.74 (the N=100K anchor) when N
+      # crosses the ceiling threshold.
+      obs_factor=$(python3 -c "print(round($knob, 1))")
+      target=$(python3 -c "
+import math
+nprobe = $knob
+# IVF formula (single-stage, no rerank): recall = ceiling -
+# 0.41 · exp(-0.037 · nprobe). Ceiling = 0.74 at the N=100K
+# anchor; smaller N hits 1.0 ceiling because full-scan
+# becomes reachable.
+n = $N
+if n <= 25_000:
+    ceiling = 1.0
+elif n <= 100_000:
+    ceiling = 0.74
+elif n <= 330_000:
+    ceiling = 0.68
+else:
+    ceiling = 0.77
+predicted = max(0.0, min(ceiling, ceiling - 0.41 * math.exp(-0.037 * nprobe)))
+print(f'{predicted:.3f}')
+")
+      ;;
+    *)
+      obs_factor="?"
+      target="(unsupported)"
+      ;;
+  esac
 
-  printf '%-30s %6s %10s %12s   %s\n' \
-    "$name" "$ef" "$recall" "$obs_factor" "$target"
+  printf '%-30s %4s %6s %10s %12s   %s\n' \
+    "$name" "$algo" "$knob" "$recall" "$obs_factor" "$target"
 done
 
 echo "----------------------------------------------------------------"
