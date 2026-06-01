@@ -7,6 +7,7 @@ use thiserror::Error;
 
 /// Configuration for LLM integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LLMConfig {
     /// Enable legacy LLM/RAG coordinator integration.
     pub enabled: bool,
@@ -38,6 +39,7 @@ pub struct LLMConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AWSBedrockConfig {
     pub region: String,
     pub model_id: String,
@@ -47,6 +49,7 @@ pub struct AWSBedrockConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AzureOpenAIConfig {
     pub endpoint: String,
     pub api_key: String,
@@ -55,6 +58,7 @@ pub struct AzureOpenAIConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GoogleVertexConfig {
     pub project_id: String,
     pub location: String,
@@ -63,6 +67,7 @@ pub struct GoogleVertexConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct OllamaConfig {
     pub base_url: String,
     pub model_name: String,
@@ -70,6 +75,7 @@ pub struct OllamaConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VLLMConfig {
     pub base_url: String,
     pub model_name: String,
@@ -78,6 +84,7 @@ pub struct VLLMConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct HuggingFaceConfig {
     pub api_key: String,
     pub model_name: String,
@@ -257,7 +264,14 @@ impl EmbeddingProvider {
 }
 
 /// RAG (Retrieval-Augmented Generation) configuration.
+///
+/// `#[serde(default)]`: the struct has a complete `Default` impl, and the
+/// checked-in `config.toml` `[llm.rag]` table is intentionally partial (it omits
+/// `semantic_cache_enabled` and uses shorthand key names). Without this, loading
+/// the default config fails with "missing field" and the server refuses to boot.
+/// Any omitted field falls back to its `Default`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RAGConfig {
     /// Enable RAG pipeline.
     pub enabled: bool,
@@ -300,6 +314,7 @@ impl Default for RAGConfig {
 
 /// Semantic cache configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SemanticCacheConfig {
     /// Enable semantic caching.
     pub enabled: bool,
