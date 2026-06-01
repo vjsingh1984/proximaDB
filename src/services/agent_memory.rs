@@ -344,6 +344,13 @@ pub fn build_memory_record(
         "session_id".to_string(),
         ProximaTreeNode::Value(ProximaValue::String(scope.session_id.clone())),
     );
+    // Mirror tenant_id into props so it is searchable through the flat
+    // props-derived metadata filter path (TD-103). `ProximaRecord.tenant_id`
+    // (set below) remains the RLS authority; this copy is search-time scoping.
+    props.insert(
+        "tenant_id".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String(scope.tenant_id.clone())),
+    );
     props.insert(
         "text".to_string(),
         ProximaTreeNode::Value(ProximaValue::String(fact.text.clone())),
@@ -427,6 +434,11 @@ impl ConsolidationAgent for LlmConsolidationAgent {
 
 /// Scoped tenant/session filter pushed into retrieval (mirrors the read
 /// surface's `MemoryAqlSource::build_scope_filter`).
+///
+/// Field names are the FLAT metadata keys produced by flattening a record's
+/// props (`proxima_tree_to_value_map`): a top-level prop `session_id` is the
+/// metadata key `"session_id"`, NOT `"props.session_id"` (TD-103). `tenant_id`
+/// is mirrored into props by `build_memory_record` so it resolves here too.
 fn scope_filter(scope: &MemoryWriteScope) -> Option<FilterExpression> {
     let parts = vec![
         FilterExpression::Comparison {
@@ -435,7 +447,7 @@ fn scope_filter(scope: &MemoryWriteScope) -> Option<FilterExpression> {
             value: serde_json::Value::String(scope.tenant_id.clone()),
         },
         FilterExpression::Comparison {
-            field: "props.session_id".to_string(),
+            field: "session_id".to_string(),
             operator: ComparisonOperator::Equals,
             value: serde_json::Value::String(scope.session_id.clone()),
         },
@@ -803,5 +815,54 @@ mod tests {
             Some(ProximaTreeNode::Value(ProximaValue::String(s))) => assert_eq!(s, "sess-1"),
             other => panic!("session_id not set: {other:?}"),
         }
+        // TD-103: tenant_id mirrored into props for search-time scoping.
+        match rec.props.get("tenant_id") {
+            Some(ProximaTreeNode::Value(ProximaValue::String(s))) => assert_eq!(s, "acme"),
+            other => panic!("tenant_id not mirrored into props: {other:?}"),
+        }
+    }
+
+    /// TD-103 regression: the scope filter must actually MATCH a record built by
+    /// `build_memory_record`, evaluated against the record's real props tree via
+    /// the canonical `evaluate_filter_proxima`. This is the end-to-end path the
+    /// mock-based orchestrator tests bypassed — it FAILS on the old
+    /// `"props.session_id"` field name and passes after the fix.
+    #[test]
+    fn scope_filter_matches_record_props_end_to_end() {
+        use crate::core::search::sql_value_filter::evaluate_filter_proxima;
+
+        let rec = build_memory_record(
+            &scope(),
+            &fact("user lives in NYC", MemoryType::Fact),
+            vec![0.1, 0.2, 0.3],
+            "oid-1".to_string(),
+        );
+        let filter = scope_filter(&scope()).expect("scope filter built");
+
+        // Matching tenant+session → record is retained.
+        assert!(
+            evaluate_filter_proxima(&filter, &rec.props),
+            "scope filter should match the record it scopes"
+        );
+
+        // Different session → filtered out.
+        let other_session = MemoryWriteScope {
+            session_id: "sess-OTHER".to_string(),
+            ..scope()
+        };
+        assert!(
+            !evaluate_filter_proxima(&scope_filter(&other_session).unwrap(), &rec.props),
+            "different session must not match"
+        );
+
+        // Different tenant → filtered out.
+        let other_tenant = MemoryWriteScope {
+            tenant_id: "other-tenant".to_string(),
+            ..scope()
+        };
+        assert!(
+            !evaluate_filter_proxima(&scope_filter(&other_tenant).unwrap(), &rec.props),
+            "different tenant must not match"
+        );
     }
 }

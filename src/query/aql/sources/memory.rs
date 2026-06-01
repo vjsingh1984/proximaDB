@@ -148,12 +148,15 @@ impl MemoryAqlSource {
             pushed.push(format!("tenant_id = {tenant}"));
         }
         if let Some(session) = &scope.session_id {
+            // Flat metadata key from props flattening (`proxima_tree_to_value_map`):
+            // a top-level prop `session_id` is the key "session_id", not
+            // "props.session_id" (TD-103). The dotted form silently matched nothing.
             parts.push(FilterExpression::Comparison {
-                field: "props.session_id".to_string(),
+                field: "session_id".to_string(),
                 operator: ComparisonOperator::Equals,
                 value: serde_json::Value::String(session.clone()),
             });
-            pushed.push(format!("props.session_id = {session}"));
+            pushed.push(format!("session_id = {session}"));
         }
         match parts.len() {
             0 => (None, pushed),
@@ -454,7 +457,25 @@ mod tests {
         let (filter, pushed) = MemoryAqlSource::build_scope_filter(&scope);
         assert_eq!(pushed.len(), 2);
         match filter {
-            Some(FilterExpression::And(parts)) => assert_eq!(parts.len(), 2),
+            Some(FilterExpression::And(parts)) => {
+                assert_eq!(parts.len(), 2);
+                // TD-103: fields must be the FLAT metadata keys (props flattened
+                // verbatim), not the dotted `props.session_id` which silently
+                // matched nothing.
+                let fields: Vec<&str> = parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        FilterExpression::Comparison { field, .. } => Some(field.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(fields.contains(&"tenant_id"), "fields: {fields:?}");
+                assert!(fields.contains(&"session_id"), "fields: {fields:?}");
+                assert!(
+                    !fields.iter().any(|f| f.contains('.')),
+                    "no dotted field names: {fields:?}"
+                );
+            }
             other => panic!("expected And of 2, got {other:?}"),
         }
     }

@@ -1339,10 +1339,10 @@ physical layouts.
 | Agent memory session scoping
 | P5
 | LOW
-| Open — deferred field
-| Session scope starts as `props["session_id"]` (no record-shape change). Promote to a first-class `ProximaRecord.session_id` field ONLY if a query-path need is proven after TD-101. Tracked to avoid silently adding a record field for a property `props` already carries.
-| 2-3 days (if promoted)
-| Acceptance: (1) Memory queries can filter by session. (2) Decision recorded (keep in `props` vs promote) with the query-path justification.
+| Resolved (v0.2) — keep props; scope filter fixed
+| **Decision (2026-05-31): keep `session_id` in `props`, NO first-class `ProximaRecord.session_id` field.** `proxima_tree_to_value_map`/`evaluate_filter_proxima` (`src/core/search/sql_value_filter.rs`) flatten each top-level prop key verbatim, so `props["session_id"]` is searchable as the flat metadata key `"session_id"`. Investigation uncovered + fixed a real shipped bug: the TD-100/TD-101 scope filters used `field: "props.session_id"` (dotted) which matched NOTHING → scoped memory search silently returned 0 rows (masked by mock-based tests). Fix: scope filters now use the flat key `"session_id"`; `build_memory_record` mirrors `tenant_id` into props so it filters through the same proven path (`ProximaRecord.tenant_id` stays the RLS authority). New `scope_filter_matches_record_props_end_to_end` test exercises the real `evaluate_filter_proxima` path (would fail on the old dotted name). Follow-up: authoritative tenant isolation via TenantContext/`search_v1_with_tenant_context` (TD-064 domain).
+| —
+| Acceptance: (1) Memory queries filter by session — DONE (flat `session_id` key, e2e-via-real-filter test). (2) Decision recorded (keep in props) — DONE. (3) Scope filter verified against a real record's props, not mocks — DONE.
 
 | TD-104
 | Complete Phase 9 handler/service extraction (seam S1)
