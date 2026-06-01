@@ -232,6 +232,7 @@ pub fn apply_advisor_to_indexes(
     let max_query_latency_ms = parse_max_query_latency_ms(config);
     let max_memory_mb = parse_max_memory_mb(config);
     let binary_rerank_allowed = parse_binary_rerank_allowed(config);
+    let modalities = parse_modalities(config);
 
     // Auto-add a stub IndexConfig when no indexes exist. Use the
     // selector to decide HNSW vs IVF.
@@ -246,6 +247,7 @@ pub fn apply_advisor_to_indexes(
             max_query_latency_ms,
             max_memory_mb,
             binary_rerank_allowed,
+            modalities: modalities.clone(),
         };
         if let Some(picked) = selector.select_and_advise(&input) {
             match &picked.algorithm {
@@ -342,6 +344,7 @@ pub fn apply_advisor_to_indexes(
                     },
                     max_memory_mb,
                     binary_rerank_allowed,
+                    modalities: modalities.clone(),
                 }) {
                     if let IndexAlgorithm::HNSW {
                         m,
@@ -391,6 +394,7 @@ pub fn apply_advisor_to_indexes(
                     max_query_latency_ms,
                     max_memory_mb,
                     binary_rerank_allowed,
+                    modalities: modalities.clone(),
                 }) && let IndexAlgorithm::IVF { nlist, nprobe, .. } = out.algorithm
                 {
                     idx.ivf_config = Some(crate::proto::proximadb_v1::IvfConfig {
@@ -544,6 +548,36 @@ pub fn parse_max_memory_mb(config: &CollectionConfig) -> Option<f64> {
         }
     }
     latest
+}
+
+/// Modality tags declared by the operator via the `modalities:`
+/// tag. Convention: comma-separated lowercase identifiers, e.g.
+/// `modalities:text,image,video`. Activates the
+/// [`crate::index::axis::management::HmgiIndexAdvisor`] when ≥ 2
+/// modalities are present.
+///
+/// Returns an empty `Vec` for single-modality collections (the
+/// default). Each modality_tag is trimmed and lower-cased so
+/// "Text" / "TEXT" / "text" all normalise to the same partition
+/// key — matches HMGI router behavior.
+///
+/// Multiple `modalities:` tags on the same collection (rare but
+/// possible) are unioned; duplicates are removed preserving the
+/// first occurrence order.
+pub fn parse_modalities(config: &CollectionConfig) -> Vec<String> {
+    const TAG: &str = "modalities:";
+    let mut out: Vec<String> = Vec::new();
+    for tag in &config.tags {
+        if let Some(rest) = tag.strip_prefix(TAG) {
+            for raw in rest.split(',') {
+                let normalised = raw.trim().to_ascii_lowercase();
+                if !normalised.is_empty() && !out.contains(&normalised) {
+                    out.push(normalised);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Operator opt-in for IVF binary / PQ rerank via the

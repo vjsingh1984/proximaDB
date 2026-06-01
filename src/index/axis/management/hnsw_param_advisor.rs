@@ -776,6 +776,7 @@ mod tests {
             max_query_latency_ms: None,
             max_memory_mb: None,
             binary_rerank_allowed: false,
+            modalities: Vec::new(),
         };
         let out = advisor.advise(&input).expect("HNSW always responds");
         let direct = advise_hnsw_params(HnswSizingInput {
@@ -815,6 +816,7 @@ mod tests {
             max_query_latency_ms: Some(0.2), // 200μs cap → ~400 ef
             max_memory_mb: None,
             binary_rerank_allowed: false,
+            modalities: Vec::new(),
         };
         let out = advisor.advise(&input).unwrap();
         // The actual ef may be slightly under 400 due to the
@@ -876,6 +878,7 @@ mod tests {
             max_query_latency_ms: None,
             max_memory_mb: None,
             binary_rerank_allowed: false,
+            modalities: Vec::new(),
         };
         let out = advisor.advise(&input).unwrap();
         assert!(

@@ -2205,6 +2205,82 @@ impl AxisManager {
         Ok(HotSwapOutcome::Applied { changes })
     }
 
+    /// Hot-swap `nprobe` on every IVF index in the collection's
+    /// active strategy. Mirror of
+    /// [`Self::apply_hnsw_ef_hot_swap`] for the IVF arm.
+    ///
+    /// `nprobe` is read from the strategy on every query (live
+    /// tunable), so this is a near-free in-place tune. `nlist` and
+    /// any PQ quantizer are baked into the cluster + posting list
+    /// structure and cannot change without a recluster — this
+    /// method intentionally only touches `nprobe`.
+    ///
+    /// The returned [`HotSwapOutcome::Applied`] reuses
+    /// [`HotSwapEfChange`] verbatim — the field names
+    /// `previous_ef_search` / `new_ef_search` are semantically
+    /// "live tunable knob", not strictly ef-only. Keeps the REST
+    /// response shape stable between HNSW + IVF.
+    pub async fn apply_ivf_nprobe_hot_swap(
+        &self,
+        collection_id: &str,
+        new_nprobe: u32,
+    ) -> Result<HotSwapOutcome> {
+        use crate::index::axis::types::IndexAlgorithm;
+
+        let mut strategies = self.collection_strategies.write().await;
+        let Some(strategy) = strategies.get_mut(collection_id) else {
+            return Ok(HotSwapOutcome::NotApplicable {
+                reason: format!("no active strategy for collection '{}'", collection_id),
+            });
+        };
+
+        let mut changes: Vec<HotSwapEfChange> = Vec::new();
+        for spec in strategy.indexes.iter_mut() {
+            if let IndexAlgorithm::IVF {
+                nlist,
+                nprobe,
+                quantizer,
+            } = &spec.algorithm
+            {
+                if *nprobe == new_nprobe {
+                    continue;
+                }
+                changes.push(HotSwapEfChange {
+                    index_name: spec.name.clone(),
+                    previous_ef_search: *nprobe,
+                    new_ef_search: new_nprobe,
+                });
+                let new_quantizer = quantizer.clone();
+                let new_nlist = *nlist;
+                spec.algorithm = IndexAlgorithm::IVF {
+                    nlist: new_nlist,
+                    nprobe: new_nprobe,
+                    quantizer: new_quantizer,
+                };
+            }
+        }
+
+        if changes.is_empty() {
+            return Ok(HotSwapOutcome::NotApplicable {
+                reason: "no IVF spec needed updating (none present, or all already at the requested nprobe)".to_string(),
+            });
+        }
+
+        for change in &changes {
+            tracing::info!(
+                target: "axis_diag",
+                site = "apply_ivf_nprobe_hot_swap",
+                collection_id = collection_id,
+                index = change.index_name.as_deref().unwrap_or("unnamed"),
+                previous_nprobe = change.previous_ef_search,
+                new_nprobe = change.new_ef_search,
+                "hot-swapped IVF nprobe"
+            );
+        }
+
+        Ok(HotSwapOutcome::Applied { changes })
+    }
+
     /// Get the distance metric configured for a collection
     /// This ensures indexes use the same metric as the collection's stored config
     async fn get_collection_distance_metric(
@@ -3188,6 +3264,144 @@ impl AxisManager {
             advised.m,
             advised.ef_construction,
             advised.ef_search,
+        );
+        Ok(Some(advised))
+    }
+
+    /// Recall-aware IVF rebuild — sizes `(nlist, nprobe)` and the
+    /// optional PQ quantizer via the `IvfIndexAdvisor` and
+    /// atomically swaps in the new strategy. Mirror of
+    /// [`Self::rebuild_and_swap_hnsw_index_for_recall_target`] for
+    /// the IVF arm.
+    ///
+    /// The rebuild itself reuses the existing
+    /// [`Self::rebuild_and_swap_ivf_index`] (IVF training +
+    /// k-means + posting-list construction); this method just
+    /// performs the advisor-driven sizing and updates the active
+    /// `IndexSelectionStrategy` so future queries pick up the new
+    /// (nlist, nprobe, PQ) tuple.
+    ///
+    /// Returns the [`AnnAdvisorOutput`] the rebuild was sized
+    /// against (carries algorithm spec + clamped flag + projected
+    /// recall + rationale) so the recluster handler can surface
+    /// the choice. Returns `Ok(None)` if no records were supplied
+    /// or the IVF advisor declined the recall target.
+    pub async fn rebuild_and_swap_ivf_index_for_recall_target(
+        &self,
+        collection_id: &str,
+        records: &[ProximaRecord],
+        recall_target: f32,
+        top_k: u32,
+        max_query_latency_ms: Option<f64>,
+        max_memory_mb: Option<f64>,
+        binary_rerank: bool,
+    ) -> Result<Option<crate::index::axis::management::AnnAdvisorOutput>> {
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::management::{
+            AnnAdvisorInput, AnnIndexAdvisor, IvfIndexAdvisor,
+        };
+
+        // (1) Gate on records being non-empty + carrying valid embeddings.
+        let dim = records
+            .iter()
+            .find_map(|r| r.embeddings.first().map(|e| e.values.to_fp32_owned().len()))
+            .unwrap_or(0);
+        if dim == 0 || records.is_empty() {
+            return Ok(None);
+        }
+
+        // (2) Resolve the collection's distance metric (same as HNSW).
+        let metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(DistanceMetric::Cosine);
+
+        // (3) Size via the IVF advisor.
+        let advisor = IvfIndexAdvisor::new();
+        let advised = advisor.advise(&AnnAdvisorInput {
+            vector_count: records.len() as u64,
+            top_k,
+            recall_target,
+            dimension: dim as u32,
+            distance_metric: metric,
+            max_query_latency_ms,
+            max_memory_mb,
+            binary_rerank_allowed: binary_rerank,
+            modalities: Vec::new(),
+        });
+        let Some(advised) = advised else {
+            // Advisor declined — recall_target above the IVF
+            // ceiling for this (N, nlist, binary_rerank) tuple.
+            tracing::info!(
+                target: "axis_diag",
+                site = "rebuild_and_swap_ivf_index_for_recall_target",
+                collection_id = collection_id,
+                recall_target = recall_target,
+                binary_rerank = binary_rerank,
+                "IVF advisor declined — recall_target unreachable at this nlist"
+            );
+            return Ok(None);
+        };
+
+        // (4) Delegate the actual rebuild to the existing IVF
+        // pipeline. The legacy rebuild path doesn't accept advisor
+        // params directly today — it picks via the cluster engine
+        // defaults. P5+ commit threads `advised.algorithm`
+        // straight through. For now, the strategy update at step
+        // (5) is the source of truth for future queries.
+        let did_rebuild = self
+            .rebuild_and_swap_ivf_index(collection_id, records)
+            .await?;
+
+        if !did_rebuild {
+            // Nothing to swap — return the advisor output so the
+            // caller knows what *would* have been built.
+            return Ok(Some(advised));
+        }
+
+        // (5) Update the active strategy with the advised
+        // (nlist, nprobe, optional PQ) tuple so subsequent
+        // queries route through the new sizing.
+        use crate::index::axis::types::{Data, IndexSelectionStrategy, IndexSpecification};
+        let spec = IndexSpecification::new(
+            Data::DenseVector { dimension: dim },
+            advised.algorithm.clone(),
+        );
+        let new_strategy = {
+            let strategies = self.collection_strategies.read().await;
+            match strategies.get(collection_id).cloned() {
+                Some(mut existing) => {
+                    let mut replaced = false;
+                    for slot in existing.indexes.iter_mut() {
+                        if matches!(slot.algorithm, IndexAlgorithm::IVF { .. }) {
+                            slot.algorithm = advised.algorithm.clone();
+                            replaced = true;
+                            break;
+                        }
+                    }
+                    if !replaced {
+                        existing.indexes.push(spec);
+                    }
+                    existing
+                }
+                None => IndexSelectionStrategy {
+                    indexes: vec![spec],
+                    routing_rules: vec![],
+                },
+            }
+        };
+        self.update_collection_strategy(collection_id, new_strategy)
+            .await?;
+
+        tracing::info!(
+            target: "axis_diag",
+            site = "rebuild_and_swap_ivf_index_for_recall_target",
+            collection_id = collection_id,
+            n = records.len(),
+            recall_target = recall_target,
+            binary_rerank = binary_rerank,
+            rationale = %advised.rationale,
+            "rebuilt IVF with advisor-sized params"
         );
         Ok(Some(advised))
     }

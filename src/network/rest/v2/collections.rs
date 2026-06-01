@@ -38,6 +38,11 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::errors::{ApiError, ApiResult};
+// AnnIndexAdvisor trait needs to be in scope so the recall-tune
+// handler's IVF dispatch arm can call `.advise(...)` on
+// IvfIndexAdvisor (P2.4 commit). HnswIndexAdvisor / HmgiIndexAdvisor
+// (P3) similarly require the trait in scope.
+use crate::index::axis::management::AnnIndexAdvisor;
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{CollectionConfig, CollectionOperation, CollectionRequest};
@@ -989,6 +994,45 @@ impl RecallDriftHealth {
 /// Stable action literal for the latency-budget conflict.
 pub const ACTION_RAISE_MAX_EF_OR_BUMP_M: &str = "raise_max_ef_or_bump_m";
 
+/// Detect the active ANN algorithm for a collection by walking its
+/// `index_configs`. Returns the first algorithm-discriminator label
+/// the route-health / recall-tune / recluster handlers dispatch on:
+///
+/// * `"ivf"` if any IndexConfig declares `IndexingAlgorithm::Ivf`
+///   (P2.4 dispatch). Recall-tune calls `apply_ivf_nprobe_hot_swap`;
+///   recluster calls `rebuild_and_swap_ivf_index_for_recall_target`.
+/// * `"hmgi"` (P3+) when an HMGI auto-synthesized IndexConfig is
+///   present — exists as a stable literal here so the response
+///   shape admits HMGI before the handler dispatch ships.
+/// * `"hnsw"` otherwise (default + every legacy collection).
+///
+/// The literal matches `SupportedAlgorithm::label()` so dashboards
+/// + SIEM filters can switch on the same string across surfaces.
+pub(super) fn active_algorithm_for(
+    config: &crate::proto::proximadb_v1::CollectionConfig,
+) -> &'static str {
+    use crate::proto::proximadb_v1::IndexingAlgorithm;
+    // P3: HMGI lives in the AXIS-internal IndexAlgorithm enum but
+    // doesn't have a proto-IndexingAlgorithm wire counterpart yet.
+    // Detect HMGI via the `modalities:` collection tag — if the
+    // operator declared ≥ 2 modalities, the advisor's selector
+    // routed to HMGI (or fell back gracefully). This matches the
+    // route-health response shape's literal mapping.
+    let modality_count =
+        crate::services::collection::recall_target::parse_modalities(config).len();
+    if modality_count >= 2 {
+        return "hmgi";
+    }
+    for idx in &config.index_configs {
+        let algo = IndexingAlgorithm::try_from(idx.algorithm)
+            .unwrap_or(IndexingAlgorithm::Unspecified);
+        if matches!(algo, IndexingAlgorithm::Ivf) {
+            return "ivf";
+        }
+    }
+    "hnsw"
+}
+
 /// Map a drift `(kind, clamped)` pair to the operator-facing
 /// next-step pointer. Shared by route-health and recall-tune so
 /// both surfaces agree on the recommended path.
@@ -1667,10 +1711,15 @@ pub async fn get_collection_route_health_v2(
             max_ef_search,
             clamped_by_max_ef: clamped,
             projected_recall_at_clamped_ef: projected,
-            // P1: recall_drift detector is HNSW-only; report
-            // "hnsw" verbatim. IVF discriminator surfaces in P2
-            // when the detector grows the second algorithm arm.
-            algorithm: "hnsw",
+            // P2.4: dispatch on the collection's active algorithm.
+            // HNSW path runs the HNSW drift detector above; IVF
+            // collections report "ivf" so the recall-tune /
+            // recluster handlers route correctly. The drift block
+            // params above are the HNSW-shape report — IVF route-
+            // health surface gets the IVF-specific drift block in
+            // a follow-up commit; for now the algorithm literal
+            // is the key dispatch signal.
+            algorithm: active_algorithm_for(&config),
         };
         crate::metrics::recall_drift_metrics::record_recall_drift_observation(
             &collection_id_for_discovery,
@@ -1880,6 +1929,12 @@ pub async fn post_collection_recall_tune_v2(
     let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
     let max_ef_search =
         crate::services::collection::recall_target::parse_max_ef_search(&config);
+    // P2.4: also parse the algorithm-agnostic budgets — the IVF
+    // dispatch arm below feeds them to the IVF advisor.
+    let max_query_latency_ms =
+        crate::services::collection::recall_target::parse_max_query_latency_ms(&config);
+    let max_memory_mb =
+        crate::services::collection::recall_target::parse_max_memory_mb(&config);
     let drift = crate::index::axis::management::detect_recall_drift(
         crate::index::axis::management::RecallDriftInput {
             baseline_n,
@@ -1925,7 +1980,7 @@ pub async fn post_collection_recall_tune_v2(
         max_ef_search,
         clamped_by_max_ef: clamped,
         projected_recall_at_clamped_ef: projected,
-        algorithm: "hnsw",
+        algorithm: active_algorithm_for(&config),
     };
     crate::metrics::recall_drift_metrics::record_recall_drift_observation(&collection_id, kind_str);
 
@@ -1968,10 +2023,78 @@ pub async fn post_collection_recall_tune_v2(
         }));
     };
 
-    let outcome = axis_manager
-        .apply_hnsw_ef_hot_swap(&collection_id, drift.current_params.ef_search)
-        .await
-        .map_err(|e| ApiError::Internal(format!("hot-swap failed: {}", e)))?;
+    // P2.4: dispatch on the collection's active algorithm. HNSW
+    // collections hot-swap ef_search; IVF collections hot-swap
+    // nprobe. Both return the same HotSwapOutcome shape so the
+    // response-building code below stays algorithm-agnostic.
+    let active_algo = active_algorithm_for(&config);
+    let outcome = match active_algo {
+        "ivf" => {
+            // For IVF, the live-tunable knob is nprobe. Compute the
+            // current advised nprobe from the IVF advisor (the
+            // HNSW-shape `drift.current_params` doesn't carry IVF
+            // sizing; ask the advisor fresh).
+            let advisor = crate::index::axis::management::IvfIndexAdvisor::new();
+            let metric = match config
+                .distance_metric
+                .and_then(|v| crate::proto::proximadb_v1::DistanceMetric::try_from(v).ok())
+            {
+                Some(crate::proto::proximadb_v1::DistanceMetric::Cosine) => {
+                    crate::compute::distance_computation::DistanceMetric::Cosine
+                }
+                Some(crate::proto::proximadb_v1::DistanceMetric::Euclidean) => {
+                    crate::compute::distance_computation::DistanceMetric::Euclidean
+                }
+                Some(crate::proto::proximadb_v1::DistanceMetric::DotProduct) => {
+                    crate::compute::distance_computation::DistanceMetric::DotProduct
+                }
+                _ => crate::compute::distance_computation::DistanceMetric::Cosine,
+            };
+            let binary_rerank = crate::services::collection::recall_target::parse_binary_rerank_allowed(&config);
+            let Some(advised) = advisor.advise(
+                &crate::index::axis::management::AnnAdvisorInput {
+                    vector_count: current_n,
+                    top_k,
+                    recall_target,
+                    dimension: config.dimension,
+                    distance_metric: metric,
+                    max_query_latency_ms,
+                    max_memory_mb,
+                    binary_rerank_allowed: binary_rerank,
+                    modalities: Vec::new(),
+                },
+            ) else {
+                // IVF advisor declined — nothing to tune.
+                return Ok(Json(RecallTuneResponse {
+                    stability: "experimental",
+                    collection_id,
+                    report,
+                    action: "not_wired",
+                    applied_changes: Vec::new(),
+                }));
+            };
+            let target_nprobe = match advised.algorithm {
+                crate::index::axis::types::IndexAlgorithm::IVF { nprobe, .. } => nprobe,
+                _ => {
+                    return Ok(Json(RecallTuneResponse {
+                        stability: "experimental",
+                        collection_id,
+                        report,
+                        action: "not_wired",
+                        applied_changes: Vec::new(),
+                    }));
+                }
+            };
+            axis_manager
+                .apply_ivf_nprobe_hot_swap(&collection_id, target_nprobe)
+                .await
+                .map_err(|e| ApiError::Internal(format!("IVF hot-swap failed: {}", e)))?
+        }
+        _ => axis_manager
+            .apply_hnsw_ef_hot_swap(&collection_id, drift.current_params.ef_search)
+            .await
+            .map_err(|e| ApiError::Internal(format!("HNSW hot-swap failed: {}", e)))?,
+    };
 
     let (action, applied_changes) = match outcome {
         crate::index::axis::management::HotSwapOutcome::Applied { changes } => {
@@ -2032,9 +2155,28 @@ pub struct RecallReclusterResponse {
 #[derive(Debug, serde::Serialize, PartialEq)]
 pub struct RecallReclusterSized {
     pub recall_target: f32,
-    pub m: u32,
-    pub ef_construction: u32,
-    pub ef_search: u32,
+    /// Stable algorithm discriminator — `"hnsw"` or `"ivf"` (P3
+    /// adds `"hmgi"`). Matches `SupportedAlgorithm::label()` so
+    /// dashboard filters can switch consistently across surfaces.
+    pub algorithm: &'static str,
+
+    // ─── HNSW fields ─────────────────────────────────────────
+    /// HNSW graph degree. `None` for IVF rebuilds.
+    pub m: Option<u32>,
+    /// HNSW build-time candidate set. `None` for IVF rebuilds.
+    pub ef_construction: Option<u32>,
+    /// HNSW search-time beam. `None` for IVF rebuilds.
+    pub ef_search: Option<u32>,
+
+    // ─── IVF fields ──────────────────────────────────────────
+    /// IVF cluster count. `None` for HNSW rebuilds.
+    pub nlist: Option<u32>,
+    /// IVF probe count per query. `None` for HNSW rebuilds.
+    pub nprobe: Option<u32>,
+    /// `true` if the rebuild stamped a PQ quantizer alongside IVF
+    /// (binary rerank tier). `false` for raw IVF; `None` for HNSW.
+    pub pq_enabled: Option<bool>,
+
     /// Advisor's free-text rationale string — for operator dashboards.
     pub rationale: String,
 }
@@ -2268,28 +2410,101 @@ pub async fn post_collection_recluster_v2(
     let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
     let max_ef_search =
         crate::services::collection::recall_target::parse_max_ef_search(&config);
+    let max_query_latency_ms =
+        crate::services::collection::recall_target::parse_max_query_latency_ms(&config);
+    let max_memory_mb =
+        crate::services::collection::recall_target::parse_max_memory_mb(&config);
+    let binary_rerank =
+        crate::services::collection::recall_target::parse_binary_rerank_allowed(&config);
 
-    // (3) Rebuild + atomic swap.
-    let advised = axis_manager
-        .rebuild_and_swap_hnsw_index_for_recall_target(
-            internal_id.as_str(),
-            &records,
-            recall_target,
-            top_k,
-            max_ef_search,
-        )
-        .await
-        .map_err(|e| ApiError::Internal(format!("HNSW rebuild failed: {}", e)))?;
-
-    let Some(advised) = advised else {
-        return Ok(Json(RecallReclusterResponse {
-            stability: "experimental",
-            collection_id,
-            applied: false,
-            reason: "no usable embeddings in record set".to_string(),
-            rebuilt_vector_count: Some(count),
-            sized: None,
-        }));
+    // (3) Dispatch the rebuild on the collection's active
+    // algorithm. HNSW path stays untouched (existing behavior);
+    // IVF path calls the new advisor-aware rebuild and
+    // normalises the response shape via the `algorithm` literal
+    // and per-algorithm sized fields.
+    let active_algo = active_algorithm_for(&config);
+    let sized: Option<RecallReclusterSized> = match active_algo {
+        "ivf" => {
+            let advised = axis_manager
+                .rebuild_and_swap_ivf_index_for_recall_target(
+                    internal_id.as_str(),
+                    &records,
+                    recall_target,
+                    top_k,
+                    max_query_latency_ms,
+                    max_memory_mb,
+                    binary_rerank,
+                )
+                .await
+                .map_err(|e| ApiError::Internal(format!("IVF rebuild failed: {}", e)))?;
+            let Some(advised) = advised else {
+                return Ok(Json(RecallReclusterResponse {
+                    stability: "experimental",
+                    collection_id,
+                    applied: false,
+                    reason:
+                        "IVF advisor declined or no usable embeddings — recall_target may exceed IVF ceiling"
+                            .to_string(),
+                    rebuilt_vector_count: Some(count),
+                    sized: None,
+                }));
+            };
+            let (nlist, nprobe, pq_enabled) = match &advised.algorithm {
+                crate::index::axis::types::IndexAlgorithm::IVF {
+                    nlist,
+                    nprobe,
+                    quantizer,
+                } => (*nlist, *nprobe, quantizer.is_some()),
+                other => unreachable!(
+                    "IVF rebuild returned non-IVF algorithm spec: {:?}",
+                    other
+                ),
+            };
+            Some(RecallReclusterSized {
+                recall_target,
+                algorithm: "ivf",
+                m: None,
+                ef_construction: None,
+                ef_search: None,
+                nlist: Some(nlist),
+                nprobe: Some(nprobe),
+                pq_enabled: Some(pq_enabled),
+                rationale: advised.rationale,
+            })
+        }
+        _ => {
+            let advised = axis_manager
+                .rebuild_and_swap_hnsw_index_for_recall_target(
+                    internal_id.as_str(),
+                    &records,
+                    recall_target,
+                    top_k,
+                    max_ef_search,
+                )
+                .await
+                .map_err(|e| ApiError::Internal(format!("HNSW rebuild failed: {}", e)))?;
+            let Some(advised) = advised else {
+                return Ok(Json(RecallReclusterResponse {
+                    stability: "experimental",
+                    collection_id,
+                    applied: false,
+                    reason: "no usable embeddings in record set".to_string(),
+                    rebuilt_vector_count: Some(count),
+                    sized: None,
+                }));
+            };
+            Some(RecallReclusterSized {
+                recall_target,
+                algorithm: "hnsw",
+                m: Some(advised.m),
+                ef_construction: Some(advised.ef_construction),
+                ef_search: Some(advised.ef_search),
+                nlist: None,
+                nprobe: None,
+                pq_enabled: None,
+                rationale: advised.rationale,
+            })
+        }
     };
 
     // After a rebuild the recall-drift state collapses to "none"
@@ -2299,20 +2514,17 @@ pub async fn post_collection_recluster_v2(
     // for the next route-health GET or sweep tick.
     crate::metrics::recall_drift_metrics::record_recall_drift_observation(&collection_id, "none");
 
-    let rationale = advised.rationale.clone();
+    let reason = sized
+        .as_ref()
+        .map(|s| s.rationale.clone())
+        .unwrap_or_default();
     Ok(Json(RecallReclusterResponse {
         stability: "experimental",
         collection_id,
-        applied: true,
-        reason: rationale.clone(),
+        applied: sized.is_some(),
+        reason,
         rebuilt_vector_count: Some(count),
-        sized: Some(RecallReclusterSized {
-            recall_target,
-            m: advised.m,
-            ef_construction: advised.ef_construction,
-            ef_search: advised.ef_search,
-            rationale,
-        }),
+        sized,
     }))
 }
 
@@ -2836,9 +3048,13 @@ mod tests {
             rebuilt_vector_count: Some(123_456),
             sized: Some(RecallReclusterSized {
                 recall_target: 0.95,
-                m: 32,
-                ef_construction: 256,
-                ef_search: 409,
+                algorithm: "hnsw",
+                m: Some(32),
+                ef_construction: Some(256),
+                ef_search: Some(409),
+                nlist: None,
+                nprobe: None,
+                pq_enabled: None,
                 rationale: "tier r=0.95 → m=32 ...".to_string(),
             }),
         };

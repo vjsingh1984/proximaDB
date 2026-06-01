@@ -3,6 +3,7 @@
 pub mod adaptive_engine;
 pub mod analyzer;
 pub mod ann_advisor;
+pub mod hmgi_param_advisor;
 pub mod hnsw_param_advisor;
 pub mod ivf_param_advisor;
 pub mod manager;
@@ -30,6 +31,7 @@ pub use hnsw_param_advisor::{
     EF_SEARCH_MAX, EF_SEARCH_MIN, HnswIndexAdvisor, HnswSizingInput, HnswSizingOutput,
     advise_hnsw_params,
 };
+pub use hmgi_param_advisor::HmgiIndexAdvisor;
 pub use ivf_param_advisor::{IvfIndexAdvisor, nlist_for_n, nprobe_for_recall, recall_for_nprobe};
 pub use migration_engine::{
     IndexMigrationEngine, MigrationComplexity, MigrationDecision, MigrationPhase, MigrationPlan,

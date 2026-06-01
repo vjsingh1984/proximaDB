@@ -800,6 +800,7 @@ impl IndexMigrationEngine {
             IndexAlgorithm::Annoy { .. } => 80.0, // Good for approximate nearest neighbor
             IndexAlgorithm::EDR { .. } => 92.0, // Excellent for enhanced dense retrieval with late interaction
             IndexAlgorithm::GlobalId { .. } => 100.0, // Excellent for O(1) vector ID lookup
+            IndexAlgorithm::HMGI { .. } => 93.0, // Excellent for multi-modal collections (per-modality HNSW with routing)
         }
     }
 

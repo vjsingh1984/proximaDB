@@ -469,6 +469,7 @@ mod tests {
             max_query_latency_ms: None,
             max_memory_mb: None,
             binary_rerank_allowed: false,
+            modalities: Vec::new(),
         }
     }
 

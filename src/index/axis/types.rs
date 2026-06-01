@@ -144,6 +144,49 @@ pub enum IndexAlgorithm {
         /// Whether to persist the index to disk for crash recovery.
         persistence_enabled: bool,
     },
+
+    /// Hierarchical Modality-aware Graph Index (HMGI). Partitions
+    /// vectors by **modality tag** (text / image / video / audio /
+    /// graph / …). Each partition runs an internal HNSW with
+    /// per-modality sizing — operators benefit from HNSW's recall
+    /// ceiling at every partition while paying a smaller search
+    /// space because queries route through the
+    /// [`crate::index::axis::hmgi::HmgiRouter`] to only the
+    /// modalities they touch.
+    ///
+    /// The variant carries one [`HmgiPartitionAlgo`] per declared
+    /// modality so the per-partition HNSW knobs are inspectable
+    /// (operator dashboards, EXPLAIN, drift detection). The
+    /// `max_partitions_per_query` bound caps fan-out — set to
+    /// `per_modality.len()` for "always touch every modality" or
+    /// lower for the operator's preferred partial-recall mode.
+    HMGI {
+        /// Per-modality HNSW sizing. Each tuple is
+        /// (modality_tag, per-partition HNSW params).
+        per_modality: Vec<HmgiPartitionAlgo>,
+        /// Max partitions a single query may fan out to. Set to
+        /// `per_modality.len()` for full coverage. Lower values
+        /// trade recall for latency.
+        max_partitions_per_query: u32,
+    },
+}
+
+/// Per-modality HNSW sizing carried inside the
+/// [`IndexAlgorithm::HMGI`] variant. Each partition is an
+/// internal HNSW; the modality tag matches the
+/// [`crate::index::axis::hmgi::HmgiPartitionKey.modality_tag`]
+/// used at insert / route time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HmgiPartitionAlgo {
+    /// Modality identifier — matches the operator's
+    /// `modalities:text,image,video` tag entries.
+    pub modality_tag: String,
+    /// Graph degree m for this partition.
+    pub m: u32,
+    /// Build-time candidate set for this partition.
+    pub ef_construction: u32,
+    /// Query-time beam width for this partition.
+    pub ef_search: u32,
 }
 
 /// Text analysis configuration
@@ -230,6 +273,7 @@ impl IndexSpecification {
                 | IndexAlgorithm::LSH { .. }
                 | IndexAlgorithm::Annoy { .. }
                 | IndexAlgorithm::EDR { .. }
+                | IndexAlgorithm::HMGI { .. }
         )
     }
 

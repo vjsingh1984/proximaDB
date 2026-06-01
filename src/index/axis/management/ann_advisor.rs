@@ -59,7 +59,11 @@ use crate::index::axis::types::IndexAlgorithm;
 pub enum SupportedAlgorithm {
     Hnsw,
     Ivf,
-    // P2/P3: Pq, Annoy
+    /// HMGI = HNSW per modality partition. Active when the
+    /// collection declares multiple modalities. Each per-modality
+    /// partition is sized via the HNSW advisor internally.
+    Hmgi,
+    // P4+: Pq, Annoy
 }
 
 impl SupportedAlgorithm {
@@ -70,6 +74,7 @@ impl SupportedAlgorithm {
         match self {
             SupportedAlgorithm::Hnsw => "hnsw",
             SupportedAlgorithm::Ivf => "ivf",
+            SupportedAlgorithm::Hmgi => "hmgi",
         }
     }
 }
@@ -78,7 +83,11 @@ impl SupportedAlgorithm {
 /// fields model declared caps — an advisor that doesn't honor a
 /// budget simply ignores its `Some` value (and the selector won't
 /// pick it when the budget is binding).
-#[derive(Debug, Clone, Copy)]
+// P3: dropped `Copy` derive because the `modalities: Vec<String>`
+// field can't be Copy. Callers that previously relied on implicit
+// copies now `.clone()` — the input is constructed once per
+// advisor call so the cost is negligible.
+#[derive(Debug, Clone)]
 pub struct AnnAdvisorInput {
     /// Expected corpus size at steady state. Drives the
     /// `N_factor` used by both HNSW and IVF formulas.
@@ -118,6 +127,20 @@ pub struct AnnAdvisorInput {
     ///
     /// HNSW advisor ignores this field (HNSW doesn't quantize).
     pub binary_rerank_allowed: bool,
+
+    /// Modality tags declared by the operator (collection tag:
+    /// `modalities:text,image,video`). Empty when the collection
+    /// is single-modality (the default — every existing collection).
+    ///
+    /// The [`crate::index::axis::management::HmgiIndexAdvisor`]
+    /// activates only when this is non-empty AND has ≥ 2 entries.
+    /// Each entry triggers a per-modality HNSW partition sized by
+    /// the [`crate::index::axis::management::HnswIndexAdvisor`]
+    /// internally.
+    ///
+    /// Other advisors (HNSW, IVF) ignore this field — modality
+    /// routing is HMGI's value proposition.
+    pub modalities: Vec<String>,
 }
 
 /// Unified output. The advisor's recommendation is a fully-formed
@@ -192,14 +215,15 @@ impl AnnSelector {
         Self { advisors }
     }
 
-    /// Production-default advisor set: HNSW + IVF for P1. PQ and
-    /// Annoy land in P2 / P3 and are registered here when their
+    /// Production-default advisor set: HNSW + IVF + HMGI. PQ and
+    /// Annoy land in P4+ and are registered here when their
     /// impls ship.
     pub fn default_set() -> Self {
         Self {
             advisors: vec![
                 Box::new(crate::index::axis::management::hnsw_param_advisor::HnswIndexAdvisor::new()),
                 Box::new(crate::index::axis::management::ivf_param_advisor::IvfIndexAdvisor::new()),
+                Box::new(crate::index::axis::management::hmgi_param_advisor::HmgiIndexAdvisor::new()),
             ],
         }
     }
@@ -327,6 +351,16 @@ mod tests {
                     nprobe: 20,
                     quantizer: None,
                 },
+                // HMGI is the third supported algorithm (SupportedAlgorithm
+                // enum at line 65). Test helpers must cover every variant
+                // or the suite fails to compile; map HMGI to a placeholder
+                // IVF shape since the helper is purely fixture-construction
+                // and downstream tests don't read these specific values.
+                SupportedAlgorithm::Hmgi => IndexAlgorithm::IVF {
+                    nlist: 256,
+                    nprobe: 16,
+                    quantizer: None,
+                },
             },
             kind,
             clamped_by_budget: clamped,
@@ -347,6 +381,7 @@ mod tests {
             max_query_latency_ms: None,
             max_memory_mb: None,
             binary_rerank_allowed: false,
+            modalities: Vec::new(),
         }
     }
 
