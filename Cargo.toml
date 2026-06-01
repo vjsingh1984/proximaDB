@@ -77,6 +77,7 @@ members = [
     "crates/query/proximadb-query-filter",
     "crates/query/proximadb-uql",
     "crates/query/proximadb-vector-query",
+    "crates/binding/proximadb-spark-jni",
 ]
 
 [workspace.package]
