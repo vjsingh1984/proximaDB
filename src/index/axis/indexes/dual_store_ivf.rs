@@ -745,7 +745,7 @@ fn adaptive_candidate_k(k: usize, recall_target: f32) -> usize {
 /// candidate list: `(d_{k+1} − d_k) / (d_{k+1} + ε) ∈ [0, 1)`. Large ⇒ the
 /// top-`k` is well separated from the rest. `0` when there is no `(k+1)`-th
 /// candidate (nothing to separate from → never early-terminate).
-fn separation_gap(sorted_ascending: &[(String, u32)], k: usize) -> f32 {
+fn separation_gap(sorted_ascending: &[(String, u32, f32)], k: usize) -> f32 {
     if k == 0 || sorted_ascending.len() <= k {
         return 0.0;
     }
@@ -1950,12 +1950,17 @@ impl UnifiedIvfIndex {
         }
         let n_probe = n_probe.unwrap_or(self.config.n_probe);
 
-        // Stage 1: Hamming coarse filter over the probed clusters' candidates.
+        // Stage 1: per-cluster rotated-residual Hamming over the probed clusters.
         let nearest_clusters =
             self.centroids
                 .find_nearest_centroids(query, n_probe, &self.distance_compute);
-        let mut coarse: Vec<(String, u32)> = Vec::new();
-        for (cluster_id, _centroid_dist) in nearest_clusters {
+        // ADR-023 R3-bis: the query's distance to its NEAREST centroid samples the
+        // intra-cluster residual-norm scale (cd_min) for the cold estimator below.
+        // `find_nearest_centroids` returns ascending distances, so the first is min.
+        let cd_min = nearest_clusters.first().map(|(_, d)| *d).unwrap_or(0.0);
+        // coarse: (id, hamming, owning cluster's centroid distance).
+        let mut coarse: Vec<(String, u32, f32)> = Vec::new();
+        for (cluster_id, centroid_dist) in nearest_clusters {
             // ADR-023 R1: the query code is the rotated residual to THIS cluster's
             // centroid — the same transform the stored codes used at insert, so
             // Hamming is meaningful within the cluster.
@@ -1965,7 +1970,7 @@ impl UnifiedIvfIndex {
             if let Some(posting_list) = self.posting_lists.get(&key).await {
                 for vector_id in &posting_list.vector_ids {
                     if let Some(code) = self.binary_codes.get(vector_id) {
-                        coarse.push((vector_id.clone(), bq.hamming(&code)));
+                        coarse.push((vector_id.clone(), bq.hamming(&code), centroid_dist));
                     }
                 }
             }
@@ -1973,22 +1978,45 @@ impl UnifiedIvfIndex {
         if coarse.is_empty() {
             return self.search(query, k, Some(n_probe)).await;
         }
-        coarse.sort_by_key(|(_, h)| *h);
 
-        // ADR-023 T-D: Stage-1-only serving. When only the COLD tier is loaded
-        // (cold start, no fp32), there is nothing to rerank — return the
-        // Hamming-ranked top-k directly. The Hamming count is a lower-better rank
-        // value (coarse; the recall envelope is reduced and disclosed by T-E).
+        // ADR-023 T-D / R3-bis: Stage-1-only serving (cold start, no fp32 to
+        // rerank). Rank by a coarse+residual estimator, NOT raw Hamming. Raw
+        // Hamming is comparable only WITHIN one cluster's rotated-residual frame —
+        // T-F measured recall INVERTING as n_probe rose because the merge drops
+        // the resident-fp32 coarse term ‖q−centroid‖². The orthonormal rotation
+        // gives ‖q−x‖² = ‖r_q‖²+‖r_x‖²−2⟨r_q,r_x⟩; the sign code estimates
+        // cosθ ≈ 1−2·hamming/dim; approximating ‖r_x‖ ≈ cd_min (the nearest-
+        // centroid distance samples the intra-cluster scale) collapses to
+        //   est² = (cd_c − cd_min)² + (4·cd_c·cd_min/dim)·hamming.
+        // Nearest cluster (cd_c=cd_min): first term 0 → ranks by hamming (≡ the
+        // measured-optimal n_probe=1 behaviour); far clusters are penalised by
+        // (cd_c−cd_min)², restoring cross-frame ordering. Lower-better.
         if self.serving_state == IvfServingState::ColdBinaryOnly {
             // ADR-023 T-E: disclose the reduced-recall coarse mode in EXPLAIN via
             // the per-request diagnostics bus (no-op outside a search scope).
             crate::observability::predicate_diagnostics::record_cold_stage1_only();
+            let dim = self.config.dimension.max(1) as f32;
+            let estimate_sq = |h: u32, cd: f32| -> f32 {
+                let gap = cd - cd_min;
+                gap * gap + (4.0 * cd * cd_min / dim) * h as f32
+            };
+            coarse.sort_by(|a, b| {
+                estimate_sq(a.1, a.2)
+                    .partial_cmp(&estimate_sq(b.1, b.2))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    // Hamming tiebreaker guards the degenerate cd_min≈0 case.
+                    .then_with(|| a.1.cmp(&b.1))
+            });
             coarse.truncate(k);
             return Ok(coarse
                 .into_iter()
-                .map(|(id, hamming)| (id, hamming as f32))
+                .map(|(id, h, cd)| (id, estimate_sq(h, cd)))
                 .collect());
         }
+
+        // Warm two-stage path: Hamming-based candidate selection (cross-cluster
+        // comparability is moot — survivors are reranked exactly with fp32).
+        coarse.sort_by_key(|(_, h, _)| *h);
 
         // ADR-023 T-H: gap-based early termination (AQR-HNSW "exact only when
         // necessary"). When the Stage-1 top-k is separated past the recall_target
@@ -2000,7 +2028,7 @@ impl UnifiedIvfIndex {
             coarse.truncate(k);
             return Ok(coarse
                 .into_iter()
-                .map(|(id, hamming)| (id, hamming as f32))
+                .map(|(id, hamming, _cd)| (id, hamming as f32))
                 .collect());
         }
 
@@ -2016,7 +2044,7 @@ impl UnifiedIvfIndex {
             let collection = collection_entry
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            for (vector_id, _hamming) in coarse {
+            for (vector_id, _hamming, _cd) in coarse {
                 if let Some(view) = collection.get(&vector_id)
                     && let Some(vector_data) = view.as_f32()
                 {
@@ -2766,7 +2794,8 @@ mod tests {
         assert!(adaptive_candidate_k(1, 0.85) >= super::MIN_RERANK_CANDIDATES); // floor
 
         // Separation gap: ascending Hamming list; 0 when there's no (k+1)-th.
-        let c = |h: u32| ("x".to_string(), h);
+        // (3rd tuple element = owning cluster's centroid distance; unused here.)
+        let c = |h: u32| ("x".to_string(), h, 0.0f32);
         assert_eq!(separation_gap(&[c(1), c(2)], 5), 0.0); // fewer than k+1
         assert_eq!(separation_gap(&[c(0), c(10)], 1), 1.0); // d_k=0, d_{k+1}=10 → 1.0
         let g = separation_gap(&[c(2), c(3)], 1); // (3-2)/3 ≈ 0.33
@@ -2946,28 +2975,32 @@ mod tests {
     /// Measures the recall lost by serving Hamming-only (rotated-residual 1-bit,
     /// no fp32 rerank — the `ColdBinaryOnly` state) versus the exact two-stage
     /// path. This is the honest envelope T-E discloses and the input to the R4
-    /// MID-tier go/no-go gate.
+    /// MID-tier go/no-go gate. It also guards the ADR-023 R3-bis fix: the cold
+    /// estimator (`(cd_c−cd_min)² + (4·cd_c·cd_min/dim)·hamming`) keeps multi-probe
+    /// from degrading recall.
     ///
     /// MEASURED (dim=64, n=800, 16 clusters, well-separated; deterministic):
     /// ```text
-    ///   n_probe   recall@10
-    ///     1         0.512   <- best: prune to the true cluster, rank within it
-    ///     2         0.358
-    ///     4         0.243
-    ///     8         0.177
-    ///    16         0.145   <- merge all frames: worse than random (10/50=0.20)
+    ///   n_probe   recall@10  (raw Hamming, pre-R3-bis)   (estimator, R3-bis)
+    ///     1          0.512                                 0.512
+    ///     2          0.358                                 0.512
+    ///     4          0.243                                 0.512
+    ///     8          0.177                                 0.512
+    ///    16          0.145  <- worse than random (0.20)    0.512
     /// ```
-    /// Two findings: (1) the 1-bit floor (~0.51) clears the 0.40 go/no-go bar but
-    /// sits BELOW AQR-HNSW's ~0.75 naive-1-bit prior on this pathologically tight
+    /// Findings: (1) the 1-bit floor (~0.51) clears the 0.40 go/no-go bar but sits
+    /// BELOW AQR-HNSW's ~0.75 naive-1-bit prior on this pathologically tight
     /// within-cluster ranking task — so 1-bit cold serving is marginal and the R4
     /// 2-bit MID tier stays warranted (or fall back to FullEager) until a real
-    /// corpus says otherwise. (2) recall INVERTS with n_probe — the opposite of
-    /// the warm path. Raw Hamming is only valid within ONE residual frame (rotated
-    /// to that cluster's centroid); merging probed clusters drops the coarse
-    /// centroid-distance term, so cross-cluster ordering is mis-ranked. The cold
-    /// path must therefore probe minimally (n_probe=1) OR compose coarse+residual
-    /// distance (the RaBitQ estimator) before multi-probe is honest. The assertion
-    /// guards the single-probe floor.
+    /// corpus says otherwise. (2) Raw Hamming INVERTED with n_probe (it is valid
+    /// only within ONE residual frame; merging clusters drops the coarse
+    /// centroid-distance term). R3-bis's coarse+residual estimator ELIMINATES the
+    /// inversion — recall is now flat at the single-probe optimum across n_probe
+    /// (far-cluster candidates are penalised by `(cd_c−cd_min)²`, so multi-probe
+    /// never contaminates). It doesn't rise above 0.512 here only because this
+    /// corpus's true neighbours all live in the nearest cluster; a boundary-
+    /// spanning corpus would also lift. The assertions guard both the floor and
+    /// the no-inversion property.
     #[tokio::test]
     async fn cold_stage1_only_recall_floor_is_measured_and_disclosed() {
         let _ = proximadb_hardware::hardware_capabilities();
@@ -3018,12 +3051,12 @@ mod tests {
 
         // Ground truth is brute-force exact (probe ALL clusters, full rerank).
         // The cold replica's centroids are resident fp32, so it prunes to the
-        // nearest clusters EXACTLY, then Hamming-ranks only within them — sweep
-        // n_probe to separate the 1-bit quantization floor (n_probe=1, the true
-        // cluster only) from cross-cluster Hamming contamination (n_probe high,
-        // where incomparable per-centroid residual frames merge and degrade).
-        let mut floor_at_1 = 0.0f64;
-        for &probe in &[1usize, 2, 4, 8, n_clusters] {
+        // nearest clusters EXACTLY, then ranks them by the R3-bis coarse+residual
+        // estimator. Sweep n_probe: the 1-bit floor is the n_probe=1 value; the
+        // estimator's job is to keep higher n_probe from degrading it.
+        let probes = [1usize, 2, 4, 8, n_clusters];
+        let mut recalls: Vec<f64> = Vec::with_capacity(probes.len());
+        for &probe in &probes {
             let mut total = 0.0f64;
             for query in &queries {
                 let exact = full.search(query, k, Some(n_clusters)).await.unwrap();
@@ -3041,22 +3074,29 @@ mod tests {
                 "ADR-023 T-F Stage-1-only recall@{k} = {recall:.3} @ n_probe={probe} (dim={dim}, n={}, clusters={n_clusters})",
                 data.len()
             );
-            if probe == 1 {
-                floor_at_1 = recall;
-            }
+            recalls.push(recall);
         }
+        let floor_at_1 = recalls[0];
 
-        // The honest envelope T-E discloses: at n_probe=1 (exact-centroid prune
-        // to the true cluster, then Hamming-rank ~50 candidates) the 1-bit floor
-        // must clear random selection (k/per_cluster) by a clear margin. This is
-        // the R4 MID-tier go/no-go input — if it cannot clear ~0.40, a 2-bit MID
-        // tier is warranted; if it clears it comfortably, 1-bit cold serving is
-        // honest to disclose.
+        // (1) Floor: at n_probe=1 the 1-bit Stage-1 recall must clear the 0.40 R4
+        // go/no-go bar (and random selection k/per_cluster = 0.20) by a margin.
         assert!(
             floor_at_1 >= 0.40,
             "Stage-1-only recall@1-probe {floor_at_1:.3} is below the 0.40 \
              go/no-go bar; the cold envelope is too weak to disclose without R4"
         );
+        // (2) No inversion (ADR-023 R3-bis): the coarse+residual estimator must
+        // keep every higher-n_probe recall at the single-probe optimum (raw
+        // Hamming collapsed to 0.145 at n_probe=16 here). Tolerance absorbs any
+        // estimator tie-break jitter; in practice the values are identical.
+        for (probe, recall) in probes.iter().zip(&recalls) {
+            assert!(
+                *recall >= floor_at_1 - 0.02,
+                "Stage-1-only recall {recall:.3} @ n_probe={probe} degraded below \
+                 the n_probe=1 floor {floor_at_1:.3} — the R3-bis estimator should \
+                 prevent multi-probe contamination"
+            );
+        }
     }
 
     // ─── TD-087 Slice B: serialization round-trip ───────────────────────────
