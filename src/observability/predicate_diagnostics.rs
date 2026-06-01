@@ -72,6 +72,9 @@ pub struct PredicateDiagnostics {
     /// Set when a search downgraded from the quantized route to exact because
     /// the recall-probe gate was closed (TD-075 / F2). Surfaced in EXPLAIN.
     quantized_downgraded: Mutex<bool>,
+    /// Set when a search served Stage-1-only (Hamming, no fp32 rerank) because
+    /// the IVF index was still cold-loaded (ADR-023 T-E `ColdBinaryOnly`).
+    cold_stage1_only: Mutex<bool>,
 }
 
 impl PredicateDiagnostics {
@@ -114,6 +117,24 @@ impl PredicateDiagnostics {
         std::mem::take(
             &mut *self
                 .quantized_downgraded
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        )
+    }
+
+    /// Mark that the search served Stage-1-only from a cold-loaded index.
+    pub fn record_cold_stage1_only(&self) {
+        *self
+            .cold_stage1_only
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = true;
+    }
+
+    /// Atomically take the cold-Stage-1-only flag, leaving the container cleared.
+    pub fn take_cold_stage1_only(&self) -> bool {
+        std::mem::take(
+            &mut *self
+                .cold_stage1_only
                 .lock()
                 .unwrap_or_else(|p| p.into_inner()),
         )
@@ -166,6 +187,22 @@ pub fn record_quantized_downgrade() {
 pub fn take_quantized_downgrade() -> bool {
     PREDICATE_DIAGNOSTICS
         .try_with(|d| d.take_quantized_downgrade())
+        .unwrap_or(false)
+}
+
+/// Record that the search served Stage-1-only from a cold-loaded IVF index
+/// (ADR-023 T-E). Silently no-ops outside an active [`scope`].
+pub fn record_cold_stage1_only() {
+    let _ = PREDICATE_DIAGNOSTICS.try_with(|d| {
+        d.record_cold_stage1_only();
+    });
+}
+
+/// Take the cold-Stage-1-only flag. Returns `false` outside an active [`scope`]
+/// or when it was not recorded. Must be called inside the [`scope`].
+pub fn take_cold_stage1_only() -> bool {
+    PREDICATE_DIAGNOSTICS
+        .try_with(|d| d.take_cold_stage1_only())
         .unwrap_or(false)
 }
 
@@ -243,6 +280,20 @@ mod tests {
         // No scope wrapping — record no-ops, take yields false (never a panic).
         record_quantized_downgrade();
         assert!(!take_quantized_downgrade());
+    }
+
+    #[tokio::test]
+    async fn cold_stage1_only_records_and_takes_inside_scope() {
+        let taken = scope(async {
+            assert!(!take_cold_stage1_only());
+            record_cold_stage1_only();
+            take_cold_stage1_only()
+        })
+        .await;
+        assert!(taken, "cold-stage1 recorded in-scope must be taken as true");
+        // Outside any scope: record no-ops, take is false.
+        record_cold_stage1_only();
+        assert!(!take_cold_stage1_only());
     }
 
     #[tokio::test]

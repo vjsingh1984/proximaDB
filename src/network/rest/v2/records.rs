@@ -1036,7 +1036,10 @@ pub async fn insert_records(
         &collection,
     ) {
         crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
-            if state.primary_pod_registry.is_assigned(&tenant.tenant_id, &collection) {
+            if state
+                .primary_pod_registry
+                .is_assigned(&tenant.tenant_id, &collection)
+            {
                 crate::metrics::primary_pod_metrics::record_allowed_bound(&tenant.tenant_id);
             } else {
                 crate::metrics::primary_pod_metrics::record_allowed_unbounded(&tenant.tenant_id);
@@ -1505,7 +1508,7 @@ pub async fn search_with_typed_filters(
     // Capture the quantized-route downgrade INSIDE the scope — the task-local
     // binding ends when the scoped future completes, so it must be taken here
     // (TD-075 / F2: surfaced in EXPLAIN below).
-    let (search_outcome, quantized_route_downgraded) =
+    let (search_outcome, quantized_route_downgraded, cold_stage1_only) =
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state
                 .request_handlers
@@ -1513,7 +1516,10 @@ pub async fn search_with_typed_filters(
                 .await;
             let downgraded =
                 crate::observability::predicate_diagnostics::take_quantized_downgrade();
-            (outcome, downgraded)
+            // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
+            let cold_stage1 =
+                crate::observability::predicate_diagnostics::take_cold_stage1_only();
+            (outcome, downgraded, cold_stage1)
         })
         .await;
     let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
@@ -1707,6 +1713,7 @@ pub async fn search_with_typed_filters(
                         corpus_gb: 0.0,
                         recall_probe_open,
                         quantized_route_downgraded,
+                        cold_stage1_only,
                     },
                 );
                 (Some(trace.clone()), Some(explain))

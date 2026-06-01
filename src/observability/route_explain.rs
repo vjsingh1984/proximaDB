@@ -67,6 +67,10 @@ pub mod hint {
     /// closed gate — a possible wiring inconsistency), this reflects the
     /// AUTHORITATIVE execution-level decision recorded by `AxisManager`.
     pub const QUANTIZED_ROUTE_DOWNGRADED: &str = "quantized_route_downgraded";
+    /// ADR-023 T-E / F2 cold path: the search served Stage-1-only (1-bit Hamming,
+    /// no fp32 rerank) because the IVF index was still cold-loaded
+    /// (`ColdBinaryOnly`). Recall is reduced until the WARM tier finishes loading.
+    pub const COLD_STAGE1_ONLY: &str = "cold_stage1_only";
 }
 
 /// Inputs the explain builder consumes. The trace itself carries most
@@ -82,6 +86,9 @@ pub struct ExplainInputs<'a> {
     /// because the recall-probe gate was closed (authoritative execution-level
     /// signal from `AxisManager`, captured via the per-request diagnostics bus).
     pub quantized_route_downgraded: bool,
+    /// ADR-023 T-E: the search served Stage-1-only from a cold-loaded IVF index
+    /// (`ColdBinaryOnly`) — reduced recall until the WARM tier loads.
+    pub cold_stage1_only: bool,
 }
 
 /// Build the structured explain.
@@ -90,7 +97,7 @@ pub fn build(inputs: &ExplainInputs<'_>) -> RouteExplain {
 
     let summary = build_summary(trace, inputs.corpus_gb);
     let sections = vec![
-        plan_section(trace, inputs.quantized_route_downgraded),
+        plan_section(trace, inputs.quantized_route_downgraded, inputs.cold_stage1_only),
         cache_section(trace),
         execution_section(trace, inputs.corpus_gb),
         repair_section(trace),
@@ -128,7 +135,11 @@ fn build_summary(trace: &SearchPlanTrace, corpus_gb: f64) -> String {
     )
 }
 
-fn plan_section(trace: &SearchPlanTrace, quantized_route_downgraded: bool) -> ExplainSection {
+fn plan_section(
+    trace: &SearchPlanTrace,
+    quantized_route_downgraded: bool,
+    cold_stage1_only: bool,
+) -> ExplainSection {
     let mut lines = vec![
         format!(
             "filter strategy: {}",
@@ -138,8 +149,13 @@ fn plan_section(trace: &SearchPlanTrace, quantized_route_downgraded: bool) -> Ex
     ];
     if quantized_route_downgraded {
         // TD-075 / F2 success criterion: disclose the degraded route reason.
+        lines.push("quantized route downgraded to exact: recall-probe gate closed".to_string());
+    }
+    if cold_stage1_only {
+        // ADR-023 T-E: disclose the reduced-recall cold-start coarse mode.
         lines.push(
-            "quantized route downgraded to exact: recall-probe gate closed".to_string(),
+            "cold start: Stage-1-only (binary Hamming, no fp32 rerank) until warm tier loads"
+                .to_string(),
         );
     }
     if let Some(est) = trace.estimated_selectivity {
@@ -276,6 +292,10 @@ fn build_hints(inputs: &ExplainInputs<'_>) -> Vec<String> {
         // the degraded-route reason F2 success criterion #3 requires in EXPLAIN.
         hints.push(hint::QUANTIZED_ROUTE_DOWNGRADED.to_string());
     }
+    if inputs.cold_stage1_only {
+        // ADR-023 T-E: cold-start coarse serving — recall reduced until warm.
+        hints.push(hint::COLD_STAGE1_ONLY.to_string());
+    }
     if trace.sure_signals.disagreement >= 0.5 {
         hints.push(hint::HIGH_DISAGREEMENT.to_string());
     }
@@ -370,6 +390,7 @@ mod tests {
             corpus_gb,
             recall_probe_open: None,
             quantized_route_downgraded: false,
+            cold_stage1_only: false,
         }
     }
 
@@ -570,7 +591,9 @@ mod tests {
         i.quantized_route_downgraded = true;
         let e = build(&i);
         assert!(
-            e.hints.iter().any(|h| h == hint::QUANTIZED_ROUTE_DOWNGRADED),
+            e.hints
+                .iter()
+                .any(|h| h == hint::QUANTIZED_ROUTE_DOWNGRADED),
             "downgrade hint must fire"
         );
         let plan = e.sections.iter().find(|s| s.header == "Plan").unwrap();
@@ -586,9 +609,35 @@ mod tests {
     fn no_downgrade_hint_when_flag_unset() {
         let t = trace_template();
         let e = build(&inputs(&t, 1.0));
-        assert!(!e.hints.iter().any(|h| h == hint::QUANTIZED_ROUTE_DOWNGRADED));
+        assert!(
+            !e.hints
+                .iter()
+                .any(|h| h == hint::QUANTIZED_ROUTE_DOWNGRADED)
+        );
         let plan = e.sections.iter().find(|s| s.header == "Plan").unwrap();
         assert!(!plan.lines.iter().any(|l| l.contains("downgraded")));
+    }
+
+    #[test]
+    fn hint_and_plan_line_on_cold_stage1_only() {
+        let t = trace_template();
+        let mut i = inputs(&t, 1.0);
+        i.cold_stage1_only = true;
+        let e = build(&i);
+        assert!(
+            e.hints.iter().any(|h| h == hint::COLD_STAGE1_ONLY),
+            "cold-stage1-only hint must fire"
+        );
+        let plan = e.sections.iter().find(|s| s.header == "Plan").unwrap();
+        assert!(
+            plan.lines
+                .iter()
+                .any(|l| l.contains("cold start") && l.contains("Stage-1-only")),
+            "Plan section must disclose the cold-start coarse mode"
+        );
+        // Unset → no hint/line.
+        let e2 = build(&inputs(&t, 1.0));
+        assert!(!e2.hints.iter().any(|h| h == hint::COLD_STAGE1_ONLY));
     }
 
     #[test]
@@ -640,10 +689,15 @@ mod tests {
             hint::CACHE_FALSE_HIT,
             hint::RECALL_PROBE_CLOSED,
             hint::QUANTIZED_ROUTE_DOWNGRADED,
+            hint::COLD_STAGE1_ONLY,
             hint::HIGH_DISAGREEMENT,
         ] {
             assert!(!label.is_empty());
-            assert!(label.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
+            assert!(
+                label
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            );
         }
     }
 }

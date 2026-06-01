@@ -1980,6 +1980,9 @@ impl UnifiedIvfIndex {
         // Hamming-ranked top-k directly. The Hamming count is a lower-better rank
         // value (coarse; the recall envelope is reduced and disclosed by T-E).
         if self.serving_state == IvfServingState::ColdBinaryOnly {
+            // ADR-023 T-E: disclose the reduced-recall coarse mode in EXPLAIN via
+            // the per-request diagnostics bus (no-op outside a search scope).
+            crate::observability::predicate_diagnostics::record_cold_stage1_only();
             coarse.truncate(k);
             return Ok(coarse
                 .into_iter()
