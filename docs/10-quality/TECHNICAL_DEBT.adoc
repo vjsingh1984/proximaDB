@@ -1330,10 +1330,10 @@ physical layouts.
 | mem0 / agentmemory framework adapters
 | P5
 | LOW
-| Open
-| P3 of the agent-memory layer. A mem0 `VectorStoreBase` provider (registered in `VectorStoreFactory`) targeting ProximaDB, and an optional mem0g graph-store mapping onto the native graph engine (collapsing the Qdrant+Neo4j pair into one backend). Document agentmemory's `CLIENT_TYPE=POSTGRES` path. Conformance tests against mem0's interface. **Carry-over from TD-100**: bind pgwire parameter placeholders (`$1`) in `execute_vector_search` (vector + metadata values) — TD-100 landed literal-value WHERE pushdown only; mem0's PGVector provider parameterizes its queries.
-| 1-2 weeks
-| Acceptance: (1) mem0 configured with the ProximaDB provider round-trips add/search/update/delete. (2) mem0g graph ops succeed against the native graph engine, or the gap is documented. (3) Adapter conformance test in CI.
+| Slice A landed (v0.2); Slice B (Python provider) open
+| P3 of the agent-memory layer. **Slice A landed 2026-05-31** — the pgwire wire mem0's PGVector provider needs: `src/network/postgres/pgvector_params.rs` (extracted pure helpers, 10 unit tests) + thin protocol.rs delegation. TD-100 WHERE metadata-filter pushdown (`payload->>'k'='v'` → `unified_search_native`), and the extended query protocol now binds `$N` placeholders: `handle_parse` infers param arity/types from `$N` (fixes the `Parameters(2,0)` client abort), `Describe(statement)` reports the real `(id,distance,metadata)` columns for vector search, and the extended `Execute` path suppresses its duplicate `RowDescription`. Verified by `pgwire_extended_param_e2e` + `mem0_pgwire_filter_e2e` (commit `67b1373e5`). **Slice B (open):** the Python mem0 `VectorStoreBase` provider (registered in `VectorStoreFactory`) targeting ProximaDB over this wire, optional mem0g graph-store mapping onto the native graph engine, agentmemory's `CLIENT_TYPE=POSTGRES` path. Follow-up: binary param-format decode (text format works today).
+| 1-2 weeks (Slice B)
+| Acceptance: (1) pgwire wire ready — DONE (extended `$N` + metadata filter, e2e green). (2) mem0 configured with the ProximaDB provider round-trips add/search/update/delete (Slice B). (3) mem0g graph ops succeed against the native graph engine, or the gap is documented (Slice B).
 
 | TD-103
 | Agent memory session scoping
