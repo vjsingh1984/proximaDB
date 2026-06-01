@@ -463,14 +463,26 @@ impl UnifiedQuantizationEngine {
                 self.quantize_custom(vector, c)
             }
 
-            // TurboQuant uses its own encode pipeline in
-            // `proximadb_vector::quantization::turboquant::encode::encode_batch`.
-            // Engine integration is P8 per TURBOQUANT_LLD_2026_05_30.
+            // TurboQuant is `lifecycle = ReadTime` (per ADR-021 §"Authority
+            // mode" and the `QuantizationMethod::lifecycle()` trait in the
+            // foundation crate). Codes are not computed per-call here;
+            // they live in the per-collection `TurboQuantStore` (see
+            // `src/compute/quantization/turboquant_store_registry.rs`)
+            // and are produced by `TurboQuantStore::add()` invoked from
+            // the collection-level ingest pipeline — which is where the
+            // `collection_id` is in scope (the engine does not see one).
+            //
+            // Callers MUST switch on `level.lifecycle()` BEFORE reaching
+            // this arm. Progressive search (Phase C) and AXIS adapters
+            // (Phase D) honour this contract. Reaching this arm is a
+            // wire-contract violation worth a loud error.
             #[cfg(feature = "experimental-turboquant")]
             Some(QuantizationLevel::TurboQuant(_)) => {
                 anyhow::bail!(
-                    "TurboQuant quantize() not yet wired through UnifiedQuantizationEngine \
-                     (pending P8 per TURBOQUANT_LLD_2026_05_30)",
+                    "TurboQuant has lifecycle=ReadTime; UnifiedQuantizationEngine::quantize \
+                     is the WriteTime seam. Switch on QuantizationMethod::lifecycle() and \
+                     route through TurboQuantStoreRegistry::get_or_create(...).add() instead. \
+                     See ADR-021 §\"Authority mode\".",
                 )
             }
         }
@@ -1827,10 +1839,17 @@ impl UnifiedQuantizationEngine {
                 }
             }
             Some(QuantizationLevel::Custom(_)) => f32::INFINITY,
-            // TurboQuant distance must go through `turboquant::kernel::search`
-            // (see P4); the legacy quantize-then-distance pipeline above
-            // doesn't know how to score TurboQuant codes. Surface as
-            // unsupported until P8 routes it.
+            // TurboQuant is `lifecycle = ReadTime`: scoring lives in the
+            // modality crate's SIMD kernel (`proximadb_vector::quantization::
+            // turboquant::kernel::search`), invoked via
+            // `src/index/turboquant_bridge.rs::search_with_candidate_set`.
+            // The sync code path here is the legacy "quantize-then-distance"
+            // shape that read-time methods don't fit. Routing through this
+            // arm always indicates an upstream missed `lifecycle()` switch;
+            // returning `f32::INFINITY` (the same sentinel `Custom` uses)
+            // pushes such a vector to the bottom of any heap-ordered top-k
+            // — bug-loud but not crash-loud, since this arm runs on the
+            // hot scoring path.
             #[cfg(feature = "experimental-turboquant")]
             Some(QuantizationLevel::TurboQuant(_)) => f32::INFINITY,
         }
@@ -1884,14 +1903,23 @@ impl UnifiedQuantizationEngine {
                 // Custom dequantization using cached parameters
                 self.dequantize_custom(&quantized_vector.data, c)
             }
-            // TurboQuant codes are not dequantizable through the legacy
-            // path — they live in the `proximadb_vector::quantization::turboquant`
-            // module's own scoring kernel. Surface as unsupported here;
-            // P8 wires the proper dispatch.
+            // TurboQuant codes are intentionally non-invertible per LLD
+            // §"Locked Type Signatures": the RaBitQ-style per-vector length
+            // renormalization is a lossy projection that can't be reversed
+            // to the original FP32 vector. Any caller that needs the
+            // original vector must read it from the canonical
+            // `ProximaRecord` (the authoritative source — see ADR-021
+            // §"Repair source"), not via a dequantize round-trip.
+            //
+            // This arm is therefore a structured "never satisfiable"
+            // error — the typed sentinel lets a future router fail loudly
+            // on misroute without losing the explanation.
             #[cfg(feature = "experimental-turboquant")]
             Some(QuantizationLevel::TurboQuant(_)) => anyhow::bail!(
-                "TurboQuant codes cannot be dequantized through UnifiedQuantizationEngine \
-                 (pending P8 per TURBOQUANT_LLD_2026_05_30)",
+                "TurboQuant codes are non-invertible (RaBitQ length-renorm is lossy by \
+                 design — TURBOQUANT_LLD §\"Locked Type Signatures\"). Read the original \
+                 vector from the canonical ProximaRecord (ADR-021 §\"Repair source\") \
+                 instead of routing through dequantize_sync.",
             ),
         }
     }

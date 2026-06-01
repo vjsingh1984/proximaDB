@@ -10,6 +10,8 @@ pub mod quantization_engine;
 pub mod selection;
 pub mod smart_defaults;
 pub mod storage_engine;
+#[cfg(feature = "experimental-turboquant")]
+pub mod turboquant_store_registry;
 pub mod types;
 
 // Re-export low-dependency quantization modules from vector modality during Phase 6 migration.
