@@ -360,6 +360,7 @@ rand_distr = "0.4"  # For generating realistic probability distributions
 
 # Cryptographic hashing
 sha2 = "0.10"
+md-5 = "0.10"  # Content-MD5 for the S3 filesystem backend (crate lib name is `md5`)
 hkdf = "0.12"  # Key derivation function
 aes-gcm = "0.10"  # AEAD encryption for field-level encryption
 
