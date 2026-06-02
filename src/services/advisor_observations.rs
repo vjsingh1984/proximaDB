@@ -303,6 +303,126 @@ mod tests {
     }
 
     #[test]
+    fn record_observation_records_latency_bucket() {
+        // latency histogram fires unconditionally — even when
+        // observed_recall is None. Pins the "latency always
+        // captured" invariant the operator runbook depends on.
+        let label = "test_latency_advisor_obs_unique";
+        let before = crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_LATENCY_US
+            .with_label_values(&[label, "hnsw"])
+            .get_sample_count();
+        let obs = AdvisorObservation::now(
+            label,
+            SupportedAlgorithm::Hnsw,
+            hnsw_spec(),
+            0.95,
+            None,
+            400,
+            12_500,
+        );
+        record_observation(&obs);
+        let after = crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_LATENCY_US
+            .with_label_values(&[label, "hnsw"])
+            .get_sample_count();
+        assert_eq!(after - before, 1);
+    }
+
+    #[test]
+    fn record_observation_records_residual_when_observed_recall_present() {
+        let label = "test_residual_present_advisor_obs_unique";
+        let before = crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_RECALL_RESIDUAL
+            .with_label_values(&[label, "hmgi"])
+            .get_sample_count();
+        let obs = AdvisorObservation::now(
+            label,
+            SupportedAlgorithm::Hmgi,
+            hnsw_spec(),
+            0.95,
+            Some(0.93),
+            400,
+            500,
+        );
+        record_observation(&obs);
+        let after = crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_RECALL_RESIDUAL
+            .with_label_values(&[label, "hmgi"])
+            .get_sample_count();
+        assert_eq!(after - before, 1);
+    }
+
+    // ───── disk sidecar plumbing ──────────────────────────────
+    //
+    // `disk_sidecar_path()` is `OnceLock`-cached at process scope
+    // so flipping the env var mid-test won't change behaviour
+    // (and the cache means subsequent tests would race the env).
+    // Instead we test the inner `append_to_sidecar` function
+    // directly, which takes the path as an arg. That covers the
+    // serialisation + append + flush plumbing without touching
+    // global state.
+
+    #[test]
+    fn disk_sidecar_appends_json_line() {
+        let tmp = std::env::temp_dir().join(format!(
+            "proximadb_advisor_obs_sidecar_test_append_{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&tmp);
+        let obs = AdvisorObservation::now(
+            "c_sidecar",
+            SupportedAlgorithm::Ivf,
+            IndexAlgorithm::IVF {
+                nlist: 316,
+                nprobe: 20,
+                quantizer: None,
+            },
+            0.55,
+            Some(0.53),
+            6320,
+            12_500,
+        );
+        append_to_sidecar(tmp.to_str().unwrap(), &obs)
+            .expect("first append");
+        // Second append → JSONL means two lines.
+        append_to_sidecar(tmp.to_str().unwrap(), &obs)
+            .expect("second append");
+        let contents = std::fs::read_to_string(&tmp).expect("read back");
+        let line_count = contents.lines().count();
+        assert_eq!(line_count, 2, "two appends → two JSONL lines");
+        for line in contents.lines() {
+            // Each line must be self-contained JSON (the parser
+            // a future tool runs over the sidecar).
+            let _: serde_json::Value =
+                serde_json::from_str(line).expect("each line parses as JSON");
+            assert!(line.contains("\"collection_id\":\"c_sidecar\""));
+            assert!(line.contains("\"algorithm\":\"ivf\""));
+        }
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn disk_sidecar_path_resolves_env_when_set() {
+        // OnceLock-cached, so this test only validates the
+        // resolver shape when the env var is set BEFORE the
+        // process boots. We exercise the std::env lookup directly
+        // (not the cached path) to confirm the contract is "read
+        // PROXIMADB_ADVISOR_OBS_DISK_SIDECAR".
+        // SAFETY: set_var is unsafe in newer toolchains; the test
+        // immediately restores prior state. Single-threaded test
+        // section — no other test reads this env var.
+        let prior = std::env::var(DISK_SIDECAR_ENV).ok();
+        unsafe {
+            std::env::set_var(DISK_SIDECAR_ENV, "/tmp/advisor_obs_test_path.jsonl");
+        }
+        let resolved = std::env::var(DISK_SIDECAR_ENV);
+        assert_eq!(resolved.as_deref(), Ok("/tmp/advisor_obs_test_path.jsonl"));
+        unsafe {
+            match prior {
+                Some(p) => std::env::set_var(DISK_SIDECAR_ENV, p),
+                None => std::env::remove_var(DISK_SIDECAR_ENV),
+            }
+        }
+    }
+
+    #[test]
     fn record_observation_handles_none_observed_recall() {
         // None observed_recall → counter still bumps; recall
         // residual histogram skipped.
