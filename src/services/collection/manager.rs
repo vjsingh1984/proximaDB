@@ -118,6 +118,22 @@ pub struct CollectionService {
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
     /// Optional RBAC enforcer for role-based access control
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
+
+    /// Per-collection TurboQuant store registry (Phase P — Quantization
+    /// Trait Convergence Plan). When present, `create_collection` with
+    /// `enable_turboquant=true` registers the per-collection store
+    /// immediately (no first-search latency hit) via
+    /// `registry.get_or_create(...)`. When absent (default test paths
+    /// + non-TurboQuant deployments), the create-time block falls back
+    /// to logging-only behavior so existing fixtures keep working.
+    ///
+    /// Same `Arc<dyn>` instance lives on `SharedServices.turboquant_registry`
+    /// — Phase P's hoist in `SharedServices::new` ensures the create-time
+    /// wire and the boot-time hydration share one map.
+    #[cfg(feature = "experimental-turboquant")]
+    turboquant_registry: Option<
+        Arc<dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry>,
+    >,
 }
 
 impl CollectionService {
@@ -150,7 +166,31 @@ impl CollectionService {
             catalog_manager: None,
             tenant_manager: None, // Will be set via with_tenant_manager()
             rbac_enforcer: None,  // Will be set via with_rbac_enforcer()
+            #[cfg(feature = "experimental-turboquant")]
+            turboquant_registry: None, // Will be set via with_turboquant_registry()
         })
+    }
+
+    /// Attach a TurboQuant store registry (Phase P — Quantization Trait
+    /// Convergence Plan). When set, `create_collection` with
+    /// `enable_turboquant=true` registers the per-collection store
+    /// immediately via `registry.get_or_create(...)`. Mirrors the
+    /// `with_catalog_manager` pattern below.
+    ///
+    /// Production wiring: `SharedServices::new` hoists the registry
+    /// construction (Phase P Site 2) and threads the same `Arc<dyn>`
+    /// instance through here. Sharing one `Arc` means create-time
+    /// registrations land in the same map the boot-time hydration loop
+    /// populates.
+    #[cfg(feature = "experimental-turboquant")]
+    pub fn with_turboquant_registry(
+        mut self,
+        registry: Arc<
+            dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry,
+        >,
+    ) -> Self {
+        self.turboquant_registry = Some(registry);
+        self
     }
 
     /// Attach the shared xCatalog manager.
@@ -641,30 +681,31 @@ impl CollectionService {
             }
         }
 
-        // Phase N — Quantization Trait Convergence Plan: operator opt-in
-        // for TurboQuant. When the SDK / handler sets
-        // `quantization.enable_turboquant = true` and the server build has
-        // `experimental-turboquant` enabled, three things happen here:
+        // Phase N (opt-in plumbing) + Phase P (create-time register) —
+        // Quantization Trait Convergence Plan. When the SDK / handler
+        // sets `quantization.enable_turboquant = true`:
         //
-        // 1. Log a load-bearing structured event so operator dashboards
-        //    see the opt-in took effect (regardless of whether downstream
-        //    catalog persistence has landed).
-        // 2. Surface the operator-visible default that downstream
-        //    consumers will materialize: `bit_width=4`, `tq_plus`
-        //    calibration, `rotation_seed` derived from the collection id
-        //    via the same FNV-1a hash the foundation crate uses (so the
-        //    runtime store, the EXPLAIN payload, and any future catalog
-        //    row all refer to the same seed — ADR-021 §"Authority mode").
-        // 3. On `cfg(experimental-turboquant)` builds: the
-        //    `EmbeddingPrecisionPolicy::with_turboquant_for_collection`
-        //    builder is the canonical construction path for downstream
-        //    catalog persistence (Phase E). Catalog wiring is a follow-up
-        //    that consumes the policy struct; this commit lands the
-        //    opt-in plumbing.
+        // 1. On `cfg(experimental-turboquant)` builds with a registry
+        //    attached: call `registry.get_or_create(...)` so the
+        //    per-collection TurboQuant store is registered NOW. The first
+        //    search reaches the kernel instead of a silent full-precision
+        //    fallback. Failures are logged but DO NOT abort collection
+        //    creation (Phase O "log + continue" pattern — registry
+        //    transient errors must not block the catalog write).
+        // 2. On `cfg(experimental-turboquant)` builds without a registry
+        //    (test fixtures + paths constructed via `CollectionService::new`
+        //    without the builder): emit the Phase N structured event so
+        //    operator dashboards still see the intent.
+        // 3. On builds without the feature: emit a `warn!` so silent
+        //    drops never go unnoticed.
         //
-        // Builds without the feature silently ignore the flag — same
-        // conservative behavior as `enable_binary`/`enable_pq` on builds
-        // that don't compile the relevant kernels.
+        // Defaults surfaced (per ADR-021 §"Authority mode"):
+        //   - `bit_width = 4`
+        //   - `calibration_mode = tq_plus`
+        //   - `rotation_seed = derive_rotation_seed(&collection_name)` —
+        //     same FNV-1a hash every other Phase-A→O surface uses, so
+        //     the runtime store, the EXPLAIN payload, and any future
+        //     catalog row all agree on the per-collection seed.
         let opt_in = enriched_config
             .quantization
             .as_ref()
@@ -673,15 +714,58 @@ impl CollectionService {
         if opt_in {
             #[cfg(feature = "experimental-turboquant")]
             {
+                use proximadb_quantization_types::CalibrationMode;
                 let seed = proximadb_quantization_types::derive_rotation_seed(&config.name);
-                tracing::info!(
-                    target: "proximadb::turboquant::opt_in",
-                    collection = %config.name,
-                    bit_width = 4u8,
-                    calibration_mode = "tq_plus",
-                    rotation_seed = format!("{:#x}", seed),
-                    "Phase N opt-in: TurboQuant registered for collection",
-                );
+                let bit_width: u8 = 4;
+                if let Some(registry) = &self.turboquant_registry {
+                    match registry
+                        .get_or_create(
+                            &config.name,
+                            config.dimension as usize,
+                            bit_width,
+                            CalibrationMode::TqPlus,
+                            seed,
+                        )
+                        .await
+                    {
+                        Ok(_store) => {
+                            tracing::info!(
+                                target: "proximadb::turboquant::opt_in",
+                                collection = %config.name,
+                                bit_width,
+                                calibration_mode = "tq_plus",
+                                rotation_seed = format!("{:#x}", seed),
+                                "Phase P opt-in: TurboQuant store registered for new collection",
+                            );
+                        }
+                        Err(e) => {
+                            // Log + continue. Collection-create must NOT
+                            // fail just because the registry hit an
+                            // error — boot-time hydration recovers on
+                            // next restart, and the next search retries
+                            // `get_or_create` lazily.
+                            tracing::warn!(
+                                target: "proximadb::turboquant::opt_in",
+                                collection = %config.name,
+                                error = %e,
+                                "Phase P opt-in: get_or_create failed; collection will fall \
+                                 back to full-precision scoring until next boot",
+                            );
+                        }
+                    }
+                } else {
+                    // Registry not attached (test path). Keep the Phase
+                    // N logging-only behavior so existing fixtures don't
+                    // break — the operator-visible intent still surfaces.
+                    tracing::info!(
+                        target: "proximadb::turboquant::opt_in",
+                        collection = %config.name,
+                        bit_width,
+                        calibration_mode = "tq_plus",
+                        rotation_seed = format!("{:#x}", seed),
+                        "Phase N opt-in (no registry attached): TurboQuant registered for collection",
+                    );
+                }
             }
             #[cfg(not(feature = "experimental-turboquant"))]
             {

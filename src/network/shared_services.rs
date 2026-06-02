@@ -390,15 +390,96 @@ impl SharedServices {
             }
         }
 
-        let collection_service = Arc::new(
-            CollectionService::new(metadata_backend, storage_config.clone())
-                .await?
-                .with_catalog_manager(catalog_manager.clone()),
+        // Phase P (Quantization Trait Convergence Plan): hoist the
+        // TurboQuant store registry construction to BEFORE the
+        // `collection_service` is built, so the SAME `Arc<dyn>` instance
+        // can flow into:
+        //   1. `CollectionService::with_turboquant_registry()` — the
+        //      create-time wire (Phase P Site 1).
+        //   2. The boot-time hydration loop below — the boot-time wire
+        //      (Phase P Site 2).
+        //   3. The `SharedServices` struct literal at the end of `new()`
+        //      — the exposed-to-consumers slot (Phase H).
+        // Sharing one `Arc` means create-time registrations land in the
+        // same map the boot hydration populated.
+        #[cfg(feature = "experimental-turboquant")]
+        let turboquant_registry: Arc<
+            dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry,
+        > = Arc::new(
+            crate::compute::quantization::turboquant_store_registry::InMemoryTurboQuantStoreRegistry::new(),
         );
+
+        let collection_service = {
+            let mut cs = CollectionService::new(metadata_backend, storage_config.clone())
+                .await?
+                .with_catalog_manager(catalog_manager.clone());
+            #[cfg(feature = "experimental-turboquant")]
+            {
+                cs = cs.with_turboquant_registry(turboquant_registry.clone());
+            }
+            Arc::new(cs)
+        };
         debug!("✅ SharedServices: CollectionService created successfully");
 
         // Collection service will be injected into StorageEngine by ProximaDB::new
         info!("✅ SharedServices: Collection service created for injection into StorageEngine");
+
+        // Phase P Site 2 — boot-time hydration of the TurboQuant store
+        // registry. After a restart, every existing collection whose
+        // proto QuantizationConfig set `enable_turboquant=true` needs
+        // its store re-registered so the first search reaches the
+        // kernel instead of a silent full-precision fallback. Iterate
+        // the existing collection list, project each collection's
+        // proto into a `TurboQuantHydrationRow`, and drive the Phase O
+        // `hydrate_registry_from_policy_rows` helper.
+        //
+        // Failures are logged and the loop continues — a single bad
+        // collection MUST NOT block startup. The helper's per-row
+        // "log + continue" contract (Phase O) handles the registry
+        // side; we mirror it here for the catalog lookup side.
+        #[cfg(feature = "experimental-turboquant")]
+        {
+            use crate::compute::quantization::turboquant_store_registry::{
+                TurboQuantHydrationRow, hydrate_registry_from_policy_rows,
+            };
+            let collections = collection_service
+                .list_collections()
+                .await
+                .unwrap_or_default();
+            let mut rows: Vec<TurboQuantHydrationRow> = Vec::new();
+            for c in &collections {
+                match collection_service.native_quantization_config(&c.id).await {
+                    Ok(Some(qcfg)) if qcfg.enable_turboquant.unwrap_or(false) => {
+                        let seed = proximadb_quantization_types::derive_rotation_seed(&c.id);
+                        rows.push(TurboQuantHydrationRow {
+                            collection_id: c.id.clone(),
+                            dim: c.dimension as usize,
+                            bit_width: 4,
+                            calibration_mode: "tq_plus".to_string(),
+                            rotation_seed: seed,
+                        });
+                    }
+                    Ok(_) => {} // Non-TurboQuant collection — silent skip.
+                    Err(e) => tracing::warn!(
+                        target: "proximadb::turboquant::hydrate",
+                        collection_id = %c.id,
+                        error = %e,
+                        "Phase P boot hydration: native_quantization_config lookup failed; skipping",
+                    ),
+                }
+            }
+            if !rows.is_empty() {
+                let attempted = rows.len();
+                let hydrated =
+                    hydrate_registry_from_policy_rows(turboquant_registry.as_ref(), &rows).await;
+                tracing::info!(
+                    target: "proximadb::turboquant::hydrate",
+                    attempted,
+                    hydrated,
+                    "Phase P boot hydration: TurboQuant stores re-registered from catalog",
+                );
+            }
+        }
 
         // 🚀 Create VectorOperationsService directly for 40-60% performance improvement
         // Use WAL config from TOML configuration
@@ -1720,10 +1801,16 @@ impl SharedServices {
                 // catalog. The trait-object widening hides the concrete
                 // `InMemoryTurboQuantStoreRegistry` so a future swap to a
                 // distributed impl (Phase F4b) is a single-line change.
+                //
+                // Phase P: this slot reuses the SAME registry instance
+                // that was hoisted ~1400 lines above and threaded into
+                // `CollectionService::with_turboquant_registry()` and
+                // the boot-time hydration loop. All three consumers
+                // (create-time wire, boot-time hydration, downstream
+                // search dispatch) share one map — see Phase P design
+                // rationale §"Why hoist the registry construction".
                 #[cfg(feature = "experimental-turboquant")]
-                turboquant_registry: Some(Arc::new(
-                    crate::compute::quantization::turboquant_store_registry::InMemoryTurboQuantStoreRegistry::new(),
-                )),
+                turboquant_registry: Some(turboquant_registry),
             },
             collection_service,
         ))
