@@ -134,30 +134,18 @@ impl FileSystem for AzureBlobFileSystem {
         if length == 0 {
             return Ok(Vec::new());
         }
-        let (container, blob) = Self::parse(path)?;
-        let client = self.service()?.container_client(container).blob_client(blob);
-        // azure's `.range()` takes `impl Into<Range>`; a std exclusive range
-        // [offset, offset+length) converts directly. `GetBlobBuilder` is not an
-        // IntoFuture, so `.into_stream()` is required; read pages only until the
-        // requested length is satisfied. Combined with a fresh client per call
-        // (see `service()`), this avoids the connection-reuse retry storm.
-        let mut stream = client.get().range(offset..(offset + length)).into_stream();
-        let want = length as usize;
-        let mut out = Vec::with_capacity(want);
-        while out.len() < want {
-            let Some(value) = stream.next().await else {
-                break;
-            };
-            let response = value.map_err(|e| Self::net("Azure get range", e))?;
-            let body = response
-                .data
-                .collect()
-                .await
-                .map_err(|e| Self::net("Azure body", e))?;
-            out.extend_from_slice(&body);
-        }
-        out.truncate(want);
-        Ok(out)
+        // KNOWN LIMITATION: azure_storage_blobs 0.19's ranged GET
+        // (`.get().range(..).into_stream()`) reliably hangs into an ~80s retry
+        // loop against Azurite (the cold reads pass, the next ranged read fails;
+        // root cause is in the pre-GA SDK's transport, not our code). The GA
+        // `azure_storage_blob` crate fixes ranged downloads but is Entra-ID-only,
+        // so it can't authenticate to Azurite (shared-key). Until that SDK gains
+        // shared-key support (or we test against real Azure), read the whole blob
+        // and slice — correct results; not bandwidth-optimal for large blobs.
+        let whole = self.read(path).await?;
+        let start = (offset as usize).min(whole.len());
+        let end = ((offset + length) as usize).min(whole.len());
+        Ok(whole[start..end].to_vec())
     }
 
     async fn write(&self, path: &str, data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
