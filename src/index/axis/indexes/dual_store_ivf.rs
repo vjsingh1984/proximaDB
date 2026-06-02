@@ -3221,6 +3221,134 @@ mod tests {
         }
     }
 
+    /// Loads a real-vector corpus from a `[u32 n][u32 dim][f32; n·dim]`
+    /// little-endian file (the format the arxive-export script writes). Returns
+    /// `(records, dim)`. Used only by the env-gated real-corpus measurement.
+    fn load_f32_corpus(path: &str) -> std::io::Result<(Vec<(String, Vec<f32>)>, usize)> {
+        let bytes = std::fs::read(path)?;
+        let rd_u32 = |b: &[u8]| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize;
+        let n = rd_u32(&bytes[0..4]);
+        let dim = rd_u32(&bytes[4..8]);
+        let mut out = Vec::with_capacity(n);
+        let mut off = 8;
+        for i in 0..n {
+            let mut v = Vec::with_capacity(dim);
+            for _ in 0..dim {
+                v.push(f32::from_le_bytes([
+                    bytes[off],
+                    bytes[off + 1],
+                    bytes[off + 2],
+                    bytes[off + 3],
+                ]));
+                off += 4;
+            }
+            out.push((format!("r{i}"), v));
+        }
+        Ok((out, dim))
+    }
+
+    /// ADR-023 T-F real-corpus rerun (R4 go/no-go). The synthetic floors
+    /// (separated ~0.51, interleaved peak ~0.31) sit below a comfortably-
+    /// serveable bar; this measures the *fixed* R3-bis estimator on REAL
+    /// embeddings (arxive bge-small, 384-d, unit-norm) to decide whether 1-bit
+    /// cold serving clears the bar or the R4 2-bit MID tier is needed.
+    ///
+    /// `#[ignore]` + env-gated: set `PROXIMADB_REAL_CORPUS` to a `[n][dim][f32…]`
+    /// file (see the arxive export) and run with `--ignored --nocapture`. Skips
+    /// cleanly when the env var is unset (so it is inert in CI). The data file is
+    /// local and never committed.
+    #[tokio::test]
+    #[ignore = "needs a local real-vector corpus via PROXIMADB_REAL_CORPUS"]
+    async fn cold_stage1_recall_on_real_corpus() {
+        let _ = proximadb_hardware::hardware_capabilities();
+        let path = match std::env::var("PROXIMADB_REAL_CORPUS") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("skip: set PROXIMADB_REAL_CORPUS to a real-vector corpus file");
+                return;
+            }
+        };
+        let (data, dim) = load_f32_corpus(&path).expect("load real corpus");
+        let n_clusters = 64; // ~sqrt(8000); ~125 vectors/cluster
+        println!(
+            "ADR-023 T-F real corpus: {} vectors, dim={dim}, n_clusters={n_clusters}",
+            data.len()
+        );
+
+        let mut full =
+            UnifiedIvfIndex::new("real_cold".to_string(), binary_ivf_config(dim, n_clusters))
+                .unwrap();
+        full.train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            full.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let cold_tier = full.export_cold_tier().await.unwrap();
+        let mut cold =
+            UnifiedIvfIndex::new("real_cold".to_string(), cold_tier.config.to_config()).unwrap();
+        cold.restore_cold_only(cold_tier).await.unwrap();
+        assert_eq!(cold.serving_state(), IvfServingState::ColdBinaryOnly);
+
+        // Queries: jitter corpus vectors slightly so the exact top-k are genuine
+        // neighbours (not a trivial self-match), as in the synthetic tests.
+        let k = 10;
+        let n_queries = 150usize;
+        let queries: Vec<Vec<f32>> = {
+            let mut qstate: u64 = 0xA5A5_5A5A_1234_9876;
+            let mut jitter = move || {
+                qstate = qstate.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut z = qstate;
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                z ^= z >> 31;
+                ((z >> 40) as f32 / (1u32 << 24) as f32) * 2.0 - 1.0
+            };
+            (0..n_queries)
+                .map(|qi| {
+                    let base = &data[(qi * 53) % data.len()].1;
+                    base.iter().map(|&x| x + jitter() * 0.02).collect()
+                })
+                .collect()
+        };
+
+        // Exact ground truth is the expensive part (brute force over the whole
+        // corpus); compute it ONCE per query, then sweep n_probe against it.
+        let mut truths: Vec<std::collections::HashSet<String>> = Vec::with_capacity(queries.len());
+        for query in &queries {
+            let exact = full.search(query, k, Some(n_clusters)).await.unwrap();
+            truths.push(exact.into_iter().map(|(id, _)| id).collect());
+        }
+
+        let probes = [1usize, 2, 4, 8, 16];
+        let mut recalls: Vec<f64> = Vec::with_capacity(probes.len());
+        for &probe in &probes {
+            let mut total = 0.0f64;
+            for (query, truth) in queries.iter().zip(&truths) {
+                let stage1 = cold
+                    .search_with_binary_acceleration(query, k, Some(probe))
+                    .await
+                    .unwrap();
+                let hit = stage1.iter().filter(|(id, _)| truth.contains(id)).count();
+                total += hit as f64 / k as f64;
+            }
+            recalls.push(total / n_queries as f64);
+        }
+        println!(
+            "ADR-023 T-F real-corpus Stage-1-only recall@{k} over n_probe {probes:?} = {recalls:?}"
+        );
+        // No hard floor assertion (real-data measurement); only sanity that the
+        // cold route returns results and never collapses below the single probe.
+        let r1 = recalls[0];
+        assert!(r1 > 0.0, "real-corpus cold recall@1 should be positive");
+        for (probe, recall) in probes.iter().zip(&recalls) {
+            assert!(
+                *recall >= r1 - 0.05,
+                "real-corpus recall {recall:.3} @ n_probe={probe} collapsed below \
+                 the single-probe baseline {r1:.3} (estimator regression?)"
+            );
+        }
+    }
+
     // ─── TD-087 Slice B: serialization round-trip ───────────────────────────
 
     #[tokio::test]
