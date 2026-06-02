@@ -174,17 +174,18 @@ use tracing::{debug, error, info, trace};
 use url::Url;
 
 pub mod atomic_strategy;
-pub mod auth;
 // intelligent_filesystem removed - using UnifiedCachingFilesystem instead
 pub mod local;
-pub mod manager;
-// NOTE (ADR-023): the legacy s3.rs/azure.rs/gcs.rs are NOT declared — they are
-// INCOMPLETE clients (hardcoded AWS URLs, "simplified" invalid SigV4, missing
-// methods), not real backends. Instead, real cloud backends are built on the
-// official SDKs and gated behind their features (the SDKs handle signing,
-// endpoints, and path-style — incl. MinIO/LocalStack for S3):
+// Cloud object-store backends, built on the official SDKs (which handle signing,
+// custom endpoints, and path-style — incl. MinIO/Azurite/fake-gcs emulators) and
+// gated behind their features. These replace the deleted legacy s3.rs/azure.rs/
+// gcs.rs/auth.rs/manager.rs, which were dead, incomplete, hand-rolled clients.
 #[cfg(feature = "aws")]
 pub mod aws_s3;
+#[cfg(feature = "azure")]
+pub mod azure_blob;
+#[cfg(feature = "gcp")]
+pub mod gcs_store;
 pub mod scheme_validation;
 pub mod write_strategy;
 // zero_copy_filesystem removed - functionality integrated into UnifiedCachingFilesystem
