@@ -889,6 +889,7 @@ mod tests {
             binary_threshold: Some(0.5),
             int8_threshold: Some(0.3),
             pq_threshold: Some(0.1),
+            enable_turboquant: Some(false),
         };
 
         let stages = pipeline.determine_stages(&quantization_config);

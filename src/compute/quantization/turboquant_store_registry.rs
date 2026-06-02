@@ -194,6 +194,107 @@ impl TurboQuantStoreRegistry for InMemoryTurboQuantStoreRegistry {
     }
 }
 
+/// Hydrate a TurboQuant store registry from a list of
+/// `(collection_id, dim, DerivedQuantizationLevel::TurboQuant{...})`
+/// tuples — Phase O (Quantization Trait Convergence Plan).
+///
+/// This is the canonical boot-time / catalog-replay path: the catalog
+/// hands the registry every TurboQuant row it knows about; the
+/// registry pre-creates stores so the first search on each collection
+/// doesn't pay the `get_or_create` cost.
+///
+/// Per-row errors are logged but do NOT abort the loop — a single
+/// malformed catalog row (wrong dim, conflicting seed) must not block
+/// every other collection from coming online. The returned count is
+/// the number of rows successfully hydrated; subtract from
+/// `rows.len()` for the failure count.
+///
+/// Idempotent: rows that match an already-registered store are
+/// silently accepted (via `get_or_create`'s caching). Rows that
+/// mismatch the registered store's config trigger the same loud
+/// `bail!` `get_or_create` always does — which is logged but doesn't
+/// abort.
+///
+/// Why a free function rather than a method on the trait? The trait
+/// stays focused on the per-collection get/get_or_create/remove
+/// surface; bulk hydration is orchestration code that composes those
+/// primitives. Future distributed backends will implement the same
+/// trait without needing a bulk-specific method.
+pub async fn hydrate_registry_from_policy_rows(
+    registry: &dyn TurboQuantStoreRegistry,
+    rows: &[TurboQuantHydrationRow],
+) -> usize {
+    let mut hydrated = 0usize;
+    for row in rows {
+        let cal_mode = match row.calibration_mode.as_str() {
+            "tq_plus" => CalibrationMode::TqPlus,
+            "identity" => CalibrationMode::Identity,
+            other => {
+                tracing::warn!(
+                    target: "proximadb::turboquant::hydrate",
+                    collection_id = %row.collection_id,
+                    calibration_mode = %other,
+                    "Phase O hydration: unknown calibration mode in catalog row; \
+                     skipping (matches DerivedQuantizationLevel::TurboQuant snake_case shape)",
+                );
+                continue;
+            }
+        };
+
+        match registry
+            .get_or_create(
+                &row.collection_id,
+                row.dim,
+                row.bit_width,
+                cal_mode,
+                row.rotation_seed,
+            )
+            .await
+        {
+            Ok(_store) => {
+                tracing::info!(
+                    target: "proximadb::turboquant::hydrate",
+                    collection_id = %row.collection_id,
+                    dim = row.dim,
+                    bit_width = row.bit_width,
+                    calibration_mode = %row.calibration_mode,
+                    rotation_seed = format!("{:#x}", row.rotation_seed),
+                    "Phase O hydration: TurboQuant store registered for collection",
+                );
+                hydrated += 1;
+            }
+            Err(e) => {
+                // Log + continue — a single bad row must not abort
+                // the whole boot.
+                tracing::warn!(
+                    target: "proximadb::turboquant::hydrate",
+                    collection_id = %row.collection_id,
+                    error = %e,
+                    "Phase O hydration: get_or_create failed; collection will fall \
+                     back to full-precision scoring until the catalog row is repaired",
+                );
+            }
+        }
+    }
+    hydrated
+}
+
+/// Single-row input to [`hydrate_registry_from_policy_rows`]. Mirrors the
+/// shape of [`proximadb_catalog::embedding_precision_policy::
+/// DerivedQuantizationLevel::TurboQuant`] but uses only primitives so
+/// callers don't need a catalog dependency just to populate the input.
+///
+/// The catalog adapter that constructs these rows is the responsibility
+/// of the caller; this struct is the wire-stable contract.
+#[derive(Debug, Clone)]
+pub struct TurboQuantHydrationRow {
+    pub collection_id: String,
+    pub dim: usize,
+    pub bit_width: u8,
+    pub calibration_mode: String,
+    pub rotation_seed: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,6 +459,112 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(s.dim(), 32);
+        assert_eq!(r.registered_count(), 1);
+    }
+
+    // ----------------------------------------------------------------
+    // Phase O: hydrate_registry_from_policy_rows
+    // ----------------------------------------------------------------
+
+    fn row(id: &str, mode: &str) -> TurboQuantHydrationRow {
+        TurboQuantHydrationRow {
+            collection_id: id.to_string(),
+            dim: 64,
+            bit_width: 4,
+            calibration_mode: mode.to_string(),
+            rotation_seed: rng_seed(id),
+        }
+    }
+
+    #[tokio::test]
+    async fn hydration_empty_input_returns_zero() {
+        let r = InMemoryTurboQuantStoreRegistry::new();
+        let n = hydrate_registry_from_policy_rows(&r, &[]).await;
+        assert_eq!(n, 0);
+        assert_eq!(r.registered_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn hydration_populates_registry_for_each_row() {
+        let r = InMemoryTurboQuantStoreRegistry::new();
+        let rows = vec![row("col-1", "tq_plus"), row("col-2", "identity")];
+        let n = hydrate_registry_from_policy_rows(&r, &rows).await;
+        assert_eq!(n, 2);
+        assert_eq!(r.registered_count(), 2);
+        assert!(r.get("col-1").await.unwrap().is_some());
+        assert!(r.get("col-2").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn hydration_skips_unknown_calibration_mode_and_continues() {
+        // A bad row must NOT abort the whole hydration loop.
+        let r = InMemoryTurboQuantStoreRegistry::new();
+        let rows = vec![
+            row("col-good", "tq_plus"),
+            row("col-bad", "nonsense"), // unknown mode → skipped
+            row("col-also-good", "identity"),
+        ];
+        let n = hydrate_registry_from_policy_rows(&r, &rows).await;
+        assert_eq!(n, 2);
+        assert!(r.get("col-good").await.unwrap().is_some());
+        assert!(r.get("col-bad").await.unwrap().is_none());
+        assert!(r.get("col-also-good").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn hydration_is_idempotent_across_calls() {
+        // Calling the hydrator twice with the same input is a no-op on
+        // the registry (the second call's `get_or_create` hits the cache).
+        let r = InMemoryTurboQuantStoreRegistry::new();
+        let rows = vec![row("col-idem", "tq_plus")];
+        let _ = hydrate_registry_from_policy_rows(&r, &rows).await;
+        let count_after_first = r.registered_count();
+        let n = hydrate_registry_from_policy_rows(&r, &rows).await;
+        assert_eq!(n, 1, "second hydration must report success");
+        assert_eq!(
+            r.registered_count(),
+            count_after_first,
+            "idempotent: second hydration must not grow the registry",
+        );
+    }
+
+    #[tokio::test]
+    async fn hydration_logs_and_continues_on_config_drift() {
+        // A row whose dim conflicts with a pre-existing store is a
+        // catalog/state mismatch — the helper logs it and continues
+        // with the remaining rows; it MUST NOT abort.
+        let r = InMemoryTurboQuantStoreRegistry::new();
+        // Pre-register a dim=64 store for col-x.
+        let _ = r
+            .get_or_create(
+                "col-x",
+                64,
+                4,
+                CalibrationMode::Identity,
+                rng_seed("col-x"),
+            )
+            .await
+            .unwrap();
+        // Now hydrate with a dim=128 row for col-x (conflict) + a
+        // good row for col-y.
+        let mut bad = row("col-x", "identity");
+        bad.dim = 128;
+        let rows = vec![bad, row("col-y", "tq_plus")];
+        let n = hydrate_registry_from_policy_rows(&r, &rows).await;
+        assert_eq!(n, 1, "only col-y must succeed");
+        assert_eq!(r.registered_count(), 2);
+        assert!(r.get("col-y").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn hydration_works_through_dyn_trait_object() {
+        // Production wiring will pass `Arc<dyn TurboQuantStoreRegistry>`
+        // — verify the helper accepts the trait object the same way.
+        let r: Arc<dyn TurboQuantStoreRegistry> =
+            Arc::new(InMemoryTurboQuantStoreRegistry::new());
+        let rows = vec![row("col-dyn-hydrate", "tq_plus")];
+        let n = hydrate_registry_from_policy_rows(r.as_ref(), &rows).await;
+        assert_eq!(n, 1);
         assert_eq!(r.registered_count(), 1);
     }
 }
