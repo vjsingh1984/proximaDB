@@ -156,6 +156,14 @@ impl AuthTestServer {
             url: format!("file://{}", tmp_data.path().display()),
             ..Default::default()
         }];
+        // metadata_url defaults to `file://./metadata` — a path
+        // relative to the cargo working directory, NOT the test's
+        // tempdir. Without this override, every run shares the same
+        // metadata catalog and the collection name collides between
+        // runs ("create_collection returned no collection:
+        // error_code=Some(COLLECTION_EXISTS)").
+        config.storage.metadata_url =
+            format!("file://{}/metadata", tmp_data.path().display());
         config.storage.wal_config.write_buffer_directory =
             format!("file://{}/wal", tmp_data.path().display());
         config.security = Some(auth_config_with_dev_key());
