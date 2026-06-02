@@ -550,6 +550,25 @@ impl AxisManager {
                 directory,
             })) => {
                 let (dimension, n) = (index.dimension(), index.len());
+                // ADR-023 R3 (c): wire the on-probe warm source so queries during
+                // the cold-load window rerank exactly — fetching ONLY the probed
+                // (survivor) clusters' fp32 — instead of serving Stage-1-only
+                // Hamming. The eager background warm-apply below still runs to
+                // FullTwoStage; `add_fp32` is idempotent (keyed by id), so any
+                // overlap between an on-probe fetch and the background fill is
+                // harmless, and `fetched_clusters` dedups repeat on-probe reads.
+                let mut index = index;
+                if !directory.is_empty() {
+                    let dir_map = directory.iter().map(|e| (e.cluster_id, *e)).collect();
+                    index.set_warm_source(
+                        crate::index::axis::indexes::dual_store_ivf::RangedWarmSource {
+                            fs: fs.clone(),
+                            path: path_str.clone(),
+                            warm_base,
+                            directory: dir_map,
+                        },
+                    );
+                }
                 let Some(index_arc) =
                     self.install_loaded_ivf(collection_id, index, dimension, n).await
                 else {
