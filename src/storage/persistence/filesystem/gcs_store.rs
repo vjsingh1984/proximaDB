@@ -259,3 +259,40 @@ impl FileSystem for GcsFileSystem {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_accepts_gs_and_gcs_schemes() {
+        assert_eq!(
+            GcsFileSystem::parse("gs://bucket/obj.bin").unwrap(),
+            ("bucket".to_string(), "obj.bin".to_string())
+        );
+        assert_eq!(
+            GcsFileSystem::parse("gcs://bucket/a/b.bin").unwrap(),
+            ("bucket".to_string(), "a/b.bin".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_rejects_non_gcs_and_incomplete() {
+        assert!(GcsFileSystem::parse("s3://b/k").is_err());
+        assert!(GcsFileSystem::parse("gs://bucket-only").is_err());
+        assert!(GcsFileSystem::parse("gs://b/").is_err());
+        assert!(GcsFileSystem::parse("gs:///obj").is_err());
+    }
+
+    #[tokio::test]
+    async fn anonymous_endpoint_config_builds_a_client() {
+        // fake-gcs shape: anonymous + custom endpoint must construct without auth I/O.
+        let fs = GcsFileSystem::new(GcsConfig {
+            endpoint_url: Some("http://127.0.0.1:4443".into()),
+            anonymous: true,
+            project_id: None,
+        })
+        .await;
+        assert!(fs.is_ok(), "anonymous+endpoint client should build offline");
+    }
+}

@@ -263,3 +263,59 @@ impl FileSystem for AzureBlobFileSystem {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_accepts_all_azure_schemes() {
+        for path in [
+            "abfs://container/blob.bin",
+            "adls://container/blob.bin",
+            "az://container/blob.bin",
+            "azure://container/blob.bin",
+        ] {
+            assert_eq!(
+                AzureBlobFileSystem::parse(path).unwrap(),
+                ("container".to_string(), "blob.bin".to_string()),
+                "scheme failed: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_keeps_nested_blob_path() {
+        assert_eq!(
+            AzureBlobFileSystem::parse("abfs://c/a/b/c.bin").unwrap(),
+            ("c".to_string(), "a/b/c.bin".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_rejects_non_azure_and_incomplete() {
+        assert!(AzureBlobFileSystem::parse("s3://b/k").is_err());
+        assert!(AzureBlobFileSystem::parse("abfs://container-only").is_err());
+        assert!(AzureBlobFileSystem::parse("abfs://c/").is_err());
+        assert!(AzureBlobFileSystem::parse("abfs:///b").is_err());
+    }
+
+    #[test]
+    fn config_default_targets_emulator() {
+        let cfg = AzureBlobConfig::default();
+        assert_eq!(cfg.account, "devstoreaccount1");
+        assert!(cfg.use_emulator);
+    }
+
+    #[tokio::test]
+    async fn store_for_caches_per_container() {
+        let fs = AzureBlobFileSystem::new(AzureBlobConfig::default())
+            .await
+            .unwrap();
+        let a = fs.store_for("c1").unwrap();
+        let b = fs.store_for("c1").unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        let _ = fs.store_for("c2").unwrap();
+        assert_eq!(fs.stores.len(), 2);
+    }
+}

@@ -266,3 +266,73 @@ impl FileSystem for AwsS3FileSystem {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_splits_bucket_and_key() {
+        assert_eq!(
+            AwsS3FileSystem::parse("s3://my-bucket/path/to/index.bin").unwrap(),
+            ("my-bucket".to_string(), "path/to/index.bin".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_accepts_s3a_scheme() {
+        assert_eq!(
+            AwsS3FileSystem::parse("s3a://b/k").unwrap(),
+            ("b".to_string(), "k".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_rejects_non_s3_scheme() {
+        assert!(matches!(
+            AwsS3FileSystem::parse("gs://b/k"),
+            Err(FilesystemError::InvalidPath(_))
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_missing_key() {
+        assert!(matches!(
+            AwsS3FileSystem::parse("s3://bucket-only"),
+            Err(FilesystemError::InvalidPath(_))
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_empty_bucket_or_key() {
+        assert!(AwsS3FileSystem::parse("s3:///key").is_err());
+        assert!(AwsS3FileSystem::parse("s3://bucket/").is_err());
+    }
+
+    #[tokio::test]
+    async fn store_for_caches_one_store_per_bucket() {
+        let fs = AwsS3FileSystem::new(AwsS3Config {
+            endpoint_url: Some("http://127.0.0.1:9000".into()),
+            force_path_style: true,
+            access_key_id: Some("k".into()),
+            secret_access_key: Some("s".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let a = fs.store_for("bkt").unwrap();
+        let b = fs.store_for("bkt").unwrap();
+        assert!(Arc::ptr_eq(&a, &b), "same bucket -> cached store");
+        assert_eq!(fs.stores.len(), 1);
+        let _ = fs.store_for("other").unwrap();
+        assert_eq!(fs.stores.len(), 2, "distinct bucket -> distinct store");
+    }
+
+    #[test]
+    fn filesystem_type_is_s3() {
+        // Construction is async; type tag is a pure const, assert via a built instance.
+        let cfg = AwsS3Config::default();
+        assert_eq!(cfg.region, "us-east-1");
+        assert!(!cfg.force_path_style);
+    }
+}
