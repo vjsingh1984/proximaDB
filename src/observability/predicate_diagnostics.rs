@@ -75,6 +75,14 @@ pub struct PredicateDiagnostics {
     /// Set when a search served Stage-1-only (Hamming, no fp32 rerank) because
     /// the IVF index was still cold-loaded (ADR-023 T-E `ColdBinaryOnly`).
     cold_stage1_only: Mutex<bool>,
+    /// TurboQuant EXPLAIN hint payload (Phase J — Quantization Trait
+    /// Convergence Plan). Carries the `TurboQuantExplainHints` JSON value
+    /// recorded by `score_turboquant`. Read at the request boundary into
+    /// `SearchPlanHints.turboquant`, then propagated to `VectorHints` via
+    /// `VectorHints::from(&SearchPlanHints)` for the wire-facing EXPLAIN
+    /// payload. See `src/index/turboquant_bridge.rs` for the 9-field
+    /// schema.
+    turboquant_hints: Mutex<Option<serde_json::Value>>,
 }
 
 impl PredicateDiagnostics {
@@ -138,6 +146,32 @@ impl PredicateDiagnostics {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner()),
         )
+    }
+
+    /// Record TurboQuant EXPLAIN hints (Phase J/K — Quantization Trait
+    /// Convergence Plan). Last-writer-wins because a single request may
+    /// traverse multiple search stages with TurboQuant scoring, and the
+    /// most recent hints carry the actionable kernel-side info
+    /// (`blocks_skipped_by_mask`, `current_epoch`, etc.).
+    ///
+    /// Why last-writer (not first-writer like `shortfall`)? Predicate
+    /// shortfalls are one-shot events tied directly to user intent; a
+    /// later shortfall in a cascaded lookup is noise. TurboQuant hints
+    /// are a per-stage tracing report — the latest is the one a
+    /// post-mortem actually wants.
+    pub fn record_turboquant_hints(&self, hints: serde_json::Value) {
+        *self
+            .turboquant_hints
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(hints);
+    }
+
+    /// Atomically take the TurboQuant hints, leaving the container empty.
+    pub fn take_turboquant_hints(&self) -> Option<serde_json::Value> {
+        self.turboquant_hints
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
     }
 }
 
@@ -204,6 +238,26 @@ pub fn take_cold_stage1_only() -> bool {
     PREDICATE_DIAGNOSTICS
         .try_with(|d| d.take_cold_stage1_only())
         .unwrap_or(false)
+}
+
+/// Record TurboQuant EXPLAIN hints into the active diagnostics container
+/// (Phase J/K — Quantization Trait Convergence Plan). Silently no-ops
+/// outside an active [`scope`] — the structured tracing event emitted
+/// by `score_turboquant` remains the operator-visible signal in that
+/// case.
+pub fn record_turboquant_hints(hints: serde_json::Value) {
+    let _ = PREDICATE_DIAGNOSTICS.try_with(|d| {
+        d.record_turboquant_hints(hints);
+    });
+}
+
+/// Take and return the captured TurboQuant hints, if any. Returns `None`
+/// when there's no active scope OR no hints were recorded. Must be
+/// called inside the [`scope`] that wrapped the search.
+pub fn take_turboquant_hints() -> Option<serde_json::Value> {
+    PREDICATE_DIAGNOSTICS
+        .try_with(|d| d.take_turboquant_hints())
+        .unwrap_or(None)
 }
 
 #[cfg(test)]
