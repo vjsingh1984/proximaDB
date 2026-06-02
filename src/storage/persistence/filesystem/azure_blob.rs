@@ -13,7 +13,6 @@
 //! blob GET — the ADR-023 cold-load primitive.
 
 use async_trait::async_trait;
-use azure_core::request_options::Range;
 use azure_storage::StorageCredentials;
 use azure_storage_blobs::prelude::{BlobServiceClient, ClientBuilder};
 use futures::StreamExt;
@@ -126,8 +125,9 @@ impl FileSystem for AzureBlobFileSystem {
         }
         let (container, blob) = Self::parse(path)?;
         let client = self.service.container_client(container).blob_client(blob);
-        // azure_core::Range is [start, end) (end exclusive).
-        let mut stream = client.get().range(Range::new(offset, offset + length)).into_stream();
+        // azure's `.range()` takes `impl Into<Range>`; a std exclusive range
+        // [offset, offset+length) converts directly (no azure_core import needed).
+        let mut stream = client.get().range(offset..(offset + length)).into_stream();
         let mut out = Vec::with_capacity(length as usize);
         while let Some(value) = stream.next().await {
             let response = value.map_err(|e| Self::net("Azure get range", e))?;
