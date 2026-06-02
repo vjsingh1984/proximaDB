@@ -3498,7 +3498,14 @@ mod tests {
         assert_eq!(s1[0].0, "v0");
 
         // Apply the deferred WARM tier → FullTwoStage; exact search now works.
-        let warm = IndexSerializer::decode_warm_tier(loaded.warm.as_ref().unwrap()).unwrap();
+        // v3: decode via the per-cluster byte-directory, then flatten.
+        let warm_dir = loaded.metadata.warm_directory().unwrap();
+        let warm: Vec<(String, Vec<f32>)> =
+            IndexSerializer::decode_warm_clusters_dir(loaded.warm.as_ref().unwrap(), &warm_dir)
+                .unwrap()
+                .into_iter()
+                .flat_map(|(_, v)| v)
+                .collect();
         assert_eq!(warm.len(), data.len());
         loaded.index.restore_warm_tier(warm).unwrap();
         assert_eq!(loaded.index.serving_state(), IvfServingState::FullTwoStage);
@@ -3536,8 +3543,9 @@ mod tests {
                 .unwrap();
         let warm_bytes = loaded.warm.take().unwrap();
 
-        // WARM is split into per-cluster extents covering every vector.
-        let clusters = IndexSerializer::decode_warm_clusters(&warm_bytes).unwrap();
+        // WARM is split into per-cluster extents covering every vector (v3 dir).
+        let warm_dir = loaded.metadata.warm_directory().unwrap();
+        let clusters = IndexSerializer::decode_warm_clusters_dir(&warm_bytes, &warm_dir).unwrap();
         assert!(!clusters.is_empty(), "warm is grouped into >=1 cluster extent");
         let total: usize = clusters.iter().map(|(_, v)| v.len()).sum();
         assert_eq!(total, data.len(), "every vector lands in some cluster extent");
@@ -3556,6 +3564,71 @@ mod tests {
         assert_eq!(loaded.index.serving_state(), IvfServingState::FullTwoStage);
         let q = data[0].1.clone();
         assert_eq!(loaded.index.search(&q, 1, None).await.unwrap()[0].0, "v0");
+    }
+
+    #[tokio::test]
+    async fn warm_byte_directory_slices_each_cluster_exactly() {
+        // ADR-023 R3 (b): the v3 WARM byte-directory lets a loader slice exactly
+        // one cluster's fp32 out of the concatenated blob. Verify (1) each extent
+        // decodes to that cluster's vectors and the union covers every vector,
+        // (2) extents tile the WARM blob with no gaps/overlap, and (3) the
+        // absolute file-offset formula the ranged loader (Slice 2) will use lands
+        // on each chunk: `4 + header_len + cold_tier_bytes + extent.offset`.
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        use crate::index::axis::ColdPathLoadPolicy;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index = UnifiedIvfIndex::new("c_dir".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_dir").await.unwrap();
+
+        let loaded = IndexSerializer::load_ivf_with_policy(
+            &bytes,
+            ColdPathLoadPolicy::BinaryFirstThenRerank,
+        )
+        .await
+        .unwrap();
+        let dir = loaded
+            .metadata
+            .warm_directory()
+            .expect("v3 index carries a WARM byte-directory");
+        assert!(!dir.is_empty(), "directory has >=1 cluster extent");
+        let warm_bytes = loaded.warm.as_ref().unwrap();
+        let profile = loaded.metadata.cold_path_profile().unwrap();
+
+        // (1) Each extent decodes to its cluster's vectors; union covers all.
+        let mut seen = 0usize;
+        for ext in &dir {
+            let chunk = &warm_bytes[ext.offset as usize..(ext.offset + ext.len) as usize];
+            let vecs = IndexSerializer::decode_warm_cluster_chunk(chunk).unwrap();
+            assert!(!vecs.is_empty(), "non-empty cluster chunk");
+            seen += vecs.len();
+        }
+        assert_eq!(seen, data.len(), "directory covers every vector exactly once");
+
+        // (2) Extents tile the WARM blob contiguously (no gaps, no overlap).
+        let mut cursor = 0u64;
+        for ext in &dir {
+            assert_eq!(ext.offset, cursor, "extent starts where the previous ended");
+            cursor += ext.len;
+        }
+        assert_eq!(cursor, profile.warm_tier_bytes, "extents tile the WARM blob");
+
+        // (3) Absolute file-offset math addresses each chunk in the full file.
+        let header_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as u64;
+        let warm_start = 4 + header_len + profile.cold_tier_bytes;
+        for ext in &dir {
+            let start = (warm_start + ext.offset) as usize;
+            let chunk = &bytes[start..start + ext.len as usize];
+            let vecs = IndexSerializer::decode_warm_cluster_chunk(chunk).unwrap();
+            assert!(!vecs.is_empty(), "absolute-offset slice decodes a cluster");
+        }
     }
 
     #[tokio::test]

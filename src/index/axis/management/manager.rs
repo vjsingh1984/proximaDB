@@ -535,7 +535,7 @@ impl AxisManager {
         // the background to upgrade ColdBinaryOnly → FullTwoStage. Non-binary /
         // v1 indexes load fully (FullEager) as before.
         match IndexSerializer::load_ivf_cold_path(&bytes).await {
-            Ok(ColdLoadResult { index, metadata: _, warm }) => {
+            Ok(ColdLoadResult { index, metadata, warm }) => {
                 let dimension = index.dimension();
                 let n = index.len();
                 let cold_first = warm.is_some();
@@ -561,8 +561,17 @@ impl AxisManager {
                 // FullTwoStage flip takes the (instant) write lock.
                 if let Some(warm_bytes) = warm {
                     let coll = collection_id.to_string();
+                    // v3 indexes carry a WARM byte-directory; decode the deferred
+                    // bytes per-cluster via the directory, else the v2 whole tier.
+                    let warm_dir = metadata.warm_directory();
                     tokio::spawn(async move {
-                        let clusters = match IndexSerializer::decode_warm_clusters(&warm_bytes) {
+                        let decoded = match warm_dir {
+                            Some(dir) => {
+                                IndexSerializer::decode_warm_clusters_dir(&warm_bytes, &dir)
+                            }
+                            None => IndexSerializer::decode_warm_clusters(&warm_bytes),
+                        };
+                        let clusters = match decoded {
                             Ok(c) => c,
                             Err(e) => {
                                 tracing::warn!("AXIS: decode warm tier failed for '{}': {}", coll, e);

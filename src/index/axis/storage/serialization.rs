@@ -37,9 +37,11 @@ use tracing::{debug, info, warn};
 /// Magic bytes for index format identification
 const AXIS_MAGIC: &[u8; 4] = b"AXIS";
 /// File-layout version. v1 = single `SerializableIvfState` body. v2 (ADR-023
-/// T-C) = cold-first two-blob body `[COLD][WARM]` so the COLD tier is
-/// range-readable without the fp32. v1 files still load via the legacy path.
-const VERSION: u16 = 2;
+/// T-C) = cold-first two-blob body `[COLD][WARM]` (WARM = one bincode tier).
+/// v3 (ADR-023 R3 (b)) = same `[COLD][WARM]` framing but WARM is concatenated
+/// per-cluster chunks with a byte-directory in the header, so a single cluster's
+/// fp32 is range-readable. v1/v2 files still load via their respective paths.
+const VERSION: u16 = 3;
 /// IVF tier-payload version (shares the value used by `SerializableIvf*`).
 const IVF_TIER_VERSION: u32 = 2;
 
@@ -215,13 +217,58 @@ pub struct ColdPathProfile {
     pub warm_checksum: u32,
 }
 
+/// One cluster's extent within the WARM blob (ADR-023 R3 (b) byte-directory).
+/// Offsets are relative to the WARM blob start; the absolute file offset is
+/// `4 + header_len + profile.cold_tier_bytes + offset`. Lets a loader
+/// `read_range` exactly one cluster's fp32 without downloading the whole tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WarmExtent {
+    /// IVF cluster this extent holds the fp32 vectors for.
+    pub cluster_id: u32,
+    /// Byte offset of the cluster's bincode chunk, relative to the WARM blob start.
+    pub offset: u64,
+    /// Byte length of the cluster's bincode chunk.
+    pub len: u64,
+}
+
+/// v3 cold-path metadata (ADR-023 R3 (b)): the v2 [`ColdPathProfile`] plus a
+/// per-cluster WARM byte-directory. Serialized into
+/// [`AxisSerializedIndexMetadata::custom_metadata`]. Wrapping (rather than adding
+/// a `Vec` field to `ColdPathProfile`) keeps `ColdPathProfile` `Copy` and keeps
+/// v2 blobs (bare `ColdPathProfile`) deserializing unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ColdPathMetaV3 {
+    /// The v2 cold/warm split profile (cold offset, warm size + CRC).
+    pub profile: ColdPathProfile,
+    /// Per-cluster WARM extents, in WARM-blob order.
+    pub warm_directory: Vec<WarmExtent>,
+}
+
 impl AxisSerializedIndexMetadata {
     /// Decode the [`ColdPathProfile`] from `custom_metadata`, if present and in
-    /// the ADR-023 format. Returns `None` for indexes serialized before ADR-023
-    /// (whose `custom_metadata` held a 1-byte binary-tier marker or was absent).
+    /// the ADR-023 format. Tries the v3 [`ColdPathMetaV3`] wrapper first, then a
+    /// bare v2 `ColdPathProfile`. Returns `None` for indexes serialized before
+    /// ADR-023 (whose `custom_metadata` held a 1-byte marker or was absent). The
+    /// 21-byte v2 blob never mis-decodes as the ≥29-byte v3 wrapper.
     pub fn cold_path_profile(&self) -> Option<ColdPathProfile> {
         let bytes = self.custom_metadata.as_ref()?;
+        if let Ok(meta) = bincode::deserialize::<ColdPathMetaV3>(bytes) {
+            return Some(meta.profile);
+        }
         bincode::deserialize::<ColdPathProfile>(bytes).ok()
+    }
+
+    /// Decode the full v3 cold-path metadata (profile + WARM byte-directory).
+    /// `None` for v1/v2 indexes (no directory) — callers fall back to a
+    /// whole-WARM-blob decode.
+    pub fn cold_path_meta(&self) -> Option<ColdPathMetaV3> {
+        let bytes = self.custom_metadata.as_ref()?;
+        bincode::deserialize::<ColdPathMetaV3>(bytes).ok()
+    }
+
+    /// The per-cluster WARM byte-directory, if this is a v3 index.
+    pub fn warm_directory(&self) -> Option<Vec<WarmExtent>> {
+        self.cold_path_meta().map(|m| m.warm_directory)
     }
 }
 
@@ -464,13 +511,26 @@ impl IndexSerializer {
             centroids: state.centroids.clone(),
             binary_tier: state.binary_tier,
         };
-        let warm = SerializableIvfWarmTier {
-            version: IVF_TIER_VERSION,
-            clusters: warm_clusters,
-        };
         let cold_bytes = bincode::serialize(&cold)?;
-        let warm_bytes = bincode::serialize(&warm)?;
         let cold_checksum = proximadb_kernel::checksum::crc32_fast(&cold_bytes);
+
+        // ADR-023 R3 (b): write each cluster's fp32 as an independently
+        // range-readable bincode chunk, concatenated into the WARM blob, with a
+        // byte-directory recording each cluster's [offset, len]. A loader can then
+        // `read_range` exactly one cluster's fp32 (offset relative to the WARM
+        // blob start). The chunk payload is the cluster's `Vec<(id, fp32)>`; the
+        // cluster_id lives in the directory.
+        let mut warm_bytes = Vec::new();
+        let mut warm_directory = Vec::with_capacity(warm_clusters.len());
+        for (cluster_id, vectors) in &warm_clusters {
+            let chunk = bincode::serialize(vectors)?;
+            warm_directory.push(WarmExtent {
+                cluster_id: *cluster_id,
+                offset: warm_bytes.len() as u64,
+                len: chunk.len() as u64,
+            });
+            warm_bytes.extend_from_slice(&chunk);
+        }
         let warm_checksum = proximadb_kernel::checksum::crc32_fast(&warm_bytes);
 
         let profile = ColdPathProfile {
@@ -478,6 +538,12 @@ impl IndexSerializer {
             cold_tier_bytes: cold_bytes.len() as u64,
             warm_tier_bytes: warm_bytes.len() as u64,
             warm_checksum,
+        };
+        // v3 metadata: profile + the WARM byte-directory (rides in custom_metadata
+        // so one small header range-read yields both).
+        let meta = ColdPathMetaV3 {
+            profile,
+            warm_directory,
         };
 
         let metadata = AxisSerializedIndexMetadata {
@@ -489,8 +555,8 @@ impl IndexSerializer {
             checksum: cold_checksum, // COLD blob CRC (validated on cold-first read)
             is_delta: false,
             base_checkpoint_id: None,
-            // ADR-023: cold-path tier profile (offsets + warm CRC) drives load.
-            custom_metadata: Some(bincode::serialize(&profile)?),
+            // ADR-023 R3 (b): cold-path tier profile + WARM byte-directory.
+            custom_metadata: Some(bincode::serialize(&meta)?),
         };
 
         let header = IndexHeader {
@@ -570,10 +636,11 @@ impl IndexSerializer {
             if proximadb_kernel::checksum::crc32_fast(warm_bytes) != profile.warm_checksum {
                 return Err(SerializationError::ChecksumMismatch);
             }
-            let warm: SerializableIvfWarmTier = bincode::deserialize(warm_bytes)?;
+            // v3: directory-framed per-cluster chunks; v2: one bincode tier.
+            let warm_flat = Self::decode_warm_flat(&header, warm_bytes)?;
             let mut index = Self::new_cold_index(&header, cold).await?;
             index
-                .restore_warm_tier(warm.into_flat())
+                .restore_warm_tier(warm_flat)
                 .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
             info!("Deserialized IVF index with {} vectors", header.metadata.num_vectors);
             return Ok((index, header.metadata));
@@ -692,10 +759,59 @@ impl IndexSerializer {
 
     /// Decode the deferred WARM bytes into per-cluster fp32 extents (ADR-023 R3):
     /// `(cluster_id, [(id, fp32)])`. The background warm-apply installs these one
-    /// cluster at a time so the fill interleaves with serving.
+    /// cluster at a time so the fill interleaves with serving. v2 layout (whole
+    /// bincode tier); for v3 directory-framed bytes use [`decode_warm_clusters_dir`].
     pub fn decode_warm_clusters(warm_bytes: &[u8]) -> Result<Vec<(u32, Vec<(String, Vec<f32>)>)>> {
         let warm: SerializableIvfWarmTier = bincode::deserialize(warm_bytes)?;
         Ok(warm.clusters)
+    }
+
+    /// Decode one cluster's WARM chunk (ADR-023 R3 (b)): the bincode payload at a
+    /// [`WarmExtent`] is the cluster's `Vec<(id, fp32)>`. Used by the ranged
+    /// loader after a single-extent `read_range`.
+    pub fn decode_warm_cluster_chunk(chunk: &[u8]) -> Result<Vec<(String, Vec<f32>)>> {
+        Ok(bincode::deserialize(chunk)?)
+    }
+
+    /// Decode v3 directory-framed WARM bytes into per-cluster extents by slicing
+    /// each [`WarmExtent`] out of the concatenated blob. Pairs the directory's
+    /// `cluster_id`s with the decoded chunks.
+    pub fn decode_warm_clusters_dir(
+        warm_bytes: &[u8],
+        directory: &[WarmExtent],
+    ) -> Result<Vec<(u32, Vec<(String, Vec<f32>)>)>> {
+        let mut out = Vec::with_capacity(directory.len());
+        for ext in directory {
+            let (start, end) = (ext.offset as usize, (ext.offset + ext.len) as usize);
+            let chunk = warm_bytes.get(start..end).ok_or_else(|| {
+                SerializationError::Io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "warm extent out of bounds",
+                ))
+            })?;
+            out.push((ext.cluster_id, Self::decode_warm_cluster_chunk(chunk)?));
+        }
+        Ok(out)
+    }
+
+    /// Decode the WARM blob into a flat fp32 list, handling both v3 (directory-
+    /// framed chunks) and v2 (one bincode tier). Used by the full (`FullEager`)
+    /// deserialize path.
+    fn decode_warm_flat(
+        header: &IndexHeader,
+        warm_bytes: &[u8],
+    ) -> Result<Vec<(String, Vec<f32>)>> {
+        match header.metadata.warm_directory() {
+            Some(directory) => {
+                let mut flat = Vec::new();
+                for (_cluster_id, vectors) in Self::decode_warm_clusters_dir(warm_bytes, &directory)?
+                {
+                    flat.extend(vectors);
+                }
+                Ok(flat)
+            }
+            None => Ok(Self::decode_warm_tier(warm_bytes)?),
+        }
     }
 
     /// Persist a trained IVF index to `path` (creates parent dirs). Disk wrapper
