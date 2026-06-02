@@ -794,12 +794,30 @@ impl UnifiedAuthService {
 
     /// Convert API key info to unified context
     fn convert_api_key_to_unified(&self, api_key_info: ApiKeyInfo) -> UnifiedUserContext {
-        // Convert string permissions to UnifiedPermission enum
-        let permissions = api_key_info
-            .permissions
-            .iter()
-            .filter_map(|p| self.parse_permission_string(p))
-            .collect();
+        // Convert string permissions to UnifiedPermission enum.
+        // A bare `"*"` in the config is the "all permissions" shorthand
+        // operators reach for in dev / single-node setups — fan it out
+        // to the SystemAdmin + ConfigureSystem + TenantAdmin + write
+        // permissions the operator-gated endpoints actually check for
+        // (recall-tune, recluster, suspend, resume, primary-pod
+        // mutations). Specific tokens still parse via
+        // `parse_permission_string`.
+        let mut permissions: std::collections::HashSet<UnifiedPermission> =
+            std::collections::HashSet::new();
+        for p in &api_key_info.permissions {
+            if p == "*" {
+                permissions.extend([
+                    UnifiedPermission::SystemAdmin,
+                    UnifiedPermission::ConfigureSystem,
+                    UnifiedPermission::TenantAdmin,
+                    UnifiedPermission::TenantRead,
+                    UnifiedPermission::TenantWrite,
+                    UnifiedPermission::CollectionCreate,
+                ]);
+            } else if let Some(parsed) = self.parse_permission_string(p) {
+                permissions.insert(parsed);
+            }
+        }
 
         UnifiedUserContext {
             user_id: api_key_info.user_id,

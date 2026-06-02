@@ -784,12 +784,43 @@ impl RestServer {
         let tenant_extractor = TenantExtractor::with_config(TenantExtractorConfig::default());
         let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
 
-        // Layer order: TraceLayer outermost, tenant extraction inside it so the
-        // tenant context is populated before handlers run.
+        // Auth layer — convergent with the multi-port `start_with_security`
+        // path. When the caller supplies a `SecurityCoordinator`, attach
+        // `auth_middleware_unified` so handlers that declare
+        // `Option<Extension<UnifiedUserContext>>` see Some(ctx) for
+        // authenticated requests. When `security_coordinator` is `None`
+        // (auth disabled by config), no layer is attached and the
+        // operator-gated handlers fall back to their `require_*_admin`
+        // single-node bypass. multi_server.rs gates the coordinator it
+        // passes by `rest_auth_enabled`, so this branch fires iff the
+        // operator explicitly enabled REST auth — matching the
+        // `start_with_security` gate at line 510.
+        let auth_layer = security_coordinator.clone().map(|coordinator| {
+            middleware::from_fn_with_state(
+                coordinator,
+                crate::network::auth::middleware::auth_middleware_unified,
+            )
+        });
+
+        // Layer order:
+        //   outermost: TraceLayer (sees every request, including unauth'd)
+        //   tenant_layer (needs auth-injected ctx for tenant resolution)
+        //   auth_layer  (injects UnifiedUserContext)
+        // Axum applies layers in reverse order, so auth runs first on
+        // the request path, then tenant, then handler.
         use tower_http::trace::TraceLayer;
-        base_router
-            .layer(tenant_layer)
-            .layer(TraceLayer::new_for_http())
+        let mut router = base_router.layer(tenant_layer);
+        if let Some(auth) = auth_layer {
+            router = router.layer(auth);
+            tracing::info!(
+                "🔒 Unified-port REST auth: ENABLED (auth_middleware_unified attached)"
+            );
+        } else {
+            tracing::info!(
+                "🔓 Unified-port REST auth: DISABLED (no security coordinator supplied)"
+            );
+        }
+        router.layer(TraceLayer::new_for_http())
     }
 
     /// Start the REST server

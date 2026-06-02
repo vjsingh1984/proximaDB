@@ -854,7 +854,16 @@ impl MultiServer {
             let request_handlers = services.request_handlers.clone();
             let graph_execution_service = services.graph_execution_service.clone();
             let metrics_collector = services.metrics_collector.clone();
-            let security_coordinator = self.security_coordinator.clone();
+            // Mirror the Arrow IPC gate above: pass the coordinator only when
+            // REST auth is enabled in config. `build_router_for_unified` reads
+            // Some/None as the auth-attach signal — convergent with the
+            // multi-port `start_with_security` path which gates on
+            // `security_config.auth.enabled` (server.rs line 510).
+            let security_coordinator = if self.rest_auth_enabled {
+                self.security_coordinator.clone()
+            } else {
+                None
+            };
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let llm_engine = self.llm_engine.clone();
