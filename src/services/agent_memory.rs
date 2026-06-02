@@ -214,6 +214,14 @@ impl MemoryWriteEngine {
         scope: &MemoryWriteScope,
         pair: &MessagePair,
     ) -> Result<Vec<AppliedAction>> {
+        // Fail-closed: a memory write MUST be tenant-scoped. Never extract,
+        // store, or audit under an empty tenant — that would write/retrieve
+        // unscoped and risk cross-tenant leakage. The tenant is authoritative
+        // (derived from the authenticated request context at the route), not a
+        // caller-supplied body field.
+        if scope.tenant_id.trim().is_empty() {
+            return Err(anyhow!("agent-memory write requires a non-empty tenant scope"));
+        }
         let facts = self.extractor.extract(pair).await?;
         let mut applied = Vec::with_capacity(facts.len());
 
@@ -1146,5 +1154,49 @@ mod tests {
         let json = serde_json::to_value(&ev).expect("serialize");
         let back: ConsolidationAuditEvent = serde_json::from_value(json).expect("deserialize");
         assert_eq!(ev, back);
+    }
+
+    // ── fail-closed tenant scoping (security) ─────────────────────────────
+
+    /// Extractor that records whether it was invoked, to prove the fail-closed
+    /// guard runs BEFORE any extraction/store work.
+    #[derive(Default)]
+    struct CountingExtractor {
+        calls: Mutex<usize>,
+    }
+    #[async_trait]
+    impl ExtractionAgent for CountingExtractor {
+        async fn extract(&self, _pair: &MessagePair) -> Result<Vec<ExtractedFact>> {
+            *self.calls.lock().map_err(|_| anyhow!("poisoned"))? += 1;
+            Ok(vec![fact("x", MemoryType::Fact)])
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_tenant_is_rejected_fail_closed() {
+        let extractor = Arc::new(CountingExtractor::default());
+        let consolidator = Arc::new(MockConsolidator(Mutex::new(
+            [ConsolidationAction::Add].into_iter().collect(),
+        )));
+        let store = Arc::new(HitStore(Vec::new()));
+        let engine = MemoryWriteEngine::new(extractor.clone(), consolidator, store);
+
+        let empty_tenant = MemoryWriteScope {
+            tenant_id: "   ".to_string(), // whitespace = empty
+            ..scope()
+        };
+        let result = engine
+            .ingest(&empty_tenant, &MessagePair {
+                user: "u".to_string(),
+                assistant: "a".to_string(),
+            })
+            .await;
+
+        assert!(result.is_err(), "empty tenant must be rejected, not run unscoped");
+        assert_eq!(
+            *extractor.calls.lock().unwrap(),
+            0,
+            "extraction must NOT run under an empty tenant (fail-closed before any work)"
+        );
     }
 }

@@ -12,7 +12,7 @@
 //! introspectable.
 
 use axum::{
-    Router,
+    Extension, Router,
     extract::{Json, State},
     response::Json as JsonResponse,
     routing::post,
@@ -22,6 +22,7 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::errors::{ApiError, ApiResult};
+use crate::network::middleware::tenant::MiddlewareTenantContext;
 use crate::services::agent_memory::{MemoryWriteEngine, MemoryWriteScope, MessagePair};
 
 /// State for the memory-write router. `engine` is `None` when the deployment
@@ -42,11 +43,15 @@ pub fn create_router() -> Router<MemoryApiState> {
 }
 
 /// Ingest request: one agent turn under a memory scope.
+///
+/// NOTE: there is intentionally NO `tenant_id` field. The tenant is the
+/// authenticated request context (X-Tenant-ID / JWT, injected by the tenant
+/// middleware), NOT a caller-supplied value — a self-asserted tenant would be a
+/// cross-tenant access vector. `session_id`/`actor` are not security boundaries
+/// and may come from the body.
 #[derive(Debug, Deserialize)]
 pub struct MemoryIngestRequest {
     pub collection: String,
-    #[serde(default)]
-    pub tenant_id: String,
     #[serde(default)]
     pub actor: String,
     #[serde(default)]
@@ -68,13 +73,17 @@ pub struct MemoryIngestResponse {
     pub applied: Vec<AppliedActionDto>,
 }
 
-/// Pure mapping from the wire request to the engine's scope + message pair.
-/// Extracted so the field mapping is unit-testable without the engine.
-fn request_to_scope_and_pair(req: &MemoryIngestRequest) -> (MemoryWriteScope, MessagePair) {
+/// Pure mapping from the wire request + AUTHORITATIVE tenant to the engine's
+/// scope + message pair. The tenant comes from the authenticated request
+/// context, never the request body. Extracted so the mapping is unit-testable.
+fn request_to_scope_and_pair(
+    req: &MemoryIngestRequest,
+    tenant_id: &str,
+) -> (MemoryWriteScope, MessagePair) {
     (
         MemoryWriteScope {
             collection: req.collection.clone(),
-            tenant_id: req.tenant_id.clone(),
+            tenant_id: tenant_id.to_string(),
             actor: req.actor.clone(),
             session_id: req.session_id.clone(),
         },
@@ -87,11 +96,12 @@ fn request_to_scope_and_pair(req: &MemoryIngestRequest) -> (MemoryWriteScope, Me
 
 async fn ingest_memory(
     State(state): State<MemoryApiState>,
+    Extension(tenant): Extension<MiddlewareTenantContext>,
     Json(request): Json<MemoryIngestRequest>,
 ) -> ApiResult<JsonResponse<MemoryIngestResponse>> {
     info!(
         collection = %request.collection,
-        tenant = %request.tenant_id,
+        tenant = %tenant.tenant_id,
         session = %request.session_id,
         "Memory ingest"
     );
@@ -104,7 +114,7 @@ async fn ingest_memory(
         ));
     };
 
-    let (scope, pair) = request_to_scope_and_pair(&request);
+    let (scope, pair) = request_to_scope_and_pair(&request, &tenant.tenant_id);
     match engine.ingest(&scope, &pair).await {
         Ok(applied) => Ok(JsonResponse(MemoryIngestResponse {
             collection: request.collection,
@@ -129,21 +139,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn request_maps_to_scope_and_pair() {
+    fn request_maps_to_scope_and_pair_with_authoritative_tenant() {
         let req = MemoryIngestRequest {
             collection: "mem".to_string(),
-            tenant_id: "acme".to_string(),
             actor: "assistant-1".to_string(),
             session_id: "sess-1".to_string(),
             user: "what's my preference?".to_string(),
             assistant: "you prefer dark mode".to_string(),
         };
-        let (scope, pair) = request_to_scope_and_pair(&req);
+        // Tenant is supplied by the caller (the authenticated request context),
+        // not the body.
+        let (scope, pair) = request_to_scope_and_pair(&req, "acme");
         assert_eq!(scope.collection, "mem");
         assert_eq!(scope.tenant_id, "acme");
         assert_eq!(scope.actor, "assistant-1");
         assert_eq!(scope.session_id, "sess-1");
         assert_eq!(pair.user, "what's my preference?");
         assert_eq!(pair.assistant, "you prefer dark mode");
+    }
+
+    #[test]
+    fn tenant_comes_from_authenticated_context_only() {
+        // The request type has no tenant_id field at all — there is no way for
+        // a caller to assert a tenant via the body. The scope tenant is exactly
+        // the authenticated one passed in.
+        let req = MemoryIngestRequest {
+            collection: "mem".to_string(),
+            actor: String::new(),
+            session_id: String::new(),
+            user: "u".to_string(),
+            assistant: "a".to_string(),
+        };
+        let (scope, _) = request_to_scope_and_pair(&req, "tenant-from-jwt");
+        assert_eq!(scope.tenant_id, "tenant-from-jwt");
     }
 }

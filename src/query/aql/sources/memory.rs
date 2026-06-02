@@ -139,7 +139,13 @@ impl MemoryAqlSource {
     fn build_scope_filter(scope: &MemoryScope) -> (Option<FilterExpression>, Vec<String>) {
         let mut parts = Vec::new();
         let mut pushed = Vec::new();
-        if let Some(tenant) = &scope.tenant_id {
+        // The tenant predicate is mandatory for isolation; only a non-empty
+        // tenant produces it. `execute` fail-closes before calling this, so a
+        // missing/blank tenant never reaches a real search — this is the
+        // belt-and-suspenders so the builder never emits `tenant_id = ""`.
+        if let Some(tenant) = &scope.tenant_id
+            && !tenant.trim().is_empty()
+        {
             parts.push(FilterExpression::Comparison {
                 field: "tenant_id".to_string(),
                 operator: ComparisonOperator::Equals,
@@ -237,6 +243,18 @@ impl AqlSource for MemoryAqlSource {
 
     async fn execute(&self, query: &AqlQuery, ctx: &mut AuditContext) -> Result<AqlResult> {
         let scope = Self::extract_scope(query);
+        // Fail-closed: a memory read MUST be tenant-scoped. Refuse rather than
+        // run an unscoped search that could surface another tenant's memories.
+        // The tenant predicate is the load-bearing isolation control for the
+        // shared-collection model, so it must always be present and non-empty.
+        match &scope.tenant_id {
+            Some(t) if !t.trim().is_empty() => {}
+            _ => {
+                return Err(ProximaDBError::Query(QueryError::VectorSearch(
+                    "agent-memory search requires a non-empty tenant scope".to_string(),
+                )));
+            }
+        }
         let recall_k = (scope.top_k as usize)
             .saturating_mul(RECALL_POOL_MULTIPLIER)
             .max(scope.top_k as usize)
@@ -485,6 +503,39 @@ mod tests {
         let (filter, pushed) = MemoryAqlSource::build_scope_filter(&MemoryScope::default());
         assert!(filter.is_none());
         assert!(pushed.is_empty());
+    }
+
+    #[test]
+    fn build_scope_filter_skips_blank_tenant() {
+        // A present-but-blank tenant must NOT produce a `tenant_id = ""`
+        // predicate (which would match nothing / leak). `execute` fail-closes
+        // on this case; the builder is the belt-and-suspenders.
+        let scope = MemoryScope {
+            tenant_id: Some("   ".to_string()),
+            ..Default::default()
+        };
+        let (filter, pushed) = MemoryAqlSource::build_scope_filter(&scope);
+        assert!(filter.is_none(), "blank tenant must not yield a predicate");
+        assert!(pushed.is_empty());
+    }
+
+    #[test]
+    fn scope_filter_always_carries_tenant_for_valid_scope() {
+        // Tenant-only scope (no session) must still emit the tenant predicate —
+        // tenant isolation is never silently dropped.
+        let scope = MemoryScope {
+            tenant_id: Some("acme".to_string()),
+            ..Default::default()
+        };
+        let (filter, pushed) = MemoryAqlSource::build_scope_filter(&scope);
+        assert_eq!(pushed, vec!["tenant_id = acme".to_string()]);
+        match filter {
+            Some(FilterExpression::Comparison { field, value, .. }) => {
+                assert_eq!(field, "tenant_id");
+                assert_eq!(value, serde_json::Value::String("acme".to_string()));
+            }
+            other => panic!("expected single tenant Comparison, got {other:?}"),
+        }
     }
 
     // ── assembly: scope restriction + type post-filter + top_k ───────────────
