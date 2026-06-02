@@ -571,17 +571,55 @@ impl ProgressiveSearchExecutor {
             // way. The bridge call's purpose is to:
             //   1. Verify the kernel runs without errors.
             //   2. Advance the BLOCKS_SKIPPED_BY_MASK Prometheus counter
-            //      when a mask is in scope (will be in Phase D).
-            //   3. Surface load-bearing TurboQuantExplainHints
-            //      (Phase F integration).
-            let _ = crate::index::turboquant_bridge::with_blocks_skipped_delta(|| {
-                crate::index::turboquant_bridge::search_with_candidate_set(
-                    &store,
-                    query_vector,
-                    candidates.len().max(1),
-                    None,
-                )
-            });
+            //      when a mask is in scope (Phase D `TurboQuantAxisIndex`
+            //      route).
+            //   3. Build the load-bearing `TurboQuantExplainHints` and
+            //      emit them via tracing (Phase J integration). A
+            //      caller-side tracing layer can collect the structured
+            //      event into the per-request `SearchPlanHints.turboquant`
+            //      slot; from there `VectorHints::from(&SearchPlanHints)`
+            //      propagates the payload to every protocol surface.
+            let (bridge_result, blocks_skipped) =
+                crate::index::turboquant_bridge::with_blocks_skipped_delta(|| {
+                    crate::index::turboquant_bridge::search_with_candidate_set(
+                        &store,
+                        query_vector,
+                        candidates.len().max(1),
+                        None,
+                    )
+                });
+
+            // Always emit the hints, even when the bridge result was an
+            // error — operator dashboards still want to see "TurboQuant
+            // was attempted" with the right config + epoch.
+            let n_hits = bridge_result.as_ref().map(|h| h.len()).unwrap_or(0);
+            let hints = crate::index::turboquant_bridge::TurboQuantExplainHints::for_search(
+                &store,
+            )
+            .with_blocks_skipped(blocks_skipped)
+            .with_n_vectors_scanned(n_hits);
+            // Structured event so a tracing subscriber can collect the
+            // JSON payload into `SearchPlanHints.turboquant` at the
+            // per-request boundary. The event is also human-grep-able
+            // in plain `RUST_LOG=debug` logs.
+            tracing::debug!(
+                target: "proximadb::turboquant::explain",
+                collection_id = %ctx.collection_id(),
+                blocks_skipped,
+                payload = %hints.to_explain_value(),
+                "TurboQuant scoring ran (Phase J explain hints)",
+            );
+            // Promote bridge errors to Phase J counter — the bridge call
+            // is best-effort but log the failure path so dashboards see
+            // it. The fallback scorer below still produces correct scores.
+            if let Err(e) = bridge_result {
+                tracing::warn!(
+                    target: "proximadb::turboquant",
+                    collection_id = %ctx.collection_id(),
+                    error = %e,
+                    "TurboQuant bridge returned error; falling back to full precision",
+                );
+            }
         }
 
         // Always run the full-precision scorer for correctness. The

@@ -76,6 +76,21 @@ pub struct SearchPlanHints {
     /// require a delta merge (`StaleOk`, or watermark up to date), or
     /// when the request was served from cache.
     pub vector_object_economy: Option<crate::query::explain::VectorObjectEconomyExplain>,
+    /// Phase J (Quantization Trait Convergence Plan): TurboQuant
+    /// EXPLAIN hints serialized via
+    /// `TurboQuantExplainHints::to_explain_value()`. Populated by
+    /// `score_turboquant` when the per-collection `TurboQuantStore` is
+    /// available (the bridge call succeeded) and `None` otherwise. The
+    /// value is propagated into `VectorHints.turboquant` via
+    /// `VectorHints::from(&SearchPlanHints)` so REST / gRPC / Arrow
+    /// Flight / pgwire all surface the same JSON shape per ADR-004
+    /// §"Plan Operators".
+    ///
+    /// The 9-field schema is the load-bearing contract — see
+    /// `src/index/turboquant_bridge.rs:172-301` for the field
+    /// semantics and `~/.claude/plans/dreamy-finding-clover.md`
+    /// §Phase F for the wire-stability test.
+    pub turboquant: Option<serde_json::Value>,
 }
 
 #[cfg(test)]

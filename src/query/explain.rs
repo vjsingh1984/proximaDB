@@ -803,6 +803,13 @@ impl From<&crate::services::operations::vectors::SearchPlanHints> for VectorHint
             ann_filtering_selectivity: h.ann_filtering_selectivity,
             ann_filtering_selectivity_source: h.ann_filtering_selectivity_source.clone(),
             ann_mode_reason,
+            // Phase J: propagate the TurboQuant EXPLAIN payload from the
+            // caller-side hint bag straight into the wire-facing struct.
+            // Cloned because `serde_json::Value` is owned. `None` is the
+            // common case (most searches don't run through TurboQuant);
+            // the `skip_serializing_if` on the field hides it from the
+            // wire shape when absent.
+            turboquant: h.turboquant.clone(),
             // index_type, quantization_level, estimated_*_cost populated by engine layer
             ..Default::default()
         }
@@ -1917,6 +1924,42 @@ mod tests {
             vector_hints.ann_mode_reason.as_deref(),
             Some("PostFilter selected from cost_analysis selectivity=0.900000")
         );
+    }
+
+    #[test]
+    fn vector_hints_from_search_plan_hints_propagates_turboquant_payload() {
+        // Phase J wire test: a `SearchPlanHints` carrying a TurboQuant
+        // JSON payload (built by `score_turboquant` in the caller-side
+        // shim) must propagate that payload into the wire-facing
+        // `VectorHints.turboquant` slot unchanged. Without this
+        // propagation, the EXPLAIN payload would be silently dropped
+        // before reaching REST / gRPC / Arrow Flight / pgwire.
+        let payload = serde_json::json!({
+            "quantization": "turboquant_4bit",
+            "calibration_mode": "tq_plus",
+            "rotation_seed": "1234567",
+            "encoded_epoch": 7,
+            "mask_pushed_to_kernel": true,
+            "kernel_arch": "scalar",
+            "blocks_skipped_by_mask": 42,
+            "length_renorm_applied": true,
+        });
+        let hints = crate::services::operations::vectors::SearchPlanHints {
+            turboquant: Some(payload.clone()),
+            ..Default::default()
+        };
+        let vh = VectorHints::from(&hints);
+        assert_eq!(vh.turboquant.as_ref(), Some(&payload));
+    }
+
+    #[test]
+    fn vector_hints_from_search_plan_hints_without_turboquant_yields_none() {
+        // The default path (no TurboQuant) must NOT synthesize a stale
+        // turboquant payload — that would leak a misleading "TurboQuant
+        // ran" signal into the EXPLAIN wire shape.
+        let hints = crate::services::operations::vectors::SearchPlanHints::default();
+        let vh = VectorHints::from(&hints);
+        assert!(vh.turboquant.is_none());
     }
 
     #[test]
