@@ -367,7 +367,7 @@ async fn hadoop_next_record_drains_records_in_order() {
     assert!(!reader.next_record());
 
     // The mock is hit exactly once — single page drained from buffer.
-    mock.assert_calls_async(1).await;
+    assert_eq!(mock.hits_async().await, 1);
 }
 
 #[tokio::test]
