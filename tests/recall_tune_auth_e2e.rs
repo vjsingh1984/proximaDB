@@ -294,13 +294,17 @@ async fn unified_port_auth_converged_recall_tune_e2e() {
         .send()
         .await
         .expect("send create");
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
     assert_eq!(
-        resp.status().as_u16(),
+        status.as_u16(),
         200,
-        "v1 collection create with admin Api-Key must succeed; got {}",
-        resp.status()
+        "v1 collection create with admin Api-Key must succeed; got {} body={}",
+        status,
+        body_text
     );
-    let create_json: serde_json::Value = resp.json().await.expect("create json");
+    let create_json: serde_json::Value =
+        serde_json::from_str(&body_text).expect("create json parse");
     assert_eq!(
         create_json.get("success").and_then(|v| v.as_bool()),
         Some(true),
