@@ -386,4 +386,95 @@ mod tests {
             "inner scope must not leak into outer scope"
         );
     }
+
+    // ------------------------------------------------------------------
+    // TurboQuant hints (Phase J/K)
+    // ------------------------------------------------------------------
+
+    fn sample_turboquant_hints(blocks_skipped: u64) -> serde_json::Value {
+        serde_json::json!({
+            "quantization": "turboquant_4bit",
+            "calibration_mode": "tq_plus",
+            "rotation_seed": "0xdeadbeef",
+            "encoded_epoch": 1,
+            "mask_pushed_to_kernel": true,
+            "kernel_arch": "scalar",
+            "blocks_skipped_by_mask": blocks_skipped,
+            "length_renorm_applied": true,
+        })
+    }
+
+    #[tokio::test]
+    async fn turboquant_record_outside_scope_is_silent_noop() {
+        record_turboquant_hints(sample_turboquant_hints(0));
+        assert!(take_turboquant_hints().is_none());
+    }
+
+    #[tokio::test]
+    async fn turboquant_record_inside_scope_is_visible_to_take() {
+        let captured = scope(async {
+            record_turboquant_hints(sample_turboquant_hints(42));
+            take_turboquant_hints()
+        })
+        .await;
+        let v = captured.expect("recorded value retrieved");
+        assert_eq!(v["blocks_skipped_by_mask"], 42);
+        assert_eq!(v["quantization"], "turboquant_4bit");
+    }
+
+    #[tokio::test]
+    async fn turboquant_last_writer_wins_across_records() {
+        // Unlike shortfall (first-writer-wins), TurboQuant hints are a
+        // per-stage tracing report — the latest is the actionable one
+        // (`blocks_skipped_by_mask` accumulates across stages).
+        let captured = scope(async {
+            record_turboquant_hints(sample_turboquant_hints(1));
+            record_turboquant_hints(sample_turboquant_hints(2));
+            record_turboquant_hints(sample_turboquant_hints(3));
+            take_turboquant_hints()
+        })
+        .await;
+        let v = captured.expect("at least one writer");
+        assert_eq!(
+            v["blocks_skipped_by_mask"], 3,
+            "last writer must win for TurboQuant hints",
+        );
+    }
+
+    #[tokio::test]
+    async fn turboquant_take_clears_the_slot() {
+        // Calling take twice yields the value then None.
+        let (first, second) = scope(async {
+            record_turboquant_hints(sample_turboquant_hints(7));
+            let a = take_turboquant_hints();
+            let b = take_turboquant_hints();
+            (a, b)
+        })
+        .await;
+        assert!(first.is_some());
+        assert!(second.is_none(), "take must clear the slot");
+    }
+
+    #[tokio::test]
+    async fn turboquant_scope_isolation_inner_does_not_leak_to_outer() {
+        // Nested scope must isolate — the outer's hint survives, the
+        // inner's hint is contained.
+        let outer = scope(async {
+            record_turboquant_hints(sample_turboquant_hints(11));
+            let inner_value = scope(async {
+                record_turboquant_hints(sample_turboquant_hints(22));
+                take_turboquant_hints()
+            })
+            .await;
+            (inner_value, take_turboquant_hints())
+        })
+        .await;
+        let (inner, outer_remaining) = outer;
+        assert_eq!(inner.expect("inner record").get("blocks_skipped_by_mask"), Some(&serde_json::Value::from(22)));
+        assert_eq!(
+            outer_remaining.expect("outer record preserved").get("blocks_skipped_by_mask"),
+            Some(&serde_json::Value::from(11)),
+            "inner scope must not leak into outer scope",
+        );
+    }
 }

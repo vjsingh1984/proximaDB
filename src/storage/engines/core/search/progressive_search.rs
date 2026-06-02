@@ -598,16 +598,28 @@ impl ProgressiveSearchExecutor {
             )
             .with_blocks_skipped(blocks_skipped)
             .with_n_vectors_scanned(n_hits);
-            // Structured event so a tracing subscriber can collect the
-            // JSON payload into `SearchPlanHints.turboquant` at the
-            // per-request boundary. The event is also human-grep-able
-            // in plain `RUST_LOG=debug` logs.
+            let payload = hints.to_explain_value();
+            // Phase K — record into the per-request task-local
+            // `PredicateDiagnostics` bus so the request handler can
+            // lift the payload into `SearchPlanHints.turboquant` via
+            // `take_turboquant_hints()` (then propagated to
+            // `VectorHints` via `VectorHints::from`). Silently no-ops
+            // when there's no active scope (test paths, untraced
+            // entry points) — the tracing event below is the
+            // operator-visible signal in that case.
+            crate::observability::predicate_diagnostics::record_turboquant_hints(
+                payload.clone(),
+            );
+            // Structured tracing event remains for log-based observability —
+            // grep `proximadb::turboquant::explain` in `RUST_LOG=debug`
+            // output to see every TurboQuant scoring attempt regardless
+            // of whether an EXPLAIN scope was active.
             tracing::debug!(
                 target: "proximadb::turboquant::explain",
                 collection_id = %ctx.collection_id(),
                 blocks_skipped,
-                payload = %hints.to_explain_value(),
-                "TurboQuant scoring ran (Phase J explain hints)",
+                payload = %payload,
+                "TurboQuant scoring ran (Phase J/K explain hints)",
             );
             // Promote bridge errors to Phase J counter — the bridge call
             // is best-effort but log the failure path so dashboards see
