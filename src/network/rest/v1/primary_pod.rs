@@ -280,11 +280,11 @@ pub struct ListResponse {
 
 /// `GET /api/v1/primary-pod/:tenant_id/:collection_id`
 pub async fn get_primary_pod(
-    Extension(user_context): Extension<Option<UnifiedUserContext>>,
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<AppState>,
     Path((tenant_id, collection_id)): Path<(String, String)>,
 ) -> Result<Json<LookupResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
-    authorize_operator(user_context.as_ref())?;
+    authorize_operator(user_context.as_ref().map(|e| &e.0))?;
 
     match state
         .primary_pod_registry
@@ -304,12 +304,12 @@ pub async fn get_primary_pod(
 
 /// `PUT /api/v1/primary-pod/:tenant_id/:collection_id`
 pub async fn put_primary_pod(
-    Extension(user_context): Extension<Option<UnifiedUserContext>>,
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<AppState>,
     Path((tenant_id, collection_id)): Path<(String, String)>,
     Json(body): Json<AssignRequest>,
 ) -> Result<Json<AssignResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
-    let user_id = authorize_operator(user_context.as_ref())?;
+    let user_id = authorize_operator(user_context.as_ref().map(|e| &e.0))?;
 
     let previous = state.primary_pod_registry.assign(
         tenant_id.clone(),
@@ -366,11 +366,11 @@ pub async fn put_primary_pod(
 
 /// `DELETE /api/v1/primary-pod/:tenant_id/:collection_id`
 pub async fn delete_primary_pod(
-    Extension(user_context): Extension<Option<UnifiedUserContext>>,
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<AppState>,
     Path((tenant_id, collection_id)): Path<(String, String)>,
 ) -> Result<Json<UnassignResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
-    let user_id = authorize_operator(user_context.as_ref())?;
+    let user_id = authorize_operator(user_context.as_ref().map(|e| &e.0))?;
 
     let removed = state
         .primary_pod_registry
@@ -410,10 +410,10 @@ pub async fn delete_primary_pod(
 
 /// `GET /api/v1/primary-pod`
 pub async fn list_primary_pods(
-    Extension(user_context): Extension<Option<UnifiedUserContext>>,
+    user_context: Option<Extension<UnifiedUserContext>>,
     State(state): State<AppState>,
 ) -> Result<Json<ListResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
-    authorize_operator(user_context.as_ref())?;
+    authorize_operator(user_context.as_ref().map(|e| &e.0))?;
 
     let items: Vec<ListItem> = state
         .primary_pod_registry
