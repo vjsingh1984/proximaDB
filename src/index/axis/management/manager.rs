@@ -522,43 +522,179 @@ impl AxisManager {
         if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
             return;
         }
+        use crate::index::axis::storage::serialization::{IndexSerializer, RangedColdLoad};
+
+        let path_str = path.to_string_lossy().to_string();
+        let fs = match Self::index_filesystem().await {
+            Ok(fs) => fs,
+            Err(e) => {
+                tracing::warn!(
+                    "AXIS: filesystem for IVF index '{}' unavailable ({})",
+                    collection_id,
+                    e
+                );
+                return;
+            }
+        };
+
+        // ADR-023 R3 (b): binary indexes load cold-first via byte-RANGE reads —
+        // only [header]+[COLD] is read before serving Stage-1, then each cluster's
+        // fp32 is fetched per-cluster on demand (never the whole WARM tier; the
+        // win on object storage). v1 / non-binary indexes fall back to a
+        // whole-file load (their membership lives in the full body).
+        match IndexSerializer::try_cold_load_ranged(&fs, &path_str).await {
+            Ok(Some(RangedColdLoad {
+                index,
+                metadata: _,
+                warm_base,
+                directory,
+            })) => {
+                let (dimension, n) = (index.dimension(), index.len());
+                let Some(index_arc) =
+                    self.install_loaded_ivf(collection_id, index, dimension, n).await
+                else {
+                    return; // another task loaded it concurrently
+                };
+                // Background ranged warm-apply: range-fetch each cluster's fp32,
+                // install under the index READ lock (released between clusters so
+                // serving overlaps the fill), then the instant FullTwoStage flip.
+                if !directory.is_empty() {
+                    let coll = collection_id.to_string();
+                    let fs2 = fs.clone();
+                    let path2 = path_str.clone();
+                    tokio::spawn(async move {
+                        let n_clusters = directory.len();
+                        for ext in &directory {
+                            let vecs = match IndexSerializer::fetch_warm_cluster_ranged(
+                                &fs2, &path2, warm_base, ext,
+                            )
+                            .await
+                            {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "AXIS: warm cluster fetch failed for '{}': {}",
+                                        coll,
+                                        e
+                                    );
+                                    return;
+                                }
+                            };
+                            let g = index_arc.read().await;
+                            if let Err(e) = g.restore_warm_cluster(&vecs) {
+                                tracing::warn!(
+                                    "AXIS: warm cluster install failed for '{}': {}",
+                                    coll,
+                                    e
+                                );
+                                return;
+                            }
+                        }
+                        index_arc.write().await.mark_full_two_stage();
+                        tracing::info!(
+                            "🔥 AXIS: warm tier (ranged) applied for '{}' ({} clusters) → FullTwoStage",
+                            coll,
+                            n_clusters,
+                        );
+                    });
+                }
+                tracing::info!(
+                    "🔥 AXIS: cold-first (ranged) IVF index for '{}' from {} ({} vectors)",
+                    collection_id,
+                    path.display(),
+                    n,
+                );
+            }
+            Ok(None) => {
+                // v1 / non-binary: whole-file load (membership lives in the body).
+                self.load_ivf_whole_file(collection_id, &path).await;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "AXIS: ranged cold-load for '{}' failed ({}); trying whole-file load",
+                    collection_id,
+                    e,
+                );
+                self.load_ivf_whole_file(collection_id, &path).await;
+            }
+        }
+    }
+
+    /// Build a `FileSystem` for IVF index I/O. Local-backed for now; ADR-023 R3
+    /// (b)/(c) Slice 4 extends this to pick the S3 backend for `s3://` paths.
+    async fn index_filesystem()
+    -> std::result::Result<Arc<dyn crate::storage::persistence::filesystem::FileSystem>, String>
+    {
+        use crate::storage::persistence::filesystem::LocalFileSystem;
+        use crate::storage::persistence::filesystem::local::LocalConfig;
+        let local = LocalFileSystem::new(LocalConfig {
+            root_dir: None,
+            follow_symlinks: true,
+            default_permissions: None,
+            sync_enabled: false,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(Arc::new(local))
+    }
+
+    /// Install a loaded IVF index into `ivf_indexes` (with a concurrent-load
+    /// double-check), register its routing strategy, and clear any suspension
+    /// marker (F4a). Returns the shared handle, or `None` if another task won the
+    /// race.
+    async fn install_loaded_ivf(
+        &self,
+        collection_id: &str,
+        index: crate::index::axis::indexes::dual_store_ivf::UnifiedIvfIndex,
+        dimension: usize,
+        n: usize,
+    ) -> Option<
+        Arc<tokio::sync::RwLock<crate::index::axis::indexes::dual_store_ivf::UnifiedIvfIndex>>,
+    > {
+        let index_arc = Arc::new(tokio::sync::RwLock::new(index));
+        {
+            let mut indexes = self.ivf_indexes.write().await;
+            if indexes.contains_key(collection_id) {
+                return None;
+            }
+            indexes.insert(collection_id.to_string(), index_arc.clone());
+        }
+        self.register_loaded_ivf_strategy(collection_id, dimension, n)
+            .await;
+        self.suspended_collections
+            .write()
+            .await
+            .remove(collection_id);
+        Some(index_arc)
+    }
+
+    /// Whole-file IVF load (the pre-R3(b) path): used for v1 / non-binary indexes
+    /// (whose posting-list membership lives in the full body) and as a fallback
+    /// when the ranged header read fails. Cold-first when the file has a binary
+    /// tier, else FullEager; any deferred WARM tier is applied per cluster in the
+    /// background.
+    async fn load_ivf_whole_file(&self, collection_id: &str, path: &std::path::Path) {
         use crate::index::axis::storage::serialization::{ColdLoadResult, IndexSerializer};
-        let bytes = match tokio::fs::read(&path).await {
+        let bytes = match tokio::fs::read(path).await {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!("AXIS: read IVF index for '{}' failed ({})", collection_id, e);
                 return;
             }
         };
-        // ADR-023 T-E: cold-first load. A binary-tier index loads its ~1/32 COLD
-        // tier and serves Stage-1 immediately; the WARM fp32 tier is applied in
-        // the background to upgrade ColdBinaryOnly → FullTwoStage. Non-binary /
-        // v1 indexes load fully (FullEager) as before.
         match IndexSerializer::load_ivf_cold_path(&bytes).await {
-            Ok(ColdLoadResult { index, metadata, warm }) => {
-                let dimension = index.dimension();
-                let n = index.len();
+            Ok(ColdLoadResult {
+                index,
+                metadata,
+                warm,
+            }) => {
+                let (dimension, n) = (index.dimension(), index.len());
                 let cold_first = warm.is_some();
-                let index_arc = Arc::new(tokio::sync::RwLock::new(index));
-                {
-                    let mut indexes = self.ivf_indexes.write().await;
-                    // Double-check: another task may have loaded it concurrently.
-                    if indexes.contains_key(collection_id) {
-                        return;
-                    }
-                    indexes.insert(collection_id.to_string(), index_arc.clone());
-                }
-                self.register_loaded_ivf_strategy(collection_id, dimension, n)
-                    .await;
-                // F4a: a warm-load resumes a suspended collection — clear the marker.
-                self.suspended_collections
-                    .write()
-                    .await
-                    .remove(collection_id);
-                // ADR-023 T-E / R3: apply the deferred WARM tier off the critical
-                // path, ONE CLUSTER AT A TIME under the index READ lock so the
-                // O(n·dim) fill interleaves with serving; only the final
-                // FullTwoStage flip takes the (instant) write lock.
+                let Some(index_arc) =
+                    self.install_loaded_ivf(collection_id, index, dimension, n).await
+                else {
+                    return;
+                };
                 if let Some(warm_bytes) = warm {
                     let coll = collection_id.to_string();
                     // v3 indexes carry a WARM byte-directory; decode the deferred
@@ -588,8 +724,6 @@ impl AxisManager {
                                 );
                                 return;
                             }
-                            // Drop the read lock between clusters so serving and
-                            // any other readers proceed (LIOS-style overlap).
                         }
                         index_arc.write().await.mark_full_two_stage();
                         tracing::info!(

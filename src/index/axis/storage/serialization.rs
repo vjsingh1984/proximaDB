@@ -894,7 +894,37 @@ impl IndexSerializer {
     /// v1/v2 files load cold here too (empty `directory`); their WARM tier is not
     /// per-cluster range-readable, so callers fall back to a whole-WARM read.
     pub async fn cold_load_ranged(fs: &Arc<dyn FileSystem>, path: &str) -> Result<RangedColdLoad> {
-        // 1) Read the 4-byte header-length prefix, then the header itself.
+        let (header, header_len) = Self::read_header_ranged(fs, path).await?;
+        Self::cold_from_header(fs, path, header, header_len).await
+    }
+
+    /// Like [`cold_load_ranged`](Self::cold_load_ranged) but returns `None` for
+    /// indexes that aren't cold-first eligible (v1 / non-binary collections —
+    /// their COLD tier carries no posting-list membership to range-read). The
+    /// manager uses this to choose ranged I/O for binary indexes and a whole-file
+    /// load for the rest, reading only the cheap header first to decide.
+    pub async fn try_cold_load_ranged(
+        fs: &Arc<dyn FileSystem>,
+        path: &str,
+    ) -> Result<Option<RangedColdLoad>> {
+        let (header, header_len) = Self::read_header_ranged(fs, path).await?;
+        let eligible = header.version >= 2
+            && header
+                .metadata
+                .cold_path_profile()
+                .map(|p| p.has_binary_tier)
+                .unwrap_or(false);
+        if !eligible {
+            return Ok(None);
+        }
+        Ok(Some(Self::cold_from_header(fs, path, header, header_len).await?))
+    }
+
+    /// Range-read the `[u32 header_len][header]` prefix and validate magic/version.
+    async fn read_header_ranged(
+        fs: &Arc<dyn FileSystem>,
+        path: &str,
+    ) -> Result<(IndexHeader, u64)> {
         let head4 = fs.read_range(path, 0, 4).await.map_err(fs_err)?;
         if head4.len() < 4 {
             return Err(SerializationError::Io(std::io::Error::new(
@@ -902,8 +932,7 @@ impl IndexSerializer {
                 "missing header length prefix",
             )));
         }
-        let header_len =
-            u32::from_le_bytes([head4[0], head4[1], head4[2], head4[3]]) as u64;
+        let header_len = u32::from_le_bytes([head4[0], head4[1], head4[2], head4[3]]) as u64;
         let header_bytes = fs.read_range(path, 4, header_len).await.map_err(fs_err)?;
         let header: IndexHeader = bincode::deserialize(&header_bytes)?;
         if header.magic != *AXIS_MAGIC {
@@ -912,10 +941,19 @@ impl IndexSerializer {
         if header.version > VERSION {
             return Err(SerializationError::UnsupportedVersion(header.version));
         }
+        Ok((header, header_len))
+    }
 
+    /// Read ONLY the COLD blob (validate its CRC), build the `ColdBinaryOnly`
+    /// index, and return the WARM base offset + per-cluster directory.
+    async fn cold_from_header(
+        fs: &Arc<dyn FileSystem>,
+        path: &str,
+        header: IndexHeader,
+        header_len: u64,
+    ) -> Result<RangedColdLoad> {
         let profile = Self::cold_profile(&header)?;
         let cold_off = 4 + header_len;
-        // 2) Read ONLY the COLD blob, validate its CRC, build ColdBinaryOnly.
         let cold_bytes = fs
             .read_range(path, cold_off, profile.cold_tier_bytes)
             .await
