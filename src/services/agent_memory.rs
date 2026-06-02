@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use proximadb_data_model::MemoryType;
 use proximadb_embedding::{EmbedBatch, EmbedRecord, EmbeddingService, IngestMode};
@@ -36,6 +37,7 @@ use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode, ProximaVa
 use crate::ai::llm_integration::LLMIntegrationEngine;
 use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::services::VectorOperationsService;
+use crate::storage::engines::eventlog::{Event, EventLogEngine};
 
 /// How many similar existing memories the consolidation step retrieves.
 const CONSOLIDATION_TOP_K: usize = 5;
@@ -139,6 +141,38 @@ pub trait MemoryStore: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
+// Consolidation audit (the "why did this memory change?" trail)
+// ---------------------------------------------------------------------------
+
+/// A durable record of one consolidation decision. Captures the decision AND
+/// the candidate set it was made against, so the memory mutation is explainable
+/// after the fact (ADR-022 auditable memory). Serializable so it can be the
+/// EventLog `Event.data` payload verbatim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConsolidationAuditEvent {
+    pub collection: String,
+    pub tenant_id: String,
+    pub session_id: String,
+    pub actor: String,
+    pub fact_text: String,
+    pub memory_type: Option<MemoryType>,
+    /// "add" | "update" | "delete" | "noop".
+    pub action: String,
+    /// The memory id added/updated/deleted (None for noop).
+    pub memory_id: Option<String>,
+    /// Ids of the similar memories the decision was made against.
+    pub similar_ids: Vec<String>,
+    pub similar_count: usize,
+}
+
+/// Sink for consolidation-decision audit records. A trait seam (like the other
+/// agent-memory ports) so tests can assert emission without a real EventLog.
+#[async_trait]
+pub trait ConsolidationAuditSink: Send + Sync {
+    async fn emit(&self, event: &ConsolidationAuditEvent) -> Result<()>;
+}
+
+// ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
 
@@ -147,6 +181,9 @@ pub struct MemoryWriteEngine {
     extractor: Arc<dyn ExtractionAgent>,
     consolidator: Arc<dyn ConsolidationAgent>,
     store: Arc<dyn MemoryStore>,
+    /// Optional durable audit of consolidation decisions. When `None`, ingest
+    /// behaves exactly as before (decisions are still returned to the caller).
+    audit_sink: Option<Arc<dyn ConsolidationAuditSink>>,
 }
 
 impl MemoryWriteEngine {
@@ -159,7 +196,15 @@ impl MemoryWriteEngine {
             extractor,
             consolidator,
             store,
+            audit_sink: None,
         }
+    }
+
+    /// Attach a sink that persists every consolidation decision (ADR-022
+    /// auditable memory). Additive: omitting it leaves ingest unchanged.
+    pub fn with_audit_sink(mut self, sink: Arc<dyn ConsolidationAuditSink>) -> Self {
+        self.audit_sink = Some(sink);
+        self
     }
 
     /// Ingest one message pair: extract facts, then for each fact retrieve
@@ -209,6 +254,27 @@ impl MemoryWriteEngine {
                     fact_text: fact.text.clone(),
                 },
             };
+
+            // Persist the consolidation decision (non-fatal: an audit failure
+            // never fails the write — mirrors the AQL audit path).
+            if let Some(sink) = &self.audit_sink {
+                let event = ConsolidationAuditEvent {
+                    collection: scope.collection.clone(),
+                    tenant_id: scope.tenant_id.clone(),
+                    session_id: scope.session_id.clone(),
+                    actor: scope.actor.clone(),
+                    fact_text: fact.text.clone(),
+                    memory_type: Some(fact.memory_type),
+                    action: applied_action.kind.to_string(),
+                    memory_id: applied_action.memory_id.clone(),
+                    similar_ids: similar.iter().map(|h| h.id.clone()).collect(),
+                    similar_count: similar.len(),
+                };
+                if let Err(e) = sink.emit(&event).await {
+                    tracing::warn!("failed to persist consolidation audit: {e}");
+                }
+            }
+
             applied.push(applied_action);
         }
 
@@ -597,6 +663,56 @@ impl MemoryEmbedder for EmbeddingServiceEmbedder {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Real audit sink adapter (reuse EventLogEngine)
+// ---------------------------------------------------------------------------
+
+/// `ConsolidationAuditSink` backed by the canonical `EventLogEngine` — the same
+/// append-only event store the AQL read-path audit trail uses. Each decision is
+/// one `Event` (entity-scoped to tenant/session/memory) so it is queryable and
+/// recoverable alongside other observability events.
+pub struct EventLogConsolidationAuditSink {
+    log: Arc<EventLogEngine>,
+}
+
+impl EventLogConsolidationAuditSink {
+    pub fn new(log: Arc<EventLogEngine>) -> Self {
+        Self { log }
+    }
+}
+
+#[async_trait]
+impl ConsolidationAuditSink for EventLogConsolidationAuditSink {
+    async fn emit(&self, event: &ConsolidationAuditEvent) -> Result<()> {
+        let entity_id = format!(
+            "memory-consolidation:{}:{}:{}",
+            event.tenant_id,
+            event.session_id,
+            event.memory_id.as_deref().unwrap_or("noop"),
+        );
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "collection".to_string(),
+            serde_json::Value::String(event.collection.clone()),
+        );
+        let ev = Event {
+            sequence: 0, // assigned by append_event
+            entity_id,
+            event_type: "MemoryConsolidationDecision".to_string(),
+            data: serde_json::to_value(event)
+                .map_err(|e| anyhow!("consolidation audit serialize failed: {e}"))?,
+            timestamp: chrono::Utc::now(),
+            causation_id: Some(event.session_id.clone()),
+            metadata,
+        };
+        self.log
+            .append_event(ev)
+            .await
+            .map_err(|e| anyhow!("consolidation audit append failed: {e}"))?;
+        Ok(())
+    }
+}
+
 /// Best-effort extraction of a string from a proto `SqlValue`.
 fn sql_value_as_string(
     val: &crate::proto::proximadb_v1::sql_value::Value,
@@ -864,5 +980,171 @@ mod tests {
             !evaluate_filter_proxima(&scope_filter(&other_tenant).unwrap(), &rec.props),
             "different tenant must not match"
         );
+    }
+
+    // ── consolidation audit persistence ──────────────────────────────────
+
+    /// Store whose `retrieve_similar` returns a fixed candidate set, so the
+    /// audit event's `similar_ids`/`similar_count` are non-trivial.
+    struct HitStore(Vec<MemoryHit>);
+    #[async_trait]
+    impl MemoryStore for HitStore {
+        async fn retrieve_similar(
+            &self,
+            _scope: &MemoryWriteScope,
+            _fact: &ExtractedFact,
+            _k: usize,
+        ) -> Result<Vec<MemoryHit>> {
+            Ok(self.0.clone())
+        }
+        async fn add(&self, _scope: &MemoryWriteScope, _fact: &ExtractedFact) -> Result<String> {
+            Ok("new-1".to_string())
+        }
+        async fn update(
+            &self,
+            _scope: &MemoryWriteScope,
+            _id: &str,
+            _fact: &ExtractedFact,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn delete(&self, _scope: &MemoryWriteScope, _id: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingAuditSink {
+        emitted: Mutex<Vec<ConsolidationAuditEvent>>,
+    }
+    #[async_trait]
+    impl ConsolidationAuditSink for RecordingAuditSink {
+        async fn emit(&self, event: &ConsolidationAuditEvent) -> Result<()> {
+            self.emitted
+                .lock()
+                .map_err(|_| anyhow!("poisoned"))?
+                .push(event.clone());
+            Ok(())
+        }
+    }
+
+    struct FailingAuditSink;
+    #[async_trait]
+    impl ConsolidationAuditSink for FailingAuditSink {
+        async fn emit(&self, _event: &ConsolidationAuditEvent) -> Result<()> {
+            Err(anyhow!("synthetic audit failure"))
+        }
+    }
+
+    fn hit(id: &str) -> MemoryHit {
+        MemoryHit {
+            id: id.to_string(),
+            text: format!("text-{id}"),
+            score: 0.9,
+            memory_type: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn audit_emits_one_event_per_consolidation_decision() {
+        let extractor = Arc::new(MockExtractor(vec![
+            fact("user prefers dark mode", MemoryType::Preference),
+            fact("user lives in NYC", MemoryType::Fact),
+            fact("stale note", MemoryType::Observation),
+        ]));
+        let mut actions = std::collections::VecDeque::new();
+        actions.push_back(ConsolidationAction::Add);
+        actions.push_back(ConsolidationAction::Update {
+            id: "m-42".to_string(),
+        });
+        actions.push_back(ConsolidationAction::Delete {
+            id: "m-7".to_string(),
+        });
+        let consolidator = Arc::new(MockConsolidator(Mutex::new(actions)));
+        let store = Arc::new(HitStore(vec![hit("h1"), hit("h2")]));
+        let audit = Arc::new(RecordingAuditSink::default());
+
+        let engine =
+            MemoryWriteEngine::new(extractor, consolidator, store).with_audit_sink(audit.clone());
+        engine
+            .ingest(&scope(), &MessagePair {
+                user: "hi".to_string(),
+                assistant: "hello".to_string(),
+            })
+            .await
+            .expect("ingest");
+
+        let events = audit.emitted.lock().unwrap();
+        assert_eq!(events.len(), 3, "one audit event per decision");
+        assert_eq!(events[0].action, "add");
+        assert_eq!(events[1].action, "update");
+        assert_eq!(events[1].memory_id.as_deref(), Some("m-42"));
+        assert_eq!(events[2].action, "delete");
+        assert_eq!(events[2].memory_id.as_deref(), Some("m-7"));
+        // The decision carries the candidate set it was made against (the "why").
+        assert_eq!(events[0].similar_count, 2);
+        assert_eq!(events[0].similar_ids, vec!["h1".to_string(), "h2".to_string()]);
+        assert_eq!(events[0].tenant_id, "acme");
+        assert_eq!(events[0].session_id, "sess-1");
+    }
+
+    #[tokio::test]
+    async fn ingest_without_audit_sink_is_unchanged() {
+        let extractor = Arc::new(MockExtractor(vec![fact("x", MemoryType::Fact)]));
+        let consolidator = Arc::new(MockConsolidator(Mutex::new(
+            [ConsolidationAction::Add].into_iter().collect(),
+        )));
+        let store = Arc::new(HitStore(Vec::new()));
+        // Plain `new` — no audit sink.
+        let engine = MemoryWriteEngine::new(extractor, consolidator, store);
+        let applied = engine
+            .ingest(&scope(), &MessagePair {
+                user: "u".to_string(),
+                assistant: "a".to_string(),
+            })
+            .await
+            .expect("ingest");
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].kind, "add");
+    }
+
+    #[tokio::test]
+    async fn audit_emit_failure_does_not_fail_ingest() {
+        let extractor = Arc::new(MockExtractor(vec![fact("x", MemoryType::Fact)]));
+        let consolidator = Arc::new(MockConsolidator(Mutex::new(
+            [ConsolidationAction::Add].into_iter().collect(),
+        )));
+        let store = Arc::new(HitStore(Vec::new()));
+        let engine = MemoryWriteEngine::new(extractor, consolidator, store)
+            .with_audit_sink(Arc::new(FailingAuditSink));
+        // The audit sink errors, but ingest must still succeed (non-fatal).
+        let applied = engine
+            .ingest(&scope(), &MessagePair {
+                user: "u".to_string(),
+                assistant: "a".to_string(),
+            })
+            .await
+            .expect("ingest must not fail when audit sink errors");
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].kind, "add");
+    }
+
+    #[test]
+    fn consolidation_audit_event_round_trips_json() {
+        let ev = ConsolidationAuditEvent {
+            collection: "mem".to_string(),
+            tenant_id: "acme".to_string(),
+            session_id: "sess-1".to_string(),
+            actor: "assistant-1".to_string(),
+            fact_text: "user likes tea".to_string(),
+            memory_type: Some(MemoryType::Preference),
+            action: "add".to_string(),
+            memory_id: Some("m1".to_string()),
+            similar_ids: vec!["h1".to_string()],
+            similar_count: 1,
+        };
+        let json = serde_json::to_value(&ev).expect("serialize");
+        let back: ConsolidationAuditEvent = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(ev, back);
     }
 }
