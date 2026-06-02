@@ -128,8 +128,16 @@ impl FileSystem for AzureBlobFileSystem {
         // azure's `.range()` takes `impl Into<Range>`; a std exclusive range
         // [offset, offset+length) converts directly (no azure_core import needed).
         let mut stream = client.get().range(offset..(offset + length)).into_stream();
-        let mut out = Vec::with_capacity(length as usize);
-        while let Some(value) = stream.next().await {
+        let want = length as usize;
+        let mut out = Vec::with_capacity(want);
+        // Read pages only until the requested range is satisfied. The Pageable
+        // would otherwise issue a continuation request PAST the range/EOF — which
+        // a store like Azurite answers with 416, sending the SDK into an ~80s
+        // retry loop ("retry policy expired"). The explicit range bounds us.
+        while out.len() < want {
+            let Some(value) = stream.next().await else {
+                break;
+            };
             let response = value.map_err(|e| Self::net("Azure get range", e))?;
             let body = response
                 .data
@@ -138,6 +146,7 @@ impl FileSystem for AzureBlobFileSystem {
                 .map_err(|e| Self::net("Azure body", e))?;
             out.extend_from_slice(&body);
         }
+        out.truncate(want);
         Ok(out)
     }
 
