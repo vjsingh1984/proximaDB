@@ -3961,6 +3961,131 @@ mod tests {
         println!("ADR-023 R3: ranged cold load + per-cluster fetch verified over S3 (MinIO/aws-sdk)");
     }
 
+    /// ADR-023 R3 over Azure Blob (Azurite). `#[cfg(feature="azure")]` + #[ignore]
+    /// + `PROXIMADB_AZURE_TEST=1`. Start `azurite` and run with `--features azure`.
+    #[cfg(feature = "azure")]
+    #[tokio::test]
+    #[ignore = "needs Azurite — set PROXIMADB_AZURE_TEST=1"]
+    async fn ranged_cold_load_over_azurite() {
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        use crate::storage::persistence::filesystem::FileSystem;
+        use crate::storage::persistence::filesystem::azure_blob::{
+            AzureBlobConfig, AzureBlobFileSystem,
+        };
+        use std::sync::Arc;
+        if std::env::var("PROXIMADB_AZURE_TEST").is_err() {
+            eprintln!("skip: set PROXIMADB_AZURE_TEST=1 (with Azurite running)");
+            return;
+        }
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_az".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_az").await.unwrap();
+
+        let azfs = AzureBlobFileSystem::new(AzureBlobConfig {
+            use_emulator: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        azfs.ensure_container("proximadb-test").await.unwrap();
+        let fs: Arc<dyn FileSystem> = Arc::new(azfs);
+
+        let path = "az://proximadb-test/proximadb_r3_azure_test.bin".to_string();
+        fs.write(&path, &bytes, None).await.unwrap();
+        let mut loaded = IndexSerializer::cold_load_ranged(&fs, &path).await.unwrap();
+        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        let q = data[0].1.clone();
+        for ext in &loaded.directory.clone() {
+            let vecs =
+                IndexSerializer::fetch_warm_cluster_ranged(&fs, &path, loaded.warm_base, ext)
+                    .await
+                    .unwrap();
+            loaded.index.restore_warm_cluster(&vecs).unwrap();
+        }
+        loaded.index.mark_full_two_stage();
+        let (whole, _) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
+        assert_eq!(
+            loaded.index.search(&q, 3, None).await.unwrap()[0].0,
+            whole.search(&q, 3, None).await.unwrap()[0].0,
+            "Azure ranged cold load matches whole-file load"
+        );
+        let _ = fs.delete(&path).await;
+        println!("ADR-023 R3: ranged cold load verified over Azure Blob (Azurite)");
+    }
+
+    /// ADR-023 R3 over GCS (fake-gcs-server). `#[cfg(feature="gcp")]` + #[ignore]
+    /// + `PROXIMADB_GCS_TEST=1`. Start fake-gcs-server and run `--features gcp`.
+    #[cfg(feature = "gcp")]
+    #[tokio::test]
+    #[ignore = "needs fake-gcs-server — set PROXIMADB_GCS_TEST=1"]
+    async fn ranged_cold_load_over_fake_gcs() {
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        use crate::storage::persistence::filesystem::FileSystem;
+        use crate::storage::persistence::filesystem::gcs_store::{GcsConfig, GcsFileSystem};
+        use std::sync::Arc;
+        if std::env::var("PROXIMADB_GCS_TEST").is_err() {
+            eprintln!("skip: set PROXIMADB_GCS_TEST=1 (with fake-gcs-server running)");
+            return;
+        }
+        let endpoint = std::env::var("PROXIMADB_GCS_TEST_ENDPOINT")
+            .unwrap_or_else(|_| "http://localhost:4443".into());
+        let bucket =
+            std::env::var("PROXIMADB_GCS_TEST_BUCKET").unwrap_or_else(|_| "proximadb-test".into());
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_gcs".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_gcs").await.unwrap();
+
+        let fs: Arc<dyn FileSystem> = Arc::new(
+            GcsFileSystem::new(GcsConfig {
+                endpoint_url: Some(endpoint),
+                anonymous: true,
+                project_id: Some("proximadb".to_string()),
+            })
+            .await
+            .unwrap(),
+        );
+
+        let path = format!("gs://{bucket}/proximadb_r3_gcs_test.bin");
+        fs.write(&path, &bytes, None).await.unwrap();
+        let mut loaded = IndexSerializer::cold_load_ranged(&fs, &path).await.unwrap();
+        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        let q = data[0].1.clone();
+        for ext in &loaded.directory.clone() {
+            let vecs =
+                IndexSerializer::fetch_warm_cluster_ranged(&fs, &path, loaded.warm_base, ext)
+                    .await
+                    .unwrap();
+            loaded.index.restore_warm_cluster(&vecs).unwrap();
+        }
+        loaded.index.mark_full_two_stage();
+        let (whole, _) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
+        assert_eq!(
+            loaded.index.search(&q, 3, None).await.unwrap()[0].0,
+            whole.search(&q, 3, None).await.unwrap()[0].0,
+            "GCS ranged cold load matches whole-file load"
+        );
+        let _ = fs.delete(&path).await;
+        println!("ADR-023 R3: ranged cold load verified over GCS (fake-gcs-server)");
+    }
+
     #[tokio::test]
     async fn cold_index_on_probe_fetches_only_survivor_clusters_and_dedups() {
         // ADR-023 R3 (c): a ColdBinaryOnly index with a RangedWarmSource fetches

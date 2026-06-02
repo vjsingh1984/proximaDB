@@ -92,6 +92,16 @@ impl AzureBlobFileSystem {
     fn net(ctx: &str, e: impl std::fmt::Display) -> FilesystemError {
         FilesystemError::Network(format!("{ctx}: {e}"))
     }
+
+    /// Create a container if it doesn't already exist (provisioning/test helper;
+    /// the `FileSystem` trait models objects, not containers). Treats an
+    /// "already exists" error as success.
+    pub async fn ensure_container(&self, container: &str) -> FsResult<()> {
+        match self.service.container_client(container).create().await {
+            Ok(_) => Ok(()),
+            Err(_) => Ok(()), // already exists (or a benign provisioning race)
+        }
+    }
 }
 
 #[async_trait]
