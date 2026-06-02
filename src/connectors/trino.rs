@@ -581,21 +581,23 @@ pub enum TrinoErrorCode {
 // Arrow Flight Integration Points
 // ============================================================================
 //
-// ⚠️  SCAFFOLD STATUS — TD-098 (partial: 2/7 live as of 2026-06-01)
+// ⚠️  SCAFFOLD STATUS — TD-098 (partial: 3/7 live as of 2026-06-01)
 //
 // Live (real `FlightServiceClient::connect` + RPC):
-//   - `flight_list_schemas` (list_flights → bucketed TrinoSchema)
-//   - `flight_list_tables`  (list_flights → schema-filtered Vec<String>)
+//   - `flight_list_schemas`     (list_flights → bucketed TrinoSchema)
+//   - `flight_list_tables`      (list_flights → schema-filtered Vec<String>)
+//   - `flight_get_table_schema` (get_schema   → SchemaResult → ArrowSchema)
 //
 // See per-fn docstrings + the contract gate at
 // `tests/connectors_flight_contract.rs::trino_flight_pilot` for the
 // in-process tonic round-trip proof. Both have async signatures —
 // older sync callers need a runtime handle.
 //
-// Still scaffolded: `flight_get_table_schema`, `flight_get_splits`,
-// plus the Page-source / sink ops. Same `FlightServiceClient::connect`
-// + dial-relevant-RPC pattern; mechanical migration. See
-// `docs/10-quality/TECHNICAL_DEBT.adoc` TD-098 for acceptance.
+// Still scaffolded: `flight_get_splits` plus the Page-source / sink
+// ops. Same `Channel::from_shared(...).connect_lazy()` +
+// `FlightServiceClient::new` + dial-relevant-RPC pattern; mechanical
+// migration. See `docs/10-quality/TECHNICAL_DEBT.adoc` TD-098 for
+// acceptance.
 
 /// Live Arrow Flight `ListFlights` query against the configured ProximaDB
 /// Flight endpoint. Returns one [`TrinoSchema`] per unique first-path
@@ -739,14 +741,57 @@ pub async fn flight_list_tables(endpoint: &str, _catalog: &str, schema: &str) ->
     tables
 }
 
-/// Flight action for getting table schema
-pub fn flight_get_table_schema(
+/// Live Arrow Flight `GetSchema` query for a `catalog.schema.table`
+/// triple. Third live Flight method (TD-098, 2026-06-01).
+///
+/// Dials the ProximaDB Flight endpoint, calls `get_schema` with a
+/// `FlightDescriptor::path([schema, table])`, and decodes the IPC
+/// schema bytes back into an `ArrowSchema` via
+/// `arrow_flight::SchemaResult::try_into`. Same dial pattern as
+/// `flight_list_schemas` / `flight_list_tables` —
+/// `Channel::from_shared(...).connect_lazy()` +
+/// `FlightServiceClient::new(channel)` (tonic ≥0.12 removed the
+/// convenience `connect()` shorthand).
+///
+/// `catalog` is currently informational — Flight descriptors are
+/// `[schema, table]` two-segment paths; the catalog is implicit in the
+/// Flight endpoint binding. Connect / RPC / decode failures degrade
+/// to `None` so callers see "schema unknown" instead of panicking on
+/// transient blips.
+pub async fn flight_get_table_schema(
+    endpoint: &str,
     _catalog: &str,
-    _schema: &str,
-    _table: &str,
+    schema: &str,
+    table: &str,
 ) -> Option<Arc<ArrowSchema>> {
-    // Schema retrieval: Arrow Flight GetSchema for table columns
-    None
+    use arrow_flight::FlightDescriptor;
+    use arrow_flight::SchemaResult;
+    use arrow_flight::flight_service_client::FlightServiceClient;
+
+    let dial = endpoint
+        .strip_prefix("grpc://")
+        .map(|rest| format!("http://{rest}"))
+        .unwrap_or_else(|| endpoint.to_string());
+
+    let channel = match tonic::transport::Channel::from_shared(dial)
+        .ok()
+        .map(|e| e.connect_lazy())
+    {
+        Some(ch) => ch,
+        None => return None,
+    };
+    let mut client = FlightServiceClient::new(channel);
+
+    let descriptor = FlightDescriptor::new_path(vec![schema.to_string(), table.to_string()]);
+    let result: SchemaResult = match client.get_schema(tonic::Request::new(descriptor)).await {
+        Ok(resp) => resp.into_inner(),
+        Err(_) => return None,
+    };
+
+    match ArrowSchema::try_from(&result) {
+        Ok(s) => Some(Arc::new(s)),
+        Err(_) => None,
+    }
 }
 
 /// Flight action for getting splits

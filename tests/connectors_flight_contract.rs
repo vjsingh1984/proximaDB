@@ -113,6 +113,7 @@ fn flight_descriptor_vectors_path_shape() {
 
 mod trino_flight_pilot {
     use std::pin::Pin;
+    use std::sync::Arc;
 
     use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
     use arrow_flight::{
@@ -120,8 +121,10 @@ mod trino_flight_pilot {
         HandshakeRequest, HandshakeResponse, PollInfo, PutResult, SchemaResult, Ticket,
     };
     use futures::Stream;
+    use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
+    use arrow_flight::SchemaAsIpc;
     use proximadb::connectors::trino::{
-        TrinoConnectorConfig, flight_list_schemas, flight_list_tables,
+        TrinoConnectorConfig, flight_get_table_schema, flight_list_schemas, flight_list_tables,
     };
     use tokio::sync::oneshot;
     use tokio_stream::wrappers::TcpListenerStream;
@@ -129,11 +132,12 @@ mod trino_flight_pilot {
 
     type RespStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
 
-    /// Minimal `FlightService` impl. Only `list_flights` is wired; every
-    /// other RPC returns Unimplemented to keep the trait satisfied without
-    /// 300+ lines of mocks.
+    /// Minimal `FlightService` impl. Only `list_flights` and
+    /// `get_schema` are wired; every other RPC returns Unimplemented to
+    /// keep the trait satisfied without 300+ lines of mocks.
     struct MockFlight {
         canned: Vec<FlightInfo>,
+        canned_schema: Option<Arc<ArrowSchema>>,
     }
 
     #[tonic::async_trait]
@@ -181,7 +185,14 @@ mod trino_flight_pilot {
             &self,
             _request: Request<FlightDescriptor>,
         ) -> Result<Response<SchemaResult>, Status> {
-            Err(Status::unimplemented("get_schema"))
+            let Some(schema) = self.canned_schema.as_ref() else {
+                return Err(Status::unimplemented("get_schema"));
+            };
+            let options = arrow::ipc::writer::IpcWriteOptions::default();
+            let result: SchemaResult = SchemaAsIpc::new(schema.as_ref(), &options)
+                .try_into()
+                .map_err(|e: arrow::error::ArrowError| Status::internal(e.to_string()))?;
+            Ok(Response::new(result))
         }
 
         async fn do_get(
@@ -242,6 +253,23 @@ mod trino_flight_pilot {
     /// server cleanly. The server task self-terminates when the
     /// shutdown receiver fires.
     async fn start_mock_flight_server(canned: Vec<FlightInfo>) -> (u16, oneshot::Sender<()>) {
+        start_mock_flight_server_full(canned, None).await
+    }
+
+    /// Variant used by tests that need `get_schema` wired (Trino
+    /// `flight_get_table_schema` pilot). `canned_schema` is encoded as
+    /// Arrow IPC into the `SchemaResult.schema` bytes by the mock.
+    async fn start_mock_flight_server_with_schema(
+        canned: Vec<FlightInfo>,
+        canned_schema: Arc<ArrowSchema>,
+    ) -> (u16, oneshot::Sender<()>) {
+        start_mock_flight_server_full(canned, Some(canned_schema)).await
+    }
+
+    async fn start_mock_flight_server_full(
+        canned: Vec<FlightInfo>,
+        canned_schema: Option<Arc<ArrowSchema>>,
+    ) -> (u16, oneshot::Sender<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind port 0");
@@ -251,6 +279,7 @@ mod trino_flight_pilot {
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let svc = MockFlight {
             canned,
+            canned_schema,
         };
         tokio::spawn(async move {
             let _ = tonic::transport::Server::builder()
@@ -336,5 +365,37 @@ mod trino_flight_pilot {
     async fn trino_flight_list_tables_returns_empty_on_unreachable_endpoint() {
         let tables = flight_list_tables("grpc://127.0.0.1:1", "proximadb", "any").await;
         assert!(tables.is_empty(), "unreachable endpoint must yield empty");
+    }
+
+    #[tokio::test]
+    async fn trino_flight_get_table_schema_returns_arrow_schema() {
+        // Mock get_schema returns a known 2-column Arrow schema; the
+        // connector must dial GetSchema and round-trip the IPC bytes
+        // back into an ArrowSchema with the same fields.
+        let canned_schema = Arc::new(ArrowSchema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let (port, _shutdown) =
+            start_mock_flight_server_with_schema(vec![], canned_schema.clone()).await;
+
+        let endpoint = format!("grpc://127.0.0.1:{port}");
+        let got = flight_get_table_schema(&endpoint, "proximadb", "sales", "orders")
+            .await
+            .expect("schema should be returned");
+        assert_eq!(got.fields().len(), 2, "expected 2 fields: {got:?}");
+        assert_eq!(got.field(0).name(), "id");
+        assert_eq!(got.field(0).data_type(), &DataType::Int64);
+        assert!(!got.field(0).is_nullable());
+        assert_eq!(got.field(1).name(), "name");
+        assert_eq!(got.field(1).data_type(), &DataType::Utf8);
+        assert!(got.field(1).is_nullable());
+    }
+
+    #[tokio::test]
+    async fn trino_flight_get_table_schema_returns_none_on_unreachable_endpoint() {
+        let result =
+            flight_get_table_schema("grpc://127.0.0.1:1", "proximadb", "any", "any").await;
+        assert!(result.is_none(), "unreachable endpoint must yield None");
     }
 }
