@@ -3856,6 +3856,111 @@ mod tests {
         let _ = tokio::fs::remove_file(&path).await;
     }
 
+    /// ADR-023 R3 (b) over a REAL S3 endpoint (MinIO), via the aws-sdk-s3 backend.
+    /// Proves the cold path is backend-agnostic: the identical `cold_load_ranged`
+    /// / `fetch_warm_cluster_ranged` code that runs on the local FS drives a real
+    /// S3 `Range:` GET — reading only `[header]+[COLD]` to serve, then per-cluster
+    /// fp32 on demand.
+    ///
+    /// `#[cfg(feature = "aws")]` + `#[ignore]` + env-gated. Start MinIO and set
+    /// `PROXIMADB_S3_TEST_ENDPOINT` (e.g. `http://localhost:9000`); run with
+    /// `cargo test --features aws ... -- --ignored`. Defaults match the dev MinIO.
+    #[cfg(feature = "aws")]
+    #[tokio::test]
+    #[ignore = "needs a running S3 endpoint (MinIO) — set PROXIMADB_S3_TEST_ENDPOINT"]
+    async fn ranged_cold_load_over_real_s3_minio() {
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        use crate::storage::persistence::filesystem::FileSystem;
+        use crate::storage::persistence::filesystem::aws_s3::{AwsS3Config, AwsS3FileSystem};
+        use std::sync::Arc;
+        let Ok(endpoint) = std::env::var("PROXIMADB_S3_TEST_ENDPOINT") else {
+            eprintln!("skip: set PROXIMADB_S3_TEST_ENDPOINT (e.g. http://localhost:9000)");
+            return;
+        };
+        let bucket =
+            std::env::var("PROXIMADB_S3_TEST_BUCKET").unwrap_or_else(|_| "proximadb-test".into());
+        let access =
+            std::env::var("PROXIMADB_S3_TEST_ACCESS").unwrap_or_else(|_| "minioadmin".into());
+        let secret =
+            std::env::var("PROXIMADB_S3_TEST_SECRET").unwrap_or_else(|_| "minioadmin".into());
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        let mut index =
+            UnifiedIvfIndex::new("c_s3".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_s3").await.unwrap();
+
+        let fs: Arc<dyn FileSystem> = Arc::new(
+            AwsS3FileSystem::new(AwsS3Config {
+                region: "us-east-1".to_string(),
+                endpoint_url: Some(endpoint),
+                force_path_style: true,
+                access_key_id: Some(access),
+                secret_access_key: Some(secret),
+                session_token: None,
+            })
+            .await
+            .unwrap(),
+        );
+
+        let path = format!("s3://{bucket}/proximadb_r3_s3_test.bin");
+        fs.write(&path, &bytes, None).await.unwrap();
+
+        // Cold-load via byte-RANGE reads from S3 (only [header]+[COLD] before serving).
+        let mut loaded = IndexSerializer::cold_load_ranged(&fs, &path).await.unwrap();
+        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        assert!(!loaded.directory.is_empty(), "v3 directory present over S3");
+        let q = data[0].1.clone();
+        let s1 = loaded
+            .index
+            .search_with_binary_acceleration(&q, 3, None)
+            .await
+            .unwrap();
+        assert_eq!(s1[0].0, "v0", "Stage-1 serves from the S3 cold load");
+
+        let warm_base = loaded.warm_base;
+        let dir = loaded.directory.clone();
+        let mut fetched = 0usize;
+        for ext in &dir {
+            let vecs = IndexSerializer::fetch_warm_cluster_ranged(&fs, &path, warm_base, ext)
+                .await
+                .unwrap();
+            fetched += vecs.len();
+            loaded.index.restore_warm_cluster(&vecs).unwrap();
+        }
+        assert_eq!(fetched, data.len(), "S3 ranged fetch covers every vector");
+        loaded.index.mark_full_two_stage();
+
+        let (whole, _) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
+        assert_eq!(
+            loaded
+                .index
+                .search(&q, 3, None)
+                .await
+                .unwrap()
+                .iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            whole
+                .search(&q, 3, None)
+                .await
+                .unwrap()
+                .iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            "S3 ranged cold load matches whole-file load"
+        );
+        let _ = fs.delete(&path).await;
+        println!("ADR-023 R3: ranged cold load + per-cluster fetch verified over S3 (MinIO/aws-sdk)");
+    }
+
     #[tokio::test]
     async fn cold_index_on_probe_fetches_only_survivor_clusters_and_dedups() {
         // ADR-023 R3 (c): a ColdBinaryOnly index with a RangedWarmSource fetches
