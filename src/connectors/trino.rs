@@ -581,20 +581,21 @@ pub enum TrinoErrorCode {
 // Arrow Flight Integration Points
 // ============================================================================
 //
-// ⚠️  SCAFFOLD STATUS — TD-098 (partial: 1/7 live as of 2026-06-01)
+// ⚠️  SCAFFOLD STATUS — TD-098 (partial: 2/7 live as of 2026-06-01)
 //
-// `flight_list_schemas` is LIVE — constructs a `FlightServiceClient`,
-// dials `list_flights`, and projects descriptor paths into TrinoSchemas.
-// See its docstring + the contract gate at
-// `tests/connectors_flight_contract.rs::trino_flight_list_schemas_*` for
-// the round-trip proof (in-process tonic test fixture). Note the new
-// signature is **async** — older sync callers need a runtime handle.
+// Live (real `FlightServiceClient::connect` + RPC):
+//   - `flight_list_schemas` (list_flights → bucketed TrinoSchema)
+//   - `flight_list_tables`  (list_flights → schema-filtered Vec<String>)
 //
-// The remaining 6 `flight_*` helpers (`flight_list_tables`,
-// `flight_get_table_schema`, `flight_get_splits`, plus the Page-source /
-// sink ops) are still scaffolds. The pattern lands when this module
-// finishes its TD-098 migration; see
-// `docs/10-quality/TECHNICAL_DEBT.adoc` for the acceptance criteria.
+// See per-fn docstrings + the contract gate at
+// `tests/connectors_flight_contract.rs::trino_flight_pilot` for the
+// in-process tonic round-trip proof. Both have async signatures —
+// older sync callers need a runtime handle.
+//
+// Still scaffolded: `flight_get_table_schema`, `flight_get_splits`,
+// plus the Page-source / sink ops. Same `FlightServiceClient::connect`
+// + dial-relevant-RPC pattern; mechanical migration. See
+// `docs/10-quality/TECHNICAL_DEBT.adoc` TD-098 for acceptance.
 
 /// Live Arrow Flight `ListFlights` query against the configured ProximaDB
 /// Flight endpoint. Returns one [`TrinoSchema`] per unique first-path
@@ -673,10 +674,69 @@ pub async fn flight_list_schemas(endpoint: &str, _catalog: &str) -> Vec<TrinoSch
         .collect()
 }
 
-/// Flight action for listing tables
-pub fn flight_list_tables(_catalog: &str, _schema: &str) -> Vec<String> {
-    // Table listing: Arrow Flight ListFlights for schema tables
-    Vec::new()
+/// Live Arrow Flight `ListFlights` query that returns the table names
+/// under a given schema. Same wire as [`flight_list_schemas`] but
+/// filters by `path[0] == schema` and returns the per-schema table
+/// list as `Vec<String>` (deduplicated, insertion-ordered).
+///
+/// Empty Vec on connect / list failures (no panic).
+///
+/// TD-098 progress: 2/7 live (was 1/7 after the `flight_list_schemas`
+/// pilot).
+pub async fn flight_list_tables(endpoint: &str, _catalog: &str, schema: &str) -> Vec<String> {
+    use arrow_flight::Criteria;
+    use arrow_flight::flight_service_client::FlightServiceClient;
+    use futures::StreamExt;
+
+    let dial = endpoint
+        .strip_prefix("grpc://")
+        .map(|rest| format!("http://{rest}"))
+        .unwrap_or_else(|| endpoint.to_string());
+
+    // tonic ≥0.12 removed the convenience `FlightServiceClient::connect`;
+    // build the Channel via `Channel::from_shared(...).connect_lazy()`
+    // and hand it to `FlightServiceClient::new`. Same pattern as
+    // `flight_list_schemas` above.
+    let channel = match tonic::transport::Channel::from_shared(dial)
+        .ok()
+        .map(|e| e.connect_lazy())
+    {
+        Some(ch) => ch,
+        None => return Vec::new(),
+    };
+    let mut client = FlightServiceClient::new(channel);
+
+    let mut stream = match client
+        .list_flights(tonic::Request::new(Criteria {
+            expression: Default::default(),
+        }))
+        .await
+    {
+        Ok(resp) => resp.into_inner(),
+        Err(_) => return Vec::new(),
+    };
+
+    let mut tables: Vec<String> = Vec::new();
+    while let Some(item) = stream.next().await {
+        let Ok(flight_info) = item else { continue };
+        let Some(desc) = flight_info.flight_descriptor else {
+            continue;
+        };
+        let mut path_iter = desc.path.into_iter();
+        let Some(schema_name) = path_iter.next() else {
+            continue;
+        };
+        if schema_name != schema {
+            continue;
+        }
+        let Some(table_name) = path_iter.next() else {
+            continue;
+        };
+        if !tables.iter().any(|t| t == &table_name) {
+            tables.push(table_name);
+        }
+    }
+    tables
 }
 
 /// Flight action for getting table schema

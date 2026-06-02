@@ -120,7 +120,9 @@ mod trino_flight_pilot {
         HandshakeRequest, HandshakeResponse, PollInfo, PutResult, SchemaResult, Ticket,
     };
     use futures::Stream;
-    use proximadb::connectors::trino::{TrinoConnectorConfig, flight_list_schemas};
+    use proximadb::connectors::trino::{
+        TrinoConnectorConfig, flight_list_schemas, flight_list_tables,
+    };
     use tokio::sync::oneshot;
     use tokio_stream::wrappers::TcpListenerStream;
     use tonic::{Request, Response, Status, Streaming};
@@ -304,5 +306,35 @@ mod trino_flight_pilot {
         // degrade to empty schema list.
         let schemas = flight_list_schemas("grpc://127.0.0.1:1", "proximadb").await;
         assert!(schemas.is_empty(), "unreachable endpoint must yield empty");
+    }
+
+    #[tokio::test]
+    async fn trino_flight_list_tables_filters_by_schema() {
+        // Mock returns paths across two schemas + a deduplicate of
+        // ["sales","orders"]. flight_list_tables("sales") should pick
+        // exactly the two distinct sales tables.
+        let canned = vec![
+            flight_info(&["sales", "orders"]),
+            flight_info(&["analytics", "events"]),
+            flight_info(&["sales", "customers"]),
+            flight_info(&["sales", "orders"]), // duplicate — must dedup
+        ];
+        let (port, _shutdown) = start_mock_flight_server(canned).await;
+
+        let endpoint = format!("grpc://127.0.0.1:{port}");
+        let tables = flight_list_tables(&endpoint, "proximadb", "sales").await;
+        assert_eq!(tables.len(), 2, "expected 2 distinct sales tables: {tables:?}");
+        assert!(tables.iter().any(|t| t == "orders"));
+        assert!(tables.iter().any(|t| t == "customers"));
+
+        // Schema not in canned list → empty Vec.
+        let none = flight_list_tables(&endpoint, "proximadb", "missing").await;
+        assert!(none.is_empty(), "missing schema must yield empty");
+    }
+
+    #[tokio::test]
+    async fn trino_flight_list_tables_returns_empty_on_unreachable_endpoint() {
+        let tables = flight_list_tables("grpc://127.0.0.1:1", "proximadb", "any").await;
+        assert!(tables.is_empty(), "unreachable endpoint must yield empty");
     }
 }
