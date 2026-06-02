@@ -242,6 +242,13 @@ pub struct AxisManager {
     /// cleared on that warm-load. Surfaced in route-health.
     suspended_collections: Arc<RwLock<std::collections::HashSet<String>>>,
 
+    /// ADR-023 R3 (c): when `true`, a cold-loaded (ranged) IVF index serves
+    /// PURELY on-probe — the eager background warm-apply is skipped, so unprobed
+    /// clusters are never downloaded (the object-store mode: pay only for what a
+    /// query touches). Default `false` keeps the eager fill → `FullTwoStage`,
+    /// which is right for cheap local I/O.
+    cold_lazy_warm: bool,
+
     /// Shared collection cache from VectorOperationsService (read-only access)
     /// This avoids duplicating collection metadata in memory
     /// Collections are cached by VectorOperationsService and shared here
@@ -427,6 +434,7 @@ impl AxisManager {
             recall_probe_gate: None,  // Set later via set_recall_probe_gate (TD-075)
             index_persist_dir: None,  // Set later via set_index_persist_dir (TD-087 Slice B)
             suspended_collections: Arc::new(RwLock::new(std::collections::HashSet::new())), // F4a
+            cold_lazy_warm: false, // ADR-023 R3 (c): eager warm by default
             shared_collection_cache: None, // Will be set via set_shared_collection_cache
             hnsw_indexes: Arc::new(RwLock::new(HashMap::new())), // Real HNSW indexes per collection
             ivf_indexes: Arc::new(RwLock::new(HashMap::new())), // Real IVF indexes per collection (DEFAULT)
@@ -465,6 +473,15 @@ impl AxisManager {
     pub fn set_index_persist_dir(&mut self, dir: std::path::PathBuf) {
         self.index_persist_dir = Some(dir);
         tracing::info!("🔗 AXIS: IVF index persistence enabled (TD-087 Slice B)");
+    }
+
+    /// ADR-023 R3 (c): enable PURE-LAZY cold warm — skip the eager background
+    /// fill so a ranged cold index downloads only the clusters queries probe (the
+    /// object-store mode: pay only for what's touched). Off by default (eager
+    /// fill → `FullTwoStage`, right for cheap local I/O). The index stays
+    /// `ColdBinaryOnly` and serves via on-probe rerank.
+    pub fn set_cold_lazy_warm(&mut self, lazy: bool) {
+        self.cold_lazy_warm = lazy;
     }
 
     /// Resolve the on-disk path for a collection's persisted IVF index, or `None`
@@ -577,7 +594,10 @@ impl AxisManager {
                 // Background ranged warm-apply: range-fetch each cluster's fp32,
                 // install under the index READ lock (released between clusters so
                 // serving overlaps the fill), then the instant FullTwoStage flip.
-                if !directory.is_empty() {
+                // ADR-023 R3 (c): skipped in pure-lazy mode — the index stays
+                // ColdBinaryOnly and serves via on-probe fetch, so unprobed
+                // clusters are never downloaded (object-store mode).
+                if !directory.is_empty() && !self.cold_lazy_warm {
                     let coll = collection_id.to_string();
                     let fs2 = fs.clone();
                     let path2 = path_str.clone();
@@ -5290,6 +5310,117 @@ mod recluster_apply_tests {
         assert_eq!(
             got_top, want_top,
             "warm-loaded index must serve identical top-k"
+        );
+    }
+
+    #[tokio::test]
+    async fn ranged_cold_load_eager_and_pure_lazy_through_the_manager() {
+        // ADR-023 R3 (b)/(c): exercise the RANGED manager load path end-to-end
+        // with a persisted BINARY (v3) index — the default rebuild is non-binary,
+        // so the other manager tests only hit the whole-file fallback. Verifies
+        // both modes: EAGER (background ranged warm-apply → FullTwoStage) and
+        // PURE-LAZY (eager fill skipped → stays ColdBinaryOnly, serves on-probe).
+        use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let dim = 8;
+        let cfg = UnifiedIvfConfig {
+            use_binary: true,
+            dimension: dim,
+            n_clusters: 2,
+            n_probe: 2, // probe all → on-probe rerank is exact
+            min_train_size: 4,
+            ..Default::default()
+        };
+        let data: Vec<(String, Vec<f32>)> = (0..24)
+            .map(|i| {
+                let v: Vec<f32> = (0..dim)
+                    .map(|d| if (i + d) % 2 == 0 { 1.0 } else { -1.0 })
+                    .collect();
+                (format!("v{i}"), v)
+            })
+            .collect();
+        let mut full = UnifiedIvfIndex::new("colz".to_string(), cfg).unwrap();
+        full.train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            full.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let q = data[0].1.clone();
+        let want: Vec<String> = full
+            .search(&q, 3, Some(2))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+
+        // Persist as a binary v3 index at the manager's expected path.
+        let path = dir.path().join("colz").join("ivf.bin");
+        IndexSerializer::persist_ivf_index(&full, "colz", &path)
+            .await
+            .unwrap();
+
+        // EAGER (default): ranged cold-load + background ranged warm-apply →
+        // FullTwoStage within a short window.
+        let mut m_eager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m_eager.set_index_persist_dir(dir.path().to_path_buf());
+        m_eager.ensure_ivf_index_loaded("colz").await;
+        let idx_e = m_eager
+            .ivf_indexes
+            .read()
+            .await
+            .get("colz")
+            .cloned()
+            .expect("ranged warm-load installed the index");
+        let mut flipped = false;
+        for _ in 0..100 {
+            if idx_e.read().await.serving_state()
+                == crate::index::axis::IvfServingState::FullTwoStage
+            {
+                flipped = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(
+            flipped,
+            "eager ranged background warm-apply reaches FullTwoStage"
+        );
+
+        // PURE-LAZY: eager fill skipped → stays ColdBinaryOnly, serves on-probe.
+        let mut m_lazy = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m_lazy.set_index_persist_dir(dir.path().to_path_buf());
+        m_lazy.set_cold_lazy_warm(true);
+        m_lazy.ensure_ivf_index_loaded("colz").await;
+        let idx_l = m_lazy
+            .ivf_indexes
+            .read()
+            .await
+            .get("colz")
+            .cloned()
+            .expect("ranged warm-load installed the index");
+        assert_eq!(
+            idx_l.read().await.serving_state(),
+            crate::index::axis::IvfServingState::ColdBinaryOnly,
+            "pure-lazy keeps the index cold (no eager FullTwoStage fill)"
+        );
+        let got: Vec<String> = idx_l
+            .read()
+            .await
+            .search_with_binary_acceleration(&q, 3, Some(2))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(got, want, "pure-lazy on-probe rerank matches the warm top-k");
+        assert!(
+            idx_l.read().await.fetched_cluster_count() <= 2,
+            "on-probe fetched only the probed clusters"
         );
     }
 
