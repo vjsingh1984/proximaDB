@@ -269,6 +269,50 @@ pub struct SharedServices {
     /// v2 `external-collections` endpoints.
     pub external_collection_service:
         Arc<crate::services::external_collection::ExternalCollectionService>,
+
+    /// Process-wide TurboQuant store registry (Phase H — Quantization
+    /// Trait Convergence Plan). Owns one
+    /// [`TurboQuantStore`](proximadb_vector::quantization::turboquant::TurboQuantStore)
+    /// per collection, keyed on `collection_id`. Search paths that route
+    /// through `lifecycle = ReadTime` (Phase C) pull the store from this
+    /// registry; the
+    /// [`TurboQuantAxisIndex`](crate::index::axis::indexes::TurboQuantAxisIndex)
+    /// adapter (Phase D) constructs its inner `IdMapIndex` against the
+    /// registry's store. xCatalog hydration (Phase I, follow-up) populates
+    /// the registry at boot from `DerivedQuantizationLevel::TurboQuant`
+    /// rows; collection-create writes back via
+    /// `TurboQuantStoreRegistry::get_or_create`.
+    ///
+    /// `None` when `experimental-turboquant` is off OR the default
+    /// constructor was used in a test path — consumers fall back to the
+    /// full-precision scorer (correct but slower) when this slot is empty.
+    /// Gated by the feature flag so default builds carry zero TurboQuant
+    /// code in the SharedServices struct.
+    #[cfg(feature = "experimental-turboquant")]
+    pub turboquant_registry: Option<
+        Arc<dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry>,
+    >,
+}
+
+impl SharedServices {
+    /// Borrow the TurboQuant registry, if any. Convenience getter so call
+    /// sites don't have to feature-gate the field access locally — this
+    /// method is feature-gated to the same condition and returns `None`
+    /// on default builds.
+    ///
+    /// Returns `None` when:
+    ///   - The `experimental-turboquant` feature is off, OR
+    ///   - The registry slot was never populated (test path using
+    ///     `Default::default()`, or a future production path that opts
+    ///     out of TurboQuant entirely).
+    #[cfg(feature = "experimental-turboquant")]
+    pub fn turboquant_registry(
+        &self,
+    ) -> Option<
+        Arc<dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry>,
+    > {
+        self.turboquant_registry.clone()
+    }
 }
 
 impl SharedServices {
@@ -1668,6 +1712,17 @@ impl SharedServices {
                 snapshot_coordinator,
                 discovery_service,
                 external_collection_service,
+                // Phase H — TurboQuant store registry. Default to an
+                // empty in-memory registry; collection-create / collection-
+                // load (Phase I, follow-up) populates it from
+                // `DerivedQuantizationLevel::TurboQuant` rows in the
+                // catalog. The trait-object widening hides the concrete
+                // `InMemoryTurboQuantStoreRegistry` so a future swap to a
+                // distributed impl (Phase F4b) is a single-line change.
+                #[cfg(feature = "experimental-turboquant")]
+                turboquant_registry: Some(Arc::new(
+                    crate::compute::quantization::turboquant_store_registry::InMemoryTurboQuantStoreRegistry::new(),
+                )),
             },
             collection_service,
         ))
