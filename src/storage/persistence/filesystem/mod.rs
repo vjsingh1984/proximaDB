@@ -178,12 +178,13 @@ pub mod auth;
 // intelligent_filesystem removed - using UnifiedCachingFilesystem instead
 pub mod local;
 pub mod manager;
-// Cloud object-store backends (reqwest + SigV4 / OAuth; no aws-sdk dependency).
-// Previously orphaned (declared in docs only) — now wired so the canonical
-// FileSystem trait actually has compiled S3/Azure/GCS range backends (ADR-023).
-pub mod azure;
-pub mod gcs;
-pub mod s3;
+// NOTE (ADR-023): s3.rs/azure.rs/gcs.rs are NOT declared here on purpose — they
+// are INCOMPLETE clients, not just unwired. s3.rs hardcodes AWS virtual-host URLs
+// (ignores `endpoint_url`/`force_path_style`, so it cannot target MinIO/LocalStack),
+// uses a "simplified" (invalid) SigV4 signer, and is missing methods (e.g.
+// `head_object`). Declaring them surfaces those compile errors. Making them real
+// backends is an implementation project (proper SigV4 + endpoint/path-style +
+// finish the methods), tracked separately — see the ADR-023 S3 correction.
 pub mod scheme_validation;
 pub mod write_strategy;
 // zero_copy_filesystem removed - functionality integrated into UnifiedCachingFilesystem
