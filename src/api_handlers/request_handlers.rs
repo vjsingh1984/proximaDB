@@ -933,6 +933,47 @@ impl UnifiedHandlers {
             .await
     }
 
+    /// Canonical rich-record scan handler used by v2 REST + connector
+    /// callers (Hadoop / Spark / Trino) to drain a collection without
+    /// the similarity bias of `searchRecords`.
+    ///
+    /// Returns visible canonical records from the WAL/memtable path
+    /// (matches the rest of the v2 single-record surface today; the
+    /// storage-inclusive scan is a separate API on
+    /// [`VectorOperationsService::list_all_records_with_tenant_context`]).
+    /// `cursor` is reserved for opaque pagination but not honored here
+    /// yet — TD-099 acceptance (3); callers should bump `limit` to
+    /// retrieve more rows in one round trip.
+    pub async fn handle_record_scan_for_tenant(
+        &self,
+        collection_id: &str,
+        limit: Option<usize>,
+        include_vector: bool,
+        include_props: bool,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let resolved_id = match self
+            .resolve_collection_id_internal(collection_id, tenant_context.as_ref())
+            .await?
+        {
+            Some(id) => id,
+            None => {
+                return Err(anyhow!("Collection '{}' not found", collection_id));
+            }
+        };
+
+        self.vector_operations_service
+            .scan_records_with_tenant_context(
+                &resolved_id,
+                limit,
+                include_vector,
+                include_props,
+                tenant_context.as_ref(),
+            )
+            .await
+    }
+
     /// Canonical rich-record delete handler used by v2 REST/gRPC/internal callers.
     pub async fn handle_record_delete_batch_for_tenant(
         &self,

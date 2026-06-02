@@ -1996,10 +1996,13 @@ pub async fn delete_record_v2(
 // Spark's planInputPartitions use this to drain a collection without
 // the similarity bias of `searchRecords`.
 //
-// Storage-engine delegation (the actual scan over RecordScan) is
-// deferred — see TD-099 in docs/10-quality/TECHNICAL_DEBT.adoc. The
-// stub below returns an empty page so the OpenAPI contract gate has a
-// real route to dial; SDKs already speak the wire shape.
+// Storage-engine delegation (TD-099 acceptance 2) ships here: the
+// handler now drives `UnifiedHandlers::handle_record_scan_for_tenant`,
+// which fans into `VectorOperationsService::scan_records_with_tenant_context`
+// (the same WAL/memtable scan used by the rest of the v2 surface).
+// Cursor-based pagination (TD-099 acceptance 3) is still a follow-up;
+// the handler returns `next_cursor: None` and recommends callers bump
+// `limit` for now.
 
 /// Body of `POST /records/scan`. Mirrors the OpenAPI `ScanRecordsRequest`
 /// schema; all fields optional so an empty `{}` returns the first page.
@@ -2023,27 +2026,39 @@ pub struct ScanRecordsRequest {
 }
 
 /// Response shape for `scanRecords`. Empty `records` + null
-/// `next_cursor` signals end-of-scan.
+/// `next_cursor` signals end-of-scan. Each record matches the OpenAPI
+/// `RecordResponse` schema (same shape used by `getRecord`).
 #[derive(Debug, Serialize)]
 pub struct ScanRecordsResponse {
-    pub records: Vec<serde_json::Value>,
+    pub records: Vec<RecordV2Response>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scanned_count: Option<u64>,
 }
 
+/// Server-side cap on a single scan page. Callers asking for more get
+/// silently clamped — keeps a wild `limit=u32::MAX` from materializing
+/// the whole collection in one round trip.
+const SCAN_RECORDS_MAX_PAGE: usize = 10_000;
+/// Default `limit` when the caller omits one. Mirrors the Hadoop SDK
+/// default in `clients/rust/src/connectors/hadoop.rs`.
+const SCAN_RECORDS_DEFAULT_LIMIT: usize = 1_000;
+
 /// POST /api/v2/collections/{collection_id}/records/scan
 ///
-/// Returns the next page of records. Stub today (TD-099): empty page,
-/// no cursor — i.e. "scan complete on first call". The spec contract
-/// is honored: SDKs that dial this route get a well-formed response
-/// shape. Storage delegation to `RecordScan` is the follow-up.
+/// Returns the next page of records (TD-099 acceptance 2, live). The
+/// handler resolves the collection id, calls
+/// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
+/// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
+/// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
+/// still deferred: `next_cursor` is always `None` today; callers bump
+/// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
 pub async fn scan_records(
     Path(collection_id): Path<String>,
-    State(_state): State<AppState>,
-    Extension(_tenant): Extension<TenantContext>,
-    Json(_request): Json<ScanRecordsRequest>,
+    State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
+    Json(request): Json<ScanRecordsRequest>,
 ) -> ApiResult<Json<ScanRecordsResponse>> {
     debug!("V2 API: scan_records for collection '{}'", collection_id);
 
@@ -2053,13 +2068,106 @@ pub async fn scan_records(
         ));
     }
 
-    // Stub: empty page, scan complete. Replace with `RecordScan` delegation
-    // when the follow-up half of TD-099 lands.
+    let include_vector = request.include_vector.unwrap_or(true);
+    let include_text = request.include_text.unwrap_or(false);
+    let include_props = true;
+    let effective_limit = clamp_scan_limit(request.limit);
+
+    let records = state
+        .request_handlers
+        .handle_record_scan_for_tenant(
+            &collection_id,
+            Some(effective_limit),
+            include_vector,
+            include_props,
+            Some(&tenant.tenant_id),
+        )
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::NotFound(format!("Collection '{}' not found", collection_id))
+            } else {
+                ApiError::Internal(format!("scan_records failed: {}", e))
+            }
+        })?;
+
+    let scanned_count = records.len() as u64;
+    let serialized: Vec<RecordV2Response> = records
+        .into_iter()
+        .map(|record| proxima_record_to_response(record, include_vector, include_text))
+        .collect();
+
     Ok(Json(ScanRecordsResponse {
-        records: vec![],
+        records: serialized,
         next_cursor: None,
-        scanned_count: Some(0),
+        scanned_count: Some(scanned_count),
     }))
+}
+
+/// Clamp the caller's requested `limit` into the
+/// `[1, SCAN_RECORDS_MAX_PAGE]` range. `None` defaults to
+/// `SCAN_RECORDS_DEFAULT_LIMIT`. Pure for testing.
+fn clamp_scan_limit(requested: Option<u32>) -> usize {
+    match requested {
+        None => SCAN_RECORDS_DEFAULT_LIMIT,
+        Some(0) => SCAN_RECORDS_DEFAULT_LIMIT,
+        Some(n) => (n as usize).min(SCAN_RECORDS_MAX_PAGE),
+    }
+}
+
+/// Convert a canonical `ProximaRecord` into the `RecordResponse`
+/// wire shape used by both `getRecord` and `scanRecords`. Honors
+/// `include_vector` + `include_text`; props always populated.
+fn proxima_record_to_response(
+    record: ProximaRecord,
+    include_vector: bool,
+    include_text: bool,
+) -> RecordV2Response {
+    let vector = if include_vector {
+        record
+            .embeddings
+            .into_iter()
+            .next()
+            .map(|cell| cell.values.to_fp32_owned())
+    } else {
+        None
+    };
+
+    let props: HashMap<String, RestProximaValue> = record
+        .props
+        .into_iter()
+        .filter_map(|(k, node)| match node {
+            ProximaTreeNode::Value(v) => Some((k, proxima_value_to_rest_value(&v))),
+            _ => None,
+        })
+        .collect();
+
+    let version = if record.record_version == 0 {
+        None
+    } else {
+        Some(record.record_version)
+    };
+    let timestamp = if record.updated_at_ns == 0 {
+        None
+    } else {
+        // ProximaRecord timestamps are nanoseconds; the v2 response
+        // shape historically uses the same ns granularity (see
+        // get_record_v2). Pass through unchanged.
+        Some(record.updated_at_ns)
+    };
+
+    RecordV2Response {
+        id: if record.oid.is_empty() {
+            record.local_id.unwrap_or_else(|| "unknown".to_string())
+        } else {
+            record.oid
+        },
+        vector,
+        props,
+        text_fields: if include_text { Some(vec![]) } else { None },
+        version,
+        timestamp,
+    }
 }
 
 #[cfg(test)]
@@ -2068,6 +2176,107 @@ mod tests {
 
     fn rv(value: serde_json::Value) -> RestProximaValue {
         RestProximaValue::Inferred(value)
+    }
+
+    #[test]
+    fn test_clamp_scan_limit_defaults_when_missing_or_zero() {
+        assert_eq!(clamp_scan_limit(None), SCAN_RECORDS_DEFAULT_LIMIT);
+        assert_eq!(clamp_scan_limit(Some(0)), SCAN_RECORDS_DEFAULT_LIMIT);
+    }
+
+    #[test]
+    fn test_clamp_scan_limit_passes_through_small_values() {
+        assert_eq!(clamp_scan_limit(Some(1)), 1);
+        assert_eq!(clamp_scan_limit(Some(42)), 42);
+        assert_eq!(clamp_scan_limit(Some(SCAN_RECORDS_MAX_PAGE as u32)), SCAN_RECORDS_MAX_PAGE);
+    }
+
+    #[test]
+    fn test_clamp_scan_limit_caps_oversize_requests() {
+        assert_eq!(
+            clamp_scan_limit(Some(u32::MAX)),
+            SCAN_RECORDS_MAX_PAGE,
+            "oversize limit must be clamped to the page cap"
+        );
+        assert_eq!(
+            clamp_scan_limit(Some(SCAN_RECORDS_MAX_PAGE as u32 + 1)),
+            SCAN_RECORDS_MAX_PAGE,
+        );
+    }
+
+    #[test]
+    fn test_scan_records_request_deserializes_bare_body() {
+        // OpenAPI spec marks every field optional; a bare {} must parse.
+        let parsed: ScanRecordsRequest = serde_json::from_str("{}").unwrap();
+        assert!(parsed.cursor.is_none());
+        assert!(parsed.limit.is_none());
+        assert!(parsed.filter.is_none());
+        assert!(parsed.include_vector.is_none());
+        assert!(parsed.include_text.is_none());
+    }
+
+    #[test]
+    fn test_scan_records_request_round_trips_full_body() {
+        let body = r#"{
+            "cursor": "abc",
+            "limit": 250,
+            "filter": {"label": "active"},
+            "include_vector": false,
+            "include_text": true
+        }"#;
+        let parsed: ScanRecordsRequest = serde_json::from_str(body).unwrap();
+        assert_eq!(parsed.cursor.as_deref(), Some("abc"));
+        assert_eq!(parsed.limit, Some(250));
+        assert_eq!(parsed.include_vector, Some(false));
+        assert_eq!(parsed.include_text, Some(true));
+        assert!(parsed.filter.is_some());
+    }
+
+    #[test]
+    fn test_proxima_record_to_response_extracts_oid_props_and_vector() {
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
+
+        let mut record = ProximaRecord::default();
+        record.oid = "rec-1".to_string();
+        record.record_version = 7;
+        record.updated_at_ns = 1_700_000_000_000_000_000;
+        record.props.insert(
+            "label".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("active".to_string())),
+        );
+        record.embeddings.push(EmbeddingCell::new_fp32(
+            "model-x",
+            "vector",
+            3,
+            vec![0.1, 0.2, 0.3],
+        ));
+
+        let resp = proxima_record_to_response(record, true, false);
+        assert_eq!(resp.id, "rec-1");
+        assert_eq!(resp.version, Some(7));
+        assert_eq!(resp.timestamp, Some(1_700_000_000_000_000_000));
+        assert_eq!(resp.vector.as_ref().map(|v| v.len()), Some(3));
+        assert!(resp.props.contains_key("label"));
+        assert!(resp.text_fields.is_none(), "include_text=false → None");
+    }
+
+    #[test]
+    fn test_proxima_record_to_response_omits_vector_when_not_requested() {
+        use proximadb_records::{EmbeddingCell, ProximaRecord};
+
+        let mut record = ProximaRecord::default();
+        record.oid = "rec-2".to_string();
+        record
+            .embeddings
+            .push(EmbeddingCell::new_fp32("model-x", "vector", 2, vec![1.0, 2.0]));
+
+        let resp = proxima_record_to_response(record, false, true);
+        assert!(resp.vector.is_none(), "include_vector=false → None");
+        match resp.text_fields {
+            Some(fields) => assert_eq!(fields.len(), 0, "include_text=true → empty Vec"),
+            None => panic!("include_text=true must yield Some(vec)"),
+        }
     }
 
     #[test]
