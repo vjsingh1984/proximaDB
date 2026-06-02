@@ -12,7 +12,8 @@ use crate::query::aql::{
     AuditOp, AuditOutcome, AuditTrail, JoinType, Result,
 };
 
-use crate::storage::engines::eventlog::{Event, EventLogEngine};
+use crate::services::audit_sink::{AuditEventSink, AuditRecord, EventLogAuditSink};
+use crate::storage::engines::eventlog::EventLogEngine;
 
 pub struct AqlExecutor {
     sources: HashMap<String, Arc<dyn AqlSource>>,
@@ -86,7 +87,7 @@ impl AqlExecutor {
 
         // Persist the audit trail if event log is available (TD-050 Phase 5)
         if let Some(log) = &self.event_log
-            && let Err(e) = self.persist_audit_trail(log.as_ref(), &trail).await
+            && let Err(e) = self.persist_audit_trail(log, &trail).await
         {
             tracing::warn!("Failed to persist audit trail: {}", e);
         }
@@ -125,24 +126,24 @@ impl AqlExecutor {
         Ok(trail)
     }
 
-    async fn persist_audit_trail(&self, log: &EventLogEngine, trail: &AuditTrail) -> Result<()> {
-        let event = Event {
-            sequence: 0,
-            entity_id: format!("query:{}", trail.query_id),
-            event_type: "AqlQueryExecuted".to_string(),
-            data: serde_json::to_value(trail).map_err(|e| {
-                proximadb_kernel::error::ProximaDBError::Internal(format!(
-                    "Audit trail serialization failed: {}",
-                    e
-                ))
-            })?,
-            timestamp: chrono::Utc::now(),
-            causation_id: None,
-            metadata: HashMap::new(),
-        };
-
-        log.append_event(event).await?;
-        Ok(())
+    async fn persist_audit_trail(&self, log: &Arc<EventLogEngine>, trail: &AuditTrail) -> Result<()> {
+        // Converged onto the shared AuditEventSink foundation: build a
+        // domain-neutral AuditRecord and emit; the Event{} construction +
+        // append_event live once, in EventLogAuditSink.
+        let data = serde_json::to_value(trail).map_err(|e| {
+            proximadb_kernel::error::ProximaDBError::Internal(format!(
+                "Audit trail serialization failed: {}",
+                e
+            ))
+        })?;
+        let record = AuditRecord::new(format!("query:{}", trail.query_id), "AqlQueryExecuted", data);
+        let sink = EventLogAuditSink::new(log.clone());
+        sink.emit(record).await.map_err(|e| {
+            proximadb_kernel::error::ProximaDBError::Internal(format!(
+                "Audit trail persist failed: {}",
+                e
+            ))
+        })
     }
 
     async fn execute_internal(

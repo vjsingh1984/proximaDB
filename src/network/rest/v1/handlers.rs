@@ -1537,8 +1537,8 @@ pub fn create_router(state: AppState) -> axum::Router {
     {
         use crate::network::rest::v1::memory::{self, MemoryApiState};
         use crate::services::agent_memory::{
-            EmbeddingServiceEmbedder, LlmConsolidationAgent, LlmExtractionAgent, MemoryWriteEngine,
-            VectorMemoryStore,
+            EmbeddingServiceEmbedder, EventLogConsolidationAuditSink, LlmConsolidationAgent,
+            LlmExtractionAgent, MemoryWriteEngine, VectorMemoryStore,
         };
         let memory_engine = state.llm_engine.as_ref().map(|llm| {
             let extractor = Arc::new(LlmExtractionAgent::new(llm.clone()));
@@ -1547,7 +1547,16 @@ pub fn create_router(state: AppState) -> axum::Router {
                 state.request_handlers.vector_operations_service.clone(),
                 Arc::new(EmbeddingServiceEmbedder),
             ));
-            Arc::new(MemoryWriteEngine::new(extractor, consolidator, store))
+            let mut engine = MemoryWriteEngine::new(extractor, consolidator, store);
+            // Persist every consolidation decision to the shared audit log when
+            // available (ADR-022 auditable memory). Same Arc<EventLogEngine> the
+            // AQL audit trail uses; mirrors the AQL wiring above.
+            if let Some(event_log) = &state.request_handlers.event_log {
+                engine = engine.with_audit_sink(Arc::new(
+                    EventLogConsolidationAuditSink::from_event_log(event_log.clone()),
+                ));
+            }
+            Arc::new(engine)
         });
         let mounted = memory_engine.is_some();
         let memory_state = MemoryApiState::new(memory_engine);

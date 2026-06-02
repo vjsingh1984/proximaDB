@@ -169,6 +169,7 @@
 
 pub mod advisor_observations;
 pub mod agent_memory;
+pub mod audit_sink;
 pub mod bulk_load;
 pub mod canonical_wal;
 pub mod catalog_introspection;
@@ -195,6 +196,7 @@ pub mod tenant_access;
 pub mod write_intent;
 
 // Re-export main service types with cleaner names
+pub use audit_sink::{AuditEventSink, AuditRecord, EventLogAuditSink};
 pub use canonical_wal::{FramedTableWalAppender, MemoryTableWalAppender};
 pub use catalog_introspection::{CatalogIntrospectionResult, CatalogIntrospectionService};
 pub use collection::Collections;

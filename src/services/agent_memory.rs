@@ -37,7 +37,8 @@ use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode, ProximaVa
 use crate::ai::llm_integration::LLMIntegrationEngine;
 use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::services::VectorOperationsService;
-use crate::storage::engines::eventlog::{Event, EventLogEngine};
+use crate::services::audit_sink::{AuditEventSink, AuditRecord, EventLogAuditSink};
+use crate::storage::engines::eventlog::EventLogEngine;
 
 /// How many similar existing memories the consolidation step retrieves.
 const CONSOLIDATION_TOP_K: usize = 5;
@@ -675,17 +676,28 @@ impl MemoryEmbedder for EmbeddingServiceEmbedder {
 // Real audit sink adapter (reuse EventLogEngine)
 // ---------------------------------------------------------------------------
 
-/// `ConsolidationAuditSink` backed by the canonical `EventLogEngine` — the same
-/// append-only event store the AQL read-path audit trail uses. Each decision is
-/// one `Event` (entity-scoped to tenant/session/memory) so it is queryable and
-/// recoverable alongside other observability events.
+/// `ConsolidationAuditSink` that maps each consolidation decision to a
+/// domain-neutral [`AuditRecord`] and emits it through the shared
+/// [`AuditEventSink`] foundation. The decision's tenant/session/memory scope
+/// becomes the entity-id; the full `ConsolidationAuditEvent` is the payload, so
+/// it is queryable + recoverable alongside every other audit event. The
+/// `Event{}` construction itself lives once, in `EventLogAuditSink` — this
+/// adapter holds only the domain → `AuditRecord` mapping.
 pub struct EventLogConsolidationAuditSink {
-    log: Arc<EventLogEngine>,
+    sink: Arc<dyn AuditEventSink>,
 }
 
 impl EventLogConsolidationAuditSink {
-    pub fn new(log: Arc<EventLogEngine>) -> Self {
-        Self { log }
+    /// Wrap any `AuditEventSink` (production: `EventLogAuditSink`).
+    pub fn new(sink: Arc<dyn AuditEventSink>) -> Self {
+        Self { sink }
+    }
+
+    /// Convenience: build directly over the shared `EventLogEngine`.
+    pub fn from_event_log(log: Arc<EventLogEngine>) -> Self {
+        Self {
+            sink: Arc::new(EventLogAuditSink::new(log)),
+        }
     }
 }
 
@@ -698,26 +710,18 @@ impl ConsolidationAuditSink for EventLogConsolidationAuditSink {
             event.session_id,
             event.memory_id.as_deref().unwrap_or("noop"),
         );
-        let mut metadata = HashMap::new();
-        metadata.insert(
-            "collection".to_string(),
-            serde_json::Value::String(event.collection.clone()),
-        );
-        let ev = Event {
-            sequence: 0, // assigned by append_event
-            entity_id,
-            event_type: "MemoryConsolidationDecision".to_string(),
-            data: serde_json::to_value(event)
-                .map_err(|e| anyhow!("consolidation audit serialize failed: {e}"))?,
-            timestamp: chrono::Utc::now(),
-            causation_id: Some(event.session_id.clone()),
-            metadata,
-        };
-        self.log
-            .append_event(ev)
+        let data = serde_json::to_value(event)
+            .map_err(|e| anyhow!("consolidation audit serialize failed: {e}"))?;
+        let record = AuditRecord::new(entity_id, "MemoryConsolidationDecision", data)
+            .with_causation(event.session_id.clone())
+            .with_metadata_kv(
+                "collection",
+                serde_json::Value::String(event.collection.clone()),
+            );
+        self.sink
+            .emit(record)
             .await
-            .map_err(|e| anyhow!("consolidation audit append failed: {e}"))?;
-        Ok(())
+            .map_err(|e| anyhow!("consolidation audit append failed: {e}"))
     }
 }
 
