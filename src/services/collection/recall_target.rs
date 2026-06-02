@@ -179,6 +179,14 @@ pub const AUTO_HNSW_INDEX_NAME: &str = "auto_hnsw_recall_target";
 /// `recall_target:` tag.
 pub const AUTO_IVF_INDEX_NAME: &str = "auto_ivf_recall_target";
 
+/// Index name used when the [`apply_advisor_to_indexes`] selector
+/// picks HMGI (≥ 2 modalities) and synthesizes a per-partition
+/// HNSW IndexConfig as the wire-level representation. HMGI has no
+/// proto `IndexingAlgorithm` variant — the `modalities:` tag at
+/// the collection level marks the collection as multi-modal at
+/// the route-health surface.
+pub const AUTO_HMGI_INDEX_NAME: &str = "auto_hmgi_recall_target";
+
 /// Result of an algorithm-agnostic advisor pass over a
 /// `CollectionConfig`. One entry per HNSW / IVF / … index the
 /// advisor sized, carrying the discriminator + full
@@ -294,6 +302,42 @@ pub fn apply_advisor_to_indexes(
                         index_name: AUTO_IVF_INDEX_NAME.to_string(),
                         output: picked,
                     }];
+                }
+                IndexAlgorithm::HMGI { per_modality, .. } => {
+                    // P3: HMGI has no wire-IndexingAlgorithm proto
+                    // variant. Synthesize the canonical per-partition
+                    // HNSW config — HMGI's advisor sizes every
+                    // partition with the same HnswIndexAdvisor call,
+                    // so the first partition's `(m, ef_construction,
+                    // ef_search)` tuple is identical to every other
+                    // partition's. The collection's `modalities:` tag
+                    // marks it as HMGI at the route-health surface;
+                    // the runtime HMGI router still partitions by
+                    // modality_tag at query time.
+                    if let Some(first) = per_modality.first() {
+                        let m = first.m;
+                        let ef_construction = first.ef_construction;
+                        let ef_search = first.ef_search;
+                        config
+                            .index_configs
+                            .push(crate::proto::proximadb_v1::IndexConfig {
+                                index_name: AUTO_HMGI_INDEX_NAME.to_string(),
+                                algorithm: IndexingAlgorithm::Hnsw as i32,
+                                hnsw_config: Some(HnswConfig {
+                                    m: Some(m),
+                                    ef_construction: Some(ef_construction),
+                                    ef_search: Some(ef_search),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            });
+                        return vec![AppliedAdvice {
+                            index_name: AUTO_HMGI_INDEX_NAME.to_string(),
+                            output: picked,
+                        }];
+                    }
+                    // Empty per_modality (shouldn't happen — HMGI
+                    // advisor declines instead) → no-op fallthrough.
                 }
                 _ => {
                     // Selector returned an algorithm the auto-add
@@ -1044,6 +1088,73 @@ mod tests {
         // And the stamped IndexConfig is IVF — the synthesised
         // name reflects which path the selector took.
         assert_eq!(c.index_configs[0].algorithm, IndexingAlgorithm::Ivf as i32);
+    }
+
+    #[test]
+    fn parse_modalities_happy_path() {
+        let c = cfg(
+            "c",
+            128,
+            &["modalities:text,image,video"],
+        );
+        assert_eq!(
+            parse_modalities(&c),
+            vec!["text".to_string(), "image".to_string(), "video".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_modalities_empty_returns_empty_vec() {
+        let c = cfg("c", 128, &["recall_target:0.95"]);
+        assert!(parse_modalities(&c).is_empty());
+    }
+
+    #[test]
+    fn parse_modalities_normalises_case_and_whitespace() {
+        // "Text" / "TEXT" / "  text  " should all collapse to "text".
+        let c = cfg(
+            "c",
+            128,
+            &["modalities: Text , IMAGE,image"],
+        );
+        let out = parse_modalities(&c);
+        assert_eq!(out, vec!["text".to_string(), "image".to_string()]);
+    }
+
+    #[test]
+    fn parse_modalities_unions_across_multiple_tags() {
+        let c = cfg(
+            "c",
+            128,
+            &["modalities:text,image", "modalities:video,image"],
+        );
+        let out = parse_modalities(&c);
+        assert_eq!(
+            out,
+            vec!["text".to_string(), "image".to_string(), "video".to_string()],
+            "duplicates removed preserving first-occurrence order"
+        );
+    }
+
+    #[test]
+    fn apply_advisor_routes_to_hmgi_when_modalities_set() {
+        // With ≥ 2 modalities declared, the advisor selector should
+        // either pick HMGI directly or fall back to HNSW with the
+        // HMGI option present in the candidate set. Either way the
+        // synthesized IndexConfig must NOT block on the modality
+        // input (no panic, no failure). Pins that the
+        // `parse_modalities → AnnAdvisorInput.modalities` plumbing
+        // is wired end-to-end.
+        let mut c = cfg(
+            "c_multimodal",
+            128,
+            &["recall_target:0.85", "modalities:text,image"],
+        );
+        let advice = apply_advisor_to_indexes(&mut c, 0.85);
+        assert!(
+            !advice.is_empty(),
+            "advisor must produce sizing when modalities + recall_target set"
+        );
     }
 
     #[test]

@@ -5433,6 +5433,141 @@ mod hot_swap_ef_tests {
         assert!(advised.is_none(), "no records → no rebuild");
     }
 
+    fn ivf_strategy(nprobe: u32, name: Option<&str>) -> IndexSelectionStrategy {
+        let mut spec = IndexSpecification::new(
+            Data::DenseVector { dimension: 128 },
+            IndexAlgorithm::IVF {
+                nlist: 256,
+                nprobe,
+                quantizer: None,
+            },
+        );
+        spec.name = name.map(String::from);
+        IndexSelectionStrategy {
+            indexes: vec![spec],
+            routing_rules: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_ivf_nprobe_hot_swap_updates_nprobe() {
+        let manager = make_manager().await;
+        manager
+            .update_collection_strategy("c_ivf", ivf_strategy(10, Some("ivf_primary")))
+            .await
+            .unwrap();
+
+        let outcome = manager
+            .apply_ivf_nprobe_hot_swap("c_ivf", 40)
+            .await
+            .unwrap();
+        match outcome {
+            HotSwapOutcome::Applied { changes } => {
+                assert_eq!(changes.len(), 1);
+                assert_eq!(changes[0].previous_ef_search, 10);
+                assert_eq!(changes[0].new_ef_search, 40);
+            }
+            HotSwapOutcome::NotApplicable { reason } => {
+                panic!("expected Applied, got NotApplicable: {}", reason);
+            }
+        }
+        let updated = manager.get_collection_strategy("c_ivf").await.unwrap();
+        match &updated.indexes[0].algorithm {
+            IndexAlgorithm::IVF { nprobe, .. } => {
+                assert_eq!(*nprobe, 40, "nprobe must be live after hot-swap");
+            }
+            other => panic!("expected IVF, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_ivf_nprobe_hot_swap_preserves_nlist() {
+        let manager = make_manager().await;
+        manager
+            .update_collection_strategy("c_ivf", ivf_strategy(10, None))
+            .await
+            .unwrap();
+        let _ = manager
+            .apply_ivf_nprobe_hot_swap("c_ivf", 40)
+            .await
+            .unwrap();
+
+        let updated = manager.get_collection_strategy("c_ivf").await.unwrap();
+        match &updated.indexes[0].algorithm {
+            IndexAlgorithm::IVF {
+                nlist,
+                nprobe,
+                quantizer,
+            } => {
+                assert_eq!(*nlist, 256, "nlist must be untouched by hot-swap");
+                assert_eq!(*nprobe, 40);
+                assert!(quantizer.is_none(), "quantizer must stay None");
+            }
+            _ => panic!("expected IVF"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_ivf_nprobe_hot_swap_no_strategy_returns_not_applicable() {
+        let manager = make_manager().await;
+        let outcome = manager
+            .apply_ivf_nprobe_hot_swap("never_created", 40)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, HotSwapOutcome::NotApplicable { .. }));
+    }
+
+    #[tokio::test]
+    async fn apply_ivf_nprobe_hot_swap_matching_nprobe_is_noop() {
+        let manager = make_manager().await;
+        manager
+            .update_collection_strategy("c_ivf", ivf_strategy(40, None))
+            .await
+            .unwrap();
+        let outcome = manager
+            .apply_ivf_nprobe_hot_swap("c_ivf", 40)
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome, HotSwapOutcome::NotApplicable { .. }),
+            "matching nprobe must be NotApplicable, got {:?}",
+            outcome
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_ivf_nprobe_hot_swap_skips_non_ivf_specs() {
+        let manager = make_manager().await;
+        // HNSW-only strategy — no IVF spec to swap.
+        manager
+            .update_collection_strategy("c_hnsw_only", hnsw_strategy(100, None))
+            .await
+            .unwrap();
+        let outcome = manager
+            .apply_ivf_nprobe_hot_swap("c_hnsw_only", 40)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, HotSwapOutcome::NotApplicable { .. }));
+    }
+
+    #[tokio::test]
+    async fn rebuild_and_swap_ivf_with_no_records_returns_none() {
+        let manager = make_manager().await;
+        let advised = manager
+            .rebuild_and_swap_ivf_index_for_recall_target(
+                "c_empty_ivf",
+                &[],
+                0.70,
+                10,
+                None,
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(advised.is_none(), "no records → no IVF rebuild");
+    }
+
     #[tokio::test]
     async fn hot_swap_skips_non_hnsw_specs() {
         let manager = make_manager().await;

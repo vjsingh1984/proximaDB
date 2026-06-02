@@ -2533,6 +2533,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn active_algorithm_defaults_to_hnsw_for_legacy_config() {
+        // No tags + no index_configs → default literal "hnsw". The
+        // route-health response leans on this for every collection
+        // pre-dating the IVF / HMGI work.
+        let cfg = crate::proto::proximadb_v1::CollectionConfig {
+            name: "c".to_string(),
+            dimension: 128,
+            ..Default::default()
+        };
+        assert_eq!(active_algorithm_for(&cfg), "hnsw");
+    }
+
+    #[test]
+    fn active_algorithm_detects_ivf_from_index_config() {
+        // An IVF entry in index_configs flips the literal — drives
+        // the recall-tune handler to call apply_ivf_nprobe_hot_swap.
+        let cfg = crate::proto::proximadb_v1::CollectionConfig {
+            name: "c".to_string(),
+            dimension: 128,
+            index_configs: vec![crate::proto::proximadb_v1::IndexConfig {
+                index_name: "ivf_primary".to_string(),
+                algorithm: crate::proto::proximadb_v1::IndexingAlgorithm::Ivf as i32,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(active_algorithm_for(&cfg), "ivf");
+    }
+
+    #[test]
+    fn active_algorithm_detects_hmgi_from_modalities_tag() {
+        // ≥ 2 modalities → HMGI literal. Wins over IVF index_config
+        // (modalities is the operator's explicit multi-modal signal).
+        let cfg = crate::proto::proximadb_v1::CollectionConfig {
+            name: "c".to_string(),
+            dimension: 128,
+            tags: vec!["modalities:text,image".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(active_algorithm_for(&cfg), "hmgi");
+    }
+
+    #[test]
+    fn active_algorithm_single_modality_falls_through_to_hnsw() {
+        // 1 modality declared → HMGI declines (needs ≥ 2). Falls
+        // through to the IVF / HNSW default.
+        let cfg = crate::proto::proximadb_v1::CollectionConfig {
+            name: "c".to_string(),
+            dimension: 128,
+            tags: vec!["modalities:text".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(active_algorithm_for(&cfg), "hnsw");
+    }
+
+    #[test]
     fn test_create_request_deserialization() {
         let json = r#"{
             "name": "products",
