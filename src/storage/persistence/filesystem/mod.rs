@@ -984,7 +984,95 @@ impl FilesystemFactory {
             );
         }
 
+        // Cloud object-store backends (real official-SDK FileSystem impls). Each
+        // is registered by scheme when its feature is compiled in; config comes
+        // from env (standard cloud env vars + PROXIMADB_* overrides for custom
+        // endpoints like MinIO/Azurite/fake-gcs). Registration is best-effort —
+        // a misconfigured cloud backend logs a warning and is skipped rather than
+        // failing factory init. The default build (no cloud feature) registers
+        // only "file". `get_filesystem(url)` then dispatches s3://, gs://, adls://
+        // to these without further changes.
+        #[cfg(feature = "aws")]
+        match aws_s3::AwsS3FileSystem::new(Self::aws_s3_config_from_env()).await {
+            Ok(backend) => {
+                let fs = self
+                    .maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
+                self.filesystems.insert("s3".to_string(), fs);
+            }
+            Err(e) => tracing::warn!("S3 FileSystem not registered: {e}"),
+        }
+        #[cfg(feature = "azure")]
+        match azure_blob::AzureBlobFileSystem::new(Self::azure_config_from_env()).await {
+            Ok(backend) => {
+                let fs = self
+                    .maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
+                for scheme in ["adls", "abfs", "az", "azure"] {
+                    self.filesystems.insert(scheme.to_string(), fs.clone());
+                }
+            }
+            Err(e) => tracing::warn!("Azure FileSystem not registered: {e}"),
+        }
+        #[cfg(feature = "gcp")]
+        match gcs_store::GcsFileSystem::new(Self::gcs_config_from_env()).await {
+            Ok(backend) => {
+                let fs = self
+                    .maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
+                for scheme in ["gcs", "gs"] {
+                    self.filesystems.insert(scheme.to_string(), fs.clone());
+                }
+            }
+            Err(e) => tracing::warn!("GCS FileSystem not registered: {e}"),
+        }
+
         Ok(())
+    }
+
+    /// Build the S3 backend config from env (`AWS_*` + `PROXIMADB_S3_*` overrides
+    /// for custom endpoints / path-style, e.g. MinIO).
+    #[cfg(feature = "aws")]
+    fn aws_s3_config_from_env() -> aws_s3::AwsS3Config {
+        aws_s3::AwsS3Config {
+            region: std::env::var("PROXIMADB_S3_REGION")
+                .or_else(|_| std::env::var("AWS_REGION"))
+                .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+                .unwrap_or_else(|_| "us-east-1".to_string()),
+            endpoint_url: std::env::var("PROXIMADB_S3_ENDPOINT").ok(),
+            force_path_style: std::env::var("PROXIMADB_S3_FORCE_PATH_STYLE")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false),
+            access_key_id: std::env::var("AWS_ACCESS_KEY_ID").ok(),
+            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").ok(),
+            session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
+        }
+    }
+
+    /// Build the Azure backend config from env (`AZURE_STORAGE_*`;
+    /// `PROXIMADB_AZURE_EMULATOR=1` for Azurite).
+    #[cfg(feature = "azure")]
+    fn azure_config_from_env() -> azure_blob::AzureBlobConfig {
+        azure_blob::AzureBlobConfig {
+            account: std::env::var("AZURE_STORAGE_ACCOUNT")
+                .unwrap_or_else(|_| "devstoreaccount1".to_string()),
+            access_key: std::env::var("AZURE_STORAGE_KEY").ok(),
+            use_emulator: std::env::var("PROXIMADB_AZURE_EMULATOR")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false),
+        }
+    }
+
+    /// Build the GCS backend config from env (`PROXIMADB_GCS_*`;
+    /// `PROXIMADB_GCS_ANONYMOUS=1` + endpoint for fake-gcs-server).
+    #[cfg(feature = "gcp")]
+    fn gcs_config_from_env() -> gcs_store::GcsConfig {
+        gcs_store::GcsConfig {
+            endpoint_url: std::env::var("PROXIMADB_GCS_ENDPOINT").ok(),
+            anonymous: std::env::var("PROXIMADB_GCS_ANONYMOUS")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false),
+            project_id: std::env::var("GCP_PROJECT")
+                .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
+                .ok(),
+        }
     }
 
     /// Get filesystem instance for URL scheme (cached instances)
