@@ -581,23 +581,25 @@ pub enum TrinoErrorCode {
 // Arrow Flight Integration Points
 // ============================================================================
 //
-// ⚠️  SCAFFOLD STATUS — TD-098 (partial: 3/7 live as of 2026-06-01)
+// ⚠️  SCAFFOLD STATUS — TD-098 (partial: 4/7 live as of 2026-06-01)
 //
 // Live (real `FlightServiceClient::connect` + RPC):
-//   - `flight_list_schemas`     (list_flights → bucketed TrinoSchema)
-//   - `flight_list_tables`      (list_flights → schema-filtered Vec<String>)
-//   - `flight_get_table_schema` (get_schema   → SchemaResult → ArrowSchema)
+//   - `flight_list_schemas`     (list_flights    → bucketed TrinoSchema)
+//   - `flight_list_tables`      (list_flights    → schema-filtered Vec<String>)
+//   - `flight_get_table_schema` (get_schema      → SchemaResult → ArrowSchema)
+//   - `flight_get_splits`       (get_flight_info → endpoint tickets → Vec<TrinoSplit>)
 //
 // See per-fn docstrings + the contract gate at
 // `tests/connectors_flight_contract.rs::trino_flight_pilot` for the
 // in-process tonic round-trip proof. Both have async signatures —
 // older sync callers need a runtime handle.
 //
-// Still scaffolded: `flight_get_splits` plus the Page-source / sink
-// ops. Same `Channel::from_shared(...).connect_lazy()` +
-// `FlightServiceClient::new` + dial-relevant-RPC pattern; mechanical
-// migration. See `docs/10-quality/TECHNICAL_DEBT.adoc` TD-098 for
-// acceptance.
+// Still scaffolded: the Page-source / sink ops
+// (`TrinoPageSource::get_next_page`, `TrinoPageSink::{append_page,
+// finish}`). Same `Channel::from_shared(...).connect_lazy()` +
+// `FlightServiceClient::new` + dial-relevant-RPC pattern (do_get /
+// do_put streaming); mechanical migration. See
+// `docs/10-quality/TECHNICAL_DEBT.adoc` TD-098 for acceptance.
 
 /// Live Arrow Flight `ListFlights` query against the configured ProximaDB
 /// Flight endpoint. Returns one [`TrinoSchema`] per unique first-path
@@ -794,15 +796,69 @@ pub async fn flight_get_table_schema(
     }
 }
 
-/// Flight action for getting splits
-pub fn flight_get_splits(
+/// Live Arrow Flight `GetFlightInfo` query that materializes the
+/// `TrinoSplit` set for a `catalog.schema.table` triple. Fourth live
+/// Flight method (TD-098, 2026-06-01).
+///
+/// Dials the ProximaDB Flight endpoint, calls `get_flight_info` with a
+/// `FlightDescriptor` carrying `path=[schema, table]` and `cmd =
+/// JSON-encoded constraint` (the constraint is informational over the
+/// wire today; the ProximaDB Flight server is expected to apply it
+/// when generating endpoints), then decodes each
+/// `FlightInfo.endpoint[i].ticket.ticket` bytes back into a
+/// `TrinoSplit` via serde-json. Same dial pattern as the prior three
+/// live methods — `Channel::from_shared(...).connect_lazy()` +
+/// `FlightServiceClient::new(channel)`.
+///
+/// `catalog` is informational (Flight descriptors are two-segment
+/// `[schema, table]` paths; the catalog is implicit in the endpoint
+/// binding). Connect / RPC / decode failures degrade to an empty Vec.
+pub async fn flight_get_splits(
+    endpoint: &str,
     _catalog: &str,
-    _schema: &str,
-    _table: &str,
-    _constraint: &TrinoTupleDomain,
+    schema: &str,
+    table: &str,
+    constraint: &TrinoTupleDomain,
 ) -> Vec<TrinoSplit> {
-    // Split generation: Arrow Flight GetFlightInfo for parallel reads
-    Vec::new()
+    use arrow_flight::FlightDescriptor;
+    use arrow_flight::flight_service_client::FlightServiceClient;
+
+    let dial = endpoint
+        .strip_prefix("grpc://")
+        .map(|rest| format!("http://{rest}"))
+        .unwrap_or_else(|| endpoint.to_string());
+
+    let channel = match tonic::transport::Channel::from_shared(dial)
+        .ok()
+        .map(|e| e.connect_lazy())
+    {
+        Some(ch) => ch,
+        None => return Vec::new(),
+    };
+    let mut client = FlightServiceClient::new(channel);
+
+    // FlightDescriptor type is PATH (path is set); cmd carries the
+    // JSON-encoded predicate so the server can do pushdown without a
+    // separate RPC. Tonic serialization is lossless for both fields.
+    let cmd_bytes = serde_json::to_vec(constraint).unwrap_or_default();
+    let mut descriptor =
+        FlightDescriptor::new_path(vec![schema.to_string(), table.to_string()]);
+    descriptor.cmd = cmd_bytes.into();
+
+    let info = match client.get_flight_info(tonic::Request::new(descriptor)).await {
+        Ok(resp) => resp.into_inner(),
+        Err(_) => return Vec::new(),
+    };
+
+    let mut splits = Vec::with_capacity(info.endpoint.len());
+    for ep in info.endpoint {
+        let Some(ticket) = ep.ticket else { continue };
+        match serde_json::from_slice::<TrinoSplit>(&ticket.ticket) {
+            Ok(split) => splits.push(split),
+            Err(_) => continue,
+        }
+    }
+    splits
 }
 
 // ============================================================================

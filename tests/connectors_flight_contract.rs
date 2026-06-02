@@ -124,7 +124,11 @@ mod trino_flight_pilot {
     use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
     use arrow_flight::SchemaAsIpc;
     use proximadb::connectors::trino::{
-        TrinoConnectorConfig, flight_get_table_schema, flight_list_schemas, flight_list_tables,
+        TrinoConnectorConfig, TrinoSplit, TrinoTupleDomain, flight_get_splits,
+        flight_get_table_schema, flight_list_schemas, flight_list_tables,
+    };
+    use proximadb::storage::formats::{
+        FileSplit, SplitLocality, SplitStatistics, SplitType,
     };
     use tokio::sync::oneshot;
     use tokio_stream::wrappers::TcpListenerStream;
@@ -132,12 +136,14 @@ mod trino_flight_pilot {
 
     type RespStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
 
-    /// Minimal `FlightService` impl. Only `list_flights` and
-    /// `get_schema` are wired; every other RPC returns Unimplemented to
-    /// keep the trait satisfied without 300+ lines of mocks.
+    /// Minimal `FlightService` impl. Only `list_flights`, `get_schema`,
+    /// and `get_flight_info` are wired; every other RPC returns
+    /// Unimplemented to keep the trait satisfied without 300+ lines of
+    /// mocks.
     struct MockFlight {
         canned: Vec<FlightInfo>,
         canned_schema: Option<Arc<ArrowSchema>>,
+        canned_flight_info: Option<FlightInfo>,
     }
 
     #[tonic::async_trait]
@@ -171,7 +177,10 @@ mod trino_flight_pilot {
             &self,
             _request: Request<FlightDescriptor>,
         ) -> Result<Response<FlightInfo>, Status> {
-            Err(Status::unimplemented("get_flight_info"))
+            let Some(info) = self.canned_flight_info.as_ref() else {
+                return Err(Status::unimplemented("get_flight_info"));
+            };
+            Ok(Response::new(info.clone()))
         }
 
         async fn poll_flight_info(
@@ -253,7 +262,7 @@ mod trino_flight_pilot {
     /// server cleanly. The server task self-terminates when the
     /// shutdown receiver fires.
     async fn start_mock_flight_server(canned: Vec<FlightInfo>) -> (u16, oneshot::Sender<()>) {
-        start_mock_flight_server_full(canned, None).await
+        start_mock_flight_server_full(canned, None, None).await
     }
 
     /// Variant used by tests that need `get_schema` wired (Trino
@@ -263,12 +272,24 @@ mod trino_flight_pilot {
         canned: Vec<FlightInfo>,
         canned_schema: Arc<ArrowSchema>,
     ) -> (u16, oneshot::Sender<()>) {
-        start_mock_flight_server_full(canned, Some(canned_schema)).await
+        start_mock_flight_server_full(canned, Some(canned_schema), None).await
+    }
+
+    /// Variant used by tests that need `get_flight_info` wired (Trino
+    /// `flight_get_splits` pilot). The mock returns `canned_flight_info`
+    /// verbatim from `get_flight_info`; its endpoints carry the
+    /// JSON-encoded splits.
+    async fn start_mock_flight_server_with_flight_info(
+        canned: Vec<FlightInfo>,
+        canned_flight_info: FlightInfo,
+    ) -> (u16, oneshot::Sender<()>) {
+        start_mock_flight_server_full(canned, None, Some(canned_flight_info)).await
     }
 
     async fn start_mock_flight_server_full(
         canned: Vec<FlightInfo>,
         canned_schema: Option<Arc<ArrowSchema>>,
+        canned_flight_info: Option<FlightInfo>,
     ) -> (u16, oneshot::Sender<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -280,6 +301,7 @@ mod trino_flight_pilot {
         let svc = MockFlight {
             canned,
             canned_schema,
+            canned_flight_info,
         };
         tokio::spawn(async move {
             let _ = tonic::transport::Server::builder()
@@ -397,5 +419,106 @@ mod trino_flight_pilot {
         let result =
             flight_get_table_schema("grpc://127.0.0.1:1", "proximadb", "any", "any").await;
         assert!(result.is_none(), "unreachable endpoint must yield None");
+    }
+
+    /// Build a one-segment FileSplit suitable for round-tripping through
+    /// `TrinoSplit::from_file_split` + JSON serde.
+    fn sample_file_split(split_id: &str, file_path: &str) -> FileSplit {
+        FileSplit {
+            split_id: split_id.to_string(),
+            file_path: file_path.to_string(),
+            offset: 0,
+            length: 1024,
+            split_type: SplitType::Block {
+                block_id: 0,
+                record_count: 100,
+            },
+            statistics: SplitStatistics::default(),
+            locality: SplitLocality::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn trino_flight_get_splits_decodes_endpoint_tickets() {
+        // Mock returns a FlightInfo with two endpoints; each endpoint's
+        // ticket bytes are a JSON-encoded TrinoSplit. The connector
+        // must decode each ticket back into a TrinoSplit.
+        let split_a = TrinoSplit::from_file_split(
+            "proximadb".into(),
+            "sales".into(),
+            "orders".into(),
+            sample_file_split("split-a", "s3://orders/part-0.parquet"),
+        );
+        let split_b = TrinoSplit::from_file_split(
+            "proximadb".into(),
+            "sales".into(),
+            "orders".into(),
+            sample_file_split("split-b", "s3://orders/part-1.parquet"),
+        );
+
+        let endpoints = vec![
+            arrow_flight::FlightEndpoint {
+                ticket: Some(arrow_flight::Ticket {
+                    ticket: serde_json::to_vec(&split_a).unwrap().into(),
+                }),
+                location: vec![],
+                expiration_time: None,
+                app_metadata: Default::default(),
+            },
+            arrow_flight::FlightEndpoint {
+                ticket: Some(arrow_flight::Ticket {
+                    ticket: serde_json::to_vec(&split_b).unwrap().into(),
+                }),
+                location: vec![],
+                expiration_time: None,
+                app_metadata: Default::default(),
+            },
+        ];
+        let canned_flight_info = FlightInfo {
+            schema: Default::default(),
+            flight_descriptor: Some(FlightDescriptor::new_path(vec![
+                "sales".into(),
+                "orders".into(),
+            ])),
+            endpoint: endpoints,
+            total_records: -1,
+            total_bytes: -1,
+            ordered: false,
+            app_metadata: Default::default(),
+        };
+
+        let (port, _shutdown) =
+            start_mock_flight_server_with_flight_info(vec![], canned_flight_info).await;
+
+        let endpoint = format!("grpc://127.0.0.1:{port}");
+        let splits = flight_get_splits(
+            &endpoint,
+            "proximadb",
+            "sales",
+            "orders",
+            &TrinoTupleDomain::all(),
+        )
+        .await;
+        assert_eq!(splits.len(), 2, "expected 2 splits: {splits:?}");
+        let ids: Vec<&str> = splits.iter().map(|s| s.split_id.as_str()).collect();
+        assert!(ids.contains(&"split-a"));
+        assert!(ids.contains(&"split-b"));
+        let a = splits.iter().find(|s| s.split_id == "split-a").unwrap();
+        assert_eq!(a.file_split.file_path, "s3://orders/part-0.parquet");
+        assert_eq!(a.schema, "sales");
+        assert_eq!(a.table, "orders");
+    }
+
+    #[tokio::test]
+    async fn trino_flight_get_splits_returns_empty_on_unreachable_endpoint() {
+        let splits = flight_get_splits(
+            "grpc://127.0.0.1:1",
+            "proximadb",
+            "any",
+            "any",
+            &TrinoTupleDomain::all(),
+        )
+        .await;
+        assert!(splits.is_empty(), "unreachable endpoint must yield empty");
     }
 }
