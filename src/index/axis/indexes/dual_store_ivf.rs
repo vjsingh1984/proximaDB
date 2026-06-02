@@ -713,6 +713,32 @@ pub struct UnifiedIvfIndex {
     /// `next_pow2(dimension)`; derived deterministically from `COLD_ROTATION_SEED`
     /// at construction, so insert/query/restart all rotate identically.
     rotation_signs: Vec<f32>,
+
+    /// ADR-023 R3 (c): optional on-probe warm source. When set (cold-loaded via
+    /// the ranged path), a `ColdBinaryOnly` search range-fetches ONLY the probed
+    /// clusters' fp32 from object storage on demand and reranks — never the whole
+    /// tier. Survivor-aware: a query that probes few clusters downloads only those.
+    warm_source: Option<RangedWarmSource>,
+
+    /// Clusters whose fp32 has already been range-fetched and installed
+    /// (cross-query dedup — a cluster is read from object storage at most once).
+    fetched_clusters: std::sync::Mutex<std::collections::HashSet<u32>>,
+}
+
+/// ADR-023 R3 (c): the object-store handle a `ColdBinaryOnly` index uses to
+/// range-fetch a probed cluster's fp32 on demand (survivor-aware lazy warm).
+/// Built by the manager from a [`RangedColdLoad`](crate::index::axis::storage::serialization::RangedColdLoad).
+#[derive(Clone)]
+pub struct RangedWarmSource {
+    /// Range-capable filesystem (local, S3, …) — the same backend the cold load used.
+    pub fs: Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
+    /// Index file path / URL.
+    pub path: String,
+    /// Absolute byte offset of the WARM blob (`4 + header_len + cold_tier_bytes`).
+    pub warm_base: u64,
+    /// `cluster_id` → its WARM byte-extent, for O(1) per-cluster range fetch.
+    pub directory:
+        HashMap<u32, crate::index::axis::storage::serialization::WarmExtent>,
 }
 
 /// Default target recall for the binary two-stage route (ADR-023 T-H). A
@@ -1328,6 +1354,10 @@ impl UnifiedIvfIndex {
 
             // ADR-023 R1: fixed rotation derived from the dimension + global seed.
             rotation_signs: rotation_signs(next_pow2(config_dimension), COLD_ROTATION_SEED),
+
+            // ADR-023 R3 (c): no on-probe warm source until the manager wires one.
+            warm_source: None,
+            fetched_clusters: std::sync::Mutex::new(std::collections::HashSet::new()),
         })
     }
 
@@ -1960,17 +1990,22 @@ impl UnifiedIvfIndex {
         let cd_min = nearest_clusters.first().map(|(_, d)| *d).unwrap_or(0.0);
         // coarse: (id, hamming, owning cluster's centroid distance).
         let mut coarse: Vec<(String, u32, f32)> = Vec::new();
-        for (cluster_id, centroid_dist) in nearest_clusters {
+        // ADR-023 R3 (c): the probed clusters ARE the survivor set — every coarse
+        // candidate comes from one of them — so a cold index with a warm source
+        // fetches exactly these clusters' fp32, nothing else.
+        let mut probed_clusters: Vec<u32> = Vec::with_capacity(nearest_clusters.len());
+        for (cluster_id, centroid_dist) in &nearest_clusters {
+            probed_clusters.push(*cluster_id as u32);
             // ADR-023 R1: the query code is the rotated residual to THIS cluster's
             // centroid — the same transform the stored codes used at insert, so
             // Hamming is meaningful within the cluster.
-            let centroid = &self.centroids.centroids[cluster_id];
+            let centroid = &self.centroids.centroids[*cluster_id];
             let bq = BinaryCode::from_rotated_residual(query, centroid, &self.rotation_signs);
-            let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
+            let key = PartitionedKey::new(self.collection_id.clone(), *cluster_id);
             if let Some(posting_list) = self.posting_lists.get(&key).await {
                 for vector_id in &posting_list.vector_ids {
                     if let Some(code) = self.binary_codes.get(vector_id) {
-                        coarse.push((vector_id.clone(), bq.hamming(&code), centroid_dist));
+                        coarse.push((vector_id.clone(), bq.hamming(&code), *centroid_dist));
                     }
                 }
             }
@@ -1992,8 +2027,20 @@ impl UnifiedIvfIndex {
         // measured-optimal n_probe=1 behaviour); far clusters are penalised by
         // (cd_c−cd_min)², restoring cross-frame ordering. Lower-better.
         if self.serving_state == IvfServingState::ColdBinaryOnly {
-            // ADR-023 T-E: disclose the reduced-recall coarse mode in EXPLAIN via
-            // the per-request diagnostics bus (no-op outside a search scope).
+            // ADR-023 R3 (c): if an on-probe warm source is wired, range-fetch the
+            // probed (survivor) clusters' fp32 on demand and rerank exactly — only
+            // the queried clusters are downloaded (deduped across queries). This
+            // lifts cold recall toward the warm two-stage path without the whole
+            // tier. Falls through to Stage-1-only when no source / no fp32.
+            if self.warm_source.is_some()
+                && let Some(reranked) = self
+                    .warm_fetch_and_rerank(query, &coarse, &probed_clusters, k)
+                    .await?
+            {
+                return Ok(reranked);
+            }
+            // ADR-023 T-E: no fp32 — disclose the reduced-recall Stage-1-only mode
+            // in EXPLAIN via the per-request diagnostics bus (no-op outside scope).
             crate::observability::predicate_diagnostics::record_cold_stage1_only();
             let dim = self.config.dimension.max(1) as f32;
             let estimate_sq = |h: u32, cd: f32| -> f32 {
@@ -2611,6 +2658,88 @@ impl UnifiedIvfIndex {
         }
         self.serving_state = IvfServingState::ColdBinaryOnly;
         Ok(())
+    }
+
+    /// Install the on-probe warm source (ADR-023 R3 (c)). After this, a
+    /// `ColdBinaryOnly` search range-fetches probed clusters' fp32 on demand and
+    /// reranks, instead of serving Stage-1-only Hamming.
+    pub fn set_warm_source(&mut self, source: RangedWarmSource) {
+        self.warm_source = Some(source);
+    }
+
+    /// Number of clusters whose fp32 has been range-fetched on demand so far
+    /// (ADR-023 R3 (c) — for diagnostics / tests; the survivor-aware footprint).
+    pub fn fetched_cluster_count(&self) -> usize {
+        self.fetched_clusters
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .len()
+    }
+
+    /// ADR-023 R3 (c): range-fetch the probed (survivor) clusters' fp32 on demand
+    /// (deduped via `fetched_clusters` — each cluster is read from object storage
+    /// at most once), install them, and rerank the Stage-1 candidates exactly.
+    /// `Ok(None)` when there is no warm source or nothing could be reranked (the
+    /// caller then falls back to Stage-1-only Hamming).
+    async fn warm_fetch_and_rerank(
+        &self,
+        query: &[f32],
+        coarse: &[(String, u32, f32)],
+        probed_clusters: &[u32],
+        k: usize,
+    ) -> Result<Option<Vec<(String, f32)>>> {
+        let Some(src) = &self.warm_source else {
+            return Ok(None);
+        };
+        // Fetch + install any probed cluster not already warm (cross-query dedup).
+        for &cid in probed_clusters {
+            let already = self
+                .fetched_clusters
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .contains(&cid);
+            if already {
+                continue;
+            }
+            if let Some(ext) = src.directory.get(&cid) {
+                let vecs =
+                    crate::index::axis::storage::serialization::IndexSerializer::fetch_warm_cluster_ranged(
+                        &src.fs, &src.path, src.warm_base, ext,
+                    )
+                    .await
+                    .map_err(|e| anyhow!("R3(c) warm cluster fetch failed: {e}"))?;
+                self.install_warm_vectors(&vecs)?;
+                self.fetched_clusters
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(cid);
+            }
+        }
+        // Rerank the Stage-1 candidates with fp32 (now present for probed clusters).
+        let metric = self.config.distance_metric;
+        let mut reranked: Vec<(String, f32)> = Vec::with_capacity(coarse.len());
+        if let Some(collection_entry) = self.vectors.get(&self.collection_id) {
+            let collection = collection_entry
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for (vector_id, _h, _cd) in coarse {
+                if let Some(view) = collection.get(vector_id)
+                    && let Some(vector_data) = view.as_f32()
+                {
+                    let distance = self
+                        .distance_compute
+                        .calculate_distance(query, vector_data, &metric)
+                        .rank_value;
+                    reranked.push((vector_id.clone(), distance));
+                }
+            }
+        }
+        if reranked.is_empty() {
+            return Ok(None);
+        }
+        reranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        reranked.truncate(k);
+        Ok(Some(reranked))
     }
 
     /// Install fp32 vectors into the rerank store. `&self` — only the
@@ -3712,6 +3841,97 @@ mod tests {
             r_ranged.iter().map(|(id, _)| id).collect::<Vec<_>>(),
             r_whole.iter().map(|(id, _)| id).collect::<Vec<_>>(),
             "ranged load matches whole-file load"
+        );
+
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn cold_index_on_probe_fetches_only_survivor_clusters_and_dedups() {
+        // ADR-023 R3 (c): a ColdBinaryOnly index with a RangedWarmSource fetches
+        // the fp32 of ONLY the probed (survivor) clusters on demand, reranks
+        // exactly, and dedups across queries (a cluster is range-read at most
+        // once — never the whole tier).
+        use super::RangedWarmSource;
+        use crate::index::axis::storage::serialization::{IndexSerializer, RangedColdLoad};
+        use crate::storage::persistence::filesystem::local::LocalConfig;
+        use crate::storage::persistence::filesystem::{FileSystem, LocalFileSystem};
+        use std::sync::Arc;
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        let dim = 16;
+        let n_clusters = 4;
+        let per_cluster = 15;
+        let data = synth_clustered_corpus(dim, n_clusters, per_cluster);
+        let mut full =
+            UnifiedIvfIndex::new("c_r3c".to_string(), binary_ivf_config(dim, n_clusters)).unwrap();
+        full.train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            full.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bytes = IndexSerializer::serialize_ivf(&full, "c_r3c").await.unwrap();
+
+        let path =
+            std::env::temp_dir().join(format!("proximadb_r3c_{}.axis", std::process::id()));
+        let path_str = path.to_string_lossy().to_string();
+        tokio::fs::write(&path, &bytes).await.unwrap();
+        let local = LocalFileSystem::new(LocalConfig {
+            root_dir: None,
+            follow_symlinks: true,
+            default_permissions: None,
+            sync_enabled: false,
+        })
+        .await
+        .unwrap();
+        let fs: Arc<dyn FileSystem> = Arc::new(local);
+
+        let RangedColdLoad {
+            mut index,
+            warm_base,
+            directory,
+            ..
+        } = IndexSerializer::cold_load_ranged(&fs, &path_str).await.unwrap();
+        assert_eq!(index.serving_state(), IvfServingState::ColdBinaryOnly);
+
+        // Wire the on-probe warm source (cluster_id → extent).
+        let dir_map = directory.iter().map(|e| (e.cluster_id, *e)).collect();
+        index.set_warm_source(RangedWarmSource {
+            fs: fs.clone(),
+            path: path_str.clone(),
+            warm_base,
+            directory: dir_map,
+        });
+        assert_eq!(index.fetched_cluster_count(), 0, "nothing fetched before any query");
+
+        // Query with n_probe=1: only the single nearest (survivor) cluster's fp32
+        // is fetched — not the whole tier — and the rerank matches exact search.
+        let q = data[0].1.clone();
+        let r = index
+            .search_with_binary_acceleration(&q, 5, Some(1))
+            .await
+            .unwrap();
+        let fetched = index.fetched_cluster_count();
+        assert_eq!(fetched, 1, "n_probe=1 fetched exactly one cluster");
+        assert!(fetched < n_clusters, "did NOT download the whole tier");
+
+        let (whole, _) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
+        let exact = whole.search(&q, 5, Some(n_clusters)).await.unwrap();
+        assert_eq!(
+            r[0].0, exact[0].0,
+            "on-probe rerank top-1 matches exact (whole-file) top-1"
+        );
+
+        // Second identical query: the cluster is cached → no additional fetch.
+        let _ = index
+            .search_with_binary_acceleration(&q, 5, Some(1))
+            .await
+            .unwrap();
+        assert_eq!(
+            index.fetched_cluster_count(),
+            fetched,
+            "dedup: an already-fetched cluster is not range-read again"
         );
 
         let _ = tokio::fs::remove_file(&path).await;
