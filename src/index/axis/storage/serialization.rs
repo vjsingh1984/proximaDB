@@ -838,18 +838,30 @@ impl IndexSerializer {
         }
     }
 
-    /// Persist a trained IVF index to `path` (creates parent dirs). Disk wrapper
-    /// around `serialize_ivf` (TD-087 Slice B).
+    /// Persist a trained IVF index to `path` via the canonical [`FileSystem`]
+    /// trait — the SAME abstraction the cold-load path reads through, so
+    /// persistence is object-store-aware (`s3://`/`adls://`/`gs://`/`file://`)
+    /// rather than local-only (TD-087 Slice B; ADR-023 R3 Slice 4 convergence).
+    /// `path` is a backend-relative URI/path; `create_dirs` lets the local
+    /// backend make parent dirs (object stores ignore it).
     pub async fn persist_ivf_index(
         index: &UnifiedIvfIndex,
         collection_id: &str,
-        path: &Path,
+        path: &str,
+        fs: &Arc<dyn FileSystem>,
     ) -> Result<()> {
         let bytes = Self::serialize_ivf(index, collection_id).await?;
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        tokio::fs::write(path, bytes).await?;
+        fs.write(
+            path,
+            &bytes,
+            Some(crate::storage::persistence::filesystem::FileOptions {
+                create_dirs: true,
+                overwrite: true,
+                ..Default::default()
+            }),
+        )
+        .await
+        .map_err(fs_err)?;
         Ok(())
     }
 

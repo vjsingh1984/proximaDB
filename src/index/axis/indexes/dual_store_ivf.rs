@@ -3856,6 +3856,224 @@ mod tests {
         let _ = tokio::fs::remove_file(&path).await;
     }
 
+    /// Test-only `FileSystem` decorator that counts bytes returned by `read` /
+    /// `read_range`. The ADR-023 cold-path win is a BANDWIDTH win; a wall-clock
+    /// bench over a local FS / emulator would mislead (I/O latency tracks bytes
+    /// only over a real network), so bytes-transferred is the faithful,
+    /// deterministic, backend-independent metric.
+    struct CountingFileSystem {
+        inner: std::sync::Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
+        bytes_read: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::storage::persistence::filesystem::FileSystem for CountingFileSystem {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        async fn read(
+            &self,
+            path: &str,
+        ) -> crate::storage::persistence::filesystem::FsResult<Vec<u8>> {
+            let b = self.inner.read(path).await?;
+            self.bytes_read
+                .fetch_add(b.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            Ok(b)
+        }
+        async fn read_range(
+            &self,
+            path: &str,
+            offset: u64,
+            length: u64,
+        ) -> crate::storage::persistence::filesystem::FsResult<Vec<u8>> {
+            let b = self.inner.read_range(path, offset, length).await?;
+            self.bytes_read
+                .fetch_add(b.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            Ok(b)
+        }
+        async fn write(
+            &self,
+            path: &str,
+            data: &[u8],
+            options: Option<crate::storage::persistence::filesystem::FileOptions>,
+        ) -> crate::storage::persistence::filesystem::FsResult<()> {
+            self.inner.write(path, data, options).await
+        }
+        async fn append(
+            &self,
+            path: &str,
+            data: &[u8],
+        ) -> crate::storage::persistence::filesystem::FsResult<()> {
+            self.inner.append(path, data).await
+        }
+        async fn delete(&self, path: &str) -> crate::storage::persistence::filesystem::FsResult<()> {
+            self.inner.delete(path).await
+        }
+        async fn exists(
+            &self,
+            path: &str,
+        ) -> crate::storage::persistence::filesystem::FsResult<bool> {
+            self.inner.exists(path).await
+        }
+        async fn metadata(
+            &self,
+            path: &str,
+        ) -> crate::storage::persistence::filesystem::FsResult<
+            crate::storage::persistence::filesystem::FsFileMetadata,
+        > {
+            self.inner.metadata(path).await
+        }
+        async fn list(
+            &self,
+            path: &str,
+        ) -> crate::storage::persistence::filesystem::FsResult<
+            Vec<crate::storage::persistence::filesystem::DirEntry>,
+        > {
+            self.inner.list(path).await
+        }
+        async fn create_dir(
+            &self,
+            path: &str,
+        ) -> crate::storage::persistence::filesystem::FsResult<()> {
+            self.inner.create_dir(path).await
+        }
+        async fn create_dir_all(
+            &self,
+            path: &str,
+        ) -> crate::storage::persistence::filesystem::FsResult<()> {
+            self.inner.create_dir_all(path).await
+        }
+        async fn copy(
+            &self,
+            from: &str,
+            to: &str,
+        ) -> crate::storage::persistence::filesystem::FsResult<()> {
+            self.inner.copy(from, to).await
+        }
+        async fn move_file(
+            &self,
+            from: &str,
+            to: &str,
+        ) -> crate::storage::persistence::filesystem::FsResult<()> {
+            self.inner.move_file(from, to).await
+        }
+        fn filesystem_type(&self) -> &'static str {
+            "counting"
+        }
+        async fn sync(&self) -> crate::storage::persistence::filesystem::FsResult<()> {
+            self.inner.sync().await
+        }
+        async fn open_file(
+            &self,
+            path: &str,
+            create: bool,
+        ) -> crate::storage::persistence::filesystem::FsResult<
+            Box<dyn crate::storage::persistence::filesystem::FilesystemFile>,
+        > {
+            self.inner.open_file(path, create).await
+        }
+    }
+
+    /// ADR-023 faithful BANDWIDTH bench: the cold path must transfer only
+    /// `[header] + [COLD] + probed-cluster fp32`, never the whole file. Asserts
+    /// bytes-read (the deterministic metric) through the `CountingFileSystem`
+    /// decorator over the SAME `cold_load_ranged` / `fetch_warm_cluster_ranged`
+    /// code that runs against S3/Azure/GCS.
+    #[tokio::test]
+    async fn cold_load_reads_far_fewer_bytes_than_whole_file() {
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        use crate::storage::persistence::filesystem::LocalFileSystem;
+        use crate::storage::persistence::filesystem::local::LocalConfig;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        // A corpus large enough that the WARM (fp32) tier dominates the file, so
+        // skipping it is a material saving.
+        let mut index =
+            UnifiedIvfIndex::new("c_bw".to_string(), binary_ivf_config(8, 4)).unwrap();
+        let data: Vec<(String, Vec<f32>)> = (0..200)
+            .map(|i| {
+                let mut v = vec![0.0f32; 8];
+                for (d, slot) in v.iter_mut().enumerate() {
+                    *slot = (((i * 7 + d * 13) % 17) as f32) - 8.0;
+                }
+                (format!("v{i}"), v)
+            })
+            .collect();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_bw").await.unwrap();
+        let file_size = bytes.len() as u64;
+        let path =
+            std::env::temp_dir().join(format!("proximadb_bw_{}.axis", std::process::id()));
+        let path_str = path.to_string_lossy().to_string();
+        tokio::fs::write(&path, &bytes).await.unwrap();
+
+        let local: Arc<dyn crate::storage::persistence::filesystem::FileSystem> = Arc::new(
+            LocalFileSystem::new(LocalConfig {
+                root_dir: None,
+                follow_symlinks: true,
+                default_permissions: None,
+                sync_enabled: false,
+            })
+            .await
+            .unwrap(),
+        );
+        let counter = Arc::new(AtomicU64::new(0));
+        let fs: Arc<dyn crate::storage::persistence::filesystem::FileSystem> =
+            Arc::new(CountingFileSystem {
+                inner: local,
+                bytes_read: counter.clone(),
+            });
+
+        // Cold-first load: reads only [len-prefix] + [header] + [COLD].
+        let loaded = IndexSerializer::cold_load_ranged(&fs, &path_str).await.unwrap();
+        let cold_bytes = counter.load(Ordering::Relaxed);
+        assert!(
+            cold_bytes < file_size,
+            "cold load must read less than the whole file ({cold_bytes} < {file_size})"
+        );
+        assert!(!loaded.directory.is_empty(), "v3 warm directory present");
+
+        // Serving a query that probes ONE cluster fetches only that cluster's fp32
+        // (pure-lazy object-store mode), NOT the whole WARM tier.
+        let ext = loaded
+            .directory
+            .iter()
+            .min_by_key(|e| e.len)
+            .cloned()
+            .unwrap();
+        let _ = IndexSerializer::fetch_warm_cluster_ranged(
+            &fs,
+            &path_str,
+            loaded.warm_base,
+            &ext,
+        )
+        .await
+        .unwrap();
+        let after_one_cluster = counter.load(Ordering::Relaxed);
+
+        // The faithful bandwidth assertion: cold-serve + one probed cluster
+        // transfers materially less than the whole file (>50% saved on this
+        // corpus, where the fp32 WARM tier dominates).
+        assert!(
+            after_one_cluster < file_size,
+            "cold + 1 probed cluster ({after_one_cluster}) must be < whole file ({file_size})"
+        );
+        assert!(
+            after_one_cluster * 2 < file_size,
+            "expected >50% byte saving, got {after_one_cluster}/{file_size}"
+        );
+
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
     /// ADR-023 R3 (b) over a REAL S3 endpoint (MinIO), via the aws-sdk-s3 backend.
     /// Proves the cold path is backend-agnostic: the identical `cold_load_ranged`
     /// / `fetch_warm_cluster_ranged` code that runs on the local FS drives a real
@@ -4383,7 +4601,20 @@ mod tests {
             "proximadb_ivf_persist_{}/ivf.bin",
             uuid::Uuid::new_v4().simple()
         ));
-        IndexSerializer::persist_ivf_index(&index, "c_disk", &path)
+        let local_fs: std::sync::Arc<dyn crate::storage::persistence::filesystem::FileSystem> =
+            std::sync::Arc::new(
+                crate::storage::persistence::filesystem::LocalFileSystem::new(
+                    crate::storage::persistence::filesystem::local::LocalConfig {
+                        root_dir: None,
+                        follow_symlinks: true,
+                        default_permissions: None,
+                        sync_enabled: false,
+                    },
+                )
+                .await
+                .unwrap(),
+            );
+        IndexSerializer::persist_ivf_index(&index, "c_disk", &path.to_string_lossy(), &local_fs)
             .await
             .unwrap();
         assert!(path.exists());

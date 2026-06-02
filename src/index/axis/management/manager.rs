@@ -236,6 +236,20 @@ pub struct AxisManager {
     /// `None` ⇒ persistence disabled (embedded/test harnesses without a data dir).
     index_persist_dir: Option<std::path::PathBuf>,
 
+    /// ADR-023 R3 Slice 4: optional object-store URI for index persistence
+    /// (`s3://bucket/prefix`, `adls://`, `gs://`, `file://path`). When set with
+    /// `filesystem_factory`, persistence AND cold-load route through the
+    /// canonical `FilesystemFactory` by scheme — converging on the SAME
+    /// `FileSystem`-trait path the ranged cold-load already reads through. Takes
+    /// precedence over `index_persist_dir`.
+    index_persist_url: Option<String>,
+
+    /// ADR-023 R3 Slice 4: the shared `FilesystemFactory` (injected at boot) that
+    /// `index_persist_url` dispatches through by scheme. `None` ⇒ URI mode off
+    /// (falls back to the local `index_persist_dir`).
+    filesystem_factory:
+        Option<Arc<crate::storage::persistence::filesystem::FilesystemFactory>>,
+
     /// Phase 8 F4a (TD-094): collections whose in-memory IVF index was evicted by
     /// `suspend_collection` to free memory. The persisted `ivf.bin` remains, so
     /// the next query (or `resume_collection`) warm-loads it; the marker is
@@ -433,6 +447,8 @@ impl AxisManager {
             collection_service: None, // Will be set later via set_collection_service
             recall_probe_gate: None,  // Set later via set_recall_probe_gate (TD-075)
             index_persist_dir: None,  // Set later via set_index_persist_dir (TD-087 Slice B)
+            index_persist_url: None,  // Set later via set_index_persist_url (ADR-023 R3 Slice 4)
+            filesystem_factory: None, // Set later via set_filesystem_factory (ADR-023 R3 Slice 4)
             suspended_collections: Arc::new(RwLock::new(std::collections::HashSet::new())), // F4a
             cold_lazy_warm: false, // ADR-023 R3 (c): eager warm by default
             shared_collection_cache: None, // Will be set via set_shared_collection_cache
@@ -475,6 +491,35 @@ impl AxisManager {
         tracing::info!("🔗 AXIS: IVF index persistence enabled (TD-087 Slice B)");
     }
 
+    /// ADR-023 R3 Slice 4: route IVF index persistence + cold-load through an
+    /// object-store URI (`s3://bucket/prefix`, `adls://`, `gs://`, `file://path`)
+    /// via the canonical `FilesystemFactory`. Takes precedence over the local
+    /// persist dir; requires `set_filesystem_factory` to dispatch by scheme.
+    pub fn set_index_persist_url(&mut self, url: String) {
+        tracing::info!(
+            "🔗 AXIS: IVF index persistence routed via object-store URI '{}'",
+            url
+        );
+        self.index_persist_url = Some(url);
+    }
+
+    /// ADR-023 R3 Slice 4: inject the shared `FilesystemFactory` that
+    /// `index_persist_url` dispatches through by scheme.
+    pub fn set_filesystem_factory(
+        &mut self,
+        factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+    ) {
+        self.filesystem_factory = Some(factory);
+    }
+
+    /// Whether IVF index persistence is enabled by either mechanism (object-store
+    /// URI or local dir). Suspend/resume require it (no in-memory eviction without
+    /// a resumable on-disk copy).
+    fn persistence_enabled(&self) -> bool {
+        (self.index_persist_url.is_some() && self.filesystem_factory.is_some())
+            || self.index_persist_dir.is_some()
+    }
+
     /// ADR-023 R3 (c): enable PURE-LAZY cold warm — skip the eager background
     /// fill so a ranged cold index downloads only the clusters queries probe (the
     /// object-store mode: pay only for what's touched). Off by default (eager
@@ -504,12 +549,49 @@ impl AxisManager {
         ))
     }
 
-    /// Resolve the on-disk path for a collection's persisted IVF index, or `None`
-    /// when persistence is disabled.
-    fn ivf_index_path(&self, collection_id: &str) -> Option<std::path::PathBuf> {
-        self.index_persist_dir
-            .as_ref()
-            .map(|dir| dir.join(collection_id).join("ivf.bin"))
+    /// ADR-023 R3 Slice 4 (convergence): resolve `(filesystem, path)` for a
+    /// collection's persisted IVF index, or `None` when persistence is disabled.
+    /// Object-store URI mode (`index_persist_url` + factory) takes precedence over
+    /// the legacy local dir; BOTH feed the same `FileSystem`-trait persist +
+    /// cold-load path, so the read and write sides never diverge.
+    async fn index_fs_and_path(
+        &self,
+        collection_id: &str,
+    ) -> Option<(
+        Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
+        String,
+    )> {
+        if let (Some(url), Some(factory)) =
+            (&self.index_persist_url, &self.filesystem_factory)
+        {
+            let path = format!("{}/{}/ivf.bin", url.trim_end_matches('/'), collection_id);
+            return match factory.get_filesystem(&path) {
+                Ok(fs) => Some((fs, path)),
+                Err(e) => {
+                    tracing::warn!(
+                        "AXIS: no filesystem for index URI '{}' ({}); persistence disabled",
+                        path,
+                        e
+                    );
+                    None
+                }
+            };
+        }
+        if let Some(dir) = &self.index_persist_dir {
+            let path = dir
+                .join(collection_id)
+                .join("ivf.bin")
+                .to_string_lossy()
+                .to_string();
+            return match Self::local_index_filesystem().await {
+                Ok(fs) => Some((fs, path)),
+                Err(e) => {
+                    tracing::warn!("AXIS: local filesystem unavailable ({})", e);
+                    None
+                }
+            };
+        }
+        None
     }
 
     /// Best-effort persist of a trained IVF index to disk. Logged, never fatal —
@@ -521,7 +603,7 @@ impl AxisManager {
             tokio::sync::RwLock<crate::index::axis::indexes::dual_store_ivf::UnifiedIvfIndex>,
         >,
     ) {
-        let Some(path) = self.ivf_index_path(collection_id) else {
+        let Some((fs, path)) = self.index_fs_and_path(collection_id).await else {
             return;
         };
         let guard = index.read().await;
@@ -529,13 +611,14 @@ impl AxisManager {
             &guard,
             collection_id,
             &path,
+            &fs,
         )
         .await
         {
             Ok(()) => tracing::info!(
                 "💾 AXIS: persisted IVF index for '{}' → {}",
                 collection_id,
-                path.display()
+                path
             ),
             Err(e) => tracing::warn!(
                 "AXIS: failed to persist IVF index for '{}' ({}); index remains in-memory only",
@@ -553,26 +636,16 @@ impl AxisManager {
         if self.has_ivf_index(collection_id).await {
             return;
         }
-        let Some(path) = self.ivf_index_path(collection_id) else {
+        // ADR-023 R3 Slice 4: resolve the (filesystem, path) ONCE and use it for
+        // both the existence check and the cold/whole-file load — so a local dir
+        // and an `s3://`/`adls://`/`gs://` URI drive the identical load path.
+        let Some((fs, path_str)) = self.index_fs_and_path(collection_id).await else {
             return;
         };
-        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        if !fs.exists(&path_str).await.unwrap_or(false) {
             return;
         }
         use crate::index::axis::storage::serialization::{IndexSerializer, RangedColdLoad};
-
-        let path_str = path.to_string_lossy().to_string();
-        let fs = match Self::index_filesystem().await {
-            Ok(fs) => fs,
-            Err(e) => {
-                tracing::warn!(
-                    "AXIS: filesystem for IVF index '{}' unavailable ({})",
-                    collection_id,
-                    e
-                );
-                return;
-            }
-        };
 
         // ADR-023 R3 (b): binary indexes load cold-first via byte-RANGE reads —
         // only [header]+[COLD] is read before serving Stage-1, then each cluster's
@@ -660,13 +733,13 @@ impl AxisManager {
                 tracing::info!(
                     "🔥 AXIS: cold-first (ranged) IVF index for '{}' from {} ({} vectors)",
                     collection_id,
-                    path.display(),
+                    path_str,
                     n,
                 );
             }
             Ok(None) => {
                 // v1 / non-binary: whole-file load (membership lives in the body).
-                self.load_ivf_whole_file(collection_id, &path).await;
+                self.load_ivf_whole_file(collection_id, &fs, &path_str).await;
             }
             Err(e) => {
                 tracing::warn!(
@@ -674,14 +747,16 @@ impl AxisManager {
                     collection_id,
                     e,
                 );
-                self.load_ivf_whole_file(collection_id, &path).await;
+                self.load_ivf_whole_file(collection_id, &fs, &path_str).await;
             }
         }
     }
 
-    /// Build a `FileSystem` for IVF index I/O. Local-backed for now; ADR-023 R3
-    /// (b)/(c) Slice 4 extends this to pick the S3 backend for `s3://` paths.
-    async fn index_filesystem()
+    /// Local `FileSystem` for IVF index I/O — the default backend and the
+    /// fallback when no object-store URI is configured (ADR-023 R3 Slice 4;
+    /// object-store schemes are resolved via `FilesystemFactory` in
+    /// `index_fs_and_path`).
+    async fn local_index_filesystem()
     -> std::result::Result<Arc<dyn crate::storage::persistence::filesystem::FileSystem>, String>
     {
         use crate::storage::persistence::filesystem::LocalFileSystem;
@@ -732,9 +807,14 @@ impl AxisManager {
     /// when the ranged header read fails. Cold-first when the file has a binary
     /// tier, else FullEager; any deferred WARM tier is applied per cluster in the
     /// background.
-    async fn load_ivf_whole_file(&self, collection_id: &str, path: &std::path::Path) {
+    async fn load_ivf_whole_file(
+        &self,
+        collection_id: &str,
+        fs: &Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
+        path: &str,
+    ) {
         use crate::index::axis::storage::serialization::{ColdLoadResult, IndexSerializer};
-        let bytes = match tokio::fs::read(path).await {
+        let bytes = match fs.read(path).await {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!("AXIS: read IVF index for '{}' failed ({})", collection_id, e);
@@ -796,7 +876,7 @@ impl AxisManager {
                     "🔥 AXIS: {}-loaded IVF index for '{}' from {} ({} vectors)",
                     if cold_first { "cold-first" } else { "warm" },
                     collection_id,
-                    path.display(),
+                    path,
                     n
                 );
             }
@@ -839,7 +919,7 @@ impl AxisManager {
     /// is disabled (the index could not be resumed) or there is no in-memory IVF
     /// index to evict.
     pub async fn suspend_collection(&self, collection_id: &str) -> Result<()> {
-        if self.index_persist_dir.is_none() {
+        if !self.persistence_enabled() {
             anyhow::bail!(
                 "cannot suspend '{collection_id}': index persistence is not enabled \
                  (no in-memory eviction without a resumable on-disk copy)"
@@ -892,11 +972,12 @@ impl AxisManager {
             .contains(collection_id)
     }
 
-    /// Whether a persisted IVF index exists on disk for `collection_id` (the
-    /// resumability signal surfaced in route-health).
+    /// Whether a persisted IVF index exists for `collection_id` (the resumability
+    /// signal surfaced in route-health) — checked through the resolved backend, so
+    /// it works for object-store URIs as well as the local dir.
     pub async fn has_persisted_ivf_index(&self, collection_id: &str) -> bool {
-        match self.ivf_index_path(collection_id) {
-            Some(path) => tokio::fs::try_exists(&path).await.unwrap_or(false),
+        match self.index_fs_and_path(collection_id).await {
+            Some((fs, path)) => fs.exists(&path).await.unwrap_or(false),
             None => false,
         }
     }
@@ -5378,9 +5459,22 @@ mod recluster_apply_tests {
             .map(|(id, _)| id)
             .collect();
 
-        // Persist as a binary v3 index at the manager's expected path.
+        // Persist as a binary v3 index at the manager's expected path, via the
+        // canonical FileSystem trait (ADR-023 R3 Slice 4).
         let path = dir.path().join("colz").join("ivf.bin");
-        IndexSerializer::persist_ivf_index(&full, "colz", &path)
+        let local_fs: Arc<dyn crate::storage::persistence::filesystem::FileSystem> = Arc::new(
+            crate::storage::persistence::filesystem::LocalFileSystem::new(
+                crate::storage::persistence::filesystem::local::LocalConfig {
+                    root_dir: None,
+                    follow_symlinks: true,
+                    default_permissions: None,
+                    sync_enabled: false,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        IndexSerializer::persist_ivf_index(&full, "colz", &path.to_string_lossy(), &local_fs)
             .await
             .unwrap();
 
@@ -5465,7 +5559,50 @@ mod recluster_apply_tests {
         let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
         let v = batch("np", 40, 8, 1);
         assert!(manager.rebuild_and_swap_ivf_index("col", &v).await.unwrap());
-        assert!(manager.ivf_index_path("col").is_none());
+        assert!(manager.index_fs_and_path("col").await.is_none());
+    }
+
+    /// ADR-023 R3 Slice 4 (convergence): index persistence + cold-load routed
+    /// through an object-store URI via the canonical `FilesystemFactory`. `file://`
+    /// here drives the IDENTICAL code path as `s3://`/`adls://`/`gs://` (scheme
+    /// dispatch in `index_fs_and_path` → the same `FileSystem`-trait persist/load),
+    /// so this proves the write side no longer diverges from the read side.
+    #[tokio::test]
+    async fn index_persist_via_object_store_uri_roundtrips_through_factory() {
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+        let dir = tempfile::TempDir::new().unwrap();
+        let url = format!("file://{}", dir.path().display());
+        let factory = Arc::new(FilesystemFactory::create_default().await.unwrap());
+
+        // Persist through the factory (file:// backend) in URI mode.
+        let mut m = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m.set_filesystem_factory(factory.clone());
+        m.set_index_persist_url(url.clone());
+        // URI mode takes precedence + reports persistence enabled.
+        assert!(m.persistence_enabled());
+        let (_, resolved) = m.index_fs_and_path("col").await.unwrap();
+        assert!(
+            resolved.starts_with("file://") && resolved.ends_with("/col/ivf.bin"),
+            "URI-mode path: {resolved}"
+        );
+        let v = batch("uri", 60, 8, 1);
+        assert!(m.rebuild_and_swap_ivf_index("col", &v).await.unwrap());
+        assert!(
+            m.has_persisted_ivf_index("col").await,
+            "index persisted via object-store URI (factory file:// backend)"
+        );
+
+        // A fresh manager with the same URI + factory cold-loads it — the read
+        // side resolves through the SAME factory/scheme path.
+        let mut m2 = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m2.set_filesystem_factory(factory);
+        m2.set_index_persist_url(url);
+        assert!(!m2.has_ivf_index("col").await);
+        m2.ensure_ivf_index_loaded("col").await;
+        assert!(
+            m2.has_ivf_index("col").await,
+            "index cold-loaded via object-store URI through the factory"
+        );
     }
 
     // ─── Phase 8 F4a: suspend / resume ──────────────────────────────────────

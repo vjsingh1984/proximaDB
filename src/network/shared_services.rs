@@ -807,9 +807,18 @@ impl SharedServices {
         let mut axis_manager_inner =
             crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?;
         axis_manager_inner.set_recall_probe_gate(recall_probe_gate.clone());
-        // TD-087 Slice B: persist trained IVF indexes under the data dir so a cold
-        // collection warms from disk on first query (no-op without a data dir).
-        if let Some(cfg) = opt_config {
+        // ADR-023 R3 Slice 4: give AXIS the shared FilesystemFactory so index
+        // persistence + cold-load can dispatch by scheme (s3/adls/gs/file).
+        axis_manager_inner.set_filesystem_factory(filesystem_factory.clone());
+        // Route index persistence through an object-store URI when configured
+        // (PROXIMADB_INDEX_PERSIST_URL=s3://bucket/prefix | adls://… | gs://…) —
+        // the cold-load path then reads only [header]+[COLD]+probed clusters via
+        // byte-range GETs. Otherwise persist under the local data dir so a cold
+        // collection warms from disk on first query (TD-087 Slice B; no-op without
+        // a data dir).
+        if let Ok(url) = std::env::var("PROXIMADB_INDEX_PERSIST_URL") {
+            axis_manager_inner.set_index_persist_url(url);
+        } else if let Some(cfg) = opt_config {
             axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
         }
         let axis_manager = Arc::new(axis_manager_inner);

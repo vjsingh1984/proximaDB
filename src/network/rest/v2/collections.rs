@@ -841,6 +841,7 @@ pub struct CollectionRouteHealthV2 {
     pub discovery: DiscoveryHealth,
     pub recall_drift: RecallDriftHealth,
     pub suspension: SuspensionHealth,
+    pub cold_serving: ColdServingHealth,
 
     pub degraded_reasons: Vec<DegradedReason>,
 }
@@ -1190,6 +1191,72 @@ impl SuspensionHealth {
     }
 }
 
+/// ADR-023 R3 (c) cold→warm serving state of a loaded IVF index. While a binary
+/// index is `ColdBinaryOnly` with `warm_clusters_fetched < warm_clusters_total`,
+/// the collection serves reduced-recall (on-probe Stage-1 + per-cluster fp32
+/// rerank) as the fp32 tier streams in via byte-range GETs; `FullTwoStage` (or
+/// `fetched == total`) is full recall. Surfaced so operators see the cold-start
+/// window and the object-store warm-fill progress.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ColdServingHealth {
+    /// Whether cold-serving state is observable (an IVF index is loaded and the
+    /// AXIS manager is reachable). `false` ⇒ the other fields are defaults.
+    pub observable: bool,
+    /// `"FullTwoStage"` (full recall) or `"ColdBinaryOnly"` (cold window), or
+    /// `None` when not observable.
+    pub serving_state: Option<&'static str>,
+    /// Per-cluster fp32 tiers fetched so far (the warm-fill numerator).
+    pub warm_clusters_fetched: usize,
+    /// Total per-cluster fp32 tiers for a binary index; `0` for whole-file /
+    /// non-binary loads (no per-cluster warm tracking).
+    pub warm_clusters_total: usize,
+    /// `true` while serving the cold window at reduced recall (`ColdBinaryOnly`
+    /// with `fetched < total`).
+    pub serving_reduced_recall: bool,
+    pub notes: &'static str,
+}
+
+impl ColdServingHealth {
+    /// Default block when no IVF index is loaded or the AXIS manager is absent.
+    fn unobservable() -> Self {
+        Self {
+            observable: false,
+            serving_state: None,
+            warm_clusters_fetched: 0,
+            warm_clusters_total: 0,
+            serving_reduced_recall: false,
+            notes: "no IVF index loaded; cold-serving state unavailable",
+        }
+    }
+
+    /// Build from `AxisManager::cold_serving_status` output.
+    fn from_status(
+        state: crate::index::axis::IvfServingState,
+        fetched: usize,
+        total: usize,
+    ) -> Self {
+        use crate::index::axis::IvfServingState;
+        let serving_state = match state {
+            IvfServingState::FullTwoStage => "FullTwoStage",
+            IvfServingState::ColdBinaryOnly => "ColdBinaryOnly",
+        };
+        let serving_reduced_recall =
+            matches!(state, IvfServingState::ColdBinaryOnly) && fetched < total;
+        Self {
+            observable: true,
+            serving_state: Some(serving_state),
+            warm_clusters_fetched: fetched,
+            warm_clusters_total: total,
+            serving_reduced_recall,
+            notes: if serving_reduced_recall {
+                "serving cold window: Stage-1 + on-probe fp32 rerank while warm tier streams"
+            } else {
+                "full two-stage serving (fp32 warm tier resident)"
+            },
+        }
+    }
+}
+
 /// Object-economy directory state. The directory format and sidecar live in
 /// the SST engine; route-health reports cached in-process status when present
 /// without forcing an object-storage read.
@@ -1502,6 +1569,9 @@ fn build_route_health_with_live_state(
         // Default unobservable; the async handler patches this with live
         // suspend/resume state from the AXIS manager (F4a).
         suspension: SuspensionHealth::unobservable(),
+        // Default unobservable; the async handler patches this with live
+        // cold→warm serving state from the AXIS manager (ADR-023 R3 (c)).
+        cold_serving: ColdServingHealth::unobservable(),
         degraded_reasons,
     }
 }
@@ -1632,6 +1702,18 @@ pub async fn get_collection_route_health_v2(
             }
         }
         None => SuspensionHealth::unobservable(),
+    };
+
+    // ADR-023 R3 (c): patch the cold-serving block with live AXIS state — the
+    // cold→warm window + per-cluster warm-fill progress for a loaded IVF index.
+    health.cold_serving = match crate::storage::engines::sst::core::get_sst_axis_manager() {
+        Some(axis) => match axis.cold_serving_status(&collection_id_for_discovery).await {
+            Some((state, fetched, total)) => {
+                ColdServingHealth::from_status(state, fetched, total)
+            }
+            None => ColdServingHealth::unobservable(),
+        },
+        None => ColdServingHealth::unobservable(),
     };
 
     // Patch the recall_drift block when the collection has a
@@ -2877,12 +2959,41 @@ mod tests {
         assert!(!h.suspension.observable);
         assert!(!h.suspension.suspended);
         assert!(!h.suspension.in_memory_index);
+        // ADR-023 R3 (c): the builder default for cold-serving is unobservable
+        // (the async handler patches it from the AXIS manager).
+        assert!(!h.cold_serving.observable);
+        assert_eq!(h.cold_serving.serving_state, None);
+        assert!(!h.cold_serving.serving_reduced_recall);
         // Serializes as a nested object on the route-health contract.
         let json = serde_json::to_value(&h).unwrap();
         assert!(
             json.get("suspension").is_some(),
             "suspension block present in contract"
         );
+        assert!(
+            json.get("cold_serving").is_some(),
+            "cold_serving block present in contract"
+        );
+    }
+
+    #[test]
+    fn cold_serving_health_from_status_classifies_recall() {
+        use crate::index::axis::IvfServingState;
+        // Cold window: ColdBinaryOnly with fewer warm clusters fetched than total
+        // ⇒ reduced-recall serving.
+        let cold = ColdServingHealth::from_status(IvfServingState::ColdBinaryOnly, 1, 4);
+        assert!(cold.observable);
+        assert_eq!(cold.serving_state, Some("ColdBinaryOnly"));
+        assert!(cold.serving_reduced_recall);
+        assert_eq!(cold.warm_clusters_fetched, 1);
+        assert_eq!(cold.warm_clusters_total, 4);
+        // All warm clusters present (even if still ColdBinaryOnly) ⇒ full recall.
+        let warm = ColdServingHealth::from_status(IvfServingState::ColdBinaryOnly, 4, 4);
+        assert!(!warm.serving_reduced_recall);
+        // FullTwoStage ⇒ full recall regardless of counters.
+        let full = ColdServingHealth::from_status(IvfServingState::FullTwoStage, 0, 0);
+        assert_eq!(full.serving_state, Some("FullTwoStage"));
+        assert!(!full.serving_reduced_recall);
     }
 
     #[test]
@@ -2944,6 +3055,7 @@ mod tests {
         assert_eq!(
             keys,
             vec![
+                "cold_serving",
                 "collection_id",
                 "degraded_reasons",
                 "dimension",
