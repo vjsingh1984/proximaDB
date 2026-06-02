@@ -3632,6 +3632,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ranged_cold_load_serves_then_fetches_clusters_via_filesystem() {
+        // ADR-023 R3 (b) Slice 2: `cold_load_ranged` reads only [header]+[COLD]
+        // through `FileSystem::read_range` to serve Stage-1, then
+        // `fetch_warm_cluster_ranged` pulls each cluster's fp32 on demand. The
+        // result must equal a whole-file load. (Local FS here; the same code
+        // path drives the real S3 range backend.)
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        use crate::storage::persistence::filesystem::local::LocalConfig;
+        use crate::storage::persistence::filesystem::{FileSystem, LocalFileSystem};
+        use std::sync::Arc;
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        let mut index =
+            UnifiedIvfIndex::new("c_ranged".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_ranged").await.unwrap();
+        let file_size = bytes.len() as u64;
+
+        let path = std::env::temp_dir()
+            .join(format!("proximadb_ranged_{}.axis", std::process::id()));
+        let path_str = path.to_string_lossy().to_string();
+        tokio::fs::write(&path, &bytes).await.unwrap();
+
+        let local = LocalFileSystem::new(LocalConfig {
+            root_dir: None,
+            follow_symlinks: true,
+            default_permissions: None,
+            sync_enabled: false,
+        })
+        .await
+        .unwrap();
+        let fs: Arc<dyn FileSystem> = Arc::new(local);
+
+        // Ranged cold load: only [header]+[COLD] read → ColdBinaryOnly serves S1.
+        let mut loaded = IndexSerializer::cold_load_ranged(&fs, &path_str).await.unwrap();
+        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        assert!(!loaded.directory.is_empty(), "v3 directory present");
+        assert!(
+            loaded.warm_base < file_size,
+            "the WARM blob (fp32) lies beyond the cold read boundary"
+        );
+        let q = data[0].1.clone();
+        let s1 = loaded
+            .index
+            .search_with_binary_acceleration(&q, 3, None)
+            .await
+            .unwrap();
+        assert_eq!(s1[0].0, "v0", "Stage-1 serves from the ranged cold load");
+
+        // Fetch each cluster's fp32 via range reads, install, then FullTwoStage.
+        let warm_base = loaded.warm_base;
+        let dir = loaded.directory.clone();
+        let mut fetched = 0usize;
+        for ext in &dir {
+            let vecs =
+                IndexSerializer::fetch_warm_cluster_ranged(&fs, &path_str, warm_base, ext)
+                    .await
+                    .unwrap();
+            fetched += vecs.len();
+            loaded.index.restore_warm_cluster(&vecs).unwrap();
+        }
+        assert_eq!(fetched, data.len(), "ranged fetch covers every vector");
+        loaded.index.mark_full_two_stage();
+        assert_eq!(loaded.index.serving_state(), IvfServingState::FullTwoStage);
+
+        // Equivalence: ranged full index == whole-file load on exact search.
+        let (whole, _) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
+        let r_ranged = loaded.index.search(&q, 3, None).await.unwrap();
+        let r_whole = whole.search(&q, 3, None).await.unwrap();
+        assert_eq!(
+            r_ranged.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            r_whole.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            "ranged load matches whole-file load"
+        );
+
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
     async fn cold_tier_is_a_small_fraction_of_the_full_index() {
         // ADR-023 T-F (success criterion #1): the COLD blob — loaded before
         // serving begins — is a small fraction of the full index. The per-vector

@@ -28,9 +28,11 @@ use crate::index::axis::{
 // from this module path (TD: that test should import from its own
 // module instead — the indirection is the other-agent's WIP).
 pub use crate::index::axis::ColdPathLoadPolicy;
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemError};
 use bincode;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
@@ -284,6 +286,28 @@ pub struct ColdLoadResult {
     pub metadata: AxisSerializedIndexMetadata,
     /// Deferred WARM fp32 blob (`Some` only for `BinaryFirstThenRerank`).
     pub warm: Option<Vec<u8>>,
+}
+
+/// Result of a byte-RANGE cold load (ADR-023 R3 (b),
+/// [`IndexSerializer::cold_load_ranged`]). Carries the `ColdBinaryOnly` index
+/// plus what's needed to range-fetch WARM clusters on demand — without ever
+/// downloading the whole WARM tier.
+pub struct RangedColdLoad {
+    /// The `ColdBinaryOnly` index — serves Stage-1 immediately.
+    pub index: UnifiedIvfIndex,
+    /// Header metadata (cold-path profile + WARM byte-directory).
+    pub metadata: AxisSerializedIndexMetadata,
+    /// Absolute file offset of the WARM blob: `4 + header_len + cold_tier_bytes`.
+    /// Add an extent's `offset` to range-read that cluster's fp32.
+    pub warm_base: u64,
+    /// Per-cluster WARM byte-directory. Empty for v1/v2 files (no per-cluster
+    /// framing) — callers then fall back to a whole-WARM read.
+    pub directory: Vec<WarmExtent>,
+}
+
+/// Map a [`FilesystemError`] into a [`SerializationError`] for the ranged loader.
+fn fs_err(e: FilesystemError) -> SerializationError {
+    SerializationError::Io(std::io::Error::other(e.to_string()))
 }
 
 /// Header for serialized index file
@@ -855,6 +879,82 @@ impl IndexSerializer {
             ColdPathLoadPolicy::FullEager
         };
         Self::load_ivf_with_policy(data, policy).await
+    }
+
+    /// ADR-023 R3 (b): cold-load an IVF index via byte-RANGE reads from any
+    /// [`FileSystem`] (local, S3, …). Reads only `[header]` + `[COLD]` to start
+    /// serving Stage-1 — the WARM fp32 is never downloaded here. Each cluster's
+    /// fp32 is fetched on demand with
+    /// [`fetch_warm_cluster_ranged`](Self::fetch_warm_cluster_ranged), so an
+    /// object-store load never pulls clusters a query doesn't probe. This is the
+    /// true I/O-bound version of the cold path (vs. `load_ivf_cold_path`, which
+    /// takes the whole file in memory).
+    ///
+    /// v3 files carry the per-cluster WARM byte-directory (`directory` non-empty).
+    /// v1/v2 files load cold here too (empty `directory`); their WARM tier is not
+    /// per-cluster range-readable, so callers fall back to a whole-WARM read.
+    pub async fn cold_load_ranged(fs: &Arc<dyn FileSystem>, path: &str) -> Result<RangedColdLoad> {
+        // 1) Read the 4-byte header-length prefix, then the header itself.
+        let head4 = fs.read_range(path, 0, 4).await.map_err(fs_err)?;
+        if head4.len() < 4 {
+            return Err(SerializationError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "missing header length prefix",
+            )));
+        }
+        let header_len =
+            u32::from_le_bytes([head4[0], head4[1], head4[2], head4[3]]) as u64;
+        let header_bytes = fs.read_range(path, 4, header_len).await.map_err(fs_err)?;
+        let header: IndexHeader = bincode::deserialize(&header_bytes)?;
+        if header.magic != *AXIS_MAGIC {
+            return Err(SerializationError::InvalidMagic);
+        }
+        if header.version > VERSION {
+            return Err(SerializationError::UnsupportedVersion(header.version));
+        }
+
+        let profile = Self::cold_profile(&header)?;
+        let cold_off = 4 + header_len;
+        // 2) Read ONLY the COLD blob, validate its CRC, build ColdBinaryOnly.
+        let cold_bytes = fs
+            .read_range(path, cold_off, profile.cold_tier_bytes)
+            .await
+            .map_err(fs_err)?;
+        if proximadb_kernel::checksum::crc32_fast(&cold_bytes) != header.metadata.checksum {
+            return Err(SerializationError::ChecksumMismatch);
+        }
+        let cold: SerializableIvfColdTier = bincode::deserialize(&cold_bytes)?;
+        let index = Self::new_cold_index(&header, cold).await?;
+
+        let warm_base = cold_off + profile.cold_tier_bytes;
+        let directory = header.metadata.warm_directory().unwrap_or_default();
+        info!(
+            "Ranged cold-load: served Stage-1 after {} bytes ([header]+[COLD]); {} warm clusters deferred",
+            warm_base,
+            directory.len(),
+        );
+        Ok(RangedColdLoad {
+            index,
+            metadata: header.metadata,
+            warm_base,
+            directory,
+        })
+    }
+
+    /// ADR-023 R3 (b): range-fetch and decode ONE cluster's fp32 from the WARM
+    /// blob — the only bytes read are that cluster's chunk
+    /// (`[warm_base + extent.offset, +extent.len]`).
+    pub async fn fetch_warm_cluster_ranged(
+        fs: &Arc<dyn FileSystem>,
+        path: &str,
+        warm_base: u64,
+        extent: &WarmExtent,
+    ) -> Result<Vec<(String, Vec<f32>)>> {
+        let chunk = fs
+            .read_range(path, warm_base + extent.offset, extent.len)
+            .await
+            .map_err(fs_err)?;
+        Self::decode_warm_cluster_chunk(&chunk)
     }
 
     /// Create a checkpoint from current index state
