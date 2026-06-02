@@ -298,3 +298,172 @@ async fn hadoop_fetch_next_page_posts_v2_records_scan() {
 
     mock.assert_async().await;
 }
+
+// ---------------------------------------------------------------------------
+// TD-099 (3b) — Hadoop sync-bridge: `next_record()` drives the async
+// `fetch_next_page` via tokio Handle::block_on (`block_in_place` when
+// already inside a runtime). 4 contract tests below cover the buffer
+// drain semantics, cursor follow-across-pages, immediate termination
+// on empty page, and `get_current_value` returning the drained record.
+// ---------------------------------------------------------------------------
+
+/// Build a minimal HadoopInputSplit + reader against a MockServer.
+fn build_hadoop_reader(server: &MockServer, collection: &str) -> ProximaRecordReader {
+    let config = HadoopShimConfig {
+        host: server.host(),
+        port: server.port(),
+        collection: collection.to_string(),
+        ..HadoopShimConfig::default()
+    };
+    let split = HadoopInputSplit {
+        split_id: "s0".to_string(),
+        file_split: proximadb::storage::formats::FileSplit {
+            split_id: "s0".to_string(),
+            file_path: String::new(),
+            offset: 0,
+            length: 0,
+            split_type: SplitType::ByteRange {
+                estimated_records: 0,
+            },
+            statistics: SplitStatistics::default(),
+            locality: proximadb::storage::formats::SplitLocality::default(),
+        },
+        length: 0,
+        locations: vec!["localhost".to_string()],
+    };
+    ProximaRecordReader::new(split, config)
+}
+
+#[tokio::test]
+async fn hadoop_next_record_drains_records_in_order() {
+    // Single page with 3 records + null cursor — exhausts after one
+    // fetch. next_record() returns true 3x then false.
+    let server = MockServer::start_async().await;
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/collections/col_a/records/scan");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"records":[
+                        {"id":"r1","props":{}},
+                        {"id":"r2","props":{}},
+                        {"id":"r3","props":{}}
+                    ],"next_cursor":null,"scanned_count":3}"#,
+                );
+        })
+        .await;
+
+    let mut reader = build_hadoop_reader(&server, "col_a");
+    assert!(reader.next_record(), "first record must be available");
+    assert!(reader.next_record(), "second record must be available");
+    assert!(reader.next_record(), "third record must be available");
+    assert!(
+        !reader.next_record(),
+        "buffer drained + exhausted ⇒ next_record returns false"
+    );
+    // Calling again must stay false (no panic, no extra fetch).
+    assert!(!reader.next_record());
+
+    // The mock is hit exactly once — single page drained from buffer.
+    mock.assert_calls_async(1).await;
+}
+
+#[tokio::test]
+async fn hadoop_next_record_follows_cursor_across_pages() {
+    // First page: 2 records + next_cursor="abc". Second page: 1 record
+    // + null cursor. The reader must drain 3 records total and the
+    // second mock must receive `cursor: "abc"` in the request body.
+    let server = MockServer::start_async().await;
+    let page1 = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/collections/col_b/records/scan")
+                .json_body_partial(r#"{"cursor":null}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"records":[
+                        {"id":"r1","props":{}},
+                        {"id":"r2","props":{}}
+                    ],"next_cursor":"abc","scanned_count":2}"#,
+                );
+        })
+        .await;
+    let page2 = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/collections/col_b/records/scan")
+                .json_body_partial(r#"{"cursor":"abc"}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"records":[
+                        {"id":"r3","props":{}}
+                    ],"next_cursor":null,"scanned_count":1}"#,
+                );
+        })
+        .await;
+
+    let mut reader = build_hadoop_reader(&server, "col_b");
+    assert!(reader.next_record(), "p1 r1");
+    assert!(reader.next_record(), "p1 r2");
+    assert!(reader.next_record(), "p2 r3 — cursor follow-up");
+    assert!(!reader.next_record(), "exhausted");
+
+    page1.assert_async().await;
+    page2.assert_async().await;
+}
+
+#[tokio::test]
+async fn hadoop_next_record_zero_records_terminates_immediately() {
+    let server = MockServer::start_async().await;
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/collections/col_c/records/scan");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"records":[],"next_cursor":null,"scanned_count":0}"#);
+        })
+        .await;
+
+    let mut reader = build_hadoop_reader(&server, "col_c");
+    assert!(
+        !reader.next_record(),
+        "empty page ⇒ next_record returns false on first call"
+    );
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn hadoop_get_current_value_returns_drained_record() {
+    use proximadb::connectors::hadoop::HadoopWritable;
+
+    let server = MockServer::start_async().await;
+    server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/collections/col_d/records/scan");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"records":[
+                        {"id":"r1","props":{"label":"active"}}
+                    ],"next_cursor":null,"scanned_count":1}"#,
+                );
+        })
+        .await;
+
+    let mut reader = build_hadoop_reader(&server, "col_d");
+    assert!(reader.next_record(), "drained one record");
+    let value = reader.get_current_value();
+    let HadoopWritable::MapWritable(map) = value else {
+        panic!("expected MapWritable, got {value:?}");
+    };
+    // The shape carries the v2 RecordResponse fields; the test
+    // asserts presence of the canonical "id" field (the record id).
+    assert!(map.contains_key("id"), "drained record missing id: {map:?}");
+    assert!(map.contains_key("props"), "drained record missing props: {map:?}");
+}

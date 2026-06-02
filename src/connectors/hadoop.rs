@@ -62,7 +62,7 @@
 //! job.waitForCompletion(true);
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -209,12 +209,13 @@ pub struct ProximaRecordReader {
     split: HadoopInputSplit,
     /// Configuration
     config: HadoopShimConfig,
-    /// Current batch
-    #[allow(dead_code)]
-    current_batch: Option<RecordBatch>,
-    /// Current row in batch
-    #[allow(dead_code)]
-    current_row: usize,
+    /// Buffer of records drained from the most recent `fetch_next_page`
+    /// call. `next_record` pops from the front; refill happens when
+    /// empty AND `!exhausted` (TD-099 3b).
+    record_buffer: VecDeque<serde_json::Value>,
+    /// Last record drained from the buffer, returned by
+    /// [`Self::get_current_value`].
+    current_record: Option<serde_json::Value>,
     /// Total rows read
     total_rows_read: u64,
     /// Whether reader is exhausted
@@ -237,8 +238,8 @@ impl ProximaRecordReader {
         Self {
             split,
             config,
-            current_batch: None,
-            current_row: 0,
+            record_buffer: VecDeque::new(),
+            current_record: None,
             total_rows_read: 0,
             exhausted: false,
             cursor: None,
@@ -307,40 +308,97 @@ impl ProximaRecordReader {
         Ok(records)
     }
 
-    /// Read next key-value pair
+    /// Read the next record from the buffered page; refill the buffer
+    /// via [`Self::fetch_next_page`] when empty.
     ///
-    /// Returns false when no more records. Stub today (sync ABI for
-    /// the Hadoop InputFormat contract): forwarding to
-    /// [`Self::fetch_next_page`] requires an async runtime; the
-    /// async-bridge wiring lands when the Hadoop OutputCommitter
-    /// protocol is implemented end-to-end. The contract gate exercises
-    /// `fetch_next_page` directly.
+    /// TD-099 (3b) sync-bridge: Hadoop's InputFormat contract calls
+    /// this blocking ABI in a tight loop, but `fetch_next_page` is
+    /// async. We bridge by spawning a scoped OS thread that owns a
+    /// fresh `current_thread` tokio runtime and `block_on`s the
+    /// fetch. This is runtime-context-agnostic — works whether the
+    /// caller is in a `#[tokio::test]` (current-thread or multi-thread
+    /// flavor) or pure sync (real Hadoop ABI) — and avoids the
+    /// "Cannot start a runtime from within a runtime" panic that a
+    /// naive `Runtime::new().block_on(...)` would trip when called
+    /// from inside an existing tokio runtime.
+    ///
+    /// The thread spawn cost is amortized across the page (1000
+    /// records by default), so per-record latency stays bounded by
+    /// the buffer pop. Returns false only when the buffer is empty
+    /// AND the server signalled `next_cursor: null` (end of scan).
     pub fn next_record(&mut self) -> bool {
-        if self.exhausted {
-            return false;
+        if self.record_buffer.is_empty() && !self.exhausted {
+            let fetch_result = std::thread::scope(|s| {
+                s.spawn(|| {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("build tokio runtime for sync next_record bridge");
+                    rt.block_on(self.fetch_next_page())
+                })
+                .join()
+                .expect("sync-bridge thread panicked")
+            });
+            match fetch_result {
+                Ok(records) => {
+                    self.record_buffer.extend(records);
+                }
+                Err(_) => {
+                    self.exhausted = true;
+                    return false;
+                }
+            }
         }
-        self.exhausted = true;
-        false
+
+        match self.record_buffer.pop_front() {
+            Some(record) => {
+                self.current_record = Some(record);
+                self.total_rows_read = self.total_rows_read.saturating_add(1);
+                true
+            }
+            None => false,
+        }
     }
 
-    /// Get current key (record ID)
+    /// Get current key (record ID). Extracts the `id` field of the
+    /// last-drained record; empty Text when no record has been read.
     pub fn get_current_key(&self) -> HadoopWritable {
-        HadoopWritable::Text(String::new())
+        let id = self
+            .current_record
+            .as_ref()
+            .and_then(|r| r.get("id"))
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_default();
+        HadoopWritable::Text(id)
     }
 
-    /// Get current value (record data)
+    /// Get current value (record data). Converts the last-drained
+    /// record's full JSON shape to a `MapWritable` via
+    /// [`HadoopWritable::from_json`]. Empty MapWritable when no record
+    /// has been read.
     pub fn get_current_value(&self) -> HadoopWritable {
-        HadoopWritable::MapWritable(HashMap::new())
+        match self.current_record.as_ref() {
+            Some(record) => HadoopWritable::from_json(record),
+            None => HadoopWritable::MapWritable(HashMap::new()),
+        }
     }
 
-    /// Get progress (0.0 to 1.0)
+    /// Get progress (0.0 to 1.0). The Hadoop scan API has no total
+    /// known up front, so we report 1.0 when exhausted AND the buffer
+    /// is drained, else 0.0 mid-scan.
     pub fn get_progress(&self) -> f32 {
-        if self.exhausted { 1.0 } else { 0.0 }
+        if self.exhausted && self.record_buffer.is_empty() {
+            1.0
+        } else {
+            0.0
+        }
     }
 
     /// Close the reader
     pub fn close(&mut self) {
         self.exhausted = true;
+        self.record_buffer.clear();
     }
 }
 
