@@ -484,6 +484,26 @@ impl AxisManager {
         self.cold_lazy_warm = lazy;
     }
 
+    /// ADR-023 R3 (c) observability: the cold→warm serving status of a loaded IVF
+    /// index, as `(serving_state, warm_clusters_fetched, warm_clusters_total)`.
+    /// `ColdBinaryOnly` with `fetched < total` means the collection is serving
+    /// reduced-recall while the fp32 tier streams/loads on demand; `FullTwoStage`
+    /// (or `fetched == total`) means full recall. `None` if no IVF index is
+    /// loaded; `total == 0` for whole-file / non-binary loads (no per-cluster
+    /// tracking). Surfaced in route-health so operators see the cold-start window.
+    pub async fn cold_serving_status(
+        &self,
+        collection_id: &str,
+    ) -> Option<(crate::index::axis::IvfServingState, usize, usize)> {
+        let idx = self.ivf_indexes.read().await.get(collection_id).cloned()?;
+        let g = idx.read().await;
+        Some((
+            g.serving_state(),
+            g.fetched_cluster_count(),
+            g.total_warm_clusters(),
+        ))
+    }
+
     /// Resolve the on-disk path for a collection's persisted IVF index, or `None`
     /// when persistence is disabled.
     fn ivf_index_path(&self, collection_id: &str) -> Option<std::path::PathBuf> {
@@ -5421,6 +5441,21 @@ mod recluster_apply_tests {
         assert!(
             idx_l.read().await.fetched_cluster_count() <= 2,
             "on-probe fetched only the probed clusters"
+        );
+
+        // ADR-023 R3 (c) observability: cold_serving_status surfaces the warm
+        // progress. Lazy stays ColdBinaryOnly with total=2 clusters in the
+        // directory; the eager manager (flipped) reports FullTwoStage.
+        let (lstate, lfetched, ltotal) = m_lazy.cold_serving_status("colz").await.unwrap();
+        assert_eq!(lstate, crate::index::axis::IvfServingState::ColdBinaryOnly);
+        assert_eq!(ltotal, 2, "byte-directory has both clusters");
+        assert!(lfetched <= ltotal);
+        let (estate, _, etotal) = m_eager.cold_serving_status("colz").await.unwrap();
+        assert_eq!(estate, crate::index::axis::IvfServingState::FullTwoStage);
+        assert_eq!(etotal, 2);
+        assert!(
+            m_eager.cold_serving_status("absent").await.is_none(),
+            "no status for an unloaded collection"
         );
     }
 

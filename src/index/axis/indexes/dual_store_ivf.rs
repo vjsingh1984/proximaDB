@@ -2676,6 +2676,16 @@ impl UnifiedIvfIndex {
             .len()
     }
 
+    /// Total clusters in the on-probe warm source's byte-directory (ADR-023 R3
+    /// (c)), i.e. the denominator for cold-warm progress. `0` when no ranged warm
+    /// source is wired (a whole-file / non-binary load has no per-cluster tracking).
+    pub fn total_warm_clusters(&self) -> usize {
+        self.warm_source
+            .as_ref()
+            .map(|s| s.directory.len())
+            .unwrap_or(0)
+    }
+
     /// ADR-023 R3 (c): range-fetch the probed (survivor) clusters' fp32 on demand
     /// (deduped via `fetched_clusters` — each cluster is read from object storage
     /// at most once), install them, and rerank the Stage-1 candidates exactly.
