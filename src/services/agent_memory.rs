@@ -676,6 +676,16 @@ impl MemoryEmbedder for EmbeddingServiceEmbedder {
 // Real audit sink adapter (reuse EventLogEngine)
 // ---------------------------------------------------------------------------
 
+/// The per-session entity-id prefix for consolidation audit events:
+/// `memory-consolidation:{tenant}:{session}:`. The trailing `:` makes it a true
+/// session boundary — `consolidation_entity_prefix("acme", "s1")` does NOT
+/// match a decision under session `s1b`. This is the SINGLE source of the
+/// scheme: the write sink builds its entity-id as `{prefix}{memory_id|noop}`
+/// and the read reader scans by `{prefix}`, so the two can never drift.
+pub fn consolidation_entity_prefix(tenant_id: &str, session_id: &str) -> String {
+    format!("memory-consolidation:{tenant_id}:{session_id}:")
+}
+
 /// `ConsolidationAuditSink` that maps each consolidation decision to a
 /// domain-neutral [`AuditRecord`] and emits it through the shared
 /// [`AuditEventSink`] foundation. The decision's tenant/session/memory scope
@@ -705,9 +715,8 @@ impl EventLogConsolidationAuditSink {
 impl ConsolidationAuditSink for EventLogConsolidationAuditSink {
     async fn emit(&self, event: &ConsolidationAuditEvent) -> Result<()> {
         let entity_id = format!(
-            "memory-consolidation:{}:{}:{}",
-            event.tenant_id,
-            event.session_id,
+            "{}{}",
+            consolidation_entity_prefix(&event.tenant_id, &event.session_id),
             event.memory_id.as_deref().unwrap_or("noop"),
         );
         let data = serde_json::to_value(event)
@@ -722,6 +731,54 @@ impl ConsolidationAuditSink for EventLogConsolidationAuditSink {
             .emit(record)
             .await
             .map_err(|e| anyhow!("consolidation audit append failed: {e}"))
+    }
+}
+
+/// Read side of the consolidation audit trail: lists the ADD/UPDATE/DELETE/NOOP
+/// decisions made for one `(tenant, session)`, closing the auditable-memory
+/// loop (write → persist → read). Reuses the foundational
+/// [`EventLogEngine::read_events_by_entity_prefix`] prefix scan over the SAME
+/// entity-id scheme the sink writes (via [`consolidation_entity_prefix`]).
+/// Deserialize is per-domain by design (the AQL read side does the same for its
+/// own scheme) — a malformed/foreign payload under the prefix is skipped, not
+/// fatal, so one bad record can't deny the whole session's history.
+pub struct ConsolidationAuditReader {
+    log: Arc<EventLogEngine>,
+}
+
+impl ConsolidationAuditReader {
+    pub fn new(log: Arc<EventLogEngine>) -> Self {
+        Self { log }
+    }
+
+    /// List a session's consolidation decisions in append (sequence) order.
+    /// The `(tenant_id, session_id)` pair is the trust boundary: the caller MUST
+    /// pass the authenticated tenant (never a client-supplied one) so the prefix
+    /// scopes structurally to that tenant's events only.
+    pub async fn list_session_decisions(
+        &self,
+        tenant_id: &str,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ConsolidationAuditEvent>> {
+        let prefix = consolidation_entity_prefix(tenant_id, session_id);
+        let events = self
+            .log
+            .read_events_by_entity_prefix(&prefix, 0, limit)
+            .await
+            .map_err(|e| anyhow!("consolidation audit read failed: {e}"))?;
+        let mut decisions = Vec::with_capacity(events.len());
+        for event in events {
+            match serde_json::from_value::<ConsolidationAuditEvent>(event.data) {
+                Ok(decision) => decisions.push(decision),
+                Err(e) => tracing::warn!(
+                    sequence = event.sequence,
+                    entity_id = %event.entity_id,
+                    "skipping malformed consolidation audit payload: {e}"
+                ),
+            }
+        }
+        Ok(decisions)
     }
 }
 
