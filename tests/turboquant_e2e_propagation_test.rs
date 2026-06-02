@@ -394,3 +394,146 @@ fn turboquant_slot_resolver_is_object_safe_under_dyn() {
     let _phantom: Option<Arc<dyn SlotIdResolver>> =
         None::<Arc<TurboQuantSlotResolver>>.map(|r| r as Arc<dyn SlotIdResolver>);
 }
+
+/// Phase P contract: the SAME registry instance is shared between the
+/// create-time wire (CollectionService::with_turboquant_registry +
+/// get_or_create at create_collection) and the boot-time hydration
+/// (hydrate_registry_from_policy_rows in SharedServices::new). Both
+/// consumers see one map, so create-time registrations land in the
+/// same slots boot hydration populates.
+///
+/// This test simulates the production assembly:
+///   1. One Arc<dyn TurboQuantStoreRegistry> hoisted (Phase P Site 2).
+///   2. A create-time-path-style `get_or_create` registers one collection.
+///   3. A boot-hydration-path-style `hydrate_registry_from_policy_rows`
+///      registers a second collection from a hand-built row.
+///   4. The same registry now owns BOTH stores — assert via len + Arc
+///      identity on a subsequent `get`.
+///
+/// Without this contract, create-time registrations would land in one
+/// map and boot hydration in another — concurrent boot + ingest
+/// would race and the first search after restart would see only the
+/// hydrated half.
+#[tokio::test]
+async fn phase_p_shared_registry_unifies_create_time_and_boot_hydration() {
+    use proximadb::compute::quantization::turboquant_store_registry::{
+        TurboQuantHydrationRow, hydrate_registry_from_policy_rows,
+    };
+
+    // (1) Hoist a single registry — same shape SharedServices::new does.
+    let registry: Arc<dyn TurboQuantStoreRegistry> =
+        Arc::new(InMemoryTurboQuantStoreRegistry::new());
+
+    // (2) Create-time path: CollectionService::create_collection
+    // resolves the seed via derive_rotation_seed(&name) and calls
+    // registry.get_or_create with the dimensional config. Simulate
+    // that call exactly.
+    let create_time_id = "kb-created-at-runtime";
+    let create_time_dim = 128usize;
+    let create_time_seed = derive_rotation_seed(create_time_id);
+    let create_time_store = registry
+        .get_or_create(
+            create_time_id,
+            create_time_dim,
+            4,
+            CalibrationMode::TqPlus,
+            create_time_seed,
+        )
+        .await
+        .expect("create-time get_or_create");
+    assert_eq!(create_time_store.dim(), create_time_dim);
+
+    // (3) Boot-hydration path: SharedServices::new projects each
+    // existing collection's proto into a TurboQuantHydrationRow and
+    // calls hydrate_registry_from_policy_rows on the SAME registry.
+    let boot_id = "kb-existing-at-boot";
+    let boot_dim = 64usize;
+    let boot_seed = derive_rotation_seed(boot_id);
+    let rows = vec![TurboQuantHydrationRow {
+        collection_id: boot_id.to_string(),
+        dim: boot_dim,
+        bit_width: 4,
+        calibration_mode: "tq_plus".to_string(),
+        rotation_seed: boot_seed,
+    }];
+    let hydrated = hydrate_registry_from_policy_rows(registry.as_ref(), &rows).await;
+    assert_eq!(hydrated, 1);
+
+    // (4) Both stores must live in the SAME registry. The count proves
+    // it; Arc identity on a fresh `get` proves the create-time store
+    // wasn't replaced by hydration.
+    assert_eq!(registry.registered_count(), 2);
+
+    let create_time_fetched = registry
+        .get(create_time_id)
+        .await
+        .expect("registry get for create-time id")
+        .expect("create-time store still registered");
+    assert!(
+        Arc::ptr_eq(&create_time_store, &create_time_fetched),
+        "create-time store survived hydration — registry is shared",
+    );
+
+    let boot_fetched = registry
+        .get(boot_id)
+        .await
+        .expect("registry get for boot id")
+        .expect("boot store registered by hydration");
+    assert_eq!(boot_fetched.dim(), boot_dim);
+}
+
+/// Phase P boot-hydration contract: a collection whose
+/// `enable_turboquant=true` was set at create-time but whose seed is
+/// derived from the catalog id must produce the SAME store after a
+/// simulated restart (where the registry was rebuilt empty and only
+/// the catalog row survives).
+///
+/// This locks the "boot hydration is correct after restart" contract:
+/// the seed is deterministic so the rebuilt store has identical
+/// rotation, calibration, and dimensions to the pre-restart store.
+#[tokio::test]
+async fn phase_p_boot_hydration_after_simulated_restart_uses_deterministic_seed() {
+    use proximadb::compute::quantization::turboquant_store_registry::{
+        TurboQuantHydrationRow, hydrate_registry_from_policy_rows,
+    };
+
+    let collection_id = "kb-restart-test";
+    let dim = 64usize;
+    let seed = derive_rotation_seed(collection_id);
+
+    // Pre-restart: create-time-path registered the store.
+    let pre_restart_registry: Arc<dyn TurboQuantStoreRegistry> =
+        Arc::new(InMemoryTurboQuantStoreRegistry::new());
+    let pre_store = pre_restart_registry
+        .get_or_create(collection_id, dim, 4, CalibrationMode::TqPlus, seed)
+        .await
+        .unwrap();
+
+    // Simulate restart: drop the pre-restart registry, build a fresh
+    // empty one (same as a SharedServices::new on a cold process),
+    // hydrate from the (deterministic) catalog row.
+    drop(pre_store);
+    drop(pre_restart_registry);
+
+    let post_restart_registry: Arc<dyn TurboQuantStoreRegistry> =
+        Arc::new(InMemoryTurboQuantStoreRegistry::new());
+    let rows = vec![TurboQuantHydrationRow {
+        collection_id: collection_id.to_string(),
+        dim,
+        bit_width: 4,
+        calibration_mode: "tq_plus".to_string(),
+        rotation_seed: seed,
+    }];
+    let n = hydrate_registry_from_policy_rows(post_restart_registry.as_ref(), &rows).await;
+    assert_eq!(n, 1);
+
+    let post_store = post_restart_registry
+        .get(collection_id)
+        .await
+        .unwrap()
+        .expect("hydration registered the store");
+    assert_eq!(post_store.dim(), dim);
+    assert_eq!(post_store.bit_width(), 4);
+    assert_eq!(post_store.rotation_seed(), seed);
+    assert_eq!(post_store.calibration_mode(), CalibrationMode::TqPlus);
+}

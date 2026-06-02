@@ -448,12 +448,16 @@ impl SharedServices {
                 .unwrap_or_default();
             let mut rows: Vec<TurboQuantHydrationRow> = Vec::new();
             for c in &collections {
+                // proto Collection.config carries the dimension; absence
+                // is skipped (a collection with no config can't have
+                // declared TurboQuant intent either).
+                let Some(cfg) = c.config.as_ref() else { continue };
                 match collection_service.native_quantization_config(&c.id).await {
                     Ok(Some(qcfg)) if qcfg.enable_turboquant.unwrap_or(false) => {
                         let seed = proximadb_quantization_types::derive_rotation_seed(&c.id);
                         rows.push(TurboQuantHydrationRow {
                             collection_id: c.id.clone(),
-                            dim: c.dimension as usize,
+                            dim: cfg.dimension as usize,
                             bit_width: 4,
                             calibration_mode: "tq_plus".to_string(),
                             rotation_seed: seed,
