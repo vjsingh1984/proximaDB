@@ -114,6 +114,7 @@ fn flight_descriptor_vectors_path_shape() {
 mod trino_flight_pilot {
     use std::pin::Pin;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
     use arrow_flight::{
@@ -125,9 +126,11 @@ mod trino_flight_pilot {
     use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
     use arrow_flight::SchemaAsIpc;
     use proximadb::connectors::trino::{
-        TrinoConnectorConfig, TrinoPageSource, TrinoSplit, TrinoTupleDomain, flight_get_splits,
-        flight_get_table_schema, flight_list_schemas, flight_list_tables,
+        TrinoConnectorConfig, TrinoPageSink, TrinoPageSource, TrinoSplit, TrinoTable,
+        TrinoTupleDomain, flight_get_splits, flight_get_table_schema, flight_list_schemas,
+        flight_list_tables, record_batch_to_trino_page,
     };
+    use proximadb::storage::schema::ProximaSchema;
     use proximadb::storage::formats::{
         FileSplit, SplitLocality, SplitStatistics, SplitType,
     };
@@ -138,14 +141,19 @@ mod trino_flight_pilot {
     type RespStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
 
     /// Minimal `FlightService` impl. Only `list_flights`, `get_schema`,
-    /// `get_flight_info`, and `do_get` are wired; every other RPC
-    /// returns Unimplemented to keep the trait satisfied without 300+
-    /// lines of mocks.
+    /// `get_flight_info`, `do_get`, and `do_put` are wired; every other
+    /// RPC returns Unimplemented to keep the trait satisfied without
+    /// 300+ lines of mocks.
     struct MockFlight {
         canned: Vec<FlightInfo>,
         canned_schema: Option<Arc<ArrowSchema>>,
         canned_flight_info: Option<FlightInfo>,
         canned_do_get: Option<Vec<FlightData>>,
+        /// When set, `do_put` drains the request stream, increments
+        /// this counter per inbound `FlightData`, and emits one
+        /// `PutResult` ack per inbound message. When None, `do_put`
+        /// returns Unimplemented.
+        do_put_count: Option<Arc<AtomicUsize>>,
     }
 
     #[tonic::async_trait]
@@ -221,9 +229,41 @@ mod trino_flight_pilot {
 
         async fn do_put(
             &self,
-            _request: Request<Streaming<FlightData>>,
+            request: Request<Streaming<FlightData>>,
         ) -> Result<Response<Self::DoPutStream>, Status> {
-            Err(Status::unimplemented("do_put"))
+            let Some(counter) = self.do_put_count.clone() else {
+                return Err(Status::unimplemented("do_put"));
+            };
+            let mut stream = request.into_inner();
+            let (tx, rx) = tokio::sync::mpsc::channel::<Result<PutResult, Status>>(16);
+            // Drain the client's FlightData stream and emit one
+            // PutResult ack per inbound message. Spawn so the response
+            // stream can be returned immediately; the channel closes
+            // when the client closes its end (drops the request tx)
+            // and the loop exits.
+            tokio::spawn(async move {
+                use futures::StreamExt;
+                while let Some(msg) = stream.next().await {
+                    match msg {
+                        Ok(_) => {
+                            counter.fetch_add(1, Ordering::SeqCst);
+                            if tx
+                                .send(Ok(PutResult {
+                                    app_metadata: Default::default(),
+                                }))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            let resp_stream =
+                tokio_stream::wrappers::ReceiverStream::new(rx);
+            Ok(Response::new(Box::pin(resp_stream)))
         }
 
         async fn do_action(
@@ -270,7 +310,7 @@ mod trino_flight_pilot {
     /// server cleanly. The server task self-terminates when the
     /// shutdown receiver fires.
     async fn start_mock_flight_server(canned: Vec<FlightInfo>) -> (u16, oneshot::Sender<()>) {
-        start_mock_flight_server_full(canned, None, None, None).await
+        start_mock_flight_server_full(canned, None, None, None, None).await
     }
 
     /// Variant used by tests that need `get_schema` wired (Trino
@@ -280,7 +320,7 @@ mod trino_flight_pilot {
         canned: Vec<FlightInfo>,
         canned_schema: Arc<ArrowSchema>,
     ) -> (u16, oneshot::Sender<()>) {
-        start_mock_flight_server_full(canned, Some(canned_schema), None, None).await
+        start_mock_flight_server_full(canned, Some(canned_schema), None, None, None).await
     }
 
     /// Variant used by tests that need `get_flight_info` wired (Trino
@@ -291,7 +331,7 @@ mod trino_flight_pilot {
         canned: Vec<FlightInfo>,
         canned_flight_info: FlightInfo,
     ) -> (u16, oneshot::Sender<()>) {
-        start_mock_flight_server_full(canned, None, Some(canned_flight_info), None).await
+        start_mock_flight_server_full(canned, None, Some(canned_flight_info), None, None).await
     }
 
     /// Variant used by tests that need `do_get` wired (Trino
@@ -302,7 +342,18 @@ mod trino_flight_pilot {
     async fn start_mock_flight_server_with_do_get(
         canned_do_get: Vec<FlightData>,
     ) -> (u16, oneshot::Sender<()>) {
-        start_mock_flight_server_full(vec![], None, None, Some(canned_do_get)).await
+        start_mock_flight_server_full(vec![], None, None, Some(canned_do_get), None).await
+    }
+
+    /// Variant used by tests that need `do_put` wired (Trino
+    /// `TrinoPageSink::{append_page, finish}` pilot). The mock
+    /// increments `do_put_count` per inbound `FlightData` and acks
+    /// each with a `PutResult`, so tests can assert how many wire
+    /// messages reached the server.
+    async fn start_mock_flight_server_with_do_put(
+        do_put_count: Arc<AtomicUsize>,
+    ) -> (u16, oneshot::Sender<()>) {
+        start_mock_flight_server_full(vec![], None, None, None, Some(do_put_count)).await
     }
 
     async fn start_mock_flight_server_full(
@@ -310,6 +361,7 @@ mod trino_flight_pilot {
         canned_schema: Option<Arc<ArrowSchema>>,
         canned_flight_info: Option<FlightInfo>,
         canned_do_get: Option<Vec<FlightData>>,
+        do_put_count: Option<Arc<AtomicUsize>>,
     ) -> (u16, oneshot::Sender<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -323,6 +375,7 @@ mod trino_flight_pilot {
             canned_schema,
             canned_flight_info,
             canned_do_get,
+            do_put_count,
         };
         tokio::spawn(async move {
             let _ = tonic::transport::Server::builder()
@@ -629,5 +682,114 @@ mod trino_flight_pilot {
             TrinoPageSource::new("grpc://127.0.0.1:1", split, schema).await;
         assert!(source.is_finished(), "unreachable endpoint must mark finished");
         assert!(source.get_next_page().await.is_none());
+    }
+
+    /// Build a `TrinoTable` from an Arrow schema for sink tests.
+    fn sample_trino_table(arrow_schema: Arc<ArrowSchema>) -> TrinoTable {
+        let proxima_schema = Arc::new(ProximaSchema::from_arrow_schema(
+            arrow_schema.as_ref(),
+            "test-schema-id".to_string(),
+        ));
+        TrinoTable {
+            schema_name: "sales".to_string(),
+            table_name: "orders".to_string(),
+            schema: arrow_schema,
+            proxima_schema,
+            properties: std::collections::HashMap::new(),
+            comment: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn trino_page_sink_streams_pages_via_do_put_and_summarizes() {
+        // Two TrinoPages (3 + 2 rows). The sink must dial do_put, send
+        // a schema FlightData first, then one batch FlightData per
+        // page; close on finish; surface a TrinoWriteSummary with the
+        // 5-row total. The mock counts every inbound FlightData; we
+        // assert it received >=3 messages (1 schema + 2 batches).
+        let schema = Arc::new(ArrowSchema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let table = sample_trino_table(schema.clone());
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let (port, _shutdown) =
+            start_mock_flight_server_with_do_put(counter.clone()).await;
+
+        let endpoint = format!("grpc://127.0.0.1:{port}");
+        let mut sink = TrinoPageSink::new(&endpoint, table)
+            .await
+            .expect("dial do_put");
+
+        let batch_a = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2, 3])),
+                Arc::new(StringArray::from(vec![Some("a"), None, Some("c")])),
+            ],
+        )
+        .unwrap();
+        let batch_b = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(vec![10, 20])),
+                Arc::new(StringArray::from(vec!["x", "y"])),
+            ],
+        )
+        .unwrap();
+        let page_a = record_batch_to_trino_page(&batch_a).unwrap();
+        let page_b = record_batch_to_trino_page(&batch_b).unwrap();
+
+        sink.append_page(page_a).await.expect("append_page a");
+        sink.append_page(page_b).await.expect("append_page b");
+
+        let summary = sink.finish().await.expect("finish");
+        assert_eq!(summary.rows_written, 5);
+        assert!(summary.bytes_written > 0, "should record some bytes");
+
+        // 1 schema + 2 batch messages = 3 FlightData reached the server.
+        let received = counter.load(Ordering::SeqCst);
+        assert!(
+            received >= 3,
+            "expected at least 3 FlightData messages, got {received}"
+        );
+    }
+
+    #[tokio::test]
+    async fn trino_page_sink_new_fails_on_unreachable_endpoint() {
+        let schema = Arc::new(ArrowSchema::new(vec![Field::new(
+            "id",
+            DataType::Int64,
+            false,
+        )]));
+        let table = sample_trino_table(schema);
+        let result = TrinoPageSink::new("grpc://127.0.0.1:1", table).await;
+        assert!(result.is_err(), "unreachable endpoint must error");
+    }
+
+    #[tokio::test]
+    async fn trino_page_sink_finish_without_appends_returns_zero_summary() {
+        // Dialing succeeds and finish() emits a zero summary when no
+        // pages were appended — used by Trino to short-circuit empty
+        // partition writers without sending any FlightData.
+        let schema = Arc::new(ArrowSchema::new(vec![Field::new(
+            "id",
+            DataType::Int64,
+            false,
+        )]));
+        let table = sample_trino_table(schema);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let (port, _shutdown) =
+            start_mock_flight_server_with_do_put(counter.clone()).await;
+
+        let endpoint = format!("grpc://127.0.0.1:{port}");
+        let mut sink = TrinoPageSink::new(&endpoint, table)
+            .await
+            .expect("dial do_put");
+        let summary = sink.finish().await.expect("finish");
+        assert_eq!(summary.rows_written, 0);
+        assert_eq!(summary.bytes_written, 0);
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 }
