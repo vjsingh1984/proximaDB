@@ -127,27 +127,21 @@ impl FileSystem for AzureBlobFileSystem {
         let client = self.service.container_client(container).blob_client(blob);
         // azure's `.range()` takes `impl Into<Range>`; a std exclusive range
         // [offset, offset+length) converts directly (no azure_core import needed).
-        let mut stream = client.get().range(offset..(offset + length)).into_stream();
-        let want = length as usize;
-        let mut out = Vec::with_capacity(want);
-        // Read pages only until the requested range is satisfied. The Pageable
-        // would otherwise issue a continuation request PAST the range/EOF — which
-        // a store like Azurite answers with 416, sending the SDK into an ~80s
-        // retry loop ("retry policy expired"). The explicit range bounds us.
-        while out.len() < want {
-            let Some(value) = stream.next().await else {
-                break;
-            };
-            let response = value.map_err(|e| Self::net("Azure get range", e))?;
-            let body = response
-                .data
-                .collect()
-                .await
-                .map_err(|e| Self::net("Azure body", e))?;
-            out.extend_from_slice(&body);
-        }
-        out.truncate(want);
-        Ok(out)
+        // Use the single-response `.await` (IntoFuture) rather than `.into_stream()`
+        // — the Pageable's connection handling was sending Azurite into an ~80s
+        // retry loop on reads after the first few. One bounded ranged GET is all
+        // the cold path needs.
+        let response = client
+            .get()
+            .range(offset..(offset + length))
+            .await
+            .map_err(|e| Self::net("Azure get range", e))?;
+        let body = response
+            .data
+            .collect()
+            .await
+            .map_err(|e| Self::net("Azure body", e))?;
+        Ok(body.to_vec())
     }
 
     async fn write(&self, path: &str, data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
