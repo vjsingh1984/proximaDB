@@ -3861,6 +3861,7 @@ mod tests {
     /// bench over a local FS / emulator would mislead (I/O latency tracks bytes
     /// only over a real network), so bytes-transferred is the faithful,
     /// deterministic, backend-independent metric.
+    #[derive(Debug)]
     struct CountingFileSystem {
         inner: std::sync::Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
         bytes_read: std::sync::Arc<std::sync::atomic::AtomicU64>,
