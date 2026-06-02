@@ -5,41 +5,42 @@
  * you may not use this file except in compliance with the License.
  */
 
-//! AWS S3 (and S3-compatible: MinIO / LocalStack) [`FileSystem`] backend, built
-//! on the official `aws-sdk-s3` crate. Feature-gated behind `aws`.
+//! AWS S3 (and S3-compatible: MinIO / LocalStack / R2) [`FileSystem`] backend on
+//! the canonical `object_store` crate. Feature-gated behind `aws`.
 //!
-//! Unlike the legacy `s3.rs` (which hardcoded AWS virtual-host URLs and a
-//! "simplified" SigV4 signer), this delegates SigV4 signing, custom endpoints,
-//! and path-style addressing to the SDK — so it works against MinIO/LocalStack as
-//! well as real AWS. It exists to give the canonical `FileSystem` trait a *real*
-//! S3 range backend for the ADR-023 cold-load path (`read_range` → S3 `Range:` GET).
+//! `object_store::get_range` is a TRUE byte-range S3 GET — the bandwidth-optimal
+//! ADR-023 cold-load primitive. Using `object_store` here (rather than the full
+//! `aws-sdk-s3` stack) keeps the cloud-FS layer on one canonical dependency
+//! across S3 / Azure / GCS and drops a large transitive SDK tree.
 
 use async_trait::async_trait;
-use aws_sdk_s3::Client;
-use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
-use aws_sdk_s3::primitives::ByteStream;
+use dashmap::DashMap;
+use futures::StreamExt;
+use object_store::ObjectStore;
+use object_store::PutPayload;
+use object_store::aws::AmazonS3Builder;
+use object_store::path::Path as ObjPath;
+use std::sync::Arc;
 
 use super::{
     DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata, FsResult,
 };
 
-/// Configuration for [`AwsS3FileSystem`]. `endpoint_url` + `force_path_style`
-/// target S3-compatible stores (MinIO/LocalStack); leave `endpoint_url` `None`
-/// for real AWS. Static credentials are used when both keys are set, else the
-/// SDK's default credential chain.
+/// Configuration for [`AwsS3FileSystem`]. For MinIO/LocalStack set
+/// `endpoint_url` + `force_path_style = true` + static creds.
 #[derive(Debug, Clone)]
 pub struct AwsS3Config {
-    /// AWS region (any value for MinIO, e.g. `us-east-1`).
+    /// AWS region (e.g. `us-east-1`). Required by SigV4 even for MinIO.
     pub region: String,
-    /// Custom endpoint for S3-compatible stores (e.g. `http://localhost:9000`).
+    /// Custom S3 endpoint (MinIO/LocalStack). `None` = real AWS.
     pub endpoint_url: Option<String>,
-    /// Path-style addressing (`{endpoint}/{bucket}/{key}`) — required for MinIO.
+    /// Path-style addressing (`http://host/bucket/key`) — required by MinIO.
     pub force_path_style: bool,
-    /// Static access key id (else default credential chain).
+    /// Static access key id (else env/instance credentials).
     pub access_key_id: Option<String>,
     /// Static secret access key.
     pub secret_access_key: Option<String>,
-    /// Optional session token (temporary credentials).
+    /// Optional session token (STS).
     pub session_token: Option<String>,
 }
 
@@ -56,9 +57,11 @@ impl Default for AwsS3Config {
     }
 }
 
-/// S3 `FileSystem` backend over `aws-sdk-s3`.
+/// AWS S3 `FileSystem` backend over `object_store`. One `ObjectStore` is built
+/// (and cached) per bucket.
 pub struct AwsS3FileSystem {
-    client: Client,
+    config: AwsS3Config,
+    stores: DashMap<String, Arc<dyn ObjectStore>>,
 }
 
 impl std::fmt::Debug for AwsS3FileSystem {
@@ -68,31 +71,19 @@ impl std::fmt::Debug for AwsS3FileSystem {
 }
 
 impl AwsS3FileSystem {
-    /// Build a client from [`AwsS3Config`]. Async to match the other backends'
-    /// constructors (no network call is made here).
     pub async fn new(cfg: AwsS3Config) -> FsResult<Self> {
-        let mut builder = aws_sdk_s3::config::Builder::default()
-            .behavior_version(BehaviorVersion::latest())
-            .region(Region::new(cfg.region))
-            .force_path_style(cfg.force_path_style);
-        if let Some(endpoint) = cfg.endpoint_url {
-            builder = builder.endpoint_url(endpoint);
-        }
-        if let (Some(ak), Some(sk)) = (cfg.access_key_id, cfg.secret_access_key) {
-            let creds = Credentials::new(ak, sk, cfg.session_token, None, "proximadb-static");
-            builder = builder.credentials_provider(creds);
-        }
         Ok(Self {
-            client: Client::from_conf(builder.build()),
+            config: cfg,
+            stores: DashMap::new(),
         })
     }
 
-    /// Parse `s3://bucket/key` into `(bucket, key)`.
+    /// Parse `s3://bucket/key` (or `s3a://`).
     fn parse(path: &str) -> FsResult<(String, String)> {
         let rest = path
             .strip_prefix("s3://")
             .or_else(|| path.strip_prefix("s3a://"))
-            .ok_or_else(|| FilesystemError::InvalidPath(format!("not an s3:// path: {path}")))?;
+            .ok_or_else(|| FilesystemError::InvalidPath(format!("not an s3 path: {path}")))?;
         let (bucket, key) = rest
             .split_once('/')
             .ok_or_else(|| FilesystemError::InvalidPath(format!("missing key in s3 path: {path}")))?;
@@ -100,6 +91,39 @@ impl AwsS3FileSystem {
             return Err(FilesystemError::InvalidPath(format!("bad s3 path: {path}")));
         }
         Ok((bucket.to_string(), key.to_string()))
+    }
+
+    /// Build (and cache) an `ObjectStore` for a bucket.
+    fn store_for(&self, bucket: &str) -> FsResult<Arc<dyn ObjectStore>> {
+        if let Some(s) = self.stores.get(bucket) {
+            return Ok(s.clone());
+        }
+        let mut builder = AmazonS3Builder::new()
+            .with_bucket_name(bucket)
+            .with_region(self.config.region.clone());
+        if let Some(ep) = &self.config.endpoint_url {
+            builder = builder.with_endpoint(ep.clone()).with_allow_http(true);
+        }
+        if self.config.force_path_style {
+            // Path-style addressing: http://host:port/bucket/key (MinIO).
+            builder = builder.with_virtual_hosted_style_request(false);
+        }
+        if let Some(ak) = &self.config.access_key_id {
+            builder = builder.with_access_key_id(ak.clone());
+        }
+        if let Some(sk) = &self.config.secret_access_key {
+            builder = builder.with_secret_access_key(sk.clone());
+        }
+        if let Some(tok) = &self.config.session_token {
+            builder = builder.with_token(tok.clone());
+        }
+        let store: Arc<dyn ObjectStore> = Arc::new(
+            builder
+                .build()
+                .map_err(|e| FilesystemError::Config(format!("S3 store build: {e}")))?,
+        );
+        self.stores.insert(bucket.to_string(), store.clone());
+        Ok(store)
     }
 
     fn net(ctx: &str, e: impl std::fmt::Display) -> FilesystemError {
@@ -115,131 +139,94 @@ impl FileSystem for AwsS3FileSystem {
 
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let (bucket, key) = Self::parse(path)?;
-        let out = self
-            .client
-            .get_object()
-            .bucket(&bucket)
-            .key(&key)
-            .send()
+        let store = self.store_for(&bucket)?;
+        let result = store
+            .get(&ObjPath::from(key))
             .await
-            .map_err(|e| Self::net("S3 get_object", e))?;
-        let body = out
-            .body
-            .collect()
-            .await
-            .map_err(|e| Self::net("S3 body", e))?;
-        Ok(body.into_bytes().to_vec())
+            .map_err(|e| Self::net("S3 get", e))?;
+        let bytes = result.bytes().await.map_err(|e| Self::net("S3 body", e))?;
+        Ok(bytes.to_vec())
     }
 
-    /// ADR-023 cold path: a true S3 `Range:` GET — fetches only `[offset, +length)`.
+    /// ADR-023 cold path: a TRUE ranged S3 GET — fetches only `[offset, +length)`.
     async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
         if length == 0 {
             return Ok(Vec::new());
         }
         let (bucket, key) = Self::parse(path)?;
-        let end = offset + length - 1; // HTTP byte ranges are inclusive
-        let out = self
-            .client
-            .get_object()
-            .bucket(&bucket)
-            .key(&key)
-            .range(format!("bytes={offset}-{end}"))
-            .send()
+        let store = self.store_for(&bucket)?;
+        let bytes = store
+            .get_range(&ObjPath::from(key), offset..(offset + length))
             .await
-            .map_err(|e| Self::net("S3 get_object range", e))?;
-        let body = out
-            .body
-            .collect()
-            .await
-            .map_err(|e| Self::net("S3 body", e))?;
-        Ok(body.into_bytes().to_vec())
+            .map_err(|e| Self::net("S3 get_range", e))?;
+        Ok(bytes.to_vec())
     }
 
     async fn write(&self, path: &str, data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
         let (bucket, key) = Self::parse(path)?;
-        self.client
-            .put_object()
-            .bucket(&bucket)
-            .key(&key)
-            .body(ByteStream::from(data.to_vec()))
-            .send()
+        let store = self.store_for(&bucket)?;
+        store
+            .put(&ObjPath::from(key), PutPayload::from(data.to_vec()))
             .await
-            .map_err(|e| Self::net("S3 put_object", e))?;
+            .map_err(|e| Self::net("S3 put", e))?;
         Ok(())
     }
 
     async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
         Err(FilesystemError::InvalidOperation(
-            "S3 objects are immutable; append is unsupported".to_string(),
+            "S3 objects do not support append".to_string(),
         ))
     }
 
     async fn delete(&self, path: &str) -> FsResult<()> {
         let (bucket, key) = Self::parse(path)?;
-        self.client
-            .delete_object()
-            .bucket(&bucket)
-            .key(&key)
-            .send()
+        let store = self.store_for(&bucket)?;
+        store
+            .delete(&ObjPath::from(key))
             .await
-            .map_err(|e| Self::net("S3 delete_object", e))?;
+            .map_err(|e| Self::net("S3 delete", e))?;
         Ok(())
     }
 
     async fn exists(&self, path: &str) -> FsResult<bool> {
         let (bucket, key) = Self::parse(path)?;
-        Ok(self
-            .client
-            .head_object()
-            .bucket(&bucket)
-            .key(&key)
-            .send()
-            .await
-            .is_ok())
+        let store = self.store_for(&bucket)?;
+        Ok(store.head(&ObjPath::from(key)).await.is_ok())
     }
 
     async fn metadata(&self, path: &str) -> FsResult<FsFileMetadata> {
         let (bucket, key) = Self::parse(path)?;
-        let head = self
-            .client
-            .head_object()
-            .bucket(&bucket)
-            .key(&key)
-            .send()
+        let store = self.store_for(&bucket)?;
+        let meta = store
+            .head(&ObjPath::from(key))
             .await
-            .map_err(|e| Self::net("S3 head_object", e))?;
+            .map_err(|e| Self::net("S3 head", e))?;
         Ok(FsFileMetadata {
             path: path.to_string(),
-            size: head.content_length().unwrap_or(0).max(0) as u64,
+            size: meta.size,
             is_directory: false,
-            etag: head.e_tag().map(|s| s.to_string()),
-            storage_class: head.storage_class().map(|s| s.as_str().to_string()),
+            etag: meta.e_tag,
             ..Default::default()
         })
     }
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
         let (bucket, prefix) = Self::parse(path)?;
-        let out = self
-            .client
-            .list_objects_v2()
-            .bucket(&bucket)
-            .prefix(&prefix)
-            .send()
-            .await
-            .map_err(|e| Self::net("S3 list_objects_v2", e))?;
+        let store = self.store_for(&bucket)?;
+        let mut stream = store.list(Some(&ObjPath::from(prefix)));
         let mut entries = Vec::new();
-        for obj in out.contents() {
-            let key = obj.key().unwrap_or_default().to_string();
+        while let Some(meta) = stream.next().await {
+            let meta = meta.map_err(|e| Self::net("S3 list", e))?;
+            let key = meta.location.to_string();
             let name = key.rsplit('/').next().unwrap_or(&key).to_string();
             entries.push(DirEntry {
                 name,
                 url: format!("s3://{bucket}/{key}"),
                 metadata: FsFileMetadata {
                     path: format!("s3://{bucket}/{key}"),
-                    size: obj.size().unwrap_or(0).max(0) as u64,
+                    size: meta.size,
                     is_directory: false,
-                    etag: obj.e_tag().map(|s| s.to_string()),
+                    etag: meta.e_tag,
                     ..Default::default()
                 },
             });
@@ -247,7 +234,6 @@ impl FileSystem for AwsS3FileSystem {
         Ok(entries)
     }
 
-    /// S3 has no real directories; object keys carry the hierarchy. No-op.
     async fn create_dir(&self, _path: &str) -> FsResult<()> {
         Ok(())
     }
@@ -257,17 +243,8 @@ impl FileSystem for AwsS3FileSystem {
     }
 
     async fn copy(&self, from: &str, to: &str) -> FsResult<()> {
-        let (from_bucket, from_key) = Self::parse(from)?;
-        let (to_bucket, to_key) = Self::parse(to)?;
-        self.client
-            .copy_object()
-            .bucket(&to_bucket)
-            .key(&to_key)
-            .copy_source(format!("{from_bucket}/{from_key}"))
-            .send()
-            .await
-            .map_err(|e| Self::net("S3 copy_object", e))?;
-        Ok(())
+        let data = self.read(from).await?;
+        self.write(to, &data, None).await
     }
 
     async fn move_file(&self, from: &str, to: &str) -> FsResult<()> {

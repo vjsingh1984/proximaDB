@@ -3958,7 +3958,9 @@ mod tests {
             "S3 ranged cold load matches whole-file load"
         );
         let _ = fs.delete(&path).await;
-        println!("ADR-023 R3: ranged cold load + per-cluster fetch verified over S3 (MinIO/aws-sdk)");
+        println!(
+            "ADR-023 R3: ranged cold load + per-cluster fetch verified over S3 (MinIO/object_store)"
+        );
     }
 
     /// ADR-023 R3 over Azure Blob (Azurite). `#[cfg(feature="azure")]` + #[ignore]
