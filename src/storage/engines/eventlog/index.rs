@@ -134,6 +134,31 @@ impl EventIndex {
         Ok(sequences)
     }
 
+    /// Get event sequences for all entities whose id starts with `prefix`
+    /// (sorted ascending, de-duplicated). Enables scoped audit listing such as
+    /// "all consolidation decisions under `memory-consolidation:{tenant}:{session}:`"
+    /// — a foundational scan that callers layer domain semantics on top of.
+    pub async fn get_entity_events_by_prefix(
+        &self,
+        prefix: &str,
+        from_sequence: EventSequence,
+        limit: usize,
+    ) -> Result<Vec<EventSequence>> {
+        let index = self.entity_index.read().await;
+
+        let mut sequences: Vec<EventSequence> = index
+            .iter()
+            .filter(|(entity_id, _)| entity_id.starts_with(prefix))
+            .flat_map(|(_, seqs)| seqs.iter().copied())
+            .filter(|&s| s >= from_sequence)
+            .collect();
+        sequences.sort_unstable();
+        sequences.dedup();
+        sequences.truncate(limit);
+
+        Ok(sequences)
+    }
+
     /// Get event sequences by type
     pub async fn get_events_by_type(
         &self,

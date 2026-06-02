@@ -354,6 +354,40 @@ impl EventLogEngine {
         Ok(events)
     }
 
+    /// Read events for all entities whose id starts with `prefix`, ordered by
+    /// sequence. Foundational scan for scoped audit listing (e.g. every
+    /// consolidation decision under `memory-consolidation:{tenant}:{session}:`).
+    /// Callers supply the domain entity-id scheme + deserialize `event.data`.
+    pub async fn read_events_by_entity_prefix(
+        &self,
+        prefix: &str,
+        from_sequence: EventSequence,
+        limit: usize,
+    ) -> Result<Vec<Event>> {
+        debug!(
+            "Reading events for prefix '{}' from sequence {}, limit {}",
+            prefix, from_sequence, limit
+        );
+
+        let sequences = self
+            .event_index
+            .get_entity_events_by_prefix(prefix, from_sequence, limit)
+            .await?;
+
+        let mut events = Vec::new();
+        for sequence in sequences {
+            let event_path = self.get_event_path(sequence);
+            let data =
+                FileSystem::read(self.filesystem.as_ref(), &event_path.to_string_lossy()).await?;
+            let event: Event = serde_json::from_slice(&data).map_err(|e| {
+                ProximaDBError::Internal(format!("Event deserialization failed: {}", e))
+            })?;
+            events.push(event);
+        }
+
+        Ok(events)
+    }
+
     /// Get current state of an entity (as-of now)
     ///
     /// # Arguments
@@ -563,6 +597,71 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_dir_all("/tmp/test_eventlog_append");
+    }
+
+    #[tokio::test]
+    async fn test_read_events_by_entity_prefix() {
+        let base_dir = PathBuf::from("/tmp/test_eventlog_prefix");
+        std::fs::create_dir_all(&base_dir).expect("create dir");
+        let config = EventLogConfig {
+            base_dir,
+            ..Default::default()
+        };
+        let local_fs = crate::storage::persistence::filesystem::local::LocalFileSystem::new(
+            crate::storage::persistence::filesystem::local::LocalConfig::default(),
+        )
+        .await
+        .expect("local fs");
+        let fs = Arc::new(UnifiedCachingFilesystem::new(
+            Arc::new(local_fs),
+            "eventlog_prefix".to_string(),
+            "eventlog".to_string(),
+        ));
+        let engine = EventLogEngine::new(config, fs).expect("engine");
+
+        let ev = |entity: &str| Event {
+            sequence: 0,
+            entity_id: entity.to_string(),
+            event_type: "MemoryConsolidationDecision".to_string(),
+            data: serde_json::json!({"entity": entity}),
+            timestamp: Utc::now(),
+            causation_id: None,
+            metadata: HashMap::new(),
+        };
+        // Two decisions in session "s1", one in "s1b" (boundary), one other tenant.
+        engine.append_event(ev("memory-consolidation:acme:s1:m1")).await.unwrap();
+        engine.append_event(ev("memory-consolidation:acme:s1:m2")).await.unwrap();
+        engine.append_event(ev("memory-consolidation:acme:s1b:m9")).await.unwrap();
+        engine.append_event(ev("memory-consolidation:other:s1:m1")).await.unwrap();
+
+        // Trailing-colon prefix is a true session boundary: matches s1, NOT s1b.
+        let got = engine
+            .read_events_by_entity_prefix("memory-consolidation:acme:s1:", 0, 100)
+            .await
+            .expect("prefix read");
+        let ids: Vec<&str> = got.iter().map(|e| e.entity_id.as_str()).collect();
+        assert_eq!(ids.len(), 2, "exactly the two s1 decisions: {ids:?}");
+        assert!(ids.contains(&"memory-consolidation:acme:s1:m1"));
+        assert!(ids.contains(&"memory-consolidation:acme:s1:m2"));
+        assert!(!ids.iter().any(|i| i.contains(":s1b:")), "must not bleed into s1b");
+        assert!(!ids.iter().any(|i| i.contains(":other:")), "must not cross tenant");
+        // Sequence order ascending.
+        assert!(got[0].data["entity"].as_str().unwrap().ends_with("m1"));
+
+        // limit respected.
+        let one = engine
+            .read_events_by_entity_prefix("memory-consolidation:acme:s1:", 0, 1)
+            .await
+            .unwrap();
+        assert_eq!(one.len(), 1);
+        // Non-matching prefix → empty.
+        let none = engine
+            .read_events_by_entity_prefix("memory-consolidation:nope:", 0, 100)
+            .await
+            .unwrap();
+        assert!(none.is_empty());
+
+        let _ = std::fs::remove_dir_all("/tmp/test_eventlog_prefix");
     }
 
     #[tokio::test]
