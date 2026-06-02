@@ -5,32 +5,42 @@
  * you may not use this file except in compliance with the License.
  */
 
-//! Azure Blob Storage (ADLS Gen2) [`FileSystem`] backend on the official
-//! `azure_storage_blobs` crate. Feature-gated behind `azure`.
+//! Azure Blob Storage (ADLS Gen2) [`FileSystem`] backend on the canonical
+//! `object_store` crate. Feature-gated behind `azure`.
 //!
-//! The SDK handles SAS/shared-key signing and the emulator location, so this
-//! works against Azurite as well as real Azure. `read_range` issues a ranged
-//! blob GET — the ADR-023 cold-load primitive.
+//! `object_store` is the battle-tested Rust object-store abstraction (Arrow /
+//! DataFusion / Delta ecosystem). Unlike the pre-GA `azure_storage_blobs` 0.19
+//! (whose ranged streaming GET hangs against Azurite), `object_store::get_range`
+//! is a **true byte-range read** — the bandwidth-optimal ADR-023 cold-load
+//! primitive — and `with_use_emulator(true)` targets Azurite as well as real
+//! Azure / shared-key accounts.
 
 use async_trait::async_trait;
-use azure_storage::StorageCredentials;
-use azure_storage_blobs::prelude::{BlobServiceClient, ClientBuilder};
+use dashmap::DashMap;
 use futures::StreamExt;
+use object_store::ObjectStore;
+use object_store::PutPayload;
+use object_store::azure::MicrosoftAzureBuilder;
+use object_store::path::Path as ObjPath;
+use std::sync::Arc;
 
 use super::{
     DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata, FsResult,
 };
 
 /// Configuration for [`AzureBlobFileSystem`]. `use_emulator` targets Azurite
-/// (default account `devstoreaccount1`); otherwise supply `account` + `access_key`.
+/// (well-known `devstoreaccount1` creds); otherwise supply `account` +
+/// `access_key` (and optionally a custom `endpoint`).
 #[derive(Debug, Clone)]
 pub struct AzureBlobConfig {
-    /// Storage account name (Azurite default is `devstoreaccount1`).
+    /// Storage account name (ignored in emulator mode).
     pub account: String,
     /// Shared-key access key (not needed when `use_emulator`).
     pub access_key: Option<String>,
-    /// Use the Azurite emulator location (127.0.0.1:10000, well-known creds).
+    /// Use the Azurite emulator (object_store fills in the well-known creds + host).
     pub use_emulator: bool,
+    /// Optional custom blob endpoint (non-emulator).
+    pub endpoint: Option<String>,
 }
 
 impl Default for AzureBlobConfig {
@@ -39,13 +49,16 @@ impl Default for AzureBlobConfig {
             account: "devstoreaccount1".to_string(),
             access_key: None,
             use_emulator: true,
+            endpoint: None,
         }
     }
 }
 
-/// Azure Blob `FileSystem` backend over `azure_storage_blobs`.
+/// Azure Blob `FileSystem` backend over `object_store`. One `ObjectStore` is
+/// built (and cached) per container.
 pub struct AzureBlobFileSystem {
     config: AzureBlobConfig,
+    stores: DashMap<String, Arc<dyn ObjectStore>>,
 }
 
 impl std::fmt::Debug for AzureBlobFileSystem {
@@ -56,30 +69,10 @@ impl std::fmt::Debug for AzureBlobFileSystem {
 
 impl AzureBlobFileSystem {
     pub async fn new(cfg: AzureBlobConfig) -> FsResult<Self> {
-        // Validate that a client can be built (surfaces a bad config early).
-        let fs = Self { config: cfg };
-        let _ = fs.service()?;
-        Ok(fs)
-    }
-
-    /// Build a fresh `BlobServiceClient`. A fresh client per operation avoids the
-    /// connection/keep-alive reuse that made the SDK's pooled connection fail
-    /// (and retry for ~80s) on reads after the first few against Azurite.
-    fn service(&self) -> FsResult<BlobServiceClient> {
-        let cfg = &self.config;
-        let service = if cfg.use_emulator {
-            ClientBuilder::emulator().blob_service_client()
-        } else {
-            let key = cfg.access_key.clone().ok_or_else(|| {
-                FilesystemError::Config("azure access_key required (or use_emulator)".to_string())
-            })?;
-            ClientBuilder::new(
-                cfg.account.clone(),
-                StorageCredentials::access_key(cfg.account.clone(), key),
-            )
-            .blob_service_client()
-        };
-        Ok(service)
+        Ok(Self {
+            config: cfg,
+            stores: DashMap::new(),
+        })
     }
 
     /// Parse `abfs://container/blob` (or `adls://`/`az://`/`azure://`).
@@ -99,18 +92,36 @@ impl AzureBlobFileSystem {
         Ok((container.to_string(), blob.to_string()))
     }
 
-    fn net(ctx: &str, e: impl std::fmt::Display) -> FilesystemError {
-        FilesystemError::Network(format!("{ctx}: {e}"))
+    /// Build (and cache) an `ObjectStore` for a container.
+    fn store_for(&self, container: &str) -> FsResult<Arc<dyn ObjectStore>> {
+        if let Some(s) = self.stores.get(container) {
+            return Ok(s.clone());
+        }
+        let mut builder = MicrosoftAzureBuilder::new()
+            .with_container_name(container)
+            .with_allow_http(true);
+        if self.config.use_emulator {
+            builder = builder.with_use_emulator(true);
+        } else {
+            builder = builder.with_account(self.config.account.clone());
+            if let Some(key) = &self.config.access_key {
+                builder = builder.with_access_key(key.clone());
+            }
+            if let Some(ep) = &self.config.endpoint {
+                builder = builder.with_endpoint(ep.clone());
+            }
+        }
+        let store: Arc<dyn ObjectStore> = Arc::new(
+            builder
+                .build()
+                .map_err(|e| FilesystemError::Config(format!("Azure store build: {e}")))?,
+        );
+        self.stores.insert(container.to_string(), store.clone());
+        Ok(store)
     }
 
-    /// Create a container if it doesn't already exist (provisioning/test helper;
-    /// the `FileSystem` trait models objects, not containers). Treats an
-    /// "already exists" error as success.
-    pub async fn ensure_container(&self, container: &str) -> FsResult<()> {
-        match self.service()?.container_client(container).create().await {
-            Ok(_) => Ok(()),
-            Err(_) => Ok(()), // already exists (or a benign provisioning race)
-        }
+    fn net(ctx: &str, e: impl std::fmt::Display) -> FilesystemError {
+        FilesystemError::Network(format!("{ctx}: {e}"))
     }
 }
 
@@ -122,53 +133,53 @@ impl FileSystem for AzureBlobFileSystem {
 
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service()?.container_client(container).blob_client(blob);
-        client
-            .get_content()
+        let store = self.store_for(&container)?;
+        let result = store
+            .get(&ObjPath::from(blob))
             .await
-            .map_err(|e| Self::net("Azure get_content", e))
+            .map_err(|e| Self::net("Azure get", e))?;
+        let bytes = result
+            .bytes()
+            .await
+            .map_err(|e| Self::net("Azure body", e))?;
+        Ok(bytes.to_vec())
     }
 
-    /// ADR-023 cold path: a ranged blob GET — fetches only `[offset, +length)`.
+    /// ADR-023 cold path: a TRUE ranged blob GET — fetches only `[offset, +length)`.
     async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
         if length == 0 {
             return Ok(Vec::new());
         }
-        // KNOWN LIMITATION: azure_storage_blobs 0.19's ranged GET
-        // (`.get().range(..).into_stream()`) reliably hangs into an ~80s retry
-        // loop against Azurite (the cold reads pass, the next ranged read fails;
-        // root cause is in the pre-GA SDK's transport, not our code). The GA
-        // `azure_storage_blob` crate fixes ranged downloads but is Entra-ID-only,
-        // so it can't authenticate to Azurite (shared-key). Until that SDK gains
-        // shared-key support (or we test against real Azure), read the whole blob
-        // and slice — correct results; not bandwidth-optimal for large blobs.
-        let whole = self.read(path).await?;
-        let start = (offset as usize).min(whole.len());
-        let end = ((offset + length) as usize).min(whole.len());
-        Ok(whole[start..end].to_vec())
+        let (container, blob) = Self::parse(path)?;
+        let store = self.store_for(&container)?;
+        let bytes = store
+            .get_range(&ObjPath::from(blob), offset..(offset + length))
+            .await
+            .map_err(|e| Self::net("Azure get_range", e))?;
+        Ok(bytes.to_vec())
     }
 
     async fn write(&self, path: &str, data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service()?.container_client(container).blob_client(blob);
-        client
-            .put_block_blob(data.to_vec())
+        let store = self.store_for(&container)?;
+        store
+            .put(&ObjPath::from(blob), PutPayload::from(data.to_vec()))
             .await
-            .map_err(|e| Self::net("Azure put_block_blob", e))?;
+            .map_err(|e| Self::net("Azure put", e))?;
         Ok(())
     }
 
     async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
         Err(FilesystemError::InvalidOperation(
-            "block blobs do not support append; use append blobs".to_string(),
+            "block blobs do not support append".to_string(),
         ))
     }
 
     async fn delete(&self, path: &str) -> FsResult<()> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service()?.container_client(container).blob_client(blob);
-        client
-            .delete()
+        let store = self.store_for(&container)?;
+        store
+            .delete(&ObjPath::from(blob))
             .await
             .map_err(|e| Self::net("Azure delete", e))?;
         Ok(())
@@ -176,47 +187,46 @@ impl FileSystem for AzureBlobFileSystem {
 
     async fn exists(&self, path: &str) -> FsResult<bool> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service()?.container_client(container).blob_client(blob);
-        client
-            .exists()
-            .await
-            .map_err(|e| Self::net("Azure exists", e))
+        let store = self.store_for(&container)?;
+        Ok(store.head(&ObjPath::from(blob)).await.is_ok())
     }
 
     async fn metadata(&self, path: &str) -> FsResult<FsFileMetadata> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service()?.container_client(container).blob_client(blob);
-        let props = client
-            .get_properties()
+        let store = self.store_for(&container)?;
+        let meta = store
+            .head(&ObjPath::from(blob))
             .await
-            .map_err(|e| Self::net("Azure get_properties", e))?;
+            .map_err(|e| Self::net("Azure head", e))?;
         Ok(FsFileMetadata {
             path: path.to_string(),
-            size: props.blob.properties.content_length,
+            size: meta.size,
             is_directory: false,
+            etag: meta.e_tag,
             ..Default::default()
         })
     }
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
         let (container, prefix) = Self::parse(path)?;
-        let cc = self.service()?.container_client(container.clone());
-        let mut stream = cc.list_blobs().prefix(prefix).into_stream();
+        let store = self.store_for(&container)?;
+        let mut stream = store.list(Some(&ObjPath::from(prefix)));
         let mut entries = Vec::new();
-        while let Some(value) = stream.next().await {
-            let response = value.map_err(|e| Self::net("Azure list_blobs", e))?;
-            for blob in response.blobs.blobs() {
-                entries.push(DirEntry {
-                    name: blob.name.clone(),
-                    url: format!("az://{container}/{}", blob.name),
-                    metadata: FsFileMetadata {
-                        path: format!("az://{container}/{}", blob.name),
-                        size: blob.properties.content_length,
-                        is_directory: false,
-                        ..Default::default()
-                    },
-                });
-            }
+        while let Some(meta) = stream.next().await {
+            let meta = meta.map_err(|e| Self::net("Azure list", e))?;
+            let key = meta.location.to_string();
+            let name = key.rsplit('/').next().unwrap_or(&key).to_string();
+            entries.push(DirEntry {
+                name,
+                url: format!("az://{container}/{key}"),
+                metadata: FsFileMetadata {
+                    path: format!("az://{container}/{key}"),
+                    size: meta.size,
+                    is_directory: false,
+                    etag: meta.e_tag,
+                    ..Default::default()
+                },
+            });
         }
         Ok(entries)
     }

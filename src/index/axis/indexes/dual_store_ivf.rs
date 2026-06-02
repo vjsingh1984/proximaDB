@@ -3996,7 +3996,8 @@ mod tests {
         })
         .await
         .unwrap();
-        azfs.ensure_container("proximadb-test").await.unwrap();
+        // Container "proximadb-test" is pre-created in Azurite (object_store does
+        // not manage containers); `az storage container create` provisions it.
         let fs: Arc<dyn FileSystem> = Arc::new(azfs);
 
         let path = "az://proximadb-test/proximadb_r3_azure_test.bin".to_string();

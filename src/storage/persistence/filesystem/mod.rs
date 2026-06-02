@@ -1057,6 +1057,7 @@ impl FilesystemFactory {
             use_emulator: std::env::var("PROXIMADB_AZURE_EMULATOR")
                 .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
                 .unwrap_or(false),
+            endpoint: std::env::var("AZURE_STORAGE_ENDPOINT").ok(),
         }
     }
 

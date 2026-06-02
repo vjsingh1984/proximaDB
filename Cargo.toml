@@ -338,12 +338,14 @@ sysinfo = "0.30"
 apache-avro = "0.16"
 bytes = "1.5"
 
-# Cloud storage SDKs (optional for testing)
+# Cloud storage SDKs (optional, behind aws/azure/gcp features)
 aws-config = { version = "1.0", optional = true }
 aws-sdk-s3 = { version = "1.0", optional = true }
-azure_storage = { version = "0.19", optional = true }
-azure_storage_blobs = { version = "0.19", optional = true }
 google-cloud-storage = { version = "0.15", optional = true }
+# Azure uses the canonical object_store crate (true byte-range get_range + Azurite
+# emulator support) rather than the pre-GA azure_storage_blobs (broken ranged GET).
+# object_store is already in the tree transitively (via parquet); promote to direct.
+object_store = { version = "0.12" }
 
 # Vector operations & SIMD
 nalgebra = { version = "0.32", features = ["serde-serialize"] }  # For PCA eigendecomposition, with serde for model persistence
@@ -512,7 +514,7 @@ rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 
 # Cloud storage features (optional to avoid linking issues during testing)
 aws = ["dep:aws-config", "dep:aws-sdk-s3", "proximadb-catalog/aws"]
-azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
+azure = ["object_store/azure"]
 gcp = ["dep:google-cloud-storage"]
 
 # ============================================================================
