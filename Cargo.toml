@@ -339,11 +339,16 @@ apache-avro = "0.16"
 bytes = "1.5"
 
 # Cloud storage: the canonical object_store crate provides true byte-range
-# get_range across S3 / Azure / GCS (the bandwidth-optimal ADR-023 cold-load
-# primitive) + emulator support (MinIO / Azurite / fake-gcs), replacing heavy,
-# inconsistent vendor SDKs. Already transitive (via parquet); promoted to a
-# direct dep. Per-backend support is feature-gated via the aws/azure/gcp features.
+# get_range for S3 + Azure (the bandwidth-optimal ADR-023 cold-load primitive)
+# + emulator support (MinIO / Azurite), replacing the pre-GA azure_storage_blobs
+# (broken ranged GET) and the heavy aws-sdk-s3 tree. Already transitive (via
+# parquet); promoted to a direct dep. Feature-gated via the aws/azure features.
 object_store = { version = "0.12" }
+# GCS stays on the google-cloud-storage SDK: object_store's GCS backend speaks
+# the XML API, which fake-gcs-server (our test emulator) does not serve, so it
+# is unverifiable locally; this SDK uses the JSON API (fake-gcs-compatible) and
+# still issues true ranged object downloads (bandwidth-optimal). Feature `gcp`.
+google-cloud-storage = { version = "0.15", optional = true }
 
 # Vector operations & SIMD
 nalgebra = { version = "0.32", features = ["serde-serialize"] }  # For PCA eigendecomposition, with serde for model persistence
@@ -513,7 +518,7 @@ rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 # Cloud storage features (optional to avoid linking issues during testing)
 aws = ["object_store/aws", "proximadb-catalog/aws"]
 azure = ["object_store/azure"]
-gcp = ["object_store/gcp"]
+gcp = ["dep:google-cloud-storage"]
 
 # ============================================================================
 # OPTIONAL INTEGRATION FEATURES
