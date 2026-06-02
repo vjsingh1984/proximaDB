@@ -288,6 +288,58 @@ pub struct EmbeddingPrecisionPolicy {
 }
 
 impl EmbeddingPrecisionPolicy {
+    /// Append a `DerivedQuantizationLevel::TurboQuant` to this policy's
+    /// `derived_levels`, sized for the given collection id (Phase I —
+    /// Quantization Trait Convergence Plan).
+    ///
+    /// The `rotation_seed` field is derived deterministically from
+    /// `collection_id` via the same FNV-1a hash the modality crate uses
+    /// (mirrored at [`DerivedQuantizationLevel::turboquant_for_collection`]).
+    /// This is the load-bearing wire-stable construction path: every
+    /// catalog row, every `TurboQuantStore` in memory, and every
+    /// `TurboQuantExplainHints` for this collection refer to the same
+    /// seed across restarts and across nodes.
+    ///
+    /// Defaults: 4-bit, TqPlus calibration, epoch 0. Operators that
+    /// need different parameters construct the variant directly and call
+    /// `with_derived_level(level)` (next builder below) instead.
+    ///
+    /// Also sets `derived_material = StorageAndIndex` so the writer
+    /// materializes the TurboQuant codes in the `.tq` sidecar (where
+    /// they live per LLD §3) AND the index serves them — the natural
+    /// shape for `lifecycle = ReadTime` per ADR-021 §"Authority mode".
+    ///
+    /// Idempotent: if the policy already has a `TurboQuant` derived
+    /// level, it is replaced (not appended) so successive calls
+    /// converge on the latest seed/mode/bit_width.
+    pub fn with_turboquant_for_collection(mut self, collection_id: &str) -> Self {
+        let fresh = DerivedQuantizationLevel::turboquant_for_collection(collection_id);
+        // Remove any prior TurboQuant entry — idempotency contract.
+        self.derived_levels
+            .retain(|d| !matches!(d, DerivedQuantizationLevel::TurboQuant { .. }));
+        self.derived_levels.push(fresh);
+        // Read-time variants live in their own sidecar AND surface from
+        // the index — `StorageAndIndex` is the only material option
+        // that makes sense per LLD §3.
+        if matches!(self.derived_material, QuantizationMaterialization::None) {
+            self.derived_material = QuantizationMaterialization::StorageAndIndex;
+        }
+        self
+    }
+
+    /// Append an arbitrary `DerivedQuantizationLevel` to this policy.
+    /// Idempotent on the variant kind: the same kind never appears twice
+    /// (PQ is treated as a single kind regardless of `m`/`nbits`).
+    pub fn with_derived_level(mut self, level: DerivedQuantizationLevel) -> Self {
+        use std::mem::discriminant;
+        // Compare only on the discriminant, not field contents — calling
+        // this twice with different PQ params replaces the prior entry.
+        self.derived_levels
+            .retain(|d| discriminant(d) != discriminant(&level));
+        self.derived_levels.push(level);
+        self
+    }
+
     /// LLD-locked default policy seeded at server startup. Every cluster
     /// starts with this row so existing collections (which carry no
     /// `policy_id` field on disk before PR 6) can inherit predictable
@@ -481,6 +533,115 @@ mod tests {
                 assert_eq!(encoded_epoch, 0);
             }
             other => panic!("expected TurboQuant variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_turboquant_for_collection_appends_derived_level() {
+        // Phase I contract: calling `with_turboquant_for_collection`
+        // on the global default policy produces a policy whose
+        // `derived_levels` carries exactly one TurboQuant variant
+        // with the right rotation_seed for the collection id.
+        let policy = EmbeddingPrecisionPolicy::global_default_fp32(1)
+            .with_turboquant_for_collection("col-1");
+        let tq_entries: Vec<_> = policy
+            .derived_levels
+            .iter()
+            .filter(|d| matches!(d, DerivedQuantizationLevel::TurboQuant { .. }))
+            .collect();
+        assert_eq!(tq_entries.len(), 1, "expected exactly one TurboQuant entry");
+        match tq_entries[0] {
+            DerivedQuantizationLevel::TurboQuant {
+                bit_width,
+                calibration_mode,
+                rotation_seed,
+                encoded_epoch,
+            } => {
+                assert_eq!(*bit_width, 4);
+                assert_eq!(calibration_mode, "tq_plus");
+                assert_eq!(*encoded_epoch, 0);
+                // The seed must match the canonical derivation — this is
+                // the wire-contract guard.
+                let expected =
+                    match DerivedQuantizationLevel::turboquant_for_collection("col-1") {
+                        DerivedQuantizationLevel::TurboQuant { rotation_seed, .. } => {
+                            rotation_seed
+                        }
+                        _ => panic!(),
+                    };
+                assert_eq!(*rotation_seed, expected);
+            }
+            _ => panic!("non-TurboQuant variant leaked into filter"),
+        }
+    }
+
+    #[test]
+    fn with_turboquant_for_collection_is_idempotent() {
+        // Calling the builder twice converges on a single TurboQuant
+        // entry — not two. Multi-tenant routing depends on this so a
+        // collection-update path can re-call the builder without
+        // accumulating stale entries.
+        let policy = EmbeddingPrecisionPolicy::global_default_fp32(1)
+            .with_turboquant_for_collection("col-x")
+            .with_turboquant_for_collection("col-x");
+        let count = policy
+            .derived_levels
+            .iter()
+            .filter(|d| matches!(d, DerivedQuantizationLevel::TurboQuant { .. }))
+            .count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn with_turboquant_for_collection_flips_storage_material_when_none() {
+        // ReadTime variants need `StorageAndIndex` materialization per
+        // LLD §3 (codes live in the .tq sidecar AND surface from the
+        // index). The default policy starts at `None`; the builder
+        // must promote it.
+        let policy = EmbeddingPrecisionPolicy::global_default_fp32(1)
+            .with_turboquant_for_collection("col-y");
+        assert_eq!(
+            policy.derived_material,
+            QuantizationMaterialization::StorageAndIndex,
+        );
+    }
+
+    #[test]
+    fn with_turboquant_for_collection_preserves_existing_material() {
+        // If the operator already chose a materialization (e.g.
+        // `IndexOnly`), the builder respects it — only flips from `None`.
+        let policy = EmbeddingPrecisionPolicy {
+            derived_material: QuantizationMaterialization::IndexOnly,
+            ..EmbeddingPrecisionPolicy::global_default_fp32(1)
+        }
+        .with_turboquant_for_collection("col-z");
+        assert_eq!(
+            policy.derived_material,
+            QuantizationMaterialization::IndexOnly,
+        );
+    }
+
+    #[test]
+    fn with_derived_level_dedupes_by_variant_kind() {
+        // Calling `with_derived_level` twice with the same variant
+        // kind (even with different params) replaces the prior entry.
+        // This matches operator intent — "I want PQ with these params,
+        // not THESE params AND THOSE params".
+        let policy = EmbeddingPrecisionPolicy::global_default_fp32(1)
+            .with_derived_level(DerivedQuantizationLevel::Pq { m: 8, nbits: 8 })
+            .with_derived_level(DerivedQuantizationLevel::Pq { m: 16, nbits: 4 });
+        let pq_entries: Vec<_> = policy
+            .derived_levels
+            .iter()
+            .filter(|d| matches!(d, DerivedQuantizationLevel::Pq { .. }))
+            .collect();
+        assert_eq!(pq_entries.len(), 1);
+        match pq_entries[0] {
+            DerivedQuantizationLevel::Pq { m, nbits } => {
+                assert_eq!(*m, 16);
+                assert_eq!(*nbits, 4);
+            }
+            _ => panic!(),
         }
     }
 
