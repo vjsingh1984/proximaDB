@@ -45,7 +45,7 @@ impl Default for AzureBlobConfig {
 
 /// Azure Blob `FileSystem` backend over `azure_storage_blobs`.
 pub struct AzureBlobFileSystem {
-    service: BlobServiceClient,
+    config: AzureBlobConfig,
 }
 
 impl std::fmt::Debug for AzureBlobFileSystem {
@@ -56,6 +56,17 @@ impl std::fmt::Debug for AzureBlobFileSystem {
 
 impl AzureBlobFileSystem {
     pub async fn new(cfg: AzureBlobConfig) -> FsResult<Self> {
+        // Validate that a client can be built (surfaces a bad config early).
+        let fs = Self { config: cfg };
+        let _ = fs.service()?;
+        Ok(fs)
+    }
+
+    /// Build a fresh `BlobServiceClient`. A fresh client per operation avoids the
+    /// connection/keep-alive reuse that made the SDK's pooled connection fail
+    /// (and retry for ~80s) on reads after the first few against Azurite.
+    fn service(&self) -> FsResult<BlobServiceClient> {
+        let cfg = &self.config;
         let service = if cfg.use_emulator {
             ClientBuilder::emulator().blob_service_client()
         } else {
@@ -68,7 +79,7 @@ impl AzureBlobFileSystem {
             )
             .blob_service_client()
         };
-        Ok(Self { service })
+        Ok(service)
     }
 
     /// Parse `abfs://container/blob` (or `adls://`/`az://`/`azure://`).
@@ -96,7 +107,7 @@ impl AzureBlobFileSystem {
     /// the `FileSystem` trait models objects, not containers). Treats an
     /// "already exists" error as success.
     pub async fn ensure_container(&self, container: &str) -> FsResult<()> {
-        match self.service.container_client(container).create().await {
+        match self.service()?.container_client(container).create().await {
             Ok(_) => Ok(()),
             Err(_) => Ok(()), // already exists (or a benign provisioning race)
         }
@@ -111,7 +122,7 @@ impl FileSystem for AzureBlobFileSystem {
 
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service.container_client(container).blob_client(blob);
+        let client = self.service()?.container_client(container).blob_client(blob);
         client
             .get_content()
             .await
@@ -124,29 +135,34 @@ impl FileSystem for AzureBlobFileSystem {
             return Ok(Vec::new());
         }
         let (container, blob) = Self::parse(path)?;
-        let client = self.service.container_client(container).blob_client(blob);
+        let client = self.service()?.container_client(container).blob_client(blob);
         // azure's `.range()` takes `impl Into<Range>`; a std exclusive range
-        // [offset, offset+length) converts directly (no azure_core import needed).
-        // Use the single-response `.await` (IntoFuture) rather than `.into_stream()`
-        // — the Pageable's connection handling was sending Azurite into an ~80s
-        // retry loop on reads after the first few. One bounded ranged GET is all
-        // the cold path needs.
-        let response = client
-            .get()
-            .range(offset..(offset + length))
-            .await
-            .map_err(|e| Self::net("Azure get range", e))?;
-        let body = response
-            .data
-            .collect()
-            .await
-            .map_err(|e| Self::net("Azure body", e))?;
-        Ok(body.to_vec())
+        // [offset, offset+length) converts directly. `GetBlobBuilder` is not an
+        // IntoFuture, so `.into_stream()` is required; read pages only until the
+        // requested length is satisfied. Combined with a fresh client per call
+        // (see `service()`), this avoids the connection-reuse retry storm.
+        let mut stream = client.get().range(offset..(offset + length)).into_stream();
+        let want = length as usize;
+        let mut out = Vec::with_capacity(want);
+        while out.len() < want {
+            let Some(value) = stream.next().await else {
+                break;
+            };
+            let response = value.map_err(|e| Self::net("Azure get range", e))?;
+            let body = response
+                .data
+                .collect()
+                .await
+                .map_err(|e| Self::net("Azure body", e))?;
+            out.extend_from_slice(&body);
+        }
+        out.truncate(want);
+        Ok(out)
     }
 
     async fn write(&self, path: &str, data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service.container_client(container).blob_client(blob);
+        let client = self.service()?.container_client(container).blob_client(blob);
         client
             .put_block_blob(data.to_vec())
             .await
@@ -162,7 +178,7 @@ impl FileSystem for AzureBlobFileSystem {
 
     async fn delete(&self, path: &str) -> FsResult<()> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service.container_client(container).blob_client(blob);
+        let client = self.service()?.container_client(container).blob_client(blob);
         client
             .delete()
             .await
@@ -172,7 +188,7 @@ impl FileSystem for AzureBlobFileSystem {
 
     async fn exists(&self, path: &str) -> FsResult<bool> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service.container_client(container).blob_client(blob);
+        let client = self.service()?.container_client(container).blob_client(blob);
         client
             .exists()
             .await
@@ -181,7 +197,7 @@ impl FileSystem for AzureBlobFileSystem {
 
     async fn metadata(&self, path: &str) -> FsResult<FsFileMetadata> {
         let (container, blob) = Self::parse(path)?;
-        let client = self.service.container_client(container).blob_client(blob);
+        let client = self.service()?.container_client(container).blob_client(blob);
         let props = client
             .get_properties()
             .await
@@ -196,7 +212,7 @@ impl FileSystem for AzureBlobFileSystem {
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
         let (container, prefix) = Self::parse(path)?;
-        let cc = self.service.container_client(container.clone());
+        let cc = self.service()?.container_client(container.clone());
         let mut stream = cc.list_blobs().prefix(prefix).into_stream();
         let mut entries = Vec::new();
         while let Some(value) = stream.next().await {
