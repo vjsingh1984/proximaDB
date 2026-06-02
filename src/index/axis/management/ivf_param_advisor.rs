@@ -670,15 +670,20 @@ mod tests {
 
     #[test]
     fn estimated_memory_mb_matches_back_of_envelope() {
-        // N=100K, dim=128, nlist=317:
-        //   nlist · dim · 4 = 317·128·4 = 162.3 KB ≈ 0.15 MB
-        //   N · dim · 4 = 100K·128·4 = 51.2 MB
-        //   total ≈ 51.4 MB
+        // N=100K, dim=128, nlist=317 (= max(100, ⌈√100K⌉) = 317).
+        // The advisor reports memory in **MiB** (`bytes / 1024²`),
+        // matching how operators / Prometheus / Linux report RAM:
+        //   centroid_bytes   = 317 · 128 · 4 = 162,304 B = 0.155 MiB
+        //   vector_storage   = 100K · 128 · 4 = 51,200,000 B = 48.828 MiB
+        //   total            ≈ 48.98 MiB
+        // Earlier expectation of 51.4 used SI MB (10⁶) for one term
+        // and binary KiB for the other; corrected here to MiB
+        // throughout.
         let advisor = IvfIndexAdvisor::new();
         let out = advisor.advise(&ivf_input(0.60)).unwrap();
         assert!(
-            (out.estimated_memory_mb - 51.4).abs() < 1.0,
-            "memory {} should be ≈51.4 MB",
+            (out.estimated_memory_mb - 48.98).abs() < 0.05,
+            "memory {} should be ≈48.98 MiB",
             out.estimated_memory_mb
         );
     }

@@ -805,22 +805,31 @@ mod tests {
 
     #[test]
     fn trait_impl_translates_latency_budget_to_ef_cap() {
-        // max_query_latency_ms=0.2ms → max_ef_search ≈ 400.
+        // r=0.96 → r ∈ [0.85, 0.97) → m=32 with A(32)=0.195.
+        // ef_for_recall(32, 0.96, 100K, 10) ≈ 472 (computed:
+        // nf=1103.5, headroom=0.04, ln(0.195/0.04)/3.7·nf ≈ 472).
+        // max_query_latency_ms=0.2ms → max_ef_search=ceil(200/0.5)=400.
+        // 472 > 400 → clamps to 400, sets clamped_by_max_ef.
+        //
+        // (Note: at r=0.99, the m-tier picks m=48 with A(48)=0.019
+        // — that tier reaches r=0.99 with ef≈192, well under any
+        // realistic latency cap; not useful for exercising the
+        // clamp path. The m=32 tier at r=0.96 is the sweet spot
+        // where the formula's unconstrained ef collides with a
+        // 200μs budget.)
         let advisor = HnswIndexAdvisor::new();
         let input = AnnAdvisorInput {
             vector_count: 100_000,
             top_k: 10,
-            recall_target: 0.99, // would unconstrained advise ef≈905
+            recall_target: 0.96,
             dimension: 128,
             distance_metric: DistanceMetric::Cosine,
-            max_query_latency_ms: Some(0.2), // 200μs cap → ~400 ef
+            max_query_latency_ms: Some(0.2),
             max_memory_mb: None,
             binary_rerank_allowed: false,
             modalities: Vec::new(),
         };
         let out = advisor.advise(&input).unwrap();
-        // The actual ef may be slightly under 400 due to the
-        // ceil()→u32 conversion at exactly 400; accept anything ≤ 400.
         if let IndexAlgorithm::HNSW { ef_search, .. } = out.algorithm {
             assert!(
                 ef_search <= 400,

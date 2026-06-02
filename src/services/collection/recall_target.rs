@@ -1016,18 +1016,27 @@ mod tests {
 
     #[test]
     fn binary_rerank_tag_lifts_ivf_ceiling_end_to_end() {
-        // r=0.85 without rerank tag → selector falls back to HNSW
-        // (IVF declines). r=0.85 WITH rerank → advisor stamps an
-        // IVF index with a PQ quantizer.
+        // At r=0.85 + binary_rerank, IVF *qualifies* (ceiling lifts
+        // 0.74 → 0.95) but HNSW still wins per-query work in an
+        // unconstrained tie-break (~78 vs ~12K candidates visited).
+        // To force the selector down the IVF arm we constrain
+        // memory: HNSW (m=32, N=100K, dim=128) needs ~61 MiB of
+        // graph+vector storage, IVF+PQ (m=8, nbits=8) fits in
+        // ~1 MiB. A `max_memory_mb:30` cap excludes HNSW and
+        // admits IVF — and the binary_rerank tag is what lets
+        // IVF reach r=0.85 in the first place.
         let mut c = cfg(
             "c_rerank",
             128,
-            &["recall_target:0.85", "binary_rerank:enabled"],
+            &[
+                "recall_target:0.85",
+                "binary_rerank:enabled",
+                "max_memory_mb:30",
+            ],
         );
         let advice = apply_advisor_to_indexes(&mut c, 0.85);
         assert_eq!(advice.len(), 1);
-        // Verify the IVF path was picked (binary_rerank can only
-        // route to IVF — HNSW doesn't quantize).
+        // Verify the IVF path was picked.
         assert_eq!(
             advice[0].output.kind,
             crate::index::axis::management::SupportedAlgorithm::Ivf
