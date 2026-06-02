@@ -1508,7 +1508,7 @@ pub async fn search_with_typed_filters(
     // Capture the quantized-route downgrade INSIDE the scope — the task-local
     // binding ends when the scoped future completes, so it must be taken here
     // (TD-075 / F2: surfaced in EXPLAIN below).
-    let (search_outcome, quantized_route_downgraded, cold_stage1_only) =
+    let (search_outcome, quantized_route_downgraded, cold_stage1_only, turboquant_hints) =
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state
                 .request_handlers
@@ -1519,7 +1519,18 @@ pub async fn search_with_typed_filters(
             // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
             let cold_stage1 =
                 crate::observability::predicate_diagnostics::take_cold_stage1_only();
-            (outcome, downgraded, cold_stage1)
+            // Phase K (Quantization Trait Convergence Plan): TurboQuant
+            // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
+            // the scope because the task-local binding ends when this
+            // future completes — same constraint as the take above.
+            // `None` is the common case (most searches don't run
+            // through TurboQuant scoring); the slot is skipped at
+            // serialization time via the `skip_serializing_if` on
+            // `SearchPlanHints.turboquant` (Phase J) and
+            // `VectorHints.turboquant` (Phase F).
+            let tq_hints =
+                crate::observability::predicate_diagnostics::take_turboquant_hints();
+            (outcome, downgraded, cold_stage1, tq_hints)
         })
         .await;
     let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
@@ -1651,6 +1662,11 @@ pub async fn search_with_typed_filters(
                     // no AxisManager-level shortfall was recorded
                     // during this search.
                     predicate_shortfall: predicate_shortfall.clone(),
+                    // Phase K: TurboQuant EXPLAIN payload pulled from
+                    // the same task-local bus. `None` for searches
+                    // that didn't route through TurboQuant scoring;
+                    // present with the full 9-field payload otherwise.
+                    turboquant_explain: turboquant_hints.clone(),
                 },
             );
 

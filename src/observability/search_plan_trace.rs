@@ -188,6 +188,16 @@ pub struct SearchPlanTrace {
     /// path. `failure_class` is also set to `PermissionThin` when populated.
     #[serde(default)]
     pub predicate_shortfall: Option<PredicateShortfall>,
+
+    /// Phase K (Quantization Trait Convergence Plan): TurboQuant EXPLAIN
+    /// payload recorded by `score_turboquant` via the task-local
+    /// `PredicateDiagnostics` bus. Carries the
+    /// `TurboQuantExplainHints::to_explain_value()` JSON value — the same
+    /// 9-field schema surfaced under `VectorHints.turboquant` for the
+    /// wire-facing EXPLAIN per ADR-004. `None` on the common path
+    /// (most searches don't route through TurboQuant scoring).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turboquant_explain: Option<serde_json::Value>,
 }
 
 /// TD-064: Diagnostic block describing a predicate-aware recall shortfall.
@@ -237,6 +247,7 @@ impl SearchPlanTrace {
             utility_score_avg: None,
             failure_class: None,
             predicate_shortfall: None,
+            turboquant_explain: None,
         }
     }
 

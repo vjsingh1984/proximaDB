@@ -89,6 +89,7 @@ fn full_pipeline_composes_for_a_single_trace() {
         failure_class: None,
         bytes_per_vector: 1024.0,
         predicate_shortfall: None,
+        turboquant_explain: None,
     });
     // The trace's plan must round-trip from PlanOutput.
     assert_eq!(trace.filter_strategy, plan.filter_strategy);
@@ -188,6 +189,7 @@ fn batch_of_identical_shapes_collapses_fingerprint_but_keeps_idempotency_distinc
             failure_class: None,
             bytes_per_vector: 0.0,
             predicate_shortfall: None,
+            turboquant_explain: None,
         })
     };
 
@@ -264,6 +266,7 @@ fn cross_tenant_traces_share_fingerprint_but_have_distinct_idempotency_keys() {
             failure_class: None,
             bytes_per_vector: 0.0,
             predicate_shortfall: None,
+            turboquant_explain: None,
         })
     };
 
@@ -342,6 +345,7 @@ fn non_default_plan_choice_propagates_through_the_pipeline() {
         failure_class: None,
         bytes_per_vector: 0.0,
         predicate_shortfall: None,
+        turboquant_explain: None,
     });
     assert_eq!(trace.index_route, IndexRoute::QuantizedGraphThenExact);
 

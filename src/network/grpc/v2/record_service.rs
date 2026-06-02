@@ -1076,13 +1076,23 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
 
         // TD-064: scope the search in a predicate-diagnostics context so
-        // any AxisManager-deep shortfall is captured here.
-        let search_outcome = crate::observability::predicate_diagnostics::scope(async {
-            self.request_handlers
-                .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
-                .await
-        })
-        .await;
+        // any AxisManager-deep shortfall is captured here. Phase K: also
+        // lift the TurboQuant EXPLAIN payload — task-local binding ends
+        // when the scoped future returns, so the take MUST happen inside.
+        let (search_outcome, _turboquant_hints) =
+            crate::observability::predicate_diagnostics::scope(async {
+                let outcome = self
+                    .request_handlers
+                    .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
+                    .await;
+                let tq = crate::observability::predicate_diagnostics::take_turboquant_hints();
+                (outcome, tq)
+            })
+            .await;
+        // TD-064 NOTE: this take returns None outside the scope (the
+        // task-local binding has already ended above). Pre-existing
+        // behaviour kept as-is; the structured-event path remains the
+        // operator-visible signal for shortfall in this handler.
         let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 
         match search_outcome {

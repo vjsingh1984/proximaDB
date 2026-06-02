@@ -69,6 +69,7 @@ fn trace(
         utility_score_avg: None,
         failure_class: None,
         predicate_shortfall: None,
+        turboquant_explain: None,
     }
 }
 
@@ -295,6 +296,7 @@ fn v1_fallback_replay_against_itself_agrees() {
         utility_score_avg: None,
         failure_class: None,
         predicate_shortfall: None,
+        turboquant_explain: None,
     };
     let inferencer: Arc<dyn PlanInferencer> = Arc::new(LinearV1FallbackInferencer::fail_safe());
     let o = replay(

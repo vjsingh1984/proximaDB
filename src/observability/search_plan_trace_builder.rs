@@ -54,6 +54,11 @@ pub struct TraceBuilderInputs<'a> {
     /// requested `top_k`. `None` on the happy path. When `Some`, the builder
     /// also forces `failure_class = PermissionThin`.
     pub predicate_shortfall: Option<PredicateShortfall>,
+    /// Phase K: TurboQuant EXPLAIN payload pulled from the per-request
+    /// task-local diagnostics bus by the handler. `None` when the
+    /// search didn't route through TurboQuant scoring (the common path).
+    /// Forwarded verbatim into `SearchPlanTrace.turboquant_explain`.
+    pub turboquant_explain: Option<serde_json::Value>,
 }
 
 /// Build a fully populated `SearchPlanTrace` from the inputs.
@@ -89,6 +94,7 @@ pub fn build(inputs: TraceBuilderInputs<'_>) -> SearchPlanTrace {
         utility_score_avg: None,
         failure_class,
         predicate_shortfall: inputs.predicate_shortfall,
+        turboquant_explain: inputs.turboquant_explain,
     }
 }
 
@@ -134,6 +140,7 @@ mod tests {
             failure_class: None,
             bytes_per_vector: 0.0,
             predicate_shortfall: None,
+            turboquant_explain: None,
         }
     }
 
@@ -169,6 +176,41 @@ mod tests {
         assert_eq!(t.index_route, IndexRoute::FullPrecisionGraph);
         assert_eq!(t.estimated_selectivity, Some(0.1));
         assert!(t.gls_score.is_none());
+    }
+
+    #[test]
+    fn turboquant_explain_propagates_into_trace() {
+        // Phase K wire test: the JSON payload pulled from the per-request
+        // `predicate_diagnostics` bus by the handler must land verbatim
+        // on the trace. Without this propagation, the TurboQuant hints
+        // would be lost between the executor and the operator-visible
+        // structured-log line.
+        let p = plan();
+        let mut i = inputs(&p);
+        let payload = serde_json::json!({
+            "quantization": "turboquant_2bit",
+            "blocks_skipped_by_mask": 7,
+            "mask_pushed_to_kernel": true,
+        });
+        i.turboquant_explain = Some(payload.clone());
+        let t = build(i);
+        assert_eq!(t.turboquant_explain.as_ref(), Some(&payload));
+    }
+
+    #[test]
+    fn turboquant_explain_absent_yields_none_on_trace() {
+        // Default path (most searches): no TurboQuant payload recorded,
+        // trace field stays None and serializes away via
+        // skip_serializing_if. Confirms no stale-null leakage.
+        let p = plan();
+        let t = build(inputs(&p));
+        assert!(t.turboquant_explain.is_none());
+        let v = serde_json::to_value(&t).expect("serialize trace");
+        let obj = v.as_object().expect("trace serializes as object");
+        assert!(
+            !obj.contains_key("turboquant_explain"),
+            "wire shape leaked turboquant_explain key on no-TurboQuant path: {v}",
+        );
     }
 
     #[test]

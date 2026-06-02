@@ -56,6 +56,7 @@ fn trace_template() -> SearchPlanTrace {
         utility_score_avg: None,
         failure_class: None,
         predicate_shortfall: None,
+        turboquant_explain: None,
     }
 }
 
