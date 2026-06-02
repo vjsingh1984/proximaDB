@@ -66,6 +66,8 @@ impl<'de> Deserialize<'de> for QuantizationConfig {
             binary_threshold: Option<f32>,
             int8_threshold: Option<f32>,
             pq_threshold: Option<f32>,
+            // Phase N: TurboQuant opt-in. Defaults to `None` ⇒ false.
+            enable_turboquant: Option<bool>,
 
             // SDK compatibility fields (flat structure)
             #[serde(alias = "type")]
@@ -165,6 +167,9 @@ impl<'de> Deserialize<'de> for QuantizationConfig {
             binary_threshold: helper.binary_threshold,
             int8_threshold: helper.int8_threshold,
             pq_threshold: helper.pq_threshold,
+            // Phase N: TurboQuant opt-in helper field — same defaulting
+            // behavior as `enable_binary` / `enable_int8` / `enable_pq`.
+            enable_turboquant: helper.enable_turboquant,
         })
     }
 }

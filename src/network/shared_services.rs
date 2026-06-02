@@ -914,6 +914,7 @@ impl SharedServices {
                         binary_threshold: Some(0.3),
                         int8_threshold: Some(0.1),
                         pq_threshold: Some(0.05),
+                        enable_turboquant: Some(false),
                     }),
                     storage_config: None, // VersionedCollectionMetadata doesn't have storage_assignment field
                     primary_index: Some(String::new()),

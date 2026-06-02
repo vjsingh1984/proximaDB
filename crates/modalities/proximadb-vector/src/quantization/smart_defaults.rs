@@ -93,6 +93,7 @@ impl QuantizationSmartDefaults {
             binary_threshold: Some(0.0),
             int8_threshold: Some(0.3),
             pq_threshold: Some(0.0),
+            enable_turboquant: Some(false),
         }
     }
 
@@ -159,6 +160,7 @@ impl QuantizationSmartDefaults {
             binary_threshold: Some(0.3),
             int8_threshold: Some(0.1),
             pq_threshold: Some(0.0),
+            enable_turboquant: Some(false),
         }
     }
 
@@ -245,6 +247,7 @@ impl QuantizationSmartDefaults {
             binary_threshold: Some(0.3),
             int8_threshold: Some(0.1),
             pq_threshold: Some(0.05),
+            enable_turboquant: Some(false),
         }
     }
 
@@ -331,6 +334,7 @@ impl QuantizationSmartDefaults {
             binary_threshold: Some(0.4),
             int8_threshold: Some(0.0),
             pq_threshold: Some(0.03),
+            enable_turboquant: Some(false),
         }
     }
 

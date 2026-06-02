@@ -2194,6 +2194,11 @@ pub struct QuantizationConfig {
     /// Default: 0.0
     #[prost(float, optional, tag = "22")]
     pub pq_threshold: ::core::option::Option<f32>,
+    /// Phase N (Quantization Trait Convergence Plan): operator opt-in for
+    /// TurboQuant — data-oblivious read-time scalar quantizer per ADR-021.
+    /// Default: false
+    #[prost(bool, optional, tag = "23")]
+    pub enable_turboquant: ::core::option::Option<bool>,
 }
 /// Nested message and enum types in `QuantizationConfig`.
 pub mod quantization_config {

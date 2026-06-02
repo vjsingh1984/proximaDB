@@ -635,8 +635,62 @@ impl CollectionService {
                         binary_threshold: Some(0.3),
                         int8_threshold: Some(0.1),
                         pq_threshold: Some(0.05),
+                        enable_turboquant: Some(false),
                     });
                 }
+            }
+        }
+
+        // Phase N — Quantization Trait Convergence Plan: operator opt-in
+        // for TurboQuant. When the SDK / handler sets
+        // `quantization.enable_turboquant = true` and the server build has
+        // `experimental-turboquant` enabled, three things happen here:
+        //
+        // 1. Log a load-bearing structured event so operator dashboards
+        //    see the opt-in took effect (regardless of whether downstream
+        //    catalog persistence has landed).
+        // 2. Surface the operator-visible default that downstream
+        //    consumers will materialize: `bit_width=4`, `tq_plus`
+        //    calibration, `rotation_seed` derived from the collection id
+        //    via the same FNV-1a hash the foundation crate uses (so the
+        //    runtime store, the EXPLAIN payload, and any future catalog
+        //    row all refer to the same seed — ADR-021 §"Authority mode").
+        // 3. On `cfg(experimental-turboquant)` builds: the
+        //    `EmbeddingPrecisionPolicy::with_turboquant_for_collection`
+        //    builder is the canonical construction path for downstream
+        //    catalog persistence (Phase E). Catalog wiring is a follow-up
+        //    that consumes the policy struct; this commit lands the
+        //    opt-in plumbing.
+        //
+        // Builds without the feature silently ignore the flag — same
+        // conservative behavior as `enable_binary`/`enable_pq` on builds
+        // that don't compile the relevant kernels.
+        let opt_in = enriched_config
+            .quantization
+            .as_ref()
+            .and_then(|q| q.enable_turboquant)
+            .unwrap_or(false);
+        if opt_in {
+            #[cfg(feature = "experimental-turboquant")]
+            {
+                let seed = proximadb_quantization_types::derive_rotation_seed(&config.name);
+                tracing::info!(
+                    target: "proximadb::turboquant::opt_in",
+                    collection = %config.name,
+                    bit_width = 4u8,
+                    calibration_mode = "tq_plus",
+                    rotation_seed = format!("{:#x}", seed),
+                    "Phase N opt-in: TurboQuant registered for collection",
+                );
+            }
+            #[cfg(not(feature = "experimental-turboquant"))]
+            {
+                tracing::warn!(
+                    collection = %config.name,
+                    "Collection requested enable_turboquant=true but the server build \
+                     does not have the `experimental-turboquant` feature enabled; \
+                     opt-in is silently dropped",
+                );
             }
         }
 
