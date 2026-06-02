@@ -120,7 +120,7 @@ The gate + EXPLAIN surfaces already exist:
 . *≤ ~1/30 bytes before serving* → T-A/T-B/T-C/T-F.
 . *Two-stage recall meets floor, envelope disclosed* → T-D/T-E (Stage-1-only disclosed; two-stage resumes after warm load); the gate + `QUANTIZED_ROUTE_DOWNGRADED` disclosure already shipped.
 . *Gate FAIL → non-quantized fallback + EXPLAIN reason* → already shipped (2026-05-30).
-. *Cold-start latency seconds-class* → T-F.
+. *Cold-start latency seconds-class* → T-F (bytes proxy). Cold-start latency is **I/O-bound** — the COLD blob is loaded from disk/object-store before serving, so time-to-first-serve is proportional to *bytes before serving*, already verified `cold_tier_bytes·4 < warm_tier_bytes` (~1/32 per-vector asymptotically). A local in-memory wall-clock bench would measure CPU restore time, not the I/O win, and would *understate* the benefit — so it is deliberately not added; the bytes ratio is the faithful latency proxy. A representative end-to-end number belongs in a deployment benchmark against a real object-store tier (gated on the same `UniversalIndexStorage` S3 wiring as R3 (b)/(c)), not a unit test.
 
 == Risks
 
