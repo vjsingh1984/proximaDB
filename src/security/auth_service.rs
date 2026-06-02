@@ -1089,6 +1089,173 @@ mod tests {
         assert_eq!(unknown_perm, None);
     }
 
+    // ──────────────────────────────────────────────────────────
+    //  Wildcard "*" permission expansion (auth convergence pass)
+    //
+    //  The default dev config + most operator-provided API keys
+    //  use `permissions = ["*"]` as shorthand for "all admin
+    //  permissions". `convert_api_key_to_unified` must expand
+    //  that to the six permissions the operator-gated endpoints
+    //  actually check for; otherwise the recall-tune / recluster
+    //  / suspend / resume handlers 403 every request.
+    // ──────────────────────────────────────────────────────────
+
+    fn minimal_auth_config(api_keys: HashMap<String, ApiKeyInfo>) -> AuthenticationConfig {
+        AuthenticationConfig {
+            enabled: true,
+            methods: vec![AuthenticationMethod::ApiKey],
+            require_authentication: true,
+            default_session_timeout_minutes: 60,
+            api_keys,
+            jwt: JwtConfig {
+                enabled: false,
+                secret: "t".to_string(),
+                access_token_expiration_minutes: 15,
+                refresh_token_expiration_days: 7,
+                issuer: "t".to_string(),
+                audience: "t".to_string(),
+                algorithm: "HS256".to_string(),
+            },
+            sso: SSOConfig {
+                enabled: false,
+                providers: vec![],
+                token_cache_ttl_minutes: 5,
+                aws_iam: None,
+                azure_ad: None,
+            },
+            mtls: MtlsConfig::default(),
+        }
+    }
+
+    fn api_key_info(user_id: &str, permissions: Vec<&str>) -> ApiKeyInfo {
+        ApiKeyInfo {
+            user_id: user_id.to_string(),
+            tenant_id: None,
+            permissions: permissions.into_iter().map(String::from).collect(),
+            created_at: None,
+            expires_at: None,
+            rate_limit_per_minute: None,
+            ip_restrictions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn wildcard_expands_to_full_admin_set() {
+        let service = UnifiedAuthService::new(minimal_auth_config(HashMap::new())).unwrap();
+        let ctx = service.convert_api_key_to_unified(api_key_info("dev", vec!["*"]));
+        // All six fan-out permissions must be present.
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::SystemAdmin),
+            "wildcard must grant SystemAdmin so recall-tune / recluster / suspend pass require_recall_admin"
+        );
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::ConfigureSystem),
+            "wildcard must grant ConfigureSystem (the alternative gate on require_recall_admin)"
+        );
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::TenantAdmin)
+        );
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::TenantRead)
+        );
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::TenantWrite)
+        );
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::CollectionCreate)
+        );
+        assert_eq!(
+            ctx.effective_permissions.len(),
+            6,
+            "wildcard expands to exactly the 6 documented admin-tier permissions"
+        );
+        assert_eq!(ctx.user_id, "dev");
+        assert!(matches!(ctx.auth_method, UnifiedAuthMethod::ApiKey));
+    }
+
+    #[test]
+    fn wildcard_unions_with_specific_tokens_without_duplicates() {
+        // "*" + "admin" → the union is still 6 permissions (TenantAdmin
+        // is already in the wildcard set). The HashSet dedup keeps the
+        // count stable so audit logs don't double-count.
+        let service = UnifiedAuthService::new(minimal_auth_config(HashMap::new())).unwrap();
+        let ctx = service.convert_api_key_to_unified(api_key_info(
+            "u",
+            vec!["*", "admin", "read", "system_admin"],
+        ));
+        assert_eq!(
+            ctx.effective_permissions.len(),
+            6,
+            "duplicates from specific tokens overlapping with wildcard must be deduped"
+        );
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::SystemAdmin)
+        );
+    }
+
+    #[test]
+    fn specific_permissions_without_wildcard_parse_unchanged() {
+        // Regression guard: callers that don't use "*" still get the
+        // exact per-token mapping from parse_permission_string.
+        let service = UnifiedAuthService::new(minimal_auth_config(HashMap::new())).unwrap();
+        let ctx = service.convert_api_key_to_unified(api_key_info(
+            "u",
+            vec!["read", "write", "collection_create"],
+        ));
+        assert_eq!(ctx.effective_permissions.len(), 3);
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::TenantRead)
+        );
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::TenantWrite)
+        );
+        assert!(
+            ctx.effective_permissions
+                .contains(&UnifiedPermission::CollectionCreate)
+        );
+        assert!(
+            !ctx.effective_permissions
+                .contains(&UnifiedPermission::SystemAdmin),
+            "specific tokens must NOT silently escalate to admin"
+        );
+    }
+
+    #[test]
+    fn unknown_tokens_are_skipped_not_errors() {
+        // The wildcard path coexists with the "unknown token → warn and
+        // skip" path. An unrecognised string must NOT poison the rest
+        // of the permission set.
+        let service = UnifiedAuthService::new(minimal_auth_config(HashMap::new())).unwrap();
+        let ctx = service
+            .convert_api_key_to_unified(api_key_info("u", vec!["bogus_perm", "read", "*"]));
+        // 6 (from wildcard) + 0 (bogus_perm dropped) — read is already
+        // inside the wildcard fan-out so no extra entry is added.
+        assert_eq!(ctx.effective_permissions.len(), 6);
+    }
+
+    #[test]
+    fn empty_permission_list_yields_no_authority() {
+        // Operator explicitly opts out of granting anything. The
+        // resulting context must be authenticated but powerless
+        // (every operator-gated endpoint should 403 it).
+        let service = UnifiedAuthService::new(minimal_auth_config(HashMap::new())).unwrap();
+        let ctx = service.convert_api_key_to_unified(api_key_info("u", Vec::new()));
+        assert!(
+            ctx.effective_permissions.is_empty(),
+            "empty perms list must remain empty — not silently escalated"
+        );
+        assert_eq!(ctx.user_id, "u");
+    }
+
     #[test]
     fn test_mtls_config_default() {
         let config = MtlsConfig::default();
