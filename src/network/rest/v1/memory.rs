@@ -13,9 +13,9 @@
 
 use axum::{
     Extension, Router,
-    extract::{Json, State},
+    extract::{Json, Path, Query, State},
     response::Json as JsonResponse,
-    routing::post,
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -23,23 +23,38 @@ use tracing::{error, info};
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::MiddlewareTenantContext;
-use crate::services::agent_memory::{MemoryWriteEngine, MemoryWriteScope, MessagePair};
+use crate::services::agent_memory::{
+    ConsolidationAuditEvent, ConsolidationAuditReader, MemoryWriteEngine, MemoryWriteScope,
+    MessagePair,
+};
+use crate::storage::engines::eventlog::EventLogEngine;
 
-/// State for the memory-write router. `engine` is `None` when the deployment
-/// has no LLM backend (extraction/consolidation cannot run).
+/// Default and cap for how many audit decisions a single read returns.
+const AUDIT_DEFAULT_LIMIT: usize = 100;
+const AUDIT_MAX_LIMIT: usize = 1000;
+
+/// State for the memory router. `engine` is `None` when the deployment has no
+/// LLM backend (extraction/consolidation cannot run); `event_log` is `None`
+/// when no audit store is wired (the consolidation read route is unavailable).
 #[derive(Clone)]
 pub struct MemoryApiState {
     pub engine: Option<Arc<MemoryWriteEngine>>,
+    pub event_log: Option<Arc<EventLogEngine>>,
 }
 
 impl MemoryApiState {
-    pub fn new(engine: Option<Arc<MemoryWriteEngine>>) -> Self {
-        Self { engine }
+    pub fn new(
+        engine: Option<Arc<MemoryWriteEngine>>,
+        event_log: Option<Arc<EventLogEngine>>,
+    ) -> Self {
+        Self { engine, event_log }
     }
 }
 
 pub fn create_router() -> Router<MemoryApiState> {
-    Router::new().route("/ingest", post(ingest_memory))
+    Router::new()
+        .route("/ingest", post(ingest_memory))
+        .route("/consolidation/{session_id}", get(list_consolidation_audit))
 }
 
 /// Ingest request: one agent turn under a memory scope.
@@ -134,6 +149,73 @@ async fn ingest_memory(
     }
 }
 
+/// Query params for the consolidation audit read. `limit` is clamped to
+/// `[1, AUDIT_MAX_LIMIT]`; absent/invalid → `AUDIT_DEFAULT_LIMIT`.
+#[derive(Debug, Deserialize)]
+pub struct AuditQuery {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConsolidationAuditResponse {
+    pub session_id: String,
+    pub decisions: Vec<ConsolidationAuditEvent>,
+}
+
+/// Clamp the requested page size to a sane bound. Pure → unit-tested.
+fn clamp_audit_limit(requested: Option<usize>) -> usize {
+    match requested {
+        None | Some(0) => AUDIT_DEFAULT_LIMIT,
+        Some(n) => n.min(AUDIT_MAX_LIMIT),
+    }
+}
+
+/// `GET /api/v1/memory/consolidation/{session_id}` — list the consolidation
+/// decisions (ADD/UPDATE/DELETE/NOOP) recorded for a session, in append order.
+///
+/// The tenant is taken from the AUTHENTICATED request context (NOT a path/body
+/// param), exactly like ingest: the audit entity-id prefix is
+/// `memory-consolidation:{authed_tenant}:{session}:`, so a caller can only ever
+/// read their own tenant's trail — cross-tenant reads are structurally
+/// impossible. `event_log` absent → `NotImplemented` (introspectable, like the
+/// no-LLM ingest guard).
+async fn list_consolidation_audit(
+    State(state): State<MemoryApiState>,
+    Extension(tenant): Extension<MiddlewareTenantContext>,
+    Path(session_id): Path<String>,
+    Query(query): Query<AuditQuery>,
+) -> ApiResult<JsonResponse<ConsolidationAuditResponse>> {
+    info!(
+        tenant = %tenant.tenant_id,
+        session = %session_id,
+        "Memory consolidation audit read"
+    );
+
+    let Some(event_log) = &state.event_log else {
+        return Err(ApiError::NotImplemented(
+            "agent-memory consolidation audit requires an event log; none is configured on this \
+             deployment"
+                .to_string(),
+        ));
+    };
+
+    let reader = ConsolidationAuditReader::new(event_log.clone());
+    let limit = clamp_audit_limit(query.limit);
+    match reader
+        .list_session_decisions(&tenant.tenant_id, &session_id, limit)
+        .await
+    {
+        Ok(decisions) => Ok(JsonResponse(ConsolidationAuditResponse {
+            session_id,
+            decisions,
+        })),
+        Err(e) => {
+            error!("memory consolidation audit read failed: {e}");
+            Err(ApiError::Internal(e.to_string()))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +254,13 @@ mod tests {
         };
         let (scope, _) = request_to_scope_and_pair(&req, "tenant-from-jwt");
         assert_eq!(scope.tenant_id, "tenant-from-jwt");
+    }
+
+    #[test]
+    fn audit_limit_is_clamped() {
+        assert_eq!(clamp_audit_limit(None), AUDIT_DEFAULT_LIMIT);
+        assert_eq!(clamp_audit_limit(Some(0)), AUDIT_DEFAULT_LIMIT);
+        assert_eq!(clamp_audit_limit(Some(50)), 50);
+        assert_eq!(clamp_audit_limit(Some(AUDIT_MAX_LIMIT + 1)), AUDIT_MAX_LIMIT);
     }
 }

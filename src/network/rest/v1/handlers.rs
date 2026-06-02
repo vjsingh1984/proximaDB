@@ -1559,7 +1559,12 @@ pub fn create_router(state: AppState) -> axum::Router {
             Arc::new(engine)
         });
         let mounted = memory_engine.is_some();
-        let memory_state = MemoryApiState::new(memory_engine);
+        // The read surface (GET /consolidation/{session}) needs only the audit
+        // log, independent of the LLM backend — pass the same shared Arc the
+        // write sink persists to, so a deployment with no LLM can still serve
+        // any audit trail it already recorded.
+        let memory_state =
+            MemoryApiState::new(memory_engine, state.request_handlers.event_log.clone());
         router = router.nest(
             "/api/v1/memory",
             memory::create_router().with_state(memory_state),

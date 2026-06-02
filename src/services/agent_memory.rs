@@ -1260,4 +1260,88 @@ mod tests {
             "extraction must NOT run under an empty tenant (fail-closed before any work)"
         );
     }
+
+    #[test]
+    fn prefix_is_a_true_session_boundary() {
+        let p = consolidation_entity_prefix("acme", "s1");
+        assert_eq!(p, "memory-consolidation:acme:s1:");
+        // The sink's entity-id is prefix + memory_id, so a real decision id
+        // starts with the prefix...
+        assert!(format!("{p}m42").starts_with(&p));
+        // ...but a different session (s1b) does NOT, thanks to the trailing ':'.
+        let other = consolidation_entity_prefix("acme", "s1b");
+        assert!(!format!("{other}m9").starts_with(&p));
+        // ...and neither does a different tenant.
+        let other_tenant = consolidation_entity_prefix("evil", "s1");
+        assert!(!format!("{other_tenant}m42").starts_with(&p));
+    }
+
+    async fn temp_event_log(name: &str) -> Arc<EventLogEngine> {
+        let base_dir = std::path::PathBuf::from(format!("/tmp/test_memaudit_{name}"));
+        let _ = std::fs::remove_dir_all(&base_dir);
+        std::fs::create_dir_all(&base_dir).expect("create dir");
+        let cfg = crate::storage::engines::eventlog::EventLogConfig {
+            base_dir,
+            ..Default::default()
+        };
+        let local = crate::storage::persistence::filesystem::local::LocalFileSystem::new(
+            crate::storage::persistence::filesystem::local::LocalConfig::default(),
+        )
+        .await
+        .expect("local fs");
+        let fs = Arc::new(crate::storage::persistence::filesystem::UnifiedCachingFilesystem::new(
+            Arc::new(local),
+            format!("memaudit_{name}"),
+            "eventlog".to_string(),
+        ));
+        Arc::new(EventLogEngine::new(cfg, fs).expect("eventlog engine"))
+    }
+
+    fn decision(tenant: &str, session: &str, action: &str, memory_id: Option<&str>) -> ConsolidationAuditEvent {
+        ConsolidationAuditEvent {
+            collection: "mem".to_string(),
+            tenant_id: tenant.to_string(),
+            session_id: session.to_string(),
+            actor: "assistant-1".to_string(),
+            fact_text: format!("fact for {action}"),
+            memory_type: None,
+            action: action.to_string(),
+            memory_id: memory_id.map(str::to_string),
+            similar_ids: vec![],
+            similar_count: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn sink_then_reader_round_trips_one_session_only() {
+        let log = temp_event_log("roundtrip").await;
+        let sink = EventLogConsolidationAuditSink::from_event_log(log.clone());
+
+        // Two decisions in (acme, s1); decoys in a sibling session, sibling
+        // tenant, and a session whose name is a prefix-superstring of s1.
+        sink.emit(&decision("acme", "s1", "add", Some("m1"))).await.unwrap();
+        sink.emit(&decision("acme", "s1", "update", Some("m2"))).await.unwrap();
+        sink.emit(&decision("acme", "s1b", "add", Some("m9"))).await.unwrap();
+        sink.emit(&decision("evil", "s1", "add", Some("m1"))).await.unwrap();
+        sink.emit(&decision("acme", "s1", "noop", None)).await.unwrap();
+
+        let reader = ConsolidationAuditReader::new(log);
+        let got = reader.list_session_decisions("acme", "s1", 100).await.unwrap();
+
+        // Exactly the three (acme, s1) decisions — not s1b, not the evil tenant.
+        assert_eq!(got.len(), 3, "got: {got:?}");
+        assert!(got.iter().all(|d| d.tenant_id == "acme" && d.session_id == "s1"));
+        let actions: Vec<&str> = got.iter().map(|d| d.action.as_str()).collect();
+        assert_eq!(actions, vec!["add", "update", "noop"], "append order preserved");
+
+        // limit is honored.
+        let one = reader.list_session_decisions("acme", "s1", 1).await.unwrap();
+        assert_eq!(one.len(), 1);
+
+        // Unknown session → empty, not error.
+        let none = reader.list_session_decisions("acme", "nope", 100).await.unwrap();
+        assert!(none.is_empty());
+
+        let _ = std::fs::remove_dir_all("/tmp/test_memaudit_roundtrip");
+    }
 }
