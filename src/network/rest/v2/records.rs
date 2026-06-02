@@ -1996,13 +1996,137 @@ pub async fn delete_record_v2(
 // Spark's planInputPartitions use this to drain a collection without
 // the similarity bias of `searchRecords`.
 //
-// Storage-engine delegation (TD-099 acceptance 2) ships here: the
-// handler now drives `UnifiedHandlers::handle_record_scan_for_tenant`,
-// which fans into `VectorOperationsService::scan_records_with_tenant_context`
-// (the same WAL/memtable scan used by the rest of the v2 surface).
-// Cursor-based pagination (TD-099 acceptance 3) is still a follow-up;
-// the handler returns `next_cursor: None` and recommends callers bump
-// `limit` for now.
+// Storage-engine delegation (TD-099 acceptance 2) shipped in
+// `c8050ab1a`: the handler drives `UnifiedHandlers::handle_record_scan_for_tenant`
+// → `VectorOperationsService::scan_records_with_tenant_context` (the
+// same WAL/memtable scan used by the rest of the v2 surface).
+//
+// Cursor pagination (TD-099 acceptance 3, sub-slice a): the handler
+// now stable-sorts records by `(updated_at_ns, oid)` then filters
+// strictly after the inbound cursor's tuple. Cursors are opaque
+// `base64(rmp_serde(ScanCursor))` blobs; stale cursors (epoch > 24h)
+// return 410, collection-mismatched cursors return 400. The
+// `VectorOperationsService` still materializes the full collection
+// (cursor is applied at the handler layer); pushing cursor into the
+// WAL streaming layer is a separate slice — see TD-099 acceptance (3).
+
+/// Opaque pagination cursor for `scanRecords`. The handler emits this
+/// after every full page and accepts it back on the next call to
+/// resume strictly after the previously-served tuple
+/// `(last_updated_at_ns, last_oid)` (lexicographic, with
+/// `updated_at_ns` as the primary key for stable ordering across
+/// concurrent writes — see TD-099 acceptance 3).
+///
+/// Wire shape: `base64_url_safe(rmp_serde::to_vec_named(ScanCursor))`.
+/// Opaque to clients; they round-trip the string unchanged. Internal
+/// serde-named encoding lets us add fields later without breaking
+/// old cursors (rmp-serde named-field is schema-tolerant).
+///
+/// Staleness: cursors older than [`SCAN_CURSOR_MAX_AGE_NS`] are
+/// rejected with 410 Gone. Cursors whose `collection_id` doesn't
+/// match the URL collection return 400 Bad Request. Both protect
+/// against the WAL ordering drifting under a long-paused scanner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ScanCursor {
+    /// Bind cursor to its issuing collection so a cursor leaked
+    /// across collections fails fast (400) instead of silently
+    /// re-scanning the wrong corpus.
+    collection_id: String,
+    /// Last returned record's `updated_at_ns`. Resume yields records
+    /// whose `(updated_at_ns, oid)` is strictly greater.
+    last_updated_at_ns: i64,
+    /// Tie-break on records sharing `updated_at_ns`.
+    last_oid: String,
+    /// Issue-time nanoseconds (server clock). Stale cursors → 410.
+    epoch_ns: i64,
+}
+
+/// 24-hour cursor lifetime. Chosen because WAL ordering isn't
+/// commit-quorum-stable across day-scale window of writes; longer
+/// cursors risk skipping records inserted at or before the cursor's
+/// timestamp tuple by a later writer.
+const SCAN_CURSOR_MAX_AGE_NS: i64 = 24 * 60 * 60 * 1_000_000_000;
+
+impl ScanCursor {
+    fn encode(&self) -> Result<String, ApiError> {
+        use base64::Engine;
+        let bytes = rmp_serde::to_vec_named(self).map_err(|e| {
+            ApiError::Internal(format!("cursor encode failed: {e}"))
+        })?;
+        Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+    }
+
+    fn decode(raw: &str, collection_id: &str, now_ns: i64) -> Result<Self, ApiError> {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(raw)
+            .map_err(|e| {
+                ApiError::InvalidArgument(format!("malformed scan cursor: {e}"))
+            })?;
+        let cursor: ScanCursor = rmp_serde::from_slice(&bytes).map_err(|e| {
+            ApiError::InvalidArgument(format!("malformed scan cursor: {e}"))
+        })?;
+
+        if cursor.collection_id != collection_id {
+            return Err(ApiError::InvalidArgument(format!(
+                "cursor was issued for collection '{}', not '{}'",
+                cursor.collection_id, collection_id
+            )));
+        }
+        if now_ns.saturating_sub(cursor.epoch_ns) > SCAN_CURSOR_MAX_AGE_NS {
+            return Err(ApiError::Gone(format!(
+                "scan cursor expired (age > {} hours); restart scan from the beginning",
+                SCAN_CURSOR_MAX_AGE_NS / 1_000_000_000 / 3600
+            )));
+        }
+        Ok(cursor)
+    }
+}
+
+/// Stable sort by `(updated_at_ns, oid)` then strict-after-cursor
+/// filter, then take `limit`. Emits the next cursor when the page is
+/// FULL (i.e. more records may exist); returns `None` when the page
+/// is short (definite end-of-scan).
+///
+/// Caller passes a wall-clock `now_ns` so tests can pin the epoch.
+fn apply_scan_cursor(
+    mut records: Vec<ProximaRecord>,
+    cursor: Option<&ScanCursor>,
+    limit: usize,
+    collection_id: &str,
+    now_ns: i64,
+) -> Result<(Vec<ProximaRecord>, Option<ScanCursor>), ApiError> {
+    records.sort_by(|a, b| {
+        (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
+    });
+
+    let filtered: Vec<ProximaRecord> = if let Some(c) = cursor {
+        records
+            .into_iter()
+            .filter(|r| {
+                (r.updated_at_ns, r.oid.as_str()) > (c.last_updated_at_ns, c.last_oid.as_str())
+            })
+            .collect()
+    } else {
+        records
+    };
+
+    let truncate_at = filtered.len().min(limit);
+    let page: Vec<ProximaRecord> = filtered.into_iter().take(truncate_at).collect();
+
+    let next_cursor = if page.len() == limit {
+        page.last().map(|last| ScanCursor {
+            collection_id: collection_id.to_string(),
+            last_updated_at_ns: last.updated_at_ns,
+            last_oid: last.oid.clone(),
+            epoch_ns: now_ns,
+        })
+    } else {
+        None
+    };
+
+    Ok((page, next_cursor))
+}
 
 /// Body of `POST /records/scan`. Mirrors the OpenAPI `ScanRecordsRequest`
 /// schema; all fields optional so an empty `{}` returns the first page.
@@ -2072,12 +2196,24 @@ pub async fn scan_records(
     let include_text = request.include_text.unwrap_or(false);
     let include_props = true;
     let effective_limit = clamp_scan_limit(request.limit);
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0);
 
+    let inbound_cursor: Option<ScanCursor> = match request.cursor.as_deref() {
+        Some(raw) if !raw.is_empty() => Some(ScanCursor::decode(raw, &collection_id, now_ns)?),
+        _ => None,
+    };
+
+    // The underlying service still materializes the collection; cursor
+    // semantics are enforced at the handler. Streaming WAL push-down
+    // is a future slice — see TD-099 acceptance (3) follow-ups.
     let records = state
         .request_handlers
         .handle_record_scan_for_tenant(
             &collection_id,
-            Some(effective_limit),
+            None, // pull everything; handler will apply cursor + limit
             include_vector,
             include_props,
             Some(&tenant.tenant_id),
@@ -2091,15 +2227,28 @@ pub async fn scan_records(
             }
         })?;
 
-    let scanned_count = records.len() as u64;
-    let serialized: Vec<RecordV2Response> = records
+    let (page, next_cursor) = apply_scan_cursor(
+        records,
+        inbound_cursor.as_ref(),
+        effective_limit,
+        &collection_id,
+        now_ns,
+    )?;
+
+    let scanned_count = page.len() as u64;
+    let serialized: Vec<RecordV2Response> = page
         .into_iter()
         .map(|record| proxima_record_to_response(record, include_vector, include_text))
         .collect();
 
+    let next_cursor_str = match next_cursor {
+        Some(c) => Some(c.encode()?),
+        None => None,
+    };
+
     Ok(Json(ScanRecordsResponse {
         records: serialized,
-        next_cursor: None,
+        next_cursor: next_cursor_str,
         scanned_count: Some(scanned_count),
     }))
 }
@@ -2277,6 +2426,147 @@ mod tests {
             Some(fields) => assert_eq!(fields.len(), 0, "include_text=true → empty Vec"),
             None => panic!("include_text=true must yield Some(vec)"),
         }
+    }
+
+    fn fixture_cursor() -> ScanCursor {
+        ScanCursor {
+            collection_id: "col-a".to_string(),
+            last_updated_at_ns: 1_700_000_000_000_000_000,
+            last_oid: "rec-077".to_string(),
+            epoch_ns: 1_700_000_000_000_000_000,
+        }
+    }
+
+    #[test]
+    fn test_scan_cursor_encode_decode_round_trip() {
+        let cursor = fixture_cursor();
+        let raw = cursor.encode().expect("encode");
+        let now_ns = cursor.epoch_ns + 60_000_000_000; // 1 minute later
+        let decoded = ScanCursor::decode(&raw, "col-a", now_ns).expect("decode");
+        assert_eq!(decoded.collection_id, cursor.collection_id);
+        assert_eq!(decoded.last_updated_at_ns, cursor.last_updated_at_ns);
+        assert_eq!(decoded.last_oid, cursor.last_oid);
+        assert_eq!(decoded.epoch_ns, cursor.epoch_ns);
+    }
+
+    #[test]
+    fn test_scan_cursor_rejects_stale_epoch_with_410() {
+        let cursor = fixture_cursor();
+        let raw = cursor.encode().unwrap();
+        // 25 hours later, well past the 24h ceiling.
+        let now_ns = cursor.epoch_ns + 25 * 3_600 * 1_000_000_000;
+        match ScanCursor::decode(&raw, "col-a", now_ns) {
+            Err(ApiError::Gone(_)) => {} // expected
+            other => panic!("expected ApiError::Gone, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_scan_cursor_rejects_collection_mismatch_with_400() {
+        let cursor = fixture_cursor();
+        let raw = cursor.encode().unwrap();
+        let now_ns = cursor.epoch_ns;
+        match ScanCursor::decode(&raw, "col-OTHER", now_ns) {
+            Err(ApiError::InvalidArgument(msg)) => {
+                assert!(msg.contains("col-a"), "msg must surface the issuing collection: {msg}");
+                assert!(msg.contains("col-OTHER"), "msg must surface the wrong target: {msg}");
+            }
+            other => panic!("expected ApiError::InvalidArgument, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_scan_cursor_rejects_malformed_base64() {
+        let now_ns = 1_700_000_000_000_000_000_i64;
+        assert!(matches!(
+            ScanCursor::decode("not!valid!base64", "col-a", now_ns),
+            Err(ApiError::InvalidArgument(_))
+        ));
+    }
+
+    fn fixture_record(oid: &str, updated_at_ns: i64) -> ProximaRecord {
+        let mut r = ProximaRecord::default();
+        r.oid = oid.to_string();
+        r.updated_at_ns = updated_at_ns;
+        r
+    }
+
+    #[test]
+    fn test_apply_scan_cursor_emits_next_when_page_full() {
+        let records = vec![
+            fixture_record("c", 30),
+            fixture_record("a", 10),
+            fixture_record("b", 20),
+            fixture_record("d", 40),
+        ];
+        let now_ns = 99_999_999;
+        let (page, next) =
+            apply_scan_cursor(records, None, 2, "col-a", now_ns).unwrap();
+        assert_eq!(page.len(), 2, "limit=2 ⇒ exactly 2 records");
+        // sorted by (updated_at_ns, oid): a(10), b(20), c(30), d(40)
+        assert_eq!(page[0].oid, "a");
+        assert_eq!(page[1].oid, "b");
+        let nc = next.expect("full page must emit next_cursor");
+        assert_eq!(nc.collection_id, "col-a");
+        assert_eq!(nc.last_updated_at_ns, 20);
+        assert_eq!(nc.last_oid, "b");
+        assert_eq!(nc.epoch_ns, now_ns);
+    }
+
+    #[test]
+    fn test_apply_scan_cursor_no_next_when_page_short() {
+        let records = vec![fixture_record("a", 10), fixture_record("b", 20)];
+        let (page, next) =
+            apply_scan_cursor(records, None, 10, "col-a", 0).unwrap();
+        assert_eq!(page.len(), 2);
+        assert!(next.is_none(), "short page must NOT emit next_cursor");
+    }
+
+    #[test]
+    fn test_apply_scan_cursor_filters_strictly_after_cursor() {
+        // First page returned ["a"(10), "b"(20)]; second call resumes
+        // after b(20). Must skip a, b and return c, d in order.
+        let records = vec![
+            fixture_record("d", 40),
+            fixture_record("a", 10),
+            fixture_record("c", 30),
+            fixture_record("b", 20),
+        ];
+        let cursor = ScanCursor {
+            collection_id: "col-a".to_string(),
+            last_updated_at_ns: 20,
+            last_oid: "b".to_string(),
+            epoch_ns: 0,
+        };
+        let (page, next) =
+            apply_scan_cursor(records, Some(&cursor), 10, "col-a", 0).unwrap();
+        assert_eq!(page.len(), 2, "expected 2 records after cursor");
+        assert_eq!(page[0].oid, "c");
+        assert_eq!(page[1].oid, "d");
+        assert!(next.is_none(), "page is short ⇒ no next_cursor");
+    }
+
+    #[test]
+    fn test_apply_scan_cursor_breaks_ties_on_oid() {
+        // Three records share updated_at_ns=10 but differ in oid.
+        // Sort order must be lexicographic on oid for the tie-break.
+        // Cursor at ("a", 10) resumes past it; b + c must follow.
+        let records = vec![
+            fixture_record("c", 10),
+            fixture_record("a", 10),
+            fixture_record("b", 10),
+        ];
+        let cursor = ScanCursor {
+            collection_id: "col-a".to_string(),
+            last_updated_at_ns: 10,
+            last_oid: "a".to_string(),
+            epoch_ns: 0,
+        };
+        let (page, _) =
+            apply_scan_cursor(records, Some(&cursor), 10, "col-a", 0).unwrap();
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].oid, "b");
+        assert_eq!(page[1].oid, "c");
     }
 
     #[test]
