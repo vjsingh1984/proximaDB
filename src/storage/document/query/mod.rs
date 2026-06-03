@@ -16,10 +16,12 @@ use tracing::debug;
 
 use proximadb_document::DocumentRecordKey;
 
-use crate::proto::proximadb_v1::{
-    DocFilterCondition, DocFilterOperator, SortField, SortOrder, SqlObject, SqlValue,
-    sql_value::Value as SqlValueVariant,
-};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::ProximaTree;
+use proximadb_records::conversions::json_to_proxima;
+
+use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
+use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, SortField, SortOrder};
 
 use self::filter::FilterEvaluator;
 use super::indexes::IndexManager;
@@ -255,7 +257,7 @@ impl DocumentQueryExecutor {
         documents.sort_by(|a, b| {
             for field in sort_fields {
                 let order = SortOrder::try_from(field.order).unwrap_or(SortOrder::Asc);
-                let cmp = self.compare_by_path(&a.document, &b.document, &field.path);
+                let cmp = self.compare_by_path(&a.props, &b.props, &field.path);
                 let cmp = match order {
                     SortOrder::Desc => cmp.reverse(),
                     _ => cmp,
@@ -270,8 +272,9 @@ impl DocumentQueryExecutor {
         Ok(())
     }
 
-    /// Compare two documents by a JSON path
-    fn compare_by_path(&self, a: &SqlObject, b: &SqlObject, path: &str) -> std::cmp::Ordering {
+    /// Compare two documents by a JSON path over their canonical `props` trees
+    /// (TD-106 Slice 7b).
+    fn compare_by_path(&self, a: &ProximaTree, b: &ProximaTree, path: &str) -> std::cmp::Ordering {
         let val_a = self.extract_value(a, path);
         let val_b = self.extract_value(b, path);
 
@@ -279,41 +282,32 @@ impl DocumentQueryExecutor {
             (None, None) => std::cmp::Ordering::Equal,
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
-            (Some(a), Some(b)) => self.compare_sql_values(&a, &b),
+            (Some(a), Some(b)) => self.compare_proxima_values(&a, &b),
         }
     }
 
-    fn compare_sql_values(&self, a: &SqlValue, b: &SqlValue) -> std::cmp::Ordering {
-        match (&a.value, &b.value) {
-            (Some(SqlValueVariant::NullValue(_)), Some(SqlValueVariant::NullValue(_))) => {
-                std::cmp::Ordering::Equal
-            }
-            (Some(SqlValueVariant::NullValue(_)), _) => std::cmp::Ordering::Less,
-            (_, Some(SqlValueVariant::NullValue(_))) => std::cmp::Ordering::Greater,
-            (Some(SqlValueVariant::BoolValue(va)), Some(SqlValueVariant::BoolValue(vb))) => {
-                va.cmp(vb)
-            }
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::Int64Value(vb))) => {
-                va.cmp(vb)
-            }
-            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::NumberValue(vb))) => {
-                va.total_cmp(vb)
-            }
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::NumberValue(vb))) => {
-                (*va as f64).total_cmp(vb)
-            }
-            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::Int64Value(vb))) => {
-                va.total_cmp(&(*vb as f64))
-            }
-            (Some(SqlValueVariant::StringValue(va)), Some(SqlValueVariant::StringValue(vb))) => {
-                va.cmp(vb)
-            }
-            _ => std::cmp::Ordering::Equal,
+    /// Total-order comparison over canonical leaves (NaN-stable for sort).
+    fn compare_proxima_values(&self, a: &ProximaValue, b: &ProximaValue) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (a, b) {
+            (ProximaValue::Null, ProximaValue::Null) => Ordering::Equal,
+            (ProximaValue::Null, _) => Ordering::Less,
+            (_, ProximaValue::Null) => Ordering::Greater,
+            (ProximaValue::Boolean(va), ProximaValue::Boolean(vb)) => va.cmp(vb),
+            (ProximaValue::Int64(va), ProximaValue::Int64(vb)) => va.cmp(vb),
+            (ProximaValue::Float64(va), ProximaValue::Float64(vb)) => va.total_cmp(vb),
+            (ProximaValue::Int64(va), ProximaValue::Float64(vb)) => (*va as f64).total_cmp(vb),
+            (ProximaValue::Float64(va), ProximaValue::Int64(vb)) => va.total_cmp(&(*vb as f64)),
+            (ProximaValue::String(va), ProximaValue::String(vb)) => va.cmp(vb),
+            _ => Ordering::Equal,
         }
     }
 
-    fn extract_value(&self, doc: &SqlObject, path: &str) -> Option<SqlValue> {
-        let json_doc = self.sql_object_to_json(doc);
+    /// Extract a canonical value at a JSON path from a `props` tree. Renders the
+    /// tree via the shared `proxima_tree_to_json_map` bridge for jsonpath, then
+    /// lifts the result back with `json_to_proxima`.
+    fn extract_value(&self, doc: &ProximaTree, path: &str) -> Option<ProximaValue> {
+        let json_doc = JsonValue::Object(proxima_tree_to_json_map(doc).into_iter().collect());
         let normalized_path = self.normalize_path(path);
 
         match json_doc.path(&normalized_path) {
@@ -322,12 +316,12 @@ impl DocumentQueryExecutor {
                     if arr[0].is_null() {
                         None
                     } else {
-                        self.json_to_sql_value(&arr[0])
+                        Some(json_to_proxima(&arr[0]))
                     }
                 }
                 JsonValue::Array(arr) if arr.is_empty() => None,
                 JsonValue::Null => None,
-                _ => self.json_to_sql_value(&result),
+                _ => Some(json_to_proxima(&result)),
             },
             Err(_) => None,
         }
@@ -338,86 +332,6 @@ impl DocumentQueryExecutor {
             path.to_string()
         } else {
             format!("$.{}", path)
-        }
-    }
-
-    fn sql_object_to_json(&self, obj: &SqlObject) -> JsonValue {
-        let mut map = serde_json::Map::new();
-        for (key, value) in &obj.fields {
-            if let Some(json_val) = self.sql_value_to_json(value) {
-                map.insert(key.clone(), json_val);
-            }
-        }
-        JsonValue::Object(map)
-    }
-
-    fn sql_value_to_json(&self, value: &SqlValue) -> Option<JsonValue> {
-        match &value.value {
-            Some(SqlValueVariant::NullValue(_)) => Some(JsonValue::Null),
-            Some(SqlValueVariant::BoolValue(b)) => Some(JsonValue::Bool(*b)),
-            Some(SqlValueVariant::Int64Value(i)) => Some(JsonValue::Number((*i).into())),
-            Some(SqlValueVariant::NumberValue(f)) => {
-                serde_json::Number::from_f64(*f).map(JsonValue::Number)
-            }
-            Some(SqlValueVariant::StringValue(s)) => Some(JsonValue::String(s.clone())),
-            Some(SqlValueVariant::BytesValue(bytes)) => {
-                let hex: String = bytes.iter().map(|byte| format!("{:02x}", byte)).collect();
-                Some(JsonValue::String(format!("0x{}", hex)))
-            }
-            Some(SqlValueVariant::ArrayValue(arr)) => Some(JsonValue::Array(
-                arr.values
-                    .iter()
-                    .filter_map(|value| self.sql_value_to_json(value))
-                    .collect(),
-            )),
-            Some(SqlValueVariant::ObjectValue(obj)) => Some(self.sql_object_to_json(obj)),
-            None => None,
-        }
-    }
-
-    fn json_to_sql_value(&self, value: &JsonValue) -> Option<SqlValue> {
-        match value {
-            JsonValue::Null => Some(SqlValue {
-                value: Some(SqlValueVariant::NullValue(0)),
-            }),
-            JsonValue::Bool(b) => Some(SqlValue {
-                value: Some(SqlValueVariant::BoolValue(*b)),
-            }),
-            JsonValue::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Some(SqlValue {
-                        value: Some(SqlValueVariant::Int64Value(i)),
-                    })
-                } else {
-                    n.as_f64().map(|f| SqlValue {
-                        value: Some(SqlValueVariant::NumberValue(f)),
-                    })
-                }
-            }
-            JsonValue::String(s) => Some(SqlValue {
-                value: Some(SqlValueVariant::StringValue(s.clone())),
-            }),
-            JsonValue::Array(arr) => Some(SqlValue {
-                value: Some(SqlValueVariant::ArrayValue(
-                    crate::proto::proximadb_v1::SqlArray {
-                        values: arr
-                            .iter()
-                            .filter_map(|item| self.json_to_sql_value(item))
-                            .collect(),
-                    },
-                )),
-            }),
-            JsonValue::Object(obj) => Some(SqlValue {
-                value: Some(SqlValueVariant::ObjectValue(SqlObject {
-                    fields: obj
-                        .iter()
-                        .filter_map(|(key, value)| {
-                            self.json_to_sql_value(value)
-                                .map(|value| (key.clone(), value))
-                        })
-                        .collect(),
-                })),
-            }),
         }
     }
 }

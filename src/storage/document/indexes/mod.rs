@@ -18,7 +18,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::{DocIndexType, IndexDefinition};
-use proximadb_records::ProximaRecord;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaRecord, ProximaTree, tree_get};
 
 use self::array_index::ArrayIndex;
 use self::fulltext::FullTextIndex;
@@ -149,16 +150,16 @@ impl IndexManager {
 
         let indexes = self.indexes.read().await;
         if let Some(collection_indexes) = indexes.get(collection) {
-            // Update path indexes
+            // Update path indexes (TD-106 Slice 7b: read the canonical `props` tree)
             for (path, index) in &collection_indexes.path_indexes {
-                if let Some(value) = self.extract_path_value(&document.document, path) {
+                if let Some(value) = self.extract_path_value(&document.props, path) {
                     index.insert(projection_key, value)?;
                 }
             }
 
             // Update array indexes
             for (path, index) in &collection_indexes.array_indexes {
-                if let Some(values) = self.extract_array_values(&document.document, path) {
+                if let Some(values) = self.extract_array_values(&document.props, path) {
                     index.insert(projection_key, values)?;
                 }
             }
@@ -332,68 +333,53 @@ impl IndexManager {
 
     // Helper methods for value extraction
 
-    fn extract_path_value(
-        &self,
-        document: &crate::proto::proximadb_v1::SqlObject,
-        path: &str,
-    ) -> Option<IndexValue> {
-        use super::query::path_parser::JsonPath;
-        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
-
-        // Parse and evaluate the path
-        let json_path = JsonPath::parse(&format!("$.{}", path.trim_start_matches("$."))).ok()?;
-        let values = json_path.evaluate(document);
-
-        // Get the first value and convert to IndexValue
-        values.into_iter().next().and_then(|v| {
-            match v.value {
-                Some(SqlVal::NullValue(_)) => Some(IndexValue::Null),
-                Some(SqlVal::BoolValue(b)) => Some(IndexValue::Bool(b)),
-                Some(SqlVal::Int64Value(i)) => Some(IndexValue::Int(i)),
-                Some(SqlVal::NumberValue(f)) => Some(IndexValue::Float(f)),
-                Some(SqlVal::StringValue(s)) => Some(IndexValue::String(s)),
-                Some(SqlVal::BytesValue(b)) => Some(IndexValue::Bytes(b)),
-                _ => None, // Objects and arrays aren't directly indexable
-            }
-        })
+    /// Look up a dotted path in the canonical `props` tree (TD-106 Slice 7b).
+    fn extract_path_value(&self, props: &ProximaTree, path: &str) -> Option<IndexValue> {
+        let key = path.trim_start_matches('$').trim_start_matches('.');
+        tree_get(props, key).and_then(Self::proxima_value_to_index_value)
     }
 
-    fn extract_array_values(
-        &self,
-        document: &crate::proto::proximadb_v1::SqlObject,
-        path: &str,
-    ) -> Option<Vec<IndexValue>> {
-        use super::query::path_parser::JsonPath;
-        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
-
-        // Parse and evaluate the path
-        let json_path = JsonPath::parse(&format!("$.{}", path.trim_start_matches("$."))).ok()?;
-        let values = json_path.evaluate(document);
-
-        // Get the first value (should be an array)
-        let first = values.into_iter().next()?;
-
-        if let Some(SqlVal::ArrayValue(arr)) = first.value {
-            let index_values: Vec<IndexValue> = arr
-                .values
-                .into_iter()
-                .filter_map(|v| match v.value {
-                    Some(SqlVal::NullValue(_)) => Some(IndexValue::Null),
-                    Some(SqlVal::BoolValue(b)) => Some(IndexValue::Bool(b)),
-                    Some(SqlVal::Int64Value(i)) => Some(IndexValue::Int(i)),
-                    Some(SqlVal::NumberValue(f)) => Some(IndexValue::Float(f)),
-                    Some(SqlVal::StringValue(s)) => Some(IndexValue::String(s)),
-                    Some(SqlVal::BytesValue(b)) => Some(IndexValue::Bytes(b)),
-                    _ => None,
-                })
-                .collect();
-
-            if !index_values.is_empty() {
-                return Some(index_values);
+    fn extract_array_values(&self, props: &ProximaTree, path: &str) -> Option<Vec<IndexValue>> {
+        let key = path.trim_start_matches('$').trim_start_matches('.');
+        match tree_get(props, key)? {
+            ProximaValue::Array(items) => {
+                let index_values: Vec<IndexValue> = items
+                    .iter()
+                    .filter_map(Self::proxima_value_to_index_value)
+                    .collect();
+                (!index_values.is_empty()).then_some(index_values)
             }
+            _ => None,
         }
+    }
 
-        None
+    /// Map a canonical scalar leaf to an `IndexValue`. Objects/arrays/maps and
+    /// non-scalar variants are not directly indexable (matches the prior
+    /// `SqlValue` scalar-only behavior).
+    fn proxima_value_to_index_value(value: &ProximaValue) -> Option<IndexValue> {
+        match value {
+            ProximaValue::Null => Some(IndexValue::Null),
+            ProximaValue::Boolean(b) => Some(IndexValue::Bool(*b)),
+            ProximaValue::Int8(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::Int16(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::Int32(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::Int64(i) => Some(IndexValue::Int(*i)),
+            ProximaValue::UInt8(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::UInt16(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::UInt32(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::UInt64(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::Float16(f) | ProximaValue::Float32(f) => {
+                Some(IndexValue::Float(*f as f64))
+            }
+            ProximaValue::Float64(f) => Some(IndexValue::Float(*f)),
+            ProximaValue::String(s) | ProximaValue::Symbol(s) => {
+                Some(IndexValue::String(s.clone()))
+            }
+            ProximaValue::Binary(b) | ProximaValue::BinaryVector(b) => {
+                Some(IndexValue::Bytes(b.clone()))
+            }
+            _ => None,
+        }
     }
 }
 
