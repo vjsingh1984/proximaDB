@@ -14,6 +14,8 @@ use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::conversions::{proxima_to_sql_value, sql_value_to_proxima};
 use serde_json::Value as JsonValue;
 use tracing::debug;
 
@@ -180,12 +182,14 @@ impl AggregationExecutor {
                 );
             }
 
-            // Compute each aggregation
+            // Compute each aggregation. The accumulator kernel is canonical
+            // (`ProximaValue`); convert back to the proto `SqlValue` row field at this
+            // edge (the working set stays `SqlObject` until Group B/S5) — TD-106 Slice 3.
             for agg in &group_stage.aggregations {
                 let agg_value = self.compute_aggregation(&group_docs, agg)?;
                 result_doc
                     .fields
-                    .insert(agg.output_field.clone(), agg_value);
+                    .insert(agg.output_field.clone(), proxima_to_sql_value(&agg_value));
             }
 
             results.push(result_doc);
@@ -210,8 +214,11 @@ impl AggregationExecutor {
         }
     }
 
-    /// Compute a single aggregation over a group of documents
-    fn compute_aggregation(&self, docs: &[&SqlObject], agg: &Aggregation) -> Result<SqlValue> {
+    /// Compute a single aggregation over a group of documents.
+    ///
+    /// The accumulator kernel produces canonical `ProximaValue` (TD-106 Slice 3);
+    /// callers convert to the proto row field at the edge via `proxima_to_sql_value`.
+    fn compute_aggregation(&self, docs: &[&SqlObject], agg: &Aggregation) -> Result<ProximaValue> {
         let agg_type =
             AggregationType::try_from(agg.r#type).unwrap_or(AggregationType::Unspecified);
         let path = &agg.input_path;
@@ -231,7 +238,7 @@ impl AggregationExecutor {
     }
 
     /// COUNT aggregation - counts documents (or non-null values if path specified)
-    fn agg_count(&self, docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
+    fn agg_count(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
         let count = if path.is_empty() || path == "*" {
             // Count all documents
             docs.len() as i64
@@ -242,13 +249,11 @@ impl AggregationExecutor {
                 .count() as i64
         };
 
-        Ok(SqlValue {
-            value: Some(SqlValueVariant::Int64Value(count)),
-        })
+        Ok(ProximaValue::Int64(count))
     }
 
     /// SUM aggregation
-    fn agg_sum(&self, docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
+    fn agg_sum(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
         let mut sum = 0.0;
 
         for doc in docs {
@@ -257,13 +262,11 @@ impl AggregationExecutor {
             }
         }
 
-        Ok(SqlValue {
-            value: Some(SqlValueVariant::NumberValue(sum)),
-        })
+        Ok(ProximaValue::Float64(sum))
     }
 
     /// AVG aggregation
-    fn agg_avg(&self, docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
+    fn agg_avg(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
         let mut sum = 0.0;
         let mut count = 0;
 
@@ -276,13 +279,11 @@ impl AggregationExecutor {
 
         let avg = if count > 0 { sum / count as f64 } else { 0.0 };
 
-        Ok(SqlValue {
-            value: Some(SqlValueVariant::NumberValue(avg)),
-        })
+        Ok(ProximaValue::Float64(avg))
     }
 
     /// MIN aggregation
-    fn agg_min(&self, docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
+    fn agg_min(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
         let mut min_val: Option<f64> = None;
 
         for doc in docs {
@@ -291,13 +292,11 @@ impl AggregationExecutor {
             }
         }
 
-        Ok(SqlValue {
-            value: min_val.map(SqlValueVariant::NumberValue),
-        })
+        Ok(min_val.map_or(ProximaValue::Null, ProximaValue::Float64))
     }
 
     /// MAX aggregation
-    fn agg_max(&self, docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
+    fn agg_max(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
         let mut max_val: Option<f64> = None;
 
         for doc in docs {
@@ -306,56 +305,50 @@ impl AggregationExecutor {
             }
         }
 
-        Ok(SqlValue {
-            value: max_val.map(SqlValueVariant::NumberValue),
-        })
+        Ok(max_val.map_or(ProximaValue::Null, ProximaValue::Float64))
     }
 
     /// FIRST aggregation - returns first value in group
-    fn agg_first(&self, docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
+    fn agg_first(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
         for doc in docs {
             if let Some(val) = self.extract_value(doc, path) {
-                return Ok(val);
+                return Ok(sql_value_to_proxima(&val));
             }
         }
 
-        Ok(SqlValue {
-            value: Some(SqlValueVariant::NullValue(0)),
-        })
+        Ok(ProximaValue::Null)
     }
 
     /// LAST aggregation - returns last value in group
-    fn agg_last(&self, docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
+    fn agg_last(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
         for doc in docs.iter().rev() {
             if let Some(val) = self.extract_value(doc, path) {
-                return Ok(val);
+                return Ok(sql_value_to_proxima(&val));
             }
         }
 
-        Ok(SqlValue {
-            value: Some(SqlValueVariant::NullValue(0)),
-        })
+        Ok(ProximaValue::Null)
     }
 
     /// PUSH aggregation - collects all values into an array
-    fn agg_push(&self, docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
-        let values: Vec<SqlValue> = docs
+    fn agg_push(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
+        let values: Vec<ProximaValue> = docs
             .iter()
             .filter_map(|doc| self.extract_value(doc, path))
+            .map(|v| sql_value_to_proxima(&v))
             .collect();
 
-        Ok(SqlValue {
-            value: Some(SqlValueVariant::ArrayValue(SqlArray { values })),
-        })
+        Ok(ProximaValue::Array(values))
     }
 
     /// ADD_TO_SET aggregation - collects unique values into an array
-    fn agg_add_to_set(&self, docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
+    fn agg_add_to_set(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
+        // Dedup on the extracted proto values (reusing the existing equality), then
+        // canonicalize the surviving set. Preserves first-seen ordering + semantics.
         let mut seen: Vec<SqlValue> = Vec::new();
 
         for doc in docs {
             if let Some(val) = self.extract_value(doc, path) {
-                // Check if we've already seen this value
                 let is_duplicate = seen.iter().any(|v| self.sql_values_equal(v, &val));
                 if !is_duplicate {
                     seen.push(val);
@@ -363,9 +356,9 @@ impl AggregationExecutor {
             }
         }
 
-        Ok(SqlValue {
-            value: Some(SqlValueVariant::ArrayValue(SqlArray { values: seen })),
-        })
+        Ok(ProximaValue::Array(
+            seen.iter().map(sql_value_to_proxima).collect(),
+        ))
     }
 
     // =========================================================================
@@ -974,10 +967,10 @@ mod tests {
             .compute_aggregation(&doc_refs, &agg)
             .expect("COUNT aggregation should succeed");
 
-        if let Some(SqlValueVariant::Int64Value(count)) = result.value {
+        if let ProximaValue::Int64(count) = result {
             assert_eq!(count, 3);
         } else {
-            panic!("Expected Int64Value");
+            panic!("Expected Int64");
         }
     }
 
@@ -1002,10 +995,10 @@ mod tests {
             .compute_aggregation(&doc_refs, &agg)
             .expect("SUM aggregation should succeed");
 
-        if let Some(SqlValueVariant::NumberValue(sum)) = result.value {
+        if let ProximaValue::Float64(sum) = result {
             assert!((sum - 600.0).abs() < f64::EPSILON);
         } else {
-            panic!("Expected NumberValue");
+            panic!("Expected Float64");
         }
     }
 
@@ -1030,10 +1023,10 @@ mod tests {
             .compute_aggregation(&doc_refs, &agg)
             .expect("AVG aggregation should succeed");
 
-        if let Some(SqlValueVariant::NumberValue(avg)) = result.value {
+        if let ProximaValue::Float64(avg) = result {
             assert!((avg - 90.0).abs() < f64::EPSILON);
         } else {
-            panic!("Expected NumberValue");
+            panic!("Expected Float64");
         }
     }
 
@@ -1058,10 +1051,10 @@ mod tests {
         let min_result = executor
             .compute_aggregation(&doc_refs, &min_agg)
             .expect("MIN aggregation should succeed");
-        if let Some(SqlValueVariant::NumberValue(min)) = min_result.value {
+        if let ProximaValue::Float64(min) = min_result {
             assert!((min - 3.0).abs() < f64::EPSILON);
         } else {
-            panic!("Expected NumberValue for MIN");
+            panic!("Expected Float64 for MIN");
         }
 
         // Test MAX
@@ -1073,10 +1066,10 @@ mod tests {
         let max_result = executor
             .compute_aggregation(&doc_refs, &max_agg)
             .expect("MAX aggregation should succeed");
-        if let Some(SqlValueVariant::NumberValue(max)) = max_result.value {
+        if let ProximaValue::Float64(max) = max_result {
             assert!((max - 8.0).abs() < f64::EPSILON);
         } else {
-            panic!("Expected NumberValue for MAX");
+            panic!("Expected Float64 for MAX");
         }
     }
 
