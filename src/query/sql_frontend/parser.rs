@@ -1441,44 +1441,65 @@ impl SqlFrontendParser {
 
     /// Convert WHERE clause expression to WhereClause (for DML)
     fn convert_where_clause_dml(&self, expr: &SqlExpr) -> Result<WhereClause> {
-        let conditions = self.extract_conditions_dml(expr)?;
         let operator = self.determine_logical_operator_dml(expr);
-
+        let conditions = self.flatten_conditions_for_op(expr, operator)?;
         Ok(WhereClause {
             conditions,
             operator,
         })
     }
 
-    /// Extract conditions from a WHERE expression (for DML)
-    fn extract_conditions_dml(&self, expr: &SqlExpr) -> Result<Vec<Condition>> {
+    /// Flatten a boolean WHERE expression into the operands of `target_op`,
+    /// preserving any differently-combined subtree as a single
+    /// `Condition::Nested`. This keeps the boolean tree faithful — e.g.
+    /// `A OR (B AND C)` → `[A, Nested{And,[B,C]}]` — instead of flattening every
+    /// AND/OR into one list (which silently mis-evaluated mixed clauses).
+    fn flatten_conditions_for_op(
+        &self,
+        expr: &SqlExpr,
+        target_op: LogicalOperator,
+    ) -> Result<Vec<Condition>> {
         match expr {
+            SqlExpr::Nested(inner) => self.flatten_conditions_for_op(inner, target_op),
+            SqlExpr::BinaryOp { left, op, right }
+                if Self::binary_op_matches_logical(op, target_op) =>
+            {
+                let mut conditions = self.flatten_conditions_for_op(left, target_op)?;
+                conditions.extend(self.flatten_conditions_for_op(right, target_op)?);
+                Ok(conditions)
+            }
+            _ => Ok(vec![self.expr_to_condition_dml(expr)?]),
+        }
+    }
+
+    /// Convert one `SqlExpr` into a single `Condition` — a `Nested` node for an
+    /// AND/OR subtree, a leaf otherwise.
+    fn expr_to_condition_dml(&self, expr: &SqlExpr) -> Result<Condition> {
+        match expr {
+            SqlExpr::Nested(inner) => self.expr_to_condition_dml(inner),
+            SqlExpr::BinaryOp {
+                op: BinaryOperator::And,
+                ..
+            } => Ok(Condition::Nested {
+                conditions: self.flatten_conditions_for_op(expr, LogicalOperator::And)?,
+                operator: LogicalOperator::And,
+            }),
+            SqlExpr::BinaryOp {
+                op: BinaryOperator::Or,
+                ..
+            } => Ok(Condition::Nested {
+                conditions: self.flatten_conditions_for_op(expr, LogicalOperator::Or)?,
+                operator: LogicalOperator::Or,
+            }),
             SqlExpr::BinaryOp { left, op, right } => {
-                match op {
-                    BinaryOperator::And | BinaryOperator::Or => {
-                        // Recursively extract conditions from both sides
-                        let mut conditions = self.extract_conditions_dml(left)?;
-                        conditions.extend(self.extract_conditions_dml(right)?);
-                        Ok(conditions)
-                    }
-                    BinaryOperator::Eq
-                    | BinaryOperator::NotEq
-                    | BinaryOperator::Lt
-                    | BinaryOperator::LtEq
-                    | BinaryOperator::Gt
-                    | BinaryOperator::GtEq => {
-                        // Simple comparison condition
-                        let column = self.expr_to_column_name_dml(left)?;
-                        let operator = self.convert_comparison_op_dml(op)?;
-                        let value = self.convert_expr_to_dml_literal(right)?;
-                        Ok(vec![Condition::Comparison {
-                            column,
-                            operator,
-                            value,
-                        }])
-                    }
-                    _ => Err(anyhow!("Unsupported operator in WHERE: {:?}", op)),
-                }
+                let column = self.expr_to_column_name_dml(left)?;
+                let operator = self.convert_comparison_op_dml(op)?;
+                let value = self.convert_expr_to_dml_literal(right)?;
+                Ok(Condition::Comparison {
+                    column,
+                    operator,
+                    value,
+                })
             }
             SqlExpr::InList {
                 expr,
@@ -1486,15 +1507,15 @@ impl SqlFrontendParser {
                 negated,
             } => {
                 let column = self.expr_to_column_name_dml(expr)?;
-                let values: Result<Vec<SqlValueLiteral>> = list
+                let values = list
                     .iter()
                     .map(|e| self.convert_expr_to_dml_literal(e))
-                    .collect();
-                Ok(vec![Condition::In {
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Condition::In {
                     column,
-                    values: values?,
+                    values,
                     negated: *negated,
-                }])
+                })
             }
             SqlExpr::Between {
                 expr,
@@ -1503,46 +1524,41 @@ impl SqlFrontendParser {
                 high,
             } => {
                 let column = self.expr_to_column_name_dml(expr)?;
-                let low_val = self.convert_expr_to_dml_literal(low)?;
-                let high_val = self.convert_expr_to_dml_literal(high)?;
-                Ok(vec![Condition::Between {
+                Ok(Condition::Between {
                     column,
-                    low: low_val,
-                    high: high_val,
+                    low: self.convert_expr_to_dml_literal(low)?,
+                    high: self.convert_expr_to_dml_literal(high)?,
                     negated: *negated,
-                }])
+                })
             }
-            SqlExpr::IsNull(expr) => {
-                let column = self.expr_to_column_name_dml(expr)?;
-                Ok(vec![Condition::IsNull {
-                    column,
-                    negated: false,
-                }])
-            }
-            SqlExpr::IsNotNull(expr) => {
-                let column = self.expr_to_column_name_dml(expr)?;
-                Ok(vec![Condition::IsNull {
-                    column,
-                    negated: true,
-                }])
-            }
+            SqlExpr::IsNull(inner) => Ok(Condition::IsNull {
+                column: self.expr_to_column_name_dml(inner)?,
+                negated: false,
+            }),
+            SqlExpr::IsNotNull(inner) => Ok(Condition::IsNull {
+                column: self.expr_to_column_name_dml(inner)?,
+                negated: true,
+            }),
             SqlExpr::Like {
                 expr,
                 pattern,
                 negated,
                 ..
-            } => {
-                let column = self.expr_to_column_name_dml(expr)?;
-                let pattern_str = self.extract_like_pattern(pattern)?;
-                Ok(vec![Condition::Like {
-                    column,
-                    pattern: pattern_str,
-                    negated: *negated,
-                }])
-            }
-            SqlExpr::Nested(inner) => self.extract_conditions_dml(inner),
+            } => Ok(Condition::Like {
+                column: self.expr_to_column_name_dml(expr)?,
+                pattern: self.extract_like_pattern(pattern)?,
+                negated: *negated,
+            }),
             _ => Err(anyhow!("Unsupported WHERE expression: {:?}", expr)),
         }
+    }
+
+    fn binary_op_matches_logical(op: &BinaryOperator, logical: LogicalOperator) -> bool {
+        matches!(
+            (op, logical),
+            (BinaryOperator::And, LogicalOperator::And)
+                | (BinaryOperator::Or, LogicalOperator::Or)
+        )
     }
 
     /// Extract LIKE pattern string

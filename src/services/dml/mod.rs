@@ -80,6 +80,19 @@ pub struct RelationalSelectPredicate {
     pub condition: RelationalSelectPredicateCondition,
 }
 
+/// Resolved boolean predicate tree for UPDATE/DELETE `WHERE` evaluation. Leaves
+/// are the same catalog-resolved [`RelationalSelectPredicate`] used by SELECT;
+/// the And/Or/Not nodes let UPDATE/DELETE honor full boolean `WHERE` clauses
+/// (OR, nested groups, NOT BETWEEN) while reusing the exact same catalog-aware
+/// leaf comparison (`compare_catalog_value`, PK-by-oid resolution).
+#[derive(Debug, Clone)]
+enum RelationalPredicateTree {
+    Leaf(RelationalSelectPredicate),
+    And(Vec<RelationalPredicateTree>),
+    Or(Vec<RelationalPredicateTree>),
+    Not(Box<RelationalPredicateTree>),
+}
+
 /// Syntax-level predicate input from a SQL/protocol facade.
 ///
 /// DML resolves this against xCatalog before route selection or evaluation.
@@ -1134,39 +1147,67 @@ impl DmlService {
         predicates: &[RelationalSelectPredicate],
         primary_key: Option<&str>,
     ) -> bool {
-        predicates.iter().all(|predicate| {
-            let value =
-                Self::record_column_value_for_predicate(record, &predicate.column, primary_key);
-            match &predicate.condition {
-                RelationalSelectPredicateCondition::Comparison { operator, literal } => {
+        predicates
+            .iter()
+            .all(|predicate| Self::eval_predicate_leaf(record, predicate, primary_key))
+    }
+
+    /// Evaluate a single catalog-resolved leaf predicate against a record
+    /// (catalog-type-aware comparison, PK resolved via `record.oid`). Shared by
+    /// the flat SELECT matcher and the UPDATE/DELETE predicate tree.
+    fn eval_predicate_leaf(
+        record: &ProximaRecord,
+        predicate: &RelationalSelectPredicate,
+        primary_key: Option<&str>,
+    ) -> bool {
+        let value =
+            Self::record_column_value_for_predicate(record, &predicate.column, primary_key);
+        match &predicate.condition {
+            RelationalSelectPredicateCondition::Comparison { operator, literal } => {
+                Self::compare_catalog_value(&value, literal, *operator, predicate.column.data_type)
+            }
+            RelationalSelectPredicateCondition::In { literals, negated } => {
+                let matches = literals.iter().any(|literal| {
                     Self::compare_catalog_value(
                         &value,
                         literal,
-                        *operator,
+                        RelationalSelectPredicateOperator::Equal,
                         predicate.column.data_type,
                     )
-                }
-                RelationalSelectPredicateCondition::In { literals, negated } => {
-                    let matches = literals.iter().any(|literal| {
-                        Self::compare_catalog_value(
-                            &value,
-                            literal,
-                            RelationalSelectPredicateOperator::Equal,
-                            predicate.column.data_type,
-                        )
-                    });
-                    if *negated { !matches } else { matches }
-                }
-                RelationalSelectPredicateCondition::Like { pattern, negated } => {
-                    let matches = Self::sql_like_matches(&value, pattern);
-                    if *negated { !matches } else { matches }
-                }
-                RelationalSelectPredicateCondition::IsNull { negated } => {
-                    let matches = value.is_empty();
-                    if *negated { !matches } else { matches }
-                }
+                });
+                if *negated { !matches } else { matches }
             }
-        })
+            RelationalSelectPredicateCondition::Like { pattern, negated } => {
+                let matches = Self::sql_like_matches(&value, pattern);
+                if *negated { !matches } else { matches }
+            }
+            RelationalSelectPredicateCondition::IsNull { negated } => {
+                let matches = value.is_empty();
+                if *negated { !matches } else { matches }
+            }
+        }
+    }
+
+    /// Recursively evaluate a boolean predicate tree against a record.
+    fn eval_predicate_tree(
+        record: &ProximaRecord,
+        tree: &RelationalPredicateTree,
+        primary_key: Option<&str>,
+    ) -> bool {
+        match tree {
+            RelationalPredicateTree::Leaf(predicate) => {
+                Self::eval_predicate_leaf(record, predicate, primary_key)
+            }
+            RelationalPredicateTree::And(children) => children
+                .iter()
+                .all(|child| Self::eval_predicate_tree(record, child, primary_key)),
+            RelationalPredicateTree::Or(children) => children
+                .iter()
+                .any(|child| Self::eval_predicate_tree(record, child, primary_key)),
+            RelationalPredicateTree::Not(child) => {
+                !Self::eval_predicate_tree(record, child, primary_key)
+            }
+        }
     }
 
     /// Resolve and evaluate syntax-level predicate inputs for tests and simple
@@ -2440,12 +2481,12 @@ impl DmlService {
         table_id_name: &str,
         where_clause: &WhereClause,
     ) -> Result<Vec<String>> {
-        let predicates = self.where_clause_to_select_predicates(where_clause, table_schema)?;
+        let tree = self.where_clause_to_predicate_tree(where_clause, table_schema)?;
         let primary_key = table_schema.primary_key.first().map(String::as_str);
 
-        // PK fast-path: when the WHERE pins primary-key `=`/`IN` candidates, fetch
-        // them by key (cheap point lookups) and keep only those that ALSO satisfy
-        // the full predicate.
+        // PK fast-path: when the WHERE pins primary-key `=`/`IN` candidates (only
+        // sound under a top-level conjunction — see `extract_pk_candidate_ids`),
+        // fetch them by key and keep only those that ALSO satisfy the full tree.
         let pk_candidates = self.extract_pk_candidate_ids(where_clause, table_schema)?;
         if !pk_candidates.is_empty() {
             let mut ids = Vec::new();
@@ -2467,17 +2508,15 @@ impl DmlService {
                     continue;
                 };
                 let record = Self::rich_result_to_record(rich);
-                if Self::record_matches_select_predicates(&record, &predicates, primary_key) {
+                if Self::eval_predicate_tree(&record, &tree, primary_key) {
                     ids.push(record.oid);
                 }
             }
             return Ok(ids);
         }
 
-        // No PK predicate: push the full predicate into the store scan.
-        let pred = |record: &ProximaRecord| {
-            Self::record_matches_select_predicates(record, &predicates, primary_key)
-        };
+        // No PK predicate: push the full predicate tree into the store scan.
+        let pred = |record: &ProximaRecord| Self::eval_predicate_tree(record, &tree, primary_key);
         let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
         let records = self
             .record_store
@@ -2505,6 +2544,14 @@ impl DmlService {
         where_clause: &WhereClause,
         table_schema: &CatalogTableSchema,
     ) -> Result<Vec<String>> {
+        // Only sound under a top-level conjunction: under OR a PK leaf does not
+        // bound the match set (`id = 5 OR status = 'x'` matches any id), so force
+        // the full scan path. A PK leaf nested under an inner OR yields no
+        // top-level candidate below → also scans.
+        if matches!(where_clause.operator, LogicalOperator::Or) && where_clause.conditions.len() > 1
+        {
+            return Ok(Vec::new());
+        }
         let Some(primary_key_column) = Self::primary_key_column(table_schema) else {
             return Ok(Vec::new());
         };
@@ -2535,54 +2582,75 @@ impl DmlService {
         Ok(ids)
     }
 
-    /// Convert an UPDATE/DELETE `WhereClause` into the catalog-resolved
-    /// `RelationalSelectPredicate` set used by the shared predicate evaluator.
-    /// Shapes the AND-only matcher cannot express are REJECTED with a clear error
-    /// (never silently dropped, which was the prior bug).
-    fn where_clause_to_select_predicates(
+    /// Convert an UPDATE/DELETE `WhereClause` into a resolved boolean predicate
+    /// tree. Columns are resolved against the catalog ONCE here (so per-record
+    /// evaluation is infallible); supports AND/OR/nested/BETWEEN/NOT BETWEEN.
+    fn where_clause_to_predicate_tree(
         &self,
         where_clause: &WhereClause,
         table_schema: &CatalogTableSchema,
-    ) -> Result<Vec<RelationalSelectPredicate>> {
-        if where_clause.conditions.len() > 1
-            && matches!(where_clause.operator, LogicalOperator::Or)
-        {
-            return Err(anyhow!(
-                "OR conditions in UPDATE/DELETE WHERE are not yet supported (only AND of simple predicates)"
-            ));
-        }
-        let mut inputs: Vec<RelationalSelectPredicateInput> = Vec::new();
-        for condition in &where_clause.conditions {
-            self.push_condition_as_predicate_inputs(condition, &mut inputs)?;
-        }
-        if inputs.is_empty() {
-            return Err(anyhow!(
-                "WHERE clause has no usable predicates for UPDATE/DELETE"
-            ));
-        }
-        Self::resolve_select_predicates(table_schema, &inputs)
+    ) -> Result<RelationalPredicateTree> {
+        self.combine_conditions(&where_clause.conditions, where_clause.operator, table_schema)
     }
 
-    /// Lower one `Condition` into one or more syntax-level predicate inputs.
-    /// `BETWEEN` expands to `>= low AND <= high`; `NOT BETWEEN`, nested trees,
-    /// and OR are rejected (the flat-AND matcher can't represent them).
-    fn push_condition_as_predicate_inputs(
+    /// Combine a list of conditions with the given logical operator.
+    fn combine_conditions(
+        &self,
+        conditions: &[Condition],
+        operator: LogicalOperator,
+        table_schema: &CatalogTableSchema,
+    ) -> Result<RelationalPredicateTree> {
+        if conditions.is_empty() {
+            return Err(anyhow!("WHERE clause has no conditions for UPDATE/DELETE"));
+        }
+        let mut children = conditions
+            .iter()
+            .map(|condition| self.condition_to_predicate_tree(condition, table_schema))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(if children.len() == 1 {
+            children.pop().expect("len == 1")
+        } else {
+            match operator {
+                LogicalOperator::And => RelationalPredicateTree::And(children),
+                LogicalOperator::Or => RelationalPredicateTree::Or(children),
+            }
+        })
+    }
+
+    /// Lower one `Condition` into a resolved predicate tree node. `BETWEEN`
+    /// expands to `>= low AND <= high` (negated → `Not`); `Nested` recurses.
+    fn condition_to_predicate_tree(
         &self,
         condition: &Condition,
-        inputs: &mut Vec<RelationalSelectPredicateInput>,
-    ) -> Result<()> {
+        table_schema: &CatalogTableSchema,
+    ) -> Result<RelationalPredicateTree> {
+        // Resolve a single column-leaf condition into a tree `Leaf`.
+        let leaf = |column: &str,
+                    cond: RelationalSelectPredicateCondition|
+         -> Result<RelationalPredicateTree> {
+            let resolved = Self::resolve_select_predicates(
+                table_schema,
+                &[RelationalSelectPredicateInput {
+                    column_name: column.to_string(),
+                    condition: cond,
+                }],
+            )?;
+            Ok(RelationalPredicateTree::Leaf(
+                resolved.into_iter().next().expect("one input → one predicate"),
+            ))
+        };
         match condition {
             Condition::Comparison {
                 column,
                 operator,
                 value,
-            } => inputs.push(RelationalSelectPredicateInput {
-                column_name: column.clone(),
-                condition: RelationalSelectPredicateCondition::Comparison {
+            } => leaf(
+                column,
+                RelationalSelectPredicateCondition::Comparison {
                     operator: Self::map_comparison_operator(*operator),
                     literal: self.literal_to_string(value)?,
                 },
-            }),
+            ),
             Condition::In {
                 column,
                 values,
@@ -2592,65 +2660,62 @@ impl DmlService {
                     .iter()
                     .map(|value| self.literal_to_string(value))
                     .collect::<Result<Vec<_>>>()?;
-                inputs.push(RelationalSelectPredicateInput {
-                    column_name: column.clone(),
-                    condition: RelationalSelectPredicateCondition::In {
+                leaf(
+                    column,
+                    RelationalSelectPredicateCondition::In {
                         literals,
                         negated: *negated,
                     },
-                });
+                )
             }
             Condition::Like {
                 column,
                 pattern,
                 negated,
-            } => inputs.push(RelationalSelectPredicateInput {
-                column_name: column.clone(),
-                condition: RelationalSelectPredicateCondition::Like {
+            } => leaf(
+                column,
+                RelationalSelectPredicateCondition::Like {
                     pattern: pattern.clone(),
                     negated: *negated,
                 },
-            }),
-            Condition::IsNull { column, negated } => {
-                inputs.push(RelationalSelectPredicateInput {
-                    column_name: column.clone(),
-                    condition: RelationalSelectPredicateCondition::IsNull { negated: *negated },
-                })
-            }
+            ),
+            Condition::IsNull { column, negated } => leaf(
+                column,
+                RelationalSelectPredicateCondition::IsNull { negated: *negated },
+            ),
             Condition::Between {
                 column,
                 low,
                 high,
-                negated: false,
+                negated,
             } => {
                 // col BETWEEN low AND high  ≡  col >= low AND col <= high
-                inputs.push(RelationalSelectPredicateInput {
-                    column_name: column.clone(),
-                    condition: RelationalSelectPredicateCondition::Comparison {
+                let ge = leaf(
+                    column,
+                    RelationalSelectPredicateCondition::Comparison {
                         operator: RelationalSelectPredicateOperator::GreaterThanOrEqual,
                         literal: self.literal_to_string(low)?,
                     },
-                });
-                inputs.push(RelationalSelectPredicateInput {
-                    column_name: column.clone(),
-                    condition: RelationalSelectPredicateCondition::Comparison {
+                )?;
+                let le = leaf(
+                    column,
+                    RelationalSelectPredicateCondition::Comparison {
                         operator: RelationalSelectPredicateOperator::LessThanOrEqual,
                         literal: self.literal_to_string(high)?,
                     },
-                });
+                )?;
+                let between = RelationalPredicateTree::And(vec![ge, le]);
+                Ok(if *negated {
+                    RelationalPredicateTree::Not(Box::new(between))
+                } else {
+                    between
+                })
             }
-            Condition::Between { negated: true, .. } => {
-                return Err(anyhow!(
-                    "NOT BETWEEN in UPDATE/DELETE WHERE is not yet supported"
-                ));
-            }
-            Condition::Nested { .. } => {
-                return Err(anyhow!(
-                    "Nested conditions in UPDATE/DELETE WHERE are not yet supported"
-                ));
-            }
+            Condition::Nested {
+                conditions,
+                operator,
+            } => self.combine_conditions(conditions, *operator, table_schema),
         }
-        Ok(())
     }
 
     fn map_comparison_operator(
@@ -3960,6 +4025,147 @@ mod tests {
             "deleted row must not appear in scan"
         );
         assert_eq!(after_delete.rows.len(), 1, "only i1 must remain");
+    }
+
+    /// UPDATE/DELETE WHERE supports OR / nested groups / BETWEEN / NOT BETWEEN
+    /// via the resolved predicate tree (reusing the catalog-aware leaf eval), and
+    /// the PK fast-path stays OR-safe (a PK leaf under OR forces a full scan).
+    #[tokio::test]
+    async fn update_delete_support_or_nested_between_where() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-tree.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        async fn exec(
+            dml: &DmlService,
+            parser: &crate::query::sql_frontend::SqlFrontendParser,
+            sql: &str,
+        ) -> DmlResult {
+            let stmt = parser.parse_dml(sql).expect("parse").expect("dml stmt");
+            dml.execute(stmt).await.expect("execute")
+        }
+        async fn status_of(dml: &DmlService, id: &str) -> Option<String> {
+            let sel = dml
+                .select_table_records_with_projection(
+                    "inv",
+                    &["id".to_string(), "status".to_string()],
+                    None,
+                    &[RelationalSelectPredicateInput {
+                        column_name: "id".to_string(),
+                        condition: RelationalSelectPredicateCondition::Comparison {
+                            operator: RelationalSelectPredicateOperator::Equal,
+                            literal: id.to_string(),
+                        },
+                    }],
+                )
+                .await
+                .expect("select");
+            sel.rows.first().map(|row| match &row[1] {
+                ProximaValue::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            })
+        }
+
+        for (id, status, qty) in [
+            ("i1", "active", 5),
+            ("i2", "active", 15),
+            ("i3", "idle", 25),
+            ("i4", "idle", 35),
+        ] {
+            exec(
+                &dml,
+                &parser,
+                &format!("INSERT INTO inv (id, status, qty) VALUES ('{id}', '{status}', {qty});"),
+            )
+            .await;
+        }
+
+        // (1) OR: status='active' OR qty >= 30 → i1,i2 (active) + i4 (qty 35).
+        let r = exec(
+            &dml,
+            &parser,
+            "UPDATE inv SET status = 'archived' WHERE status = 'active' OR qty >= 30;",
+        )
+        .await;
+        assert_eq!(r.rows_affected, 3, "OR union");
+        assert_eq!(status_of(&dml, "i1").await.as_deref(), Some("archived"));
+        assert_eq!(status_of(&dml, "i2").await.as_deref(), Some("archived"));
+        assert_eq!(status_of(&dml, "i3").await.as_deref(), Some("idle"), "untouched");
+        assert_eq!(status_of(&dml, "i4").await.as_deref(), Some("archived"));
+
+        // (2) BETWEEN on an INT column (catalog-aware): qty 20..30 → i3 only.
+        let r = exec(
+            &dml,
+            &parser,
+            "UPDATE inv SET status = 'mid' WHERE qty BETWEEN 20 AND 30;",
+        )
+        .await;
+        assert_eq!(r.rows_affected, 1, "BETWEEN matches i3 (qty 25)");
+        assert_eq!(status_of(&dml, "i3").await.as_deref(), Some("mid"));
+
+        // (3) NOT BETWEEN: qty outside 10..30 → i1 (5) and i4 (35).
+        let r = exec(
+            &dml,
+            &parser,
+            "UPDATE inv SET status = 'extreme' WHERE qty NOT BETWEEN 10 AND 30;",
+        )
+        .await;
+        assert_eq!(r.rows_affected, 2, "NOT BETWEEN matches i1 + i4");
+        assert_eq!(status_of(&dml, "i1").await.as_deref(), Some("extreme"));
+        assert_eq!(status_of(&dml, "i4").await.as_deref(), Some("extreme"));
+
+        // (4) Nested + PK-under-OR safety: id='i2' OR (status='extreme' AND qty < 10)
+        // → i2 (PK) + i1 (extreme AND qty 5<10). The PK leaf under OR must NOT
+        // shortcut to fetching only i2 and miss i1.
+        let r = exec(
+            &dml,
+            &parser,
+            "DELETE FROM inv WHERE id = 'i2' OR (status = 'extreme' AND qty < 10);",
+        )
+        .await;
+        assert_eq!(r.rows_affected, 2, "i2 (pk) + i1 (nested) — PK fast-path stayed OR-safe");
+        assert_eq!(status_of(&dml, "i1").await, None, "i1 deleted via nested branch");
+        assert_eq!(status_of(&dml, "i2").await, None, "i2 deleted via PK branch");
+        assert_eq!(status_of(&dml, "i3").await.as_deref(), Some("mid"), "i3 survives");
+        assert_eq!(status_of(&dml, "i4").await.as_deref(), Some("extreme"), "i4 survives");
     }
 
     /// UPDATE/DELETE WHERE must honor NON-primary-key predicates (and the full
