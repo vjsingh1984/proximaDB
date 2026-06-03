@@ -171,7 +171,27 @@ tests). Confirm no per-stage conversion remains (only the two outermost edges + 
 * **Hot branch** — `git commit -o <files>` only; a red `cargo test --lib` may be *foreign* WIP
   (check error file paths before assuming it's yours — happened in Slice 4 with dml/record_store).
 
-== 3bis. Group C status (2026-06-03 session 2) — S6 SHIPPED; S7 re-scoped
+== 3ter. Group C COMPLETE (2026-06-03 session 2) — S6 + S7a–e SHIPPED
+
+`DocumentRecord.document: SqlObject` is **deleted**; `props: ProximaTree` is the
+single in-memory document body. The whole document compute layer (filter, index/
+array/fulltext, query sort, aggregation pipeline, update-mutation family,
+projection) is `ProximaValue`-native. Commits: S5 `58a4f4ac4`, S6 `32d4436b3`,
+sync-fix `39a68714e`, S7a `f8f2e5e65`, S7b `dfed61722`, S7c `a10695861`,
+S7d `3ed3fe14b`, S7e `47d1186b4`, path_parser cleanup (dead JsonPath engine, −329 LOC).
+
+Residual `SqlObject`/`SqlValue` in `src/storage/document/` is **edges only** (intended):
+the proto wire (`from_proto`/`to_proto_*`, `DocumentStorageEngine` trait, v1
+Get/Query responses), the persistence `_document` JSON (`document_block`/`cold_tier`),
+the cross-collection `$lookup` join boundary (`aggregation_extensions::execute_lookup`
++ `aggregation::process_lookup` + `DocumentServiceLookupFetcher`), the
+`AggregateResult.results` output edge, and condition wire operands (`sql_value_to_proxima`).
+Remaining tidy-ups: the two task-#3 minors (`filter.rs::sql_value_to_index_value`;
+`aggregation_extensions` unwired evaluate_expression/stddev) and optionally moving the
+`$lookup` fetcher to a canonical contract. DocumentRecord is an in-memory facade so
+none of this changed any on-disk/wire format.
+
+== 3bis. Group C status (2026-06-03 session 2) — S6 SHIPPED; S7 re-scoped (superseded by §3ter)
 
 * **Slice 5 (Group B) SHIPPED** `58a4f4ac4` — aggregation working set is `Vec<ProximaTree>`; `SqlObject` only at the input/output/filter/lookup edges.
 * **Slice 6 (Group C dual-carry) SHIPPED** `32d4436b3` — `DocumentRecord` now carries `props: ProximaTree` (`#[serde(default)]`) beside `document: SqlObject`, populated at every construction site (`new`/`from_proto` + the `canonical_adapter`/`cold_tier`/aggregation-temp/query-test literals). The aggregation **input edges** (`execute()`/fulltext/lookup-arc) now clone `doc.props` natively — the Slice-5 per-record `sql_object_to_proxima_tree` conversions are gone. `DocumentRecord` is an in-memory facade (durable authority is `ProximaRecord`), so the new field changes **no on-disk/wire format**.
