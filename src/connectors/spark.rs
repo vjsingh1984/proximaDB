@@ -135,6 +135,11 @@ pub struct SparkInputPartition {
     pub estimated_rows: Option<i64>,
     /// Estimated bytes in this partition
     pub estimated_bytes: Option<i64>,
+    /// Pushed-down filter (lowered from Spark's `filters_json`) to apply during
+    /// the scan. Stamped by `spark_plan_input_partitions`; travels with the
+    /// serialized partition to the executor's reader.
+    #[serde(default)]
+    pub filter: Option<FilterExpression>,
 }
 
 impl SparkInputPartition {
@@ -170,6 +175,7 @@ impl SparkInputPartition {
             } else {
                 None
             },
+            filter: None,
         }
     }
 }
@@ -393,6 +399,8 @@ pub struct SparkPartitionReader {
     finished: bool,
     batch_size: usize,
     records_read: u64,
+    /// Pushed-down filter carried from the partition; applied per scan page.
+    filter: Option<FilterExpression>,
 }
 
 impl SparkPartitionReader {
@@ -418,6 +426,7 @@ impl SparkPartitionReader {
             finished: false,
             batch_size,
             records_read: 0,
+            filter: partition.filter,
         })
     }
 
@@ -667,11 +676,22 @@ pub fn spark_get_table_schema(emb: &crate::embedded::EmbeddedProximaDB, table: &
 pub fn spark_plan_input_partitions(
     emb: &crate::embedded::EmbeddedProximaDB,
     table: &str,
-    _filters_json: &str,
+    filters_json: &str,
     num_partitions: i32,
 ) -> String {
+    // Lower Spark's pushed filters once at plan time and stamp the (exactly
+    // representable) expression onto every emitted partition, so each executor's
+    // reader applies it during the scan. Malformed JSON => no push-down.
+    let filter = lower_spark_filters_to_expression(filters_json)
+        .ok()
+        .flatten();
     match emb.plan_partitions(table, num_partitions.max(1) as u32) {
-        Ok(partitions) => serde_json::to_string(&partitions).unwrap_or_else(|_| "[]".to_string()),
+        Ok(mut partitions) => {
+            for partition in &mut partitions {
+                partition.filter = filter.clone();
+            }
+            serde_json::to_string(&partitions).unwrap_or_else(|_| "[]".to_string())
+        }
         Err(_) => "[]".to_string(),
     }
 }
@@ -703,10 +723,11 @@ pub fn spark_read_next_batch(
         return Ok(Vec::new());
     }
     let (records, next_cursor) = emb
-        .scan_records(
+        .scan_records_filtered(
             reader.collection.clone().as_str(),
             reader.cursor.clone(),
             reader.batch_size,
+            reader.filter.as_ref(),
         )
         .map_err(SparkError::embedded)?;
 
@@ -1018,6 +1039,7 @@ mod tests {
             preferred_locations: vec!["host1".to_string()],
             estimated_rows: Some(1000),
             estimated_bytes: Some(1024 * 1024),
+            filter: None,
         };
 
         assert_eq!(partition.partition_id, 0);
@@ -1393,6 +1415,116 @@ mod tests {
         assert_eq!(batch.schema().field(1).name(), "vector");
         assert_eq!(reader.records_read(), 3);
         assert!(reader.is_finished(), "single page ⇒ finished");
+    }
+
+    fn make_spark_record_with_category(oid: &str, category: &str) -> ProximaRecord {
+        let mut record = make_spark_record(oid);
+        record.props.insert(
+            "category".to_string(),
+            proximadb_records::ProximaTreeNode::Value(proximadb_records::ProximaValue::String(
+                category.to_string(),
+            )),
+        );
+        record
+    }
+
+    /// Drain a reader fully and return the total Arrow rows produced.
+    fn drain_reader(db: &EmbeddedProximaDB, reader: &mut SparkPartitionReader) -> usize {
+        let mut total = 0;
+        loop {
+            let bytes = spark_read_next_batch(db, reader).expect("read batch");
+            if bytes.is_empty() {
+                break;
+            }
+            total += arrow_ipc_to_record_batch(&bytes).expect("decode").num_rows();
+        }
+        total
+    }
+
+    fn plan_and_read(
+        db: &EmbeddedProximaDB,
+        collection: &str,
+        filters_json: &str,
+    ) -> (Option<FilterExpression>, usize) {
+        let json = spark_plan_input_partitions(db, collection, filters_json, 1);
+        let partitions: Vec<SparkInputPartition> = serde_json::from_str(&json).unwrap();
+        let filter = partitions[0].filter.clone();
+        let mut reader =
+            spark_create_partition_reader(&serde_json::to_string(&partitions[0]).unwrap())
+                .expect("reader");
+        (filter, drain_reader(db, &mut reader))
+    }
+
+    #[test]
+    fn spark_filter_pushdown_predicate_eq() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_eq_col", 4, None).expect("create");
+        let recs = (0..10)
+            .map(|i| {
+                make_spark_record_with_category(
+                    &format!("rec_{i}"),
+                    if i % 2 == 0 { "a" } else { "b" },
+                )
+            })
+            .collect();
+        db.insert_proxima_records("spark_eq_col", recs).expect("insert");
+
+        let filters = r#"[{"filter_type":"EqualTo","column":"category","value":"a","children":[]}]"#;
+        let (filter, total) = plan_and_read(&db, "spark_eq_col", filters);
+        assert!(filter.is_some(), "filter must be stamped onto the partition");
+        assert_eq!(total, 5, "only the 5 category='a' records pass the pushed filter");
+    }
+
+    #[test]
+    fn spark_filter_pushdown_in_set() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_in_col", 4, None).expect("create");
+        let recs = (0..12)
+            .map(|i| {
+                let cat = ["a", "b", "c"][i % 3];
+                make_spark_record_with_category(&format!("rec_{i}"), cat)
+            })
+            .collect();
+        db.insert_proxima_records("spark_in_col", recs).expect("insert");
+
+        let filters =
+            r#"[{"filter_type":"In","column":"category","value":["a","b"],"children":[]}]"#;
+        let (_filter, total) = plan_and_read(&db, "spark_in_col", filters);
+        assert_eq!(total, 8, "category IN ('a','b') matches 8 of 12 (4 'c' excluded)");
+    }
+
+    #[test]
+    fn spark_filter_pushdown_no_match_returns_empty() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_nomatch_col", 4, None)
+            .expect("create");
+        let recs = (0..6)
+            .map(|i| make_spark_record_with_category(&format!("rec_{i}"), "a"))
+            .collect();
+        db.insert_proxima_records("spark_nomatch_col", recs)
+            .expect("insert");
+
+        let filters =
+            r#"[{"filter_type":"EqualTo","column":"category","value":"zzz","children":[]}]"#;
+        let (_filter, total) = plan_and_read(&db, "spark_nomatch_col", filters);
+        assert_eq!(total, 0, "no record matches ⇒ scan returns nothing");
+    }
+
+    #[test]
+    fn spark_filter_pushdown_malformed_filter_drains_all() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_allf_col", 4, None)
+            .expect("create");
+        let recs = (0..4)
+            .map(|i| make_spark_record_with_category(&format!("rec_{i}"), "a"))
+            .collect();
+        db.insert_proxima_records("spark_allf_col", recs)
+            .expect("insert");
+
+        // Malformed / non-array filter JSON ⇒ no push-down ⇒ all rows.
+        let (filter, total) = plan_and_read(&db, "spark_allf_col", "{}");
+        assert!(filter.is_none(), "malformed filter ⇒ nothing stamped");
+        assert_eq!(total, 4);
     }
 
     #[test]

@@ -2029,6 +2029,23 @@ impl EmbeddedProximaDB {
         (Vec<proximadb_records::ProximaRecord>, Option<String>),
         Box<dyn std::error::Error + Send + Sync>,
     > {
+        self.scan_records_filtered(collection, cursor, limit, None)
+    }
+
+    /// Paginated scan with an optional pushed-down `filter` (e.g. a lowered Spark
+    /// predicate) applied INSIDE the WAL scan before the limit, via the same
+    /// `scan_records_paginated` seam. `filter` is evaluated against each record's
+    /// property tree.
+    pub fn scan_records_filtered(
+        &self,
+        collection: &str,
+        cursor: Option<String>,
+        limit: usize,
+        filter: Option<&crate::core::search::FilterExpression>,
+    ) -> Result<
+        (Vec<proximadb_records::ProximaRecord>, Option<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let now_ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as i64)
@@ -2045,7 +2062,8 @@ impl EmbeddedProximaDB {
             // TD-099(3d): push cursor + limit into the WAL streaming layer via
             // the same VectorOperationsService pathway used by
             // `insert_proxima_records`, so writes and reads agree on the
-            // collection-id key. Embedded mode is single-tenant (no predicate).
+            // collection-id key. Embedded mode is single-tenant (no tenant
+            // predicate); the optional `filter` rides the same predicate seam.
             let (page, next) = self
                 .shared_services
                 .vector_operations_service
@@ -2056,6 +2074,7 @@ impl EmbeddedProximaDB {
                     true,
                     true,
                     None,
+                    filter,
                     now_ns,
                 )
                 .await

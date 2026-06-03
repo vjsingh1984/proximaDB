@@ -1011,6 +1011,7 @@ impl UnifiedHandlers {
                 include_vector,
                 include_props,
                 tenant_context.as_ref(),
+                None,
                 now_ns,
             )
             .await

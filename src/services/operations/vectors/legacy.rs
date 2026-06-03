@@ -786,9 +786,12 @@ impl VectorOperationsService {
     /// cursor-filter + take, but O(log d + limit) per page once the per-collection
     /// scan index is warm.
     ///
-    /// Tenant filtering is pushed INTO the storage range-scan as a predicate so
-    /// it is applied before the limit — otherwise a multi-tenant collection would
-    /// return short pages and stop pagination prematurely.
+    /// Tenant filtering — and an optional pushed-down `filter` (e.g. a Spark
+    /// predicate) — is pushed INTO the storage range-scan as a predicate so it is
+    /// applied before the limit; otherwise a filtered/multi-tenant collection
+    /// would return short pages and stop pagination prematurely. The `filter` is
+    /// evaluated against each record's property tree.
+    #[allow(clippy::too_many_arguments)]
     pub async fn scan_records_paginated(
         &self,
         collection_id: &str,
@@ -797,6 +800,7 @@ impl VectorOperationsService {
         include_vector: bool,
         include_props: bool,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        filter: Option<&crate::core::search::FilterExpression>,
         now_ns: i64,
     ) -> Result<(
         Vec<ProximaRecord>,
@@ -805,15 +809,26 @@ impl VectorOperationsService {
         self.validate_tenant_collection_access(collection_id, tenant_context)
             .await?;
 
-        // Tenant predicate mirrors the legacy `records.retain(...)` rule exactly,
-        // applied inside the storage scan before the limit is reached.
-        let tenant_pred: Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> = tenant_context
-            .map(|tc| {
-                let tid = tc.tenant_id.clone();
-                Box::new(move |r: &ProximaRecord| r.tenant_id.is_empty() || r.tenant_id == tid)
-                    as Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>
-            });
-        let pred_ref = tenant_pred.as_deref();
+        // Combined page predicate = tenant rule AND the optional pushed filter,
+        // applied inside the storage scan BEFORE the limit. Owns its captures
+        // (tenant id + cloned filter) so the closure is 'static + Send + Sync.
+        let tenant_id = tenant_context.map(|tc| tc.tenant_id.clone());
+        let owned_filter = filter.cloned();
+        let pred: Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> =
+            if tenant_id.is_some() || owned_filter.is_some() {
+                Some(Box::new(move |r: &ProximaRecord| {
+                    let tenant_ok = tenant_id
+                        .as_ref()
+                        .is_none_or(|tid| r.tenant_id.is_empty() || &r.tenant_id == tid);
+                    let filter_ok = owned_filter.as_ref().is_none_or(|f| {
+                        crate::core::search::sql_value_filter::evaluate_filter_proxima(f, &r.props)
+                    });
+                    tenant_ok && filter_ok
+                }))
+            } else {
+                None
+            };
+        let pred_ref = pred.as_deref();
 
         let after = cursor.map(|c| (c.last_updated_at_ns, c.last_oid.as_str()));
 
