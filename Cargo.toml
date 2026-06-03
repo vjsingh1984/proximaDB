@@ -508,7 +508,6 @@ experimental-turboquant = [
 ]
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
 avx512 = []
-distributed = []
 standalone = []
 # Cluster mode - enables distributed consensus (Raft), replication, and health services
 # Used for multi-node deployments with leader election and data replication.

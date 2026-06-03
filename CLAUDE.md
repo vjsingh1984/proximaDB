@@ -230,8 +230,7 @@ All API types defined in `proto/proximadb.proto` and `proto/proximadb/v1/*.proto
 - `gpu`: Metal GPU acceleration (macOS; CPU fallback on other platforms)
 - `experimental-engines`: RAPTOR and SWIFT engines (disabled by default to prevent panics from unimplemented paths)
 - `experimental-cdc-connectors`: Native CDC database connectors (partial; prefer Debezium for production)
-- `cluster`: Distributed consensus (Raft), replication, health services
-- `distributed`: Multi-node deployment support
+- `cluster`: Multi-node deployment — distributed consensus (Raft), replication, health services, and the cross-node eventlog gRPC sync (the former `distributed` feature was folded into `cluster`)
 
 ### Configuration (`config/config.toml`)
 
