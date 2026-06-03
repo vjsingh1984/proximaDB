@@ -53,6 +53,26 @@
 //!   WHERE vector_search(embedding, array(0.1, 0.2, ...), 10) > 0.8
 //! """)
 //! ```
+//!
+//! ## Filter push-down (Rust-side foundation)
+//!
+//! Spark's pushed-down predicates arrive as a JSON array of [`SparkFilter`]
+//! (the `filters_json` argument to [`spark_plan_input_partitions`]).
+//! [`lower_spark_filters_to_expression`] lowers them into the canonical
+//! [`FilterExpression`] tree; the planner stamps the result onto each
+//! [`SparkInputPartition`], and the partition reader pushes it into the WAL
+//! record scan, where it is evaluated against each record's **property tree**
+//! (`record.props` — where relational/document table columns live) BEFORE the
+//! page limit, so executors receive only matching rows.
+//!
+//! Contract: a filter is pushed only if it can be represented and evaluated
+//! EXACTLY. Filters referencing nested struct-path columns, `AlwaysTrue/False`,
+//! or an `And/Or/Not` with any unrepresentable child are **dropped** during
+//! lowering (never partially applied). The (future) JVM DataSource V2 connector
+//! must report dropped filters to Spark for re-application — until that JVM
+//! layer exists, this path has no production driver (it is exercised by the
+//! native unit/e2e tests). Example `filters_json`:
+//! `[{"filter_type":"EqualTo","column":"category","value":"science","children":[]}]`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
