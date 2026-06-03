@@ -6,12 +6,14 @@
 use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
 use proximadb_data_model::ProximaValue;
+use proximadb_records::ProximaTree;
 use proximadb_records::conversions::{json_to_proxima, sql_value_to_proxima};
 use regex::Regex;
 use serde_json::Value as JsonValue;
 
+use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
 use crate::proto::proximadb_v1::{
-    DocFilterCondition, DocFilterOperator, DocumentFilter, SqlObject, SqlValue,
+    DocFilterCondition, DocFilterOperator, DocumentFilter, SqlValue,
     sql_value::Value as SqlValueVariant,
 };
 
@@ -31,9 +33,10 @@ impl FilterEvaluator {
 
     /// Evaluate a filter against a document
     pub fn evaluate(&self, filter: &DocumentFilter, document: &DocumentRecord) -> bool {
-        // Evaluate all conditions (AND logic)
+        // Evaluate all conditions (AND logic). TD-106 Slice 7a: read the canonical
+        // `props` tree (the vestigial `document: SqlObject` field is removed in S7e).
         for condition in &filter.conditions {
-            if !self.evaluate_condition(condition, &document.document) {
+            if !self.evaluate_condition(condition, &document.props) {
                 return false;
             }
         }
@@ -60,7 +63,7 @@ impl FilterEvaluator {
     }
 
     /// Evaluate a single condition
-    fn evaluate_condition(&self, condition: &DocFilterCondition, document: &SqlObject) -> bool {
+    fn evaluate_condition(&self, condition: &DocFilterCondition, document: &ProximaTree) -> bool {
         let path = &condition.path;
         let operator = DocFilterOperator::try_from(condition.operator)
             .unwrap_or(DocFilterOperator::Unspecified);
@@ -97,11 +100,12 @@ impl FilterEvaluator {
     }
 
     /// Extract value at a JSON path, returning a canonical `ProximaValue`.
-    fn extract_path_value(&self, document: &SqlObject, path: &str) -> Option<ProximaValue> {
-        // The jsonpath engine operates on serde_json::Value, so the (proto) document is
-        // rendered to JSON for the query; the result is lifted to canonical `ProximaValue`
-        // via `json_to_proxima` (TD-106 Slice 2) — no proto `SqlValue` is constructed here.
-        let json_value = self.sql_object_to_json(document);
+    fn extract_path_value(&self, document: &ProximaTree, path: &str) -> Option<ProximaValue> {
+        // The jsonpath engine operates on serde_json::Value, so the canonical `props`
+        // tree is rendered to JSON via the shared `proxima_tree_to_json_map` bridge; the
+        // result is lifted back to `ProximaValue` via `json_to_proxima` (TD-106 Slice 7a)
+        // — no proto `SqlObject`/`SqlValue` is constructed here.
+        let json_value = JsonValue::Object(proxima_tree_to_json_map(document).into_iter().collect());
 
         // Normalize path: $.field or field -> $.field
         let normalized_path = if path.starts_with("$.") || path.starts_with('$') {
@@ -146,48 +150,6 @@ impl FilterEvaluator {
                 }
             }
             Err(_) => None,
-        }
-    }
-
-    /// Convert SqlObject to serde_json::Value
-    fn sql_object_to_json(&self, obj: &SqlObject) -> JsonValue {
-        let mut map = serde_json::Map::new();
-        for (key, value) in &obj.fields {
-            if let Some(json_val) = self.sql_value_to_json(value) {
-                map.insert(key.clone(), json_val);
-            }
-        }
-        JsonValue::Object(map)
-    }
-
-    /// Convert SqlValue to serde_json::Value
-    fn sql_value_to_json(&self, value: &SqlValue) -> Option<JsonValue> {
-        match &value.value {
-            Some(SqlValueVariant::NullValue(_)) => Some(JsonValue::Null),
-            Some(SqlValueVariant::BoolValue(b)) => Some(JsonValue::Bool(*b)),
-            Some(SqlValueVariant::Int64Value(i)) => Some(JsonValue::Number((*i).into())),
-            Some(SqlValueVariant::NumberValue(f)) => {
-                serde_json::Number::from_f64(*f).map(JsonValue::Number)
-            }
-            Some(SqlValueVariant::StringValue(s)) => Some(JsonValue::String(s.clone())),
-            Some(SqlValueVariant::BytesValue(b)) => {
-                if let Ok(jsonb) = ProximaValue::from_jsonb_slice(b) {
-                    Some(jsonb)
-                } else {
-                    let hex_str: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
-                    Some(JsonValue::String(format!("0x{}", hex_str)))
-                }
-            }
-            Some(SqlValueVariant::ArrayValue(arr)) => {
-                let json_arr: Vec<JsonValue> = arr
-                    .values
-                    .iter()
-                    .filter_map(|v| self.sql_value_to_json(v))
-                    .collect();
-                Some(JsonValue::Array(json_arr))
-            }
-            Some(SqlValueVariant::ObjectValue(obj)) => Some(self.sql_object_to_json(obj)),
-            None => None,
         }
     }
 
@@ -371,8 +333,16 @@ impl Default for FilterEvaluator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::SqlArray;
+    use proximadb_records::ProximaTreeNode;
     use std::collections::HashMap;
+
+    /// Build a flat canonical `props` tree from leaf values.
+    fn tree(fields: Vec<(&str, ProximaValue)>) -> ProximaTree {
+        fields
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), ProximaTreeNode::Value(v)))
+            .collect()
+    }
 
     #[test]
     fn test_filter_evaluator_new() {
@@ -418,20 +388,10 @@ mod tests {
         let evaluator = FilterEvaluator::new();
 
         // Create a simple document: {"name": "Alice", "age": 30}
-        let mut fields = HashMap::new();
-        fields.insert(
-            "name".to_string(),
-            SqlValue {
-                value: Some(SqlValueVariant::StringValue("Alice".to_string())),
-            },
-        );
-        fields.insert(
-            "age".to_string(),
-            SqlValue {
-                value: Some(SqlValueVariant::Int64Value(30)),
-            },
-        );
-        let doc = SqlObject { fields };
+        let doc = tree(vec![
+            ("name", ProximaValue::String("Alice".to_string())),
+            ("age", ProximaValue::Int64(30)),
+        ]);
 
         // Test extraction with $.name
         let result = evaluator.extract_path_value(&doc, "$.name");
@@ -457,42 +417,22 @@ mod tests {
         let evaluator = FilterEvaluator::new();
 
         // Create a nested document: {"profile": {"name": "Bob", "scores": [90, 85, 92]}}
-        let mut profile_fields = HashMap::new();
-        profile_fields.insert(
-            "name".to_string(),
-            SqlValue {
-                value: Some(SqlValueVariant::StringValue("Bob".to_string())),
-            },
-        );
-        profile_fields.insert(
-            "scores".to_string(),
-            SqlValue {
-                value: Some(SqlValueVariant::ArrayValue(SqlArray {
-                    values: vec![
-                        SqlValue {
-                            value: Some(SqlValueVariant::Int64Value(90)),
-                        },
-                        SqlValue {
-                            value: Some(SqlValueVariant::Int64Value(85)),
-                        },
-                        SqlValue {
-                            value: Some(SqlValueVariant::Int64Value(92)),
-                        },
-                    ],
-                })),
-            },
-        );
-
-        let mut fields = HashMap::new();
-        fields.insert(
-            "profile".to_string(),
-            SqlValue {
-                value: Some(SqlValueVariant::ObjectValue(SqlObject {
-                    fields: profile_fields,
-                })),
-            },
-        );
-        let doc = SqlObject { fields };
+        let profile: ProximaTree = HashMap::from([
+            (
+                "name".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String("Bob".to_string())),
+            ),
+            (
+                "scores".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Array(vec![
+                    ProximaValue::Int64(90),
+                    ProximaValue::Int64(85),
+                    ProximaValue::Int64(92),
+                ])),
+            ),
+        ]);
+        let doc: ProximaTree =
+            HashMap::from([("profile".to_string(), ProximaTreeNode::Object(profile))]);
 
         // Test nested path
         let result = evaluator.extract_path_value(&doc, "$.profile.name");
@@ -508,64 +448,23 @@ mod tests {
     fn test_extract_path_value_missing_field() {
         let evaluator = FilterEvaluator::new();
 
-        let fields = HashMap::new();
-        let doc = SqlObject { fields };
+        let doc = ProximaTree::new();
 
         let result = evaluator.extract_path_value(&doc, "$.nonexistent");
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_value_to_json_to_proxima_equivalence() {
-        // The two canonicalization paths must agree: converting a proto SqlValue
-        // directly (`sql_value_to_proxima`) vs rendering it to JSON
-        // (`sql_value_to_json`, the jsonpath input edge) then lifting via
-        // `json_to_proxima` (the new extract path) must yield equal values.
-        let evaluator = FilterEvaluator::new();
-
-        let test_values = vec![
-            SqlValue {
-                value: Some(SqlValueVariant::StringValue("test".to_string())),
-            },
-            SqlValue {
-                value: Some(SqlValueVariant::Int64Value(42)),
-            },
-            SqlValue {
-                value: Some(SqlValueVariant::NumberValue(3.14)),
-            },
-            SqlValue {
-                value: Some(SqlValueVariant::BoolValue(true)),
-            },
-            SqlValue {
-                value: Some(SqlValueVariant::NullValue(0)),
-            },
-        ];
-
-        for original in test_values {
-            let json = evaluator.sql_value_to_json(&original);
-            assert!(json.is_some(), "Should convert to JSON");
-            let via_json = json_to_proxima(&json.unwrap());
-            assert!(
-                evaluator.proxima_values_equal(&sql_value_to_proxima(&original), &via_json),
-                "Direct and via-JSON canonicalization must agree"
-            );
-        }
-    }
-
-    #[test]
     fn test_jsonb_filtering() {
         let evaluator = FilterEvaluator::new();
         let original = serde_json::json!({"priority": "high", "active": true});
-        let bytes = ProximaValue::to_jsonb_vec(&original).unwrap();
 
-        let val = SqlValue {
-            value: Some(SqlValueVariant::BytesValue(bytes)),
-        };
-
-        // Extract path value from a document containing this jsonb
-        let mut fields = HashMap::new();
-        fields.insert("metadata".to_string(), val);
-        let doc = SqlObject { fields };
+        // Document carries the jsonb object as a canonical leaf; the
+        // `proxima_tree_to_json_map` bridge renders it back to JSON for jsonpath.
+        let doc: ProximaTree = HashMap::from([(
+            "metadata".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Jsonb(original)),
+        )]);
 
         let result = evaluator.extract_path_value(&doc, "$.metadata.priority");
         assert!(result.is_some());

@@ -147,12 +147,12 @@ impl AggregationExecutor {
         Ok(documents
             .iter()
             .filter(|doc| {
-                // Filter edge: the `FilterEvaluator` still consumes a
-                // `DocumentRecord{document: SqlObject}`, so rebuild a temp record
-                // from the canonical tree (removed in Group C).
+                // Slice 7a: the filter reads the canonical `props` tree, so the temp
+                // record carries the working tree as `props`; `document` is the
+                // vestigial field (removed in S7e) and left default.
                 let record = DocumentRecord {
                     id: String::new(),
-                    document: proxima_tree_to_sql_object(doc),
+                    document: SqlObject::default(),
                     props: (*doc).clone(),
                     version: 0,
                     collection_id: String::new(),
@@ -620,20 +620,9 @@ impl AggregationExecutor {
 
     /// Check if a document matches a filter (helper for pipeline processing).
     ///
-    /// Operates on a `DocumentRecord` (the still-`SqlObject` filter input edge).
+    /// Slice 7a: the filter reads the record's canonical `props` tree directly.
     pub fn matches_filter(&self, doc: &DocumentRecord, filter: &DocumentFilter) -> bool {
-        // Create a temporary DocumentRecord for filter evaluation
-        let record = DocumentRecord {
-            id: String::new(),
-            document: doc.document.clone(),
-            props: doc.props.clone(),
-            version: 0,
-            collection_id: String::new(),
-            updated_at_ns: 0,
-            schema_id: None,
-            document_type: None,
-        };
-        self.filter_evaluator.evaluate(filter, &record)
+        self.filter_evaluator.evaluate(filter, doc)
     }
 
     /// Set a value at a path in a document (simplified for top-level paths)
