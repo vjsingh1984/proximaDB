@@ -72,19 +72,17 @@ impl AggregationExecutor {
         filter: Option<&DocumentFilter>,
         pipeline: &[AggregationStage],
     ) -> Result<Vec<SqlObject>> {
-        // Start with filtered documents if filter is provided. The input edge
-        // lifts each `DocumentRecord.document` (SqlObject) into a `ProximaTree`.
+        // Start with filtered documents if filter is provided. Slice 6: the record
+        // carries the canonical `props` tree, so the input edge is a clone (no
+        // per-record SqlObject conversion).
         let mut working_set: Vec<ProximaTree> = if let Some(f) = filter {
             documents
                 .into_iter()
                 .filter(|doc| self.filter_evaluator.evaluate(f, doc))
-                .map(|doc| sql_object_to_proxima_tree(&doc.document))
+                .map(|doc| doc.props)
                 .collect()
         } else {
-            documents
-                .into_iter()
-                .map(|doc| sql_object_to_proxima_tree(&doc.document))
-                .collect()
+            documents.into_iter().map(|doc| doc.props).collect()
         };
 
         debug!(
@@ -155,6 +153,7 @@ impl AggregationExecutor {
                 let record = DocumentRecord {
                     id: String::new(),
                     document: proxima_tree_to_sql_object(doc),
+                    props: (*doc).clone(),
                     version: 0,
                     collection_id: String::new(),
                     updated_at_ns: 0,
@@ -627,6 +626,7 @@ impl AggregationExecutor {
         let record = DocumentRecord {
             id: String::new(),
             document: doc.document.clone(),
+            props: doc.props.clone(),
             version: 0,
             collection_id: String::new(),
             updated_at_ns: 0,
@@ -665,11 +665,8 @@ impl AggregationExecutor {
     ) -> Vec<(DocumentRecord, f32)> {
         let total_docs = documents.len() as f32;
 
-        // Lift each record's document into a canonical tree once (input edge).
-        let trees: Vec<ProximaTree> = documents
-            .iter()
-            .map(|doc| sql_object_to_proxima_tree(&doc.document))
-            .collect();
+        // Slice 6: the record carries the canonical `props` tree directly.
+        let trees: Vec<ProximaTree> = documents.iter().map(|doc| doc.props.clone()).collect();
 
         // Calculate document frequency for each term
         let mut doc_frequencies: HashMap<String, usize> = HashMap::new();

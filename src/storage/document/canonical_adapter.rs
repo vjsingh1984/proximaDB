@@ -48,6 +48,7 @@ pub fn canonical_document_to_legacy(document: CanonicalDocument) -> DocumentReco
     DocumentRecord {
         id: document.key.document_id,
         document: proxima_tree_to_sql_object(&document.document),
+        props: document.document,
         version: document.metadata.version,
         collection_id: document.key.collection_id,
         updated_at_ns: document.metadata.updated_at_ns.unwrap_or(0),
@@ -131,21 +132,24 @@ mod tests {
     }
 
     fn legacy_record() -> DocumentRecord {
+        let document = object(vec![
+            ("title", string_value("Architecture")),
+            (
+                "author",
+                SqlValue {
+                    value: Some(sql_value::Value::ObjectValue(object(vec![(
+                        "name",
+                        string_value("Ada"),
+                    )]))),
+                },
+            ),
+            ("revision", int_value(3)),
+        ]);
+        let props = sql_object_to_proxima_tree(&document);
         DocumentRecord {
             id: "doc-1".to_string(),
-            document: object(vec![
-                ("title", string_value("Architecture")),
-                (
-                    "author",
-                    SqlValue {
-                        value: Some(sql_value::Value::ObjectValue(object(vec![(
-                            "name",
-                            string_value("Ada"),
-                        )]))),
-                    },
-                ),
-                ("revision", int_value(3)),
-            ]),
+            document,
+            props,
             version: 7,
             collection_id: "papers".to_string(),
             updated_at_ns: 42,

@@ -245,9 +245,11 @@ impl StorageEngineColdTierRetriever {
             })
             .unwrap_or(0);
 
+        let props = crate::storage::document::sql_object_to_proxima_tree(&document);
         Some(DocumentRecord {
             id: original_id,
             document,
+            props,
             collection_id: collection_name,
             version,
             updated_at_ns: record.updated_at.unwrap_or(0) * 1_000_000, // Convert ms to ns

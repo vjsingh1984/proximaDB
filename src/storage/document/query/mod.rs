@@ -448,25 +448,43 @@ mod tests {
         let executor = DocumentQueryExecutor::new();
         let index_manager = IndexManager::new();
 
+        let doc1 = SqlObject {
+            fields: HashMap::from([
+                (
+                    "status".to_string(),
+                    SqlValue {
+                        value: Some(Value::StringValue("inactive".to_string())),
+                    },
+                ),
+                (
+                    "age".to_string(),
+                    SqlValue {
+                        value: Some(Value::Int64Value(40)),
+                    },
+                ),
+            ]),
+        };
+        let doc2 = SqlObject {
+            fields: HashMap::from([
+                (
+                    "status".to_string(),
+                    SqlValue {
+                        value: Some(Value::StringValue("active".to_string())),
+                    },
+                ),
+                (
+                    "age".to_string(),
+                    SqlValue {
+                        value: Some(Value::Int64Value(20)),
+                    },
+                ),
+            ]),
+        };
         let documents = vec![
             DocumentRecord {
                 id: "doc1".to_string(),
-                document: SqlObject {
-                    fields: HashMap::from([
-                        (
-                            "status".to_string(),
-                            SqlValue {
-                                value: Some(Value::StringValue("inactive".to_string())),
-                            },
-                        ),
-                        (
-                            "age".to_string(),
-                            SqlValue {
-                                value: Some(Value::Int64Value(40)),
-                            },
-                        ),
-                    ]),
-                },
+                props: crate::storage::document::sql_object_to_proxima_tree(&doc1),
+                document: doc1,
                 version: 1,
                 collection_id: "users".to_string(),
                 updated_at_ns: 0,
@@ -475,22 +493,8 @@ mod tests {
             },
             DocumentRecord {
                 id: "doc2".to_string(),
-                document: SqlObject {
-                    fields: HashMap::from([
-                        (
-                            "status".to_string(),
-                            SqlValue {
-                                value: Some(Value::StringValue("active".to_string())),
-                            },
-                        ),
-                        (
-                            "age".to_string(),
-                            SqlValue {
-                                value: Some(Value::Int64Value(20)),
-                            },
-                        ),
-                    ]),
-                },
+                props: crate::storage::document::sql_object_to_proxima_tree(&doc2),
+                document: doc2,
                 version: 1,
                 collection_id: "users".to_string(),
                 updated_at_ns: 0,

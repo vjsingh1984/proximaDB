@@ -38,7 +38,7 @@ use super::aggregation_extensions::LookupFetcher;
 #[cfg(feature = "canonical-document-store")]
 use super::canonical_adapter::legacy_document_to_proxima_record;
 use super::canonical_adapter::proxima_record_to_legacy_document;
-use super::canonical_adapter::{proxima_tree_to_sql_object, sql_object_to_proxima_tree};
+use super::canonical_adapter::proxima_tree_to_sql_object;
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
@@ -1874,20 +1874,17 @@ impl DocumentService {
         };
 
         // Execute aggregation pipeline with lookup support. The working set is the
-        // canonical `ProximaTree` (TD-106 Slice 5); the input edge lifts each
-        // `DocumentRecord.document` (SqlObject) once via `sql_object_to_proxima_tree`.
+        // canonical `ProximaTree` (TD-106 Slice 5); Slice 6 reads the record's
+        // canonical `props` tree directly at the input edge.
         let executor = AggregationExecutor::new();
         let mut working_set: Vec<ProximaTree> = if let Some(f) = &filter {
             documents
                 .iter()
                 .filter(|doc| executor.matches_filter(doc, f))
-                .map(|doc| sql_object_to_proxima_tree(&doc.document))
+                .map(|doc| doc.props.clone())
                 .collect()
         } else {
-            documents
-                .iter()
-                .map(|doc| sql_object_to_proxima_tree(&doc.document))
-                .collect()
+            documents.into_iter().map(|doc| doc.props).collect()
         };
 
         // Process each stage, handling lookups specially

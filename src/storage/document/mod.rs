@@ -26,11 +26,14 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use proximadb_records::ProximaTree;
+
 use crate::proto::proximadb_v1::{
     DocumentCollectionConfig, DocumentContent, DocumentFilter, DocumentResult, DocumentUpdate,
     IndexDefinition, SortField, SqlObject,
 };
 
+pub use self::canonical_adapter::sql_object_to_proxima_tree;
 pub use self::service::DocumentService;
 
 // ---------------------------------------------------------------------------
@@ -110,8 +113,20 @@ pub trait DocumentStorageEngine: Send + Sync {
 pub struct DocumentRecord {
     /// Unique document ID
     pub id: String,
-    /// Document content as nested JSON
+    /// Document content as nested JSON (legacy v1 proto shape).
+    ///
+    /// TD-106 Group C: retained as the wire/compat edge only; the canonical
+    /// in-memory representation is [`Self::props`]. Removed in Slice 7.
     pub document: SqlObject,
+    /// Canonical NF² property tree mirroring [`Self::document`].
+    ///
+    /// TD-106 Slice 6 (dual-carry): internal compute reads this canonical tree
+    /// instead of converting `document` per call. `#[serde(default)]` keeps any
+    /// legacy-serialized record (which predates this field) deserializable; the
+    /// in-memory facade is never the durable shape (durable authority is
+    /// `ProximaRecord`).
+    #[serde(default)]
+    pub props: ProximaTree,
     /// Version number for optimistic locking
     pub version: u64,
     /// Collection this document belongs to
@@ -127,9 +142,11 @@ pub struct DocumentRecord {
 impl DocumentRecord {
     /// Create a new document record
     pub fn new(id: String, document: SqlObject, collection_id: String) -> Self {
+        let props = sql_object_to_proxima_tree(&document);
         Self {
             id,
             document,
+            props,
             version: 1,
             collection_id,
             updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
@@ -140,9 +157,12 @@ impl DocumentRecord {
 
     /// Create from proto DocumentContent
     pub fn from_proto(id: String, content: DocumentContent, collection_id: String) -> Result<Self> {
+        let document = content.document.unwrap_or_default();
+        let props = sql_object_to_proxima_tree(&document);
         Ok(Self {
             id,
-            document: content.document.unwrap_or_default(),
+            document,
+            props,
             version: 1,
             collection_id,
             updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
