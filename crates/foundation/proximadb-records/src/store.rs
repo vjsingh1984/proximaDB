@@ -59,6 +59,15 @@ pub struct RecordRecoverySummary {
     pub deletes_replayed: usize,
 }
 
+/// Borrowed row predicate for scan push-down.
+///
+/// Explicitly higher-ranked over the record reference (`for<'r>`) so it composes
+/// with `#[async_trait]` scan methods — without the explicit HRTB, async_trait
+/// hoists the elided lifetime to the method's lifetime and a short-lived
+/// `&ProximaRecord` can no longer be passed. `Send + Sync` keeps the async
+/// future `Send`.
+pub type RecordScanPredicate<'a> = dyn for<'r> Fn(&'r ProximaRecord) -> bool + Send + Sync + 'a;
+
 /// Predicate/options accepted by canonical record scan implementations.
 ///
 /// This remains modality-neutral: document/graph/vector facades express their
@@ -183,6 +192,44 @@ pub trait RecordScan: Send + Sync {
             .await?;
         records.retain(|record| options.matches_record(record));
         Ok(records)
+    }
+
+    /// Scan with an arbitrary row `predicate` pushed in alongside `options`.
+    ///
+    /// Returns up to `options.limit` records that match BOTH `options`
+    /// (label/tenant/property) AND `predicate`. The store is responsible for
+    /// applying `predicate`, so callers must not re-filter afterward — this lets
+    /// hot implementations evaluate the predicate during iteration and stop at
+    /// the limit instead of materializing the whole table first.
+    ///
+    /// The predicate is a borrowed trait object (not stored in the
+    /// `Clone`/`PartialEq` `RecordScanOptions`, and not a catalog/SQL IR — this
+    /// crate stays modality- and query-language-neutral). `Send + Sync` so the
+    /// `#[async_trait]` future stays `Send`.
+    ///
+    /// Default: correct but not early-stopping — scans all `options`-matching
+    /// records, applies `predicate`, then caps at the limit. Hot stores override.
+    async fn scan_records_filtered(
+        &self,
+        options: RecordScanOptions,
+        predicate: Option<&RecordScanPredicate<'_>>,
+    ) -> RecordStoreResult<Vec<ProximaRecord>> {
+        let limit = options.limit.unwrap_or(usize::MAX);
+        let mut opts = options;
+        opts.limit = None;
+        let mut all = self.scan_records_with_options(opts).await?;
+        let mut kept = 0usize;
+        all.retain(|record| {
+            if kept >= limit {
+                return false;
+            }
+            let keep = predicate.map_or(true, |p| p(record));
+            if keep {
+                kept += 1;
+            }
+            keep
+        });
+        Ok(all)
     }
 }
 
@@ -357,6 +404,40 @@ mod tests {
         let records = storage.scan_records(10).await.expect("scan");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].oid, "r1");
+    }
+
+    #[tokio::test]
+    async fn scan_records_filtered_applies_predicate_and_caps_at_limit() {
+        let store = MemoryRecordStore::default();
+        for i in 0..6u64 {
+            store
+                .upsert_record(ProximaRecord {
+                    oid: format!("r{i}"),
+                    record_version: i,
+                    ..ProximaRecord::default()
+                })
+                .await
+                .expect("upsert");
+        }
+
+        // Predicate selects even record_version (r0,r2,r4 = 3 matches); limit 2.
+        let pred = |r: &ProximaRecord| r.record_version % 2 == 0;
+        let got = store
+            .scan_records_filtered(RecordScanOptions::limit(2), Some(&pred))
+            .await
+            .expect("filtered scan");
+        assert_eq!(got.len(), 2, "capped at limit");
+        assert!(
+            got.iter().all(|r| r.record_version % 2 == 0),
+            "only predicate matches returned"
+        );
+
+        // No predicate behaves like a plain limited scan.
+        let none = store
+            .scan_records_filtered(RecordScanOptions::limit(10), None)
+            .await
+            .expect("no-predicate scan");
+        assert_eq!(none.len(), 6);
     }
 
     #[tokio::test]

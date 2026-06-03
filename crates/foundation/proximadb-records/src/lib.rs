@@ -44,7 +44,7 @@ pub mod wire_v2;
 
 pub use store::{
     RecordKey, RecordRecoveryOperation, RecordRecoverySummary, RecordScan, RecordScanOptions,
-    RecordStorage, RecordStore, RecordStoreResult, RecordWriteResult,
+    RecordScanPredicate, RecordStorage, RecordStore, RecordStoreResult, RecordWriteResult,
     replay_record_recovery_operations,
 };
 
