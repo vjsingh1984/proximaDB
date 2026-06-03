@@ -3421,7 +3421,7 @@ mod tests {
         let route = DmlService::select_route_metadata(
             &schema,
             &schema.columns,
-            &predicates,
+            predicates.len(),
             Some(1),
             RelationalSelectAccessPath::PrimaryKeyLookup,
         );
@@ -4322,6 +4322,179 @@ mod tests {
         assert_eq!(status_of(&dml, "i2").await, None, "i2 deleted via PK branch");
         assert_eq!(status_of(&dml, "i3").await.as_deref(), Some("mid"), "i3 survives");
         assert_eq!(status_of(&dml, "i4").await.as_deref(), Some("extreme"), "i4 survives");
+    }
+
+    /// SELECT WHERE supports OR / mixed-AND-OR / nested groups / NOT IN through
+    /// the same resolved predicate tree as UPDATE/DELETE, pushed into the record
+    /// scan via `select_table_records_with_projection_where`. The PK fast-path
+    /// stays OR-safe (a PK leaf under OR forces a full scan), and nested groups
+    /// are NOT flattened.
+    #[tokio::test]
+    async fn select_where_supports_or_nested_and_pk_or_safety() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-select-tree.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        for (id, status, qty) in [
+            ("i1", "active", 5),
+            ("i2", "active", 15),
+            ("i3", "idle", 25),
+            ("i4", "idle", 35),
+        ] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO inv (id, status, qty) VALUES ('{id}', '{status}', {qty});"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // Run a full SELECT string through the WhereClause-tree path; return the
+        // chosen access path plus the sorted matching ids.
+        async fn run(
+            dml: &DmlService,
+            parser: &crate::query::sql_frontend::SqlFrontendParser,
+            sql: &str,
+            limit: Option<usize>,
+        ) -> (RelationalSelectAccessPath, Vec<String>) {
+            let where_clause = parser.parse_select_where_clause(sql).expect("parse where");
+            let res = dml
+                .select_table_records_with_projection_where(
+                    "inv",
+                    &["id".to_string()],
+                    limit,
+                    where_clause.as_ref(),
+                )
+                .await
+                .expect("select");
+            let mut ids: Vec<String> = res
+                .rows
+                .iter()
+                .map(|row| match &row[0] {
+                    ProximaValue::String(s) => s.clone(),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            ids.sort();
+            (res.route_metadata.access_path, ids)
+        }
+
+        // (1) OR union: status='active' OR qty >= 30 → i1,i2 (active) + i4 (35).
+        let (path, ids) = run(
+            &dml,
+            &parser,
+            "SELECT id FROM inv WHERE status = 'active' OR qty >= 30",
+            None,
+        )
+        .await;
+        assert_eq!(path, RelationalSelectAccessPath::TableScan);
+        assert_eq!(ids, vec!["i1", "i2", "i4"], "OR union");
+
+        // (2) PK-under-OR safety: id='i2' OR status='idle'. The PK leaf must NOT
+        // shortcut to a point lookup that misses the idle rows.
+        let (path, ids) = run(
+            &dml,
+            &parser,
+            "SELECT id FROM inv WHERE id = 'i2' OR status = 'idle'",
+            None,
+        )
+        .await;
+        assert_eq!(
+            path,
+            RelationalSelectAccessPath::TableScan,
+            "PK leaf under OR must force a full scan"
+        );
+        assert_eq!(ids, vec!["i2", "i3", "i4"]);
+
+        // (3) PK fast-path + full-predicate re-check: id IN (i1,i2,i3) AND
+        // status='active' → only i1,i2 (i3 is idle and is dropped by the re-check).
+        let (path, ids) = run(
+            &dml,
+            &parser,
+            "SELECT id FROM inv WHERE id IN ('i1','i2','i3') AND status = 'active'",
+            None,
+        )
+        .await;
+        assert_eq!(path, RelationalSelectAccessPath::PrimaryKeyLookup);
+        assert_eq!(ids, vec!["i1", "i2"]);
+
+        // (4) Nested grouping must NOT flatten: status='idle' AND (qty < 30 OR
+        // id='i1') → i3 only. Flattening to `idle AND qty<30 AND id='i1'` would
+        // wrongly return zero rows.
+        let (path, ids) = run(
+            &dml,
+            &parser,
+            "SELECT id FROM inv WHERE status = 'idle' AND (qty < 30 OR id = 'i1')",
+            None,
+        )
+        .await;
+        assert_eq!(path, RelationalSelectAccessPath::TableScan);
+        assert_eq!(ids, vec!["i3"]);
+
+        // (5) NOT IN mixed with OR over a never-true branch: qty NOT IN (5,15) OR
+        // status IS NULL → i3,i4 (no row has a NULL status).
+        let (_, ids) = run(
+            &dml,
+            &parser,
+            "SELECT id FROM inv WHERE qty NOT IN (5, 15) OR status IS NULL",
+            None,
+        )
+        .await;
+        assert_eq!(ids, vec!["i3", "i4"]);
+
+        // (6) LIMIT honored on the OR scan path.
+        let (_, ids) = run(
+            &dml,
+            &parser,
+            "SELECT id FROM inv WHERE status = 'active' OR status = 'idle'",
+            Some(2),
+        )
+        .await;
+        assert_eq!(ids.len(), 2, "limit pushed into the predicate scan");
+
+        // (7) No WHERE → scan all rows.
+        let (path, ids) = run(&dml, &parser, "SELECT id FROM inv", None).await;
+        assert_eq!(path, RelationalSelectAccessPath::TableScan);
+        assert_eq!(ids, vec!["i1", "i2", "i3", "i4"]);
     }
 
     /// UPDATE/DELETE WHERE must honor NON-primary-key predicates (and the full

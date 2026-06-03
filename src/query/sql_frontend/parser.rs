@@ -2145,6 +2145,60 @@ mod tests {
     }
 
     #[test]
+    fn parse_select_where_clause_preserves_or_and_nested_grouping() {
+        let parser = SqlFrontendParser::new();
+
+        // Flat OR: faithful top-level Or operator + two conditions.
+        let wc = parser
+            .parse_select_where_clause("SELECT id FROM inv WHERE a = 1 OR b = 2")
+            .expect("parse")
+            .expect("has WHERE");
+        assert!(matches!(wc.operator, LogicalOperator::Or));
+        assert_eq!(wc.conditions.len(), 2);
+
+        // Mixed AND/OR must NOT flatten: `a AND (b OR c)` →
+        // top-level And of [Comparison(a), Nested{Or,[b,c]}].
+        let wc = parser
+            .parse_select_where_clause("SELECT id FROM inv WHERE a = 1 AND (b = 2 OR c = 3)")
+            .expect("parse")
+            .expect("has WHERE");
+        assert!(matches!(wc.operator, LogicalOperator::And));
+        assert_eq!(wc.conditions.len(), 2);
+        assert!(matches!(wc.conditions[0], Condition::Comparison { .. }));
+        match &wc.conditions[1] {
+            Condition::Nested {
+                conditions,
+                operator,
+            } => {
+                assert!(matches!(operator, LogicalOperator::Or));
+                assert_eq!(conditions.len(), 2);
+            }
+            other => panic!("expected nested OR subtree, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_select_where_clause_handles_no_where_and_non_select() {
+        let parser = SqlFrontendParser::new();
+
+        // Well-formed SELECT with no WHERE → Ok(None) (scan all).
+        assert!(
+            parser
+                .parse_select_where_clause("SELECT id FROM inv")
+                .expect("parse")
+                .is_none()
+        );
+
+        // Non-SELECT statement → Err so the caller falls back to the legacy
+        // string-predicate path rather than treating it as a query error.
+        assert!(
+            parser
+                .parse_select_where_clause("UPDATE inv SET status = 'x' WHERE id = '1'")
+                .is_err()
+        );
+    }
+
+    #[test]
     fn parse_ddl_create_index_supports_default_btree() {
         let parser = SqlFrontendParser::new();
 
