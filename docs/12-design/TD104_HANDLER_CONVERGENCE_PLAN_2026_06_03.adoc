@@ -115,6 +115,44 @@ unit-tested from `cargo test --lib`). Est. ~1d incl. mode verification, not 0.5d
 Full convergence ≈ 10 engineering days. **S1 is independently shippable now** and removes
 the live REST dependence on ROOT without touching the other protocols.
 
+=== 4bis. Per-protocol ROOT-consumption (verified 2026-06-03) — REST/gRPC/pgwire OFF ROOT
+
+A handler-consumption audit corrected the picture: of the four protocols, **only Arrow
+Flight still consumes the ROOT handler.**
+
+* **REST** — converged in **S1** (`f141dcc5d`).
+* **gRPC** — converged in **S2** (`7e18a483b`): gRPC v1 (`crates/platform/proximadb-api/src/grpc/v1/{vector,collection,sql}.rs`) already stored the handler as `Arc<dyn ApiHandlersPort>` and called only the 7 trait methods; document/graph/observability RPCs already use their own ports. Switched the 3 boot sites (`multi_server.rs` start/unified/cluster) from `services.request_handlers` (ROOT) to `services.api_handlers` (RUNTIME). **Needs gRPC smoke-test.**
+* **pgwire** — **already independent**: `PostgresServer` (`network/postgres/protocol.rs:50–76`) was built from decomposed ports/services (`CollectionPort`, `VectorOperationsService`, `CatalogManager`, `DocumentService`, `GraphService`, `ObservabilityService`) — never the monolithic handler. No change.
+* **Arrow Flight** — **still on ROOT** (the last consumer). `ArrowFlightServer`/`ProximaFlightService` (`network/arrow_ipc/{server,service}.rs`) hold the **concrete** `Arc<UnifiedHandlers>` and use:
+** the record-batch methods `handle_record_{insert_batch,batch,delete_batch}_for_tenant` (service.rs:913/917/941) — **ROOT inherent, not in any port**;
+** concrete-field access `.collection_service.{collection,list_collections}` (service.rs:1028/1049) — coverable by the existing `CollectionPort`;
+** the inherent `.storage_config()` (server.rs:162) — should become flight-server state;
+** `handle_vector_search_v1` (service.rs:966) — already `ApiHandlersPort`.
+
+=== 4ter. Arrow Flight migration (the real S3) — design-first, blocked by crate layering
+
+The record-batch methods are the blocker. Their request/response types live in the **root crate**:
+`RichRecordBatchRequest`/`RichRecordDeleteBatchRequest` (`src/services/operations/vectors/legacy.rs:85/92`),
+`BatchOperationResult` (`src/services/operations/batch_result.rs:48`), and `handle_record_*_for_tenant`
+(`src/api_handlers/request_handlers.rs:1021/1069/1145`). A `RecordOpsPort` must live in
+`proximadb-runtime` (or a contract crate) which sits **below** the root crate, so it **cannot reference
+those root types** as-is. S3 therefore requires, in order:
+. **Relocate** `RichRecordBatchRequest`/`RichRecordDeleteBatchRequest`/`BatchOperationResult` (and the
+  `Record` payload they carry) down into a shared crate the port can depend on (candidate:
+  `proximadb-runtime` or a new `proximadb-record-ops` contract). Mind the dependency direction.
+. **Define `RecordOpsPort`** there: `handle_record_insert_batch_for_tenant`, `handle_record_batch_for_tenant`,
+  `handle_record_delete_batch_for_tenant`.
+. **Impl it** on the concrete service (the bodies move from `request_handlers.rs`, delegating to
+  `vector_operations_service`/`document_service`); surface it on RUNTIME (or wire it standalone).
+. **Re-type `ArrowFlightServer`/`ProximaFlightService`** to hold `Arc<dyn ApiHandlersPort>` +
+  `Arc<dyn RecordOpsPort>` + `Arc<dyn CollectionPort>` instead of `Arc<UnifiedHandlers>`; pass
+  `StorageConfig` to the flight server as state to drop `.storage_config()`.
+. Then Arrow is off ROOT. With S5 (build-time AQL/hybrid/memory field-extraction injection) and the
+  `ports=None` legacy/cluster paths wired, the `rest/v1/handlers.rs:1337` fallback and ROOT itself can be deleted.
+
+**Not a mechanical switch** — it's a cross-crate type relocation + a new port + un-verifiable Arrow
+runtime behavior. Do it design-first, in its own session, with a Flight smoke-test.
+
 == 5. Convergence Gate notes
 
 * New ports (`MetricsPort`, `DocumentPort`) must declare authority mode / policy boundary in
