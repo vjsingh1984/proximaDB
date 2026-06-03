@@ -1,0 +1,100 @@
+= TD-104 / Seam S1 — UnifiedHandlers Convergence Plan
+:toc: left
+:toclevels: 2
+Date: 2026-06-03
+Status: PLAN (no code yet)
+Seam: CONVERGENCE_AUDIT S1 / TD-104
+Branch: proximadb-embedding
+
+[NOTE]
+====
+Planning artifact for collapsing the two `UnifiedHandlers` onto the runtime
+port-based one. Based on a full repo map (2026-06-03). No code changed yet.
+Companion to the apex map (`SYSTEM_MAP_2026_05_30.adoc`) and the Convergence Gate.
+====
+
+== 1. The seam
+
+Two `UnifiedHandlers` implement `ApiHandlersPort`
+(`crates/platform/proximadb-runtime/src/port.rs:26`):
+
+* **ROOT (inherent-logic)** — `src/api_handlers/request_handlers.rs:232`. Holds **12
+  concrete services** (`CollectionService`, `VectorOperationsService`, `DocumentService`,
+  `ObservabilityService`, `EventLogEngine`, 3× graph services, `MetricsQueryService`,
+  `QueryFacadeAdapter`, `DmlService`, `CanonicalPrecisionResolver`). Implements the 7
+  `ApiHandlersPort` methods **plus ~30 inherent-only methods** (metrics/admin, record
+  APIs, `execute_sql_frontend`, cache/setters).
+* **RUNTIME (port-based)** — `crates/platform/proximadb-runtime/src/handlers.rs:129`. Holds
+  **3 port trait objects** (`CollectionPort`, `VectorOpsPort`, `QueryAdapterPort`) + cache.
+  Implements exactly the 7 `ApiHandlersPort` methods by delegation; **zero inherent logic**.
+
+`ApiHandlersPort` (7 methods): `handle_collection_operation_for_tenant`,
+`handle_vector_search_v1{,_for_tenant}`, `handle_vector_batch_v1_for_tenant`,
+`handle_vector_v1_for_tenant`, `execute_hybrid_query`, `execute_sql_v1`.
+
+== 2. Current wiring (the good news)
+
+* **REST already prefers RUNTIME.** `src/network/rest/v1/handlers.rs:1337` casts
+  `state.api_handlers` (RUNTIME, built in `shared_services.rs:1529`) and only **falls back**
+  to `state.request_handlers` (ROOT) when `api_handlers` is `None`. In normal boot both exist
+  and REST collection/vector dispatch already goes through RUNTIME.
+* **gRPC / Arrow Flight / pgwire are locked to ROOT** — `multi_server.rs` passes
+  `services.request_handlers` (ROOT) directly to those servers (many sites ~445–1509).
+* **Router-build field extractions are locked to ROOT** — AQL source registration, the
+  hybrid backend, bulk-load coordinator, and memory store read concrete fields off ROOT:
+  `.vector_operations_service` (rest/v1/handlers.rs:1207/1399/1462/1482/1511/1521/1547),
+  `.document_service` (:1492), `.observability_service` (:1498), `.event_log`
+  (:1474/1554/1567), `.graph_execution_service` (rest/server.rs:308). These are **build-time
+  wiring**, separate from per-request dispatch.
+
+== 3. Blockers to full convergence (missing port surface)
+
+The RUNTIME handler can't yet replace ROOT everywhere because the ports don't cover ROOT's
+inherent methods. Ports live in `crates/platform/proximadb-runtime/src/service_ports.rs`.
+
+[cols="2,2,1",options="header"]
+|===
+| ROOT capability | Port today | Gap
+| Collection CRUD / resolve | `CollectionPort` (6 methods) | covered
+| Vector search / batch / get | `VectorOpsPort::{search,batch_upsert,get_vector}` | covered
+| Hybrid + SQL v1 | `QueryAdapterPort::{execute_hybrid,execute_sql}` | covered
+| `metrics` / `collection_metrics` / `query_hints` | — | **missing**
+| `force_flush_collection` (port has `flush_all` only) | — | **missing**
+| `list_unflushed_vectors` | — | **missing**
+| Record APIs (`handle_record_*_for_tenant`) | — | **missing (no DocumentPort)**
+| `execute_sql_frontend` (legacy SQL) | — | **missing**
+| Build-time service field extraction | — | **no port; structural**
+|===
+
+== 4. Recommended slicing
+
+* **S1 — mandate RUNTIME for REST dispatch (READY, low risk, ~0.5d).** Replace the
+  fallback cast at `rest/v1/handlers.rs:1337` with `state.api_handlers.clone().expect(...)`
+  and assert RUNTIME is always built in `shared_services`. RUNTIME already implements all 7
+  methods and is already preferred — this just removes the dead ROOT fallback for REST
+  request dispatch. gRPC/Arrow/pgwire and the build-time field extractions are untouched
+  (they still hold ROOT). **Verify:** REST collection/vector e2e + `cargo test`.
+* **S2 — `MetricsPort` (or extend `VectorOpsPort`) (~2d).** Add `metrics`,
+  `collection_metrics`, `query_hints`, `force_flush_collection`, `list_unflushed_vectors`;
+  implement on the concrete services; surface on RUNTIME.
+* **S3 — `DocumentPort`/`RecordPort` (~3d).** Cover `handle_record_{search,get,scan,
+  scan_paginated,delete_batch,batch,insert_batch}_for_tenant`; cut gRPC record paths over.
+* **S4 — SQL frontend (~2d).** Fold `execute_sql_frontend` into `QueryAdapterPort` (or
+  deprecate the legacy path) so the multiplex/pgwire SQL route leaves ROOT.
+* **S5 — build-time field extraction (~3d, the hard part).** Re-wire AQL source
+  registration / hybrid backend / bulk-load / memory store / graph AQL source to receive
+  injected services (or ports) at boot instead of reaching into ROOT's concrete fields.
+  Only after S2–S5 can gRPC/Arrow/pgwire move off ROOT and ROOT be deleted.
+
+Full convergence ≈ 10 engineering days. **S1 is independently shippable now** and removes
+the live REST dependence on ROOT without touching the other protocols.
+
+== 5. Convergence Gate notes
+
+* New ports (`MetricsPort`, `DocumentPort`) must declare authority mode / policy boundary in
+  their doc headers per the Gate; they are facades over the same concrete services (no new
+  durable authority).
+* Do **not** expose concrete services as public fields to "fix" S5 — that re-introduces the
+  hidden coupling the seam exists to remove. Inject at boot.
+* ROOT deletion is the terminal step; keep both handlers until gRPC/Arrow/pgwire + build-time
+  wiring are all on ports.
