@@ -38,7 +38,7 @@ use super::aggregation_extensions::LookupFetcher;
 #[cfg(feature = "canonical-document-store")]
 use super::canonical_adapter::legacy_document_to_proxima_record;
 use super::canonical_adapter::proxima_record_to_legacy_document;
-use super::canonical_adapter::proxima_tree_to_sql_object;
+use super::canonical_adapter::{proxima_tree_to_sql_object, sql_object_to_proxima_tree};
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
@@ -1094,6 +1094,12 @@ impl DocumentService {
                 return Err(e);
             }
         }
+
+        // TD-106 dual-carry invariant: `apply_update` mutates the legacy
+        // `document` (SqlObject); resync the canonical `props` tree so the
+        // record persisted to the in-memory store (non-canonical mode) and read
+        // back by filter/aggregation reflects the update.
+        record.props = sql_object_to_proxima_tree(&record.document);
 
         // Increment version
         let new_version = record.version + 1;
@@ -2716,6 +2722,20 @@ mod tests {
             name.value,
             Some(sql_value::Value::StringValue("Alice".to_string()))
         );
+
+        // TD-106 dual-carry invariant: after an update the canonical `props` tree
+        // must mirror the mutated `document` (filter/aggregation read `props`).
+        assert_eq!(
+            fetched.props,
+            sql_object_to_proxima_tree(&fetched.document),
+            "props must stay in sync with document after update_document"
+        );
+        match fetched.props.get("email") {
+            Some(proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String(s),
+            )) => assert_eq!(s, "alice@newdomain.com", "props must carry the updated value"),
+            other => panic!("expected updated email in props, got {other:?}"),
+        }
     }
 
     #[tokio::test]
