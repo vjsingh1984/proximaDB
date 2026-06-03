@@ -14,9 +14,6 @@
 //! - Lakehouse-native: Iceberg/Delta/Hudi table format support
 //! - Multi-tenant: Namespace isolation with RBAC
 
-// Internal catalog types (Serde-compatible)
-pub mod types;
-
 // Core traits
 // `traits` was the local Catalog trait module. Option B consolidation
 // (PR INT-3 line-of-work) merged its method surface into
@@ -28,16 +25,8 @@ pub mod traits {
     pub use proximadb_catalog::{Catalog, CatalogHealth, LakehouseExtension, TableFormat};
 }
 
-// Metadata cache
-pub mod cache;
-
 // Partition pruning for query optimization
 pub mod partition_pruning;
-
-// Always-available catalog implementations
-pub mod hive;
-pub mod iceberg;
-pub mod native;
 
 // Internal schema registry (multi-model unified catalog)
 pub mod internal;
@@ -48,9 +37,6 @@ pub mod iceberg_rest_service;
 // PAX segment registry — bridges write path (gRPC v2) with Iceberg REST snapshot stats
 pub mod segment_registry;
 pub use segment_registry::SegmentRegistry;
-
-// OLTP catalog backend (PostgreSQL / Neon / Supabase / MariaDB / SQLite)
-pub mod oltp;
 
 // Catalog federation (unified view across internal and external catalogs)
 pub mod federation;
@@ -99,25 +85,15 @@ pub use corpus_version::CorpusVersionRegistry;
 pub mod corpus_version_fs_store;
 pub use corpus_version_fs_store::FileSystemCorpusVersionStore;
 
-// Feature-gated implementations
+// Feature-gated catalog backends — canonical impls live in `proximadb-catalog`.
 #[cfg(feature = "delta-lake")]
-pub mod delta;
+pub use proximadb_catalog::delta::{DeltaCatalog, DeltaCatalogConfig};
 #[cfg(feature = "aws")]
-pub mod glue;
+pub use proximadb_catalog::glue::GlueCatalog;
 #[cfg(feature = "polaris-catalog")]
-pub mod polaris;
+pub use proximadb_catalog::polaris::PolarisCatalog;
 #[cfg(feature = "unity-catalog")]
-pub mod unity;
-
-// Re-exports for feature-gated catalogs
-#[cfg(feature = "delta-lake")]
-pub use delta::{DeltaCatalog, DeltaCatalogConfig};
-#[cfg(feature = "aws")]
-pub use glue::GlueCatalog;
-#[cfg(feature = "polaris-catalog")]
-pub use polaris::PolarisCatalog;
-#[cfg(feature = "unity-catalog")]
-pub use unity::UnityCatalog;
+pub use proximadb_catalog::unity::UnityCatalog;
 
 use std::collections::HashMap;
 use std::sync::Arc;
