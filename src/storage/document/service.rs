@@ -29,7 +29,7 @@ use crate::storage::traits::UnifiedStorageFormat;
 use proximadb_document::{DOCUMENT_COLLECTION_PROP, DOCUMENT_RECORD_LABEL, DocumentRecordKey};
 #[cfg(feature = "canonical-document-store")]
 use proximadb_records::{
-    RecordKey, RecordRecoveryOperation, RecordScanOptions, RecordStorage,
+    ProximaTree, RecordKey, RecordRecoveryOperation, RecordScanOptions, RecordStorage,
     replay_record_recovery_operations,
 };
 
@@ -38,6 +38,7 @@ use super::aggregation_extensions::LookupFetcher;
 #[cfg(feature = "canonical-document-store")]
 use super::canonical_adapter::legacy_document_to_proxima_record;
 use super::canonical_adapter::proxima_record_to_legacy_document;
+use super::canonical_adapter::{proxima_tree_to_sql_object, sql_object_to_proxima_tree};
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
@@ -1872,16 +1873,21 @@ impl DocumentService {
             service: this.clone(),
         };
 
-        // Execute aggregation pipeline with lookup support
+        // Execute aggregation pipeline with lookup support. The working set is the
+        // canonical `ProximaTree` (TD-106 Slice 5); the input edge lifts each
+        // `DocumentRecord.document` (SqlObject) once via `sql_object_to_proxima_tree`.
         let executor = AggregationExecutor::new();
-        let mut working_set: Vec<SqlObject> = if let Some(f) = &filter {
+        let mut working_set: Vec<ProximaTree> = if let Some(f) = &filter {
             documents
                 .iter()
                 .filter(|doc| executor.matches_filter(doc, f))
-                .map(|doc| doc.document.clone())
+                .map(|doc| sql_object_to_proxima_tree(&doc.document))
                 .collect()
         } else {
-            documents.into_iter().map(|doc| doc.document).collect()
+            documents
+                .iter()
+                .map(|doc| sql_object_to_proxima_tree(&doc.document))
+                .collect()
         };
 
         // Process each stage, handling lookups specially
@@ -1915,8 +1921,13 @@ impl DocumentService {
             query_time_ms
         );
 
+        // Output edge: lower the canonical working set back to the proto row shape
+        // for the public `AggregateResult` contract.
+        let results: Vec<SqlObject> =
+            working_set.iter().map(proxima_tree_to_sql_object).collect();
+
         Ok(crate::storage::document::AggregateResult {
-            results: working_set,
+            results,
             query_time_ms,
         })
     }
