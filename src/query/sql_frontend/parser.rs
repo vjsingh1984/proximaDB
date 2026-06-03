@@ -985,6 +985,37 @@ impl SqlFrontendParser {
         self.try_convert_dml(statement)
     }
 
+    /// Parse a `SELECT` statement and return its `WHERE` clause as the same
+    /// faithful boolean [`WhereClause`] IR that UPDATE/DELETE use — so the
+    /// pgwire relational SELECT path can push OR / mixed-AND-OR / grouped
+    /// predicates into the record scan instead of degrading to a full scan.
+    ///
+    /// Returns `Ok(None)` when the statement is a well-formed SELECT with no
+    /// `WHERE`. Returns `Err` when the text is not a single SELECT, fails to
+    /// parse, or its `WHERE` contains an expression the DML converter rejects;
+    /// the caller treats `Err` as "fall back to the legacy string-predicate
+    /// path" (over-inclusive full scan), NOT as a query error.
+    pub fn parse_select_where_clause(&self, sql: &str) -> Result<Option<WhereClause>> {
+        let statements = Parser::parse_sql(&self.dialect, sql)
+            .map_err(|e| anyhow!("SQL parsing failed: {}", e))?;
+        let [statement] = statements.as_slice() else {
+            return Err(anyhow!(
+                "expected exactly one statement, found {}",
+                statements.len()
+            ));
+        };
+        let Statement::Query(query) = statement else {
+            return Err(anyhow!("statement is not a SELECT query"));
+        };
+        let SetExpr::Select(select) = &*query.body else {
+            return Err(anyhow!("query body is not a simple SELECT"));
+        };
+        match &select.selection {
+            None => Ok(None),
+            Some(expr) => Ok(Some(self.convert_where_clause_dml(expr)?)),
+        }
+    }
+
     /// Try to convert a statement to DML, returning None for SELECT queries
     fn try_convert_dml(&self, statement: &Statement) -> Result<Option<DmlStatement>> {
         match statement {

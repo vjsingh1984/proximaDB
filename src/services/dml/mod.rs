@@ -93,6 +93,21 @@ enum RelationalPredicateTree {
     Not(Box<RelationalPredicateTree>),
 }
 
+impl RelationalPredicateTree {
+    /// Number of leaf (column) predicates in the tree — used as the
+    /// `predicate_count` route-metadata signal for tree-driven SELECTs (the
+    /// tree analogue of the flat path's `predicates.len()`).
+    fn leaf_count(&self) -> usize {
+        match self {
+            Self::Leaf(_) => 1,
+            Self::And(children) | Self::Or(children) => {
+                children.iter().map(Self::leaf_count).sum()
+            }
+            Self::Not(child) => child.leaf_count(),
+        }
+    }
+}
+
 /// Syntax-level predicate input from a SQL/protocol facade.
 ///
 /// DML resolves this against xCatalog before route selection or evaluation.
@@ -549,7 +564,7 @@ impl DmlService {
         let route_metadata = Self::select_route_metadata(
             &table_schema,
             &selected_columns,
-            &predicates,
+            predicates.len(),
             limit,
             access_path,
         );
@@ -559,6 +574,147 @@ impl DmlService {
             route_metadata,
             rows,
         })
+    }
+
+    /// Select current visible records for a catalog table using the same faithful
+    /// boolean [`WhereClause`] IR that UPDATE/DELETE use — so OR / mixed-AND-OR /
+    /// grouped SELECT predicates push into the scan instead of degrading to a full
+    /// table scan. `where_clause = None` means no `WHERE` (scan all, capped by limit).
+    ///
+    /// This converges the pgwire SELECT WHERE path onto [`RelationalPredicateTree`]
+    /// (built by [`Self::where_clause_to_predicate_tree`]) and reuses the exact
+    /// OR-safe PK fast-path ([`Self::extract_pk_candidate_ids`]) + tree evaluator
+    /// ([`Self::eval_predicate_tree`]) that drive UPDATE/DELETE. The flat
+    /// [`Self::select_table_records_with_projection`] is retained unchanged for
+    /// callers that still pass a flat predicate Vec.
+    pub async fn select_table_records_with_projection_where(
+        &self,
+        table_name: &str,
+        projection_column_names: &[String],
+        limit: Option<usize>,
+        where_clause: Option<&WhereClause>,
+    ) -> Result<RelationalSelectResult> {
+        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let selected_columns =
+            Self::resolve_select_projection(&table_schema, projection_column_names)?;
+
+        let (access_path, records, predicate_count) = match where_clause {
+            Some(where_clause) => {
+                let tree = self.where_clause_to_predicate_tree(where_clause, &table_schema)?;
+                let predicate_count = tree.leaf_count();
+                let (access_path, records) = self
+                    .select_table_records_with_tree(
+                        &table_schema,
+                        &table_id_name,
+                        limit,
+                        where_clause,
+                        &tree,
+                    )
+                    .await?;
+                (access_path, records, predicate_count)
+            }
+            None => {
+                // No WHERE: scan all rows up to the limit (no predicate pushed).
+                let records = self
+                    .record_store
+                    .scan_records_filtered(
+                        &table_schema,
+                        TableRecordScanRequest {
+                            table_id: table_id_name.clone(),
+                            limit,
+                            include_vector: true,
+                            include_props: true,
+                        },
+                        None,
+                        None,
+                    )
+                    .await?;
+                (RelationalSelectAccessPath::TableScan, records, 0)
+            }
+        };
+
+        let rows = Self::project_select_rows(&records, &table_schema, &selected_columns)?;
+        let route_metadata = Self::select_route_metadata(
+            &table_schema,
+            &selected_columns,
+            predicate_count,
+            limit,
+            access_path,
+        );
+
+        Ok(RelationalSelectResult {
+            selected_columns,
+            route_metadata,
+            rows,
+        })
+    }
+
+    /// Records-returning, limit-honoring twin of [`Self::resolve_matching_ids`] for
+    /// the SELECT path: PK fast-path (OR-safe via [`Self::extract_pk_candidate_ids`],
+    /// re-checked against the full tree) else a predicate scan with the limit pushed in.
+    async fn select_table_records_with_tree(
+        &self,
+        table_schema: &CatalogTableSchema,
+        table_id_name: &str,
+        limit: Option<usize>,
+        where_clause: &WhereClause,
+        tree: &RelationalPredicateTree,
+    ) -> Result<(RelationalSelectAccessPath, Vec<ProximaRecord>)> {
+        let primary_key = table_schema.primary_key.first().map(String::as_str);
+
+        // PK fast-path: only fires under a top-level conjunction (extract_pk_candidate_ids
+        // returns empty under top-level OR, so `id = 5 OR status = 'x'` correctly scans).
+        // Each candidate is re-checked against the FULL tree before counting as a match.
+        let pk_candidates = self.extract_pk_candidate_ids(where_clause, table_schema)?;
+        if !pk_candidates.is_empty() {
+            let cap = limit.unwrap_or(usize::MAX);
+            let mut records = Vec::new();
+            for candidate in pk_candidates {
+                if records.len() >= cap {
+                    break;
+                }
+                let Some(rich) = self
+                    .record_store
+                    .get_by_key(
+                        table_schema,
+                        TableRecordGetRequest {
+                            table_id: table_id_name.to_string(),
+                            key: candidate,
+                            include_vector: true,
+                            include_props: true,
+                        },
+                        None,
+                    )
+                    .await?
+                else {
+                    continue;
+                };
+                let record = Self::rich_result_to_record(rich);
+                if Self::eval_predicate_tree(&record, tree, primary_key) {
+                    records.push(record);
+                }
+            }
+            return Ok((RelationalSelectAccessPath::PrimaryKeyLookup, records));
+        }
+
+        // No usable PK predicate: push the full tree into the store scan + limit.
+        let pred = |record: &ProximaRecord| Self::eval_predicate_tree(record, tree, primary_key);
+        let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
+        let records = self
+            .record_store
+            .scan_records_filtered(
+                table_schema,
+                TableRecordScanRequest {
+                    table_id: table_id_name.to_string(),
+                    limit,
+                    include_vector: true,
+                    include_props: true,
+                },
+                predicate,
+                None,
+            )
+            .await?;
+        Ok((RelationalSelectAccessPath::TableScan, records))
     }
 
     /// Select current visible records for simple catalog-table reads.
@@ -987,7 +1143,7 @@ impl DmlService {
     fn select_route_metadata(
         table_schema: &CatalogTableSchema,
         selected_columns: &[CatalogColumn],
-        predicates: &[RelationalSelectPredicate],
+        predicate_count: usize,
         limit: Option<usize>,
         access_path: RelationalSelectAccessPath,
     ) -> RelationalSelectRouteMetadata {
@@ -997,7 +1153,7 @@ impl DmlService {
             workload_profile: table_schema.workload_profile.as_str().to_string(),
             storage_specialization: table_schema.storage_specialization.as_str().to_string(),
             policy_boundary: Self::select_policy_boundary(table_schema),
-            predicate_count: predicates.len(),
+            predicate_count,
             projected_column_count: selected_columns.len(),
             limit,
         }

@@ -2247,15 +2247,6 @@ impl PostgresProtocol {
         debug!("Executing relational query on table: {}", table_name);
 
         let projection_column_names = Self::extract_selected_column_names(query);
-        let predicates = if query.to_ascii_uppercase().contains(" WHERE ") {
-            // OR predicates and other complex expressions are not yet wired into the
-            // simple AND-predicate model (T4 remaining work). Fall back to a full
-            // scan rather than returning an empty result — over-inclusive is better
-            // than empty for a compatibility layer.
-            Self::extract_select_where_predicates(query).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
 
         let Some(dml_service) = self.dml_service.clone() else {
             self.send_command_complete("SELECT 0").await?;
@@ -2264,18 +2255,43 @@ impl PostgresProtocol {
 
         let limit = Self::extract_select_limit(query);
         let order_by = Self::extract_select_order_by(query);
-        let mut result = dml_service
-            .select_table_records_with_projection(
-                table_name,
-                &projection_column_names,
-                // Fetch all matching rows BEFORE LIMIT when we need
-                // to ORDER BY — sorting then truncating is the only
-                // correct semantics. With no ORDER BY the planner
-                // keeps the limit pushdown.
-                if order_by.is_some() { None } else { limit },
-                &predicates,
-            )
-            .await?;
+        // Fetch all matching rows BEFORE LIMIT when we need to ORDER BY —
+        // sorting then truncating is the only correct semantics. With no
+        // ORDER BY the planner keeps the limit pushdown.
+        let scan_limit = if order_by.is_some() { None } else { limit };
+
+        // Prefer the faithful boolean WHERE tree (OR / mixed-AND-OR / grouped
+        // predicates push into the scan, reusing the UPDATE/DELETE tree
+        // machinery). If sqlparser can't parse the query (pg-specific syntax)
+        // or its WHERE has an unsupported expression, fall back to the legacy
+        // string-predicate path — over-inclusive full scan, never empty.
+        let mut result = match SqlFrontendParser::new().parse_select_where_clause(query) {
+            Ok(where_clause) => {
+                dml_service
+                    .select_table_records_with_projection_where(
+                        table_name,
+                        &projection_column_names,
+                        scan_limit,
+                        where_clause.as_ref(),
+                    )
+                    .await?
+            }
+            Err(_) => {
+                let predicates = if query.to_ascii_uppercase().contains(" WHERE ") {
+                    Self::extract_select_where_predicates(query).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                dml_service
+                    .select_table_records_with_projection(
+                        table_name,
+                        &projection_column_names,
+                        scan_limit,
+                        &predicates,
+                    )
+                    .await?
+            }
+        };
         let fields = result
             .selected_columns
             .iter()
