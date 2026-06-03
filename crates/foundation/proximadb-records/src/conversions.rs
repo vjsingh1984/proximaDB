@@ -68,6 +68,36 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
     }
 }
 
+/// Convert a `serde_json::Value` into a `ProximaValue` (natural-JSON mapping).
+///
+/// Numbers split into `Int64`/`Float64`. This matches the composition
+/// `json -> SqlValue -> sql_value_to_proxima`, so internal compute migrating off a
+/// jsonpath/`serde_json` bridge (e.g. document filter path extraction) keeps identical
+/// value semantics. Canonical home for the previously-scattered `json_to_proxima_value`
+/// copies (arrow_ipc, websocket, rest/v2) to converge onto later.
+pub fn json_to_proxima(value: &serde_json::Value) -> ProximaValue {
+    match value {
+        serde_json::Value::Null => ProximaValue::Null,
+        serde_json::Value::Bool(b) => ProximaValue::Boolean(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                ProximaValue::Int64(i)
+            } else {
+                ProximaValue::Float64(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::String(s) => ProximaValue::String(s.clone()),
+        serde_json::Value::Array(arr) => {
+            ProximaValue::Array(arr.iter().map(json_to_proxima).collect())
+        }
+        serde_json::Value::Object(obj) => ProximaValue::Map(
+            obj.iter()
+                .map(|(k, v)| (k.clone(), json_to_proxima(v)))
+                .collect(),
+        ),
+    }
+}
+
 /// Convert a canonical `ProximaValue` into the legacy v1 `SqlValue`.
 ///
 /// This exists only as a storage-service adapter while the vector operations

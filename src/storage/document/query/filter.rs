@@ -6,12 +6,12 @@
 use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
 use proximadb_data_model::ProximaValue;
-use proximadb_records::conversions::sql_value_to_proxima;
+use proximadb_records::conversions::{json_to_proxima, sql_value_to_proxima};
 use regex::Regex;
 use serde_json::Value as JsonValue;
 
 use crate::proto::proximadb_v1::{
-    DocFilterCondition, DocFilterOperator, DocumentFilter, SqlArray, SqlObject, SqlValue,
+    DocFilterCondition, DocFilterOperator, DocumentFilter, SqlObject, SqlValue,
     sql_value::Value as SqlValueVariant,
 };
 
@@ -65,15 +65,12 @@ impl FilterEvaluator {
         let operator = DocFilterOperator::try_from(condition.operator)
             .unwrap_or(DocFilterOperator::Unspecified);
 
-        // Extract the document value (still proto at the jsonpath edge — Slice 2),
-        // then lift it and the filter operands into canonical `ProximaValue` ONCE so the
-        // comparison kernel below operates on canonical types (TD-106 seam S3, Slice 1).
-        // `condition.value`/`condition.values` are proto wire operands off `DocFilterCondition`
-        // — a legitimate edge; we convert, not mutate them.
-        let doc_value = self
-            .extract_path_value(document, path)
-            .as_ref()
-            .map(sql_value_to_proxima);
+        // `extract_path_value` returns a canonical `ProximaValue` (Slice 2). The filter
+        // operands `condition.value`/`condition.values` are proto wire operands off
+        // `DocFilterCondition` — a legitimate edge; lift them once via `sql_value_to_proxima`
+        // so the comparison kernel below operates entirely on canonical values
+        // (TD-106 seam S3).
+        let doc_value = self.extract_path_value(document, path);
         let cond_value = condition.value.as_ref().map(sql_value_to_proxima);
         let cond_values: Vec<ProximaValue> =
             condition.values.iter().map(sql_value_to_proxima).collect();
@@ -99,9 +96,11 @@ impl FilterEvaluator {
         }
     }
 
-    /// Extract value at a JSON path
-    fn extract_path_value(&self, document: &SqlObject, path: &str) -> Option<SqlValue> {
-        // Convert SqlObject to serde_json::Value for jsonpath processing
+    /// Extract value at a JSON path, returning a canonical `ProximaValue`.
+    fn extract_path_value(&self, document: &SqlObject, path: &str) -> Option<ProximaValue> {
+        // The jsonpath engine operates on serde_json::Value, so the (proto) document is
+        // rendered to JSON for the query; the result is lifted to canonical `ProximaValue`
+        // via `json_to_proxima` (TD-106 Slice 2) — no proto `SqlValue` is constructed here.
         let json_value = self.sql_object_to_json(document);
 
         // Normalize path: $.field or field -> $.field
@@ -124,31 +123,26 @@ impl FilterEvaluator {
                         if arr[0].is_null() {
                             None
                         } else {
-                            self.json_to_sql_value(&arr[0])
+                            Some(json_to_proxima(&arr[0]))
                         }
                     }
-                    // Multiple element array = return as array
+                    // Multiple element array = return as array (nulls filtered)
                     JsonValue::Array(arr) => {
-                        // Filter out nulls
-                        let sql_values: Vec<SqlValue> = arr
+                        let values: Vec<ProximaValue> = arr
                             .iter()
                             .filter(|v| !v.is_null())
-                            .filter_map(|v| self.json_to_sql_value(v))
+                            .map(json_to_proxima)
                             .collect();
-                        if sql_values.is_empty() {
+                        if values.is_empty() {
                             None
                         } else {
-                            Some(SqlValue {
-                                value: Some(SqlValueVariant::ArrayValue(SqlArray {
-                                    values: sql_values,
-                                })),
-                            })
+                            Some(ProximaValue::Array(values))
                         }
                     }
                     // Null result = not found
                     JsonValue::Null => None,
                     // Direct value result
-                    _ => self.json_to_sql_value(&results),
+                    _ => Some(json_to_proxima(&results)),
                 }
             }
             Err(_) => None,
@@ -194,52 +188,6 @@ impl FilterEvaluator {
             }
             Some(SqlValueVariant::ObjectValue(obj)) => Some(self.sql_object_to_json(obj)),
             None => None,
-        }
-    }
-
-    /// Convert serde_json::Value to SqlValue
-    fn json_to_sql_value(&self, value: &JsonValue) -> Option<SqlValue> {
-        match value {
-            JsonValue::Null => Some(SqlValue {
-                value: Some(SqlValueVariant::NullValue(0)),
-            }),
-            JsonValue::Bool(b) => Some(SqlValue {
-                value: Some(SqlValueVariant::BoolValue(*b)),
-            }),
-            JsonValue::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Some(SqlValue {
-                        value: Some(SqlValueVariant::Int64Value(i)),
-                    })
-                } else {
-                    n.as_f64().map(|f| SqlValue {
-                        value: Some(SqlValueVariant::NumberValue(f)),
-                    })
-                }
-            }
-            JsonValue::String(s) => Some(SqlValue {
-                value: Some(SqlValueVariant::StringValue(s.clone())),
-            }),
-            JsonValue::Array(arr) => {
-                let sql_values: Vec<SqlValue> = arr
-                    .iter()
-                    .filter_map(|v| self.json_to_sql_value(v))
-                    .collect();
-                Some(SqlValue {
-                    value: Some(SqlValueVariant::ArrayValue(SqlArray { values: sql_values })),
-                })
-            }
-            JsonValue::Object(obj) => {
-                let mut fields = std::collections::HashMap::new();
-                for (k, v) in obj {
-                    if let Some(sql_val) = self.json_to_sql_value(v) {
-                        fields.insert(k.clone(), sql_val);
-                    }
-                }
-                Some(SqlValue {
-                    value: Some(SqlValueVariant::ObjectValue(SqlObject { fields })),
-                })
-            }
         }
     }
 
@@ -423,6 +371,7 @@ impl Default for FilterEvaluator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::SqlArray;
     use std::collections::HashMap;
 
     #[test]
@@ -487,10 +436,7 @@ mod tests {
         // Test extraction with $.name
         let result = evaluator.extract_path_value(&doc, "$.name");
         assert!(result.is_some());
-        if let Some(SqlValue {
-            value: Some(SqlValueVariant::StringValue(s)),
-        }) = result
-        {
+        if let Some(ProximaValue::String(s)) = result {
             assert_eq!(s, "Alice");
         } else {
             panic!("Expected string value");
@@ -499,10 +445,7 @@ mod tests {
         // Test extraction without $ prefix (should normalize)
         let result = evaluator.extract_path_value(&doc, "age");
         assert!(result.is_some());
-        if let Some(SqlValue {
-            value: Some(SqlValueVariant::Int64Value(i)),
-        }) = result
-        {
+        if let Some(ProximaValue::Int64(i)) = result {
             assert_eq!(i, 30);
         } else {
             panic!("Expected int64 value");
@@ -554,10 +497,7 @@ mod tests {
         // Test nested path
         let result = evaluator.extract_path_value(&doc, "$.profile.name");
         assert!(result.is_some());
-        if let Some(SqlValue {
-            value: Some(SqlValueVariant::StringValue(s)),
-        }) = result
-        {
+        if let Some(ProximaValue::String(s)) = result {
             assert_eq!(s, "Bob");
         } else {
             panic!("Expected string value for nested path");
@@ -576,10 +516,13 @@ mod tests {
     }
 
     #[test]
-    fn test_json_round_trip() {
+    fn test_value_to_json_to_proxima_equivalence() {
+        // The two canonicalization paths must agree: converting a proto SqlValue
+        // directly (`sql_value_to_proxima`) vs rendering it to JSON
+        // (`sql_value_to_json`, the jsonpath input edge) then lifting via
+        // `json_to_proxima` (the new extract path) must yield equal values.
         let evaluator = FilterEvaluator::new();
 
-        // Test that conversion is round-trip safe for various types
         let test_values = vec![
             SqlValue {
                 value: Some(SqlValueVariant::StringValue("test".to_string())),
@@ -601,14 +544,10 @@ mod tests {
         for original in test_values {
             let json = evaluator.sql_value_to_json(&original);
             assert!(json.is_some(), "Should convert to JSON");
-            let back = evaluator.json_to_sql_value(&json.unwrap());
-            assert!(back.is_some(), "Should convert back to SqlValue");
+            let via_json = json_to_proxima(&json.unwrap());
             assert!(
-                evaluator.proxima_values_equal(
-                    &sql_value_to_proxima(&original),
-                    &sql_value_to_proxima(&back.unwrap())
-                ),
-                "Round-trip should preserve value"
+                evaluator.proxima_values_equal(&sql_value_to_proxima(&original), &via_json),
+                "Direct and via-JSON canonicalization must agree"
             );
         }
     }
@@ -630,10 +569,7 @@ mod tests {
 
         let result = evaluator.extract_path_value(&doc, "$.metadata.priority");
         assert!(result.is_some());
-        if let Some(SqlValue {
-            value: Some(SqlValueVariant::StringValue(s)),
-        }) = result
-        {
+        if let Some(ProximaValue::String(s)) = result {
             assert_eq!(s, "high");
         } else {
             panic!("Expected string 'high' from jsonb path");
