@@ -480,8 +480,12 @@ impl MultiServer {
 
             // ── Build all gRPC services through the port-based factory ─────────
 
+            // TD-104 S2: gRPC's API service consumes only the ApiHandlersPort
+            // trait (collection/vector/hybrid/sql); route it through the runtime
+            // port-based handler instead of the root inherent one. Document/graph/
+            // observability RPCs already use their own ports.
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
-                services.request_handlers.clone();
+                services.api_handlers.clone();
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
             let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
                 .with_graph(graph_port)
@@ -938,8 +942,12 @@ impl MultiServer {
                     self.shared_services.vector_ops_port.clone(),
                     self.shared_services.fulltext_indexes.clone(),
                 ));
+            // TD-104 S2: gRPC's API service consumes only the ApiHandlersPort
+            // trait (collection/vector/hybrid/sql); route it through the runtime
+            // port-based handler instead of the root inherent one. Document/graph/
+            // observability RPCs already use their own ports.
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
-                services.request_handlers.clone();
+                services.api_handlers.clone();
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
             let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
                 .with_graph(graph_port)
@@ -1335,8 +1343,12 @@ impl MultiServer {
                     self.shared_services.vector_ops_port.clone(),
                     self.shared_services.fulltext_indexes.clone(),
                 ));
+            // TD-104 S2: gRPC's API service consumes only the ApiHandlersPort
+            // trait (collection/vector/hybrid/sql); route it through the runtime
+            // port-based handler instead of the root inherent one. Document/graph/
+            // observability RPCs already use their own ports.
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
-                services.request_handlers.clone();
+                services.api_handlers.clone();
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
             let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
                 .with_graph(graph_port)
