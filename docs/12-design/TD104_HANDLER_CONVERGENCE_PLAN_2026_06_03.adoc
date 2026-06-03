@@ -68,12 +68,25 @@ inherent methods. Ports live in `crates/platform/proximadb-runtime/src/service_p
 
 == 4. Recommended slicing
 
-* **S1 — mandate RUNTIME for REST dispatch (READY, low risk, ~0.5d).** Replace the
-  fallback cast at `rest/v1/handlers.rs:1337` with `state.api_handlers.clone().expect(...)`
-  and assert RUNTIME is always built in `shared_services`. RUNTIME already implements all 7
-  methods and is already preferred — this just removes the dead ROOT fallback for REST
-  request dispatch. gRPC/Arrow/pgwire and the build-time field extractions are untouched
-  (they still hold ROOT). **Verify:** REST collection/vector e2e + `cargo test`.
+* **S1 — always wire RUNTIME into REST, then remove the ROOT fallback (CORRECTED — NOT a
+  trivial cast-removal).** Verified 2026-06-03: the `unwrap_or_else(ROOT)` fallback at
+  `rest/v1/handlers.rs:1337` is **load-bearing for multi-port mode with gRPC disabled**, not
+  dead. The handlers.rs `AppState.api_handlers` is `Option` (set only via `with_api_handlers`,
+  called only when `ports: Some`). In `multi_server.rs`:
+** **Unified-port mode (default)** already builds `RestServerPorts` unconditionally with
+   `api_handlers: services.api_handlers.clone()` (multi_server.rs:843–848) → REST **already
+   uses RUNTIME** there. This half of the seam is effectively closed in the default config.
+** **Multi-port mode** builds `rest_ports_opt` **inside the `if enable_grpc` block**
+   (multi_server.rs:302/466) → when gRPC is off, `ports == None`, `api_handlers` stays `None`,
+   and REST dispatch falls back to ROOT. Replacing 1337 with `.expect(...)` would **panic** in
+   that config.
++
+**Corrected S1:** hoist the `api_handlers` wiring (and the `doc_port`/`graph_port`/`obs_port`
+that `RestServerPorts` bundles) **out of the gRPC-gated block** so the multi-port REST server
+always receives `services.api_handlers` (always built at `shared_services.rs:1733`). Then the
+1337 fallback is truly dead and can be removed. **Risk: moderate** — touches server-boot wiring
+across unified + multi-port (+ gRPC on/off) modes; must be exercised in each mode (can't be
+unit-tested from `cargo test --lib`). Est. ~1d incl. mode verification, not 0.5d.
 * **S2 — `MetricsPort` (or extend `VectorOpsPort`) (~2d).** Add `metrics`,
   `collection_metrics`, `query_hints`, `force_flush_collection`, `list_unflushed_vectors`;
   implement on the concrete services; surface on RUNTIME.
