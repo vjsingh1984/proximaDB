@@ -974,6 +974,48 @@ impl UnifiedHandlers {
             .await
     }
 
+    /// Paginated variant of [`Self::handle_record_scan_for_tenant`] (TD-099(3d)
+    /// push-down): resolves tenant + collection id, then streams a single page
+    /// from the deduped, time-ordered scan index and returns `(page,
+    /// next_cursor)`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn handle_record_scan_paginated_for_tenant(
+        &self,
+        collection_id: &str,
+        cursor: Option<&crate::services::scan_cursor::ScanCursor>,
+        limit: usize,
+        include_vector: bool,
+        include_props: bool,
+        tenant_id: Option<&str>,
+        now_ns: i64,
+    ) -> Result<(
+        Vec<proximadb_records::ProximaRecord>,
+        Option<crate::services::scan_cursor::ScanCursor>,
+    )> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let resolved_id = match self
+            .resolve_collection_id_internal(collection_id, tenant_context.as_ref())
+            .await?
+        {
+            Some(id) => id,
+            None => {
+                return Err(anyhow!("Collection '{}' not found", collection_id));
+            }
+        };
+
+        self.vector_operations_service
+            .scan_records_paginated(
+                &resolved_id,
+                cursor,
+                limit,
+                include_vector,
+                include_props,
+                tenant_context.as_ref(),
+                now_ns,
+            )
+            .await
+    }
+
     /// Canonical rich-record delete handler used by v2 REST/gRPC/internal callers.
     pub async fn handle_record_delete_batch_for_tenant(
         &self,

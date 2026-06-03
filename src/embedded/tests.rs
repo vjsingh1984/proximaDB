@@ -1205,6 +1205,30 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_records_excludes_ttl_expired_full_path() {
+        // TD-099(3d): a TTL-expired record must be dropped end-to-end through the
+        // push-down path (embedded → service → WAL scan index), which proves the
+        // read-time `now_ns` is threaded correctly.
+        let (db, _td) = build_test_db();
+        db.create_collection("ttl_scan_col", 4, None).expect("create");
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+
+        let live = make_test_record("live", now_ns - 1_000);
+        let mut dead = make_test_record("dead", now_ns - 1_000);
+        dead.valid_to_ns = Some(now_ns - 1); // expired in the past
+
+        db.insert_proxima_records("ttl_scan_col", vec![live, dead])
+            .expect("insert");
+
+        let (page, _next) = db.scan_records("ttl_scan_col", None, 100).expect("scan");
+        let got: Vec<&str> = page.iter().map(|r| r.oid.as_str()).collect();
+        assert_eq!(got, vec!["live"], "expired record must be excluded: {page:?}");
+    }
+
+    #[test]
     fn test_plan_partitions_returns_single_partition_for_existing_collection() {
         let (db, _td) = build_test_db();
         db.create_collection("part_col", 4, None).expect("create");

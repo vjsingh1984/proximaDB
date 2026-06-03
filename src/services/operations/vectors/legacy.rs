@@ -779,6 +779,65 @@ impl VectorOperationsService {
         Ok(records)
     }
 
+    /// Paginated record scan (TD-099(3d) push-down). Returns up to `limit`
+    /// records with canonical key `(updated_at_ns, oid)` strictly greater than
+    /// `cursor`, in ascending order, plus the next cursor (when the page is
+    /// full). Byte-identical to `scan_records_with_tenant_context` + sort +
+    /// cursor-filter + take, but O(log d + limit) per page once the per-collection
+    /// scan index is warm.
+    ///
+    /// Tenant filtering is pushed INTO the storage range-scan as a predicate so
+    /// it is applied before the limit — otherwise a multi-tenant collection would
+    /// return short pages and stop pagination prematurely.
+    pub async fn scan_records_paginated(
+        &self,
+        collection_id: &str,
+        cursor: Option<&crate::services::scan_cursor::ScanCursor>,
+        limit: usize,
+        include_vector: bool,
+        include_props: bool,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+        now_ns: i64,
+    ) -> Result<(
+        Vec<ProximaRecord>,
+        Option<crate::services::scan_cursor::ScanCursor>,
+    )> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+
+        // Tenant predicate mirrors the legacy `records.retain(...)` rule exactly,
+        // applied inside the storage scan before the limit is reached.
+        let tenant_pred: Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> =
+            tenant_context.map(|tc| {
+                let tid = tc.tenant_id.clone();
+                Box::new(move |r: &ProximaRecord| r.tenant_id.is_empty() || r.tenant_id == tid)
+                    as Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>
+            });
+        let pred_ref = tenant_pred.as_deref();
+
+        let after = cursor.map(|c| (c.last_updated_at_ns, c.last_oid.as_str()));
+
+        let mut page = self
+            .wal_manager
+            .stream_unflushed_records(collection_id, after, limit, pred_ref, now_ns)
+            .await?;
+
+        if !include_vector {
+            for record in &mut page {
+                record.embeddings.clear();
+            }
+        }
+        if !include_props {
+            for record in &mut page {
+                record.props.clear();
+            }
+        }
+
+        let next =
+            crate::services::scan_cursor::derive_next_cursor(&page, limit, collection_id, now_ns);
+        Ok((page, next))
+    }
+
     /// Resolve a user-facing collection identifier (name) to the canonical
     /// internal id that the write path keys WAL + storage under. Idempotent for
     /// already-canonical ids; falls back to the input if resolution fails.
@@ -1062,12 +1121,8 @@ impl VectorOperationsService {
         {
             use crate::proto::proximadb_v1::EmbeddingPrecision;
             let target = match EmbeddingPrecision::try_from(precision_value) {
-                Ok(EmbeddingPrecision::Fp16) => {
-                    Some(proximadb_records::EmbeddingScalarType::Fp16)
-                }
-                Ok(EmbeddingPrecision::Bf16) => {
-                    Some(proximadb_records::EmbeddingScalarType::Bf16)
-                }
+                Ok(EmbeddingPrecision::Fp16) => Some(proximadb_records::EmbeddingScalarType::Fp16),
+                Ok(EmbeddingPrecision::Bf16) => Some(proximadb_records::EmbeddingScalarType::Bf16),
                 Ok(EmbeddingPrecision::Int8) => {
                     Some(proximadb_records::EmbeddingScalarType::Int8Scalar)
                 }
@@ -5854,15 +5909,10 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 /// predicted recall + work, and record the observation.
 /// Best-effort — any lookup miss short-circuits silently. The
 /// search path's success contract is unaffected.
-async fn observe_advisor_for_search(
-    collection_id: &str,
-    top_k: u32,
-    observed_latency_us: u64,
-) {
+async fn observe_advisor_for_search(collection_id: &str, top_k: u32, observed_latency_us: u64) {
     // (1) Reach the live AXIS manager to read the active strategy.
     // Absent on HELIX-only deployments — short-circuit gracefully.
-    let Some(axis_manager) = crate::storage::engines::sst::core::get_sst_axis_manager()
-    else {
+    let Some(axis_manager) = crate::storage::engines::sst::core::get_sst_axis_manager() else {
         return;
     };
 
@@ -5879,16 +5929,11 @@ async fn observe_advisor_for_search(
     // primary ANN index per collection. The matching advisor's
     // `recall_for()` computes the predicted recall.
     use crate::index::axis::management::{
-        AnnIndexAdvisor, HmgiIndexAdvisor, HnswIndexAdvisor, IvfIndexAdvisor,
-        SupportedAlgorithm,
+        AnnIndexAdvisor, HmgiIndexAdvisor, HnswIndexAdvisor, IvfIndexAdvisor, SupportedAlgorithm,
     };
     use crate::index::axis::types::IndexAlgorithm;
 
-    let Some(spec) = strategy
-        .indexes
-        .iter()
-        .find(|s| s.supports_vector_search())
-    else {
+    let Some(spec) = strategy.indexes.iter().find(|s| s.supports_vector_search()) else {
         return;
     };
 

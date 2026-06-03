@@ -2042,29 +2042,26 @@ impl EmbeddedProximaDB {
         };
 
         self.runtime.block_on(async {
-            // Pull everything via the same VectorOperationsService
-            // pathway used by `insert_proxima_records` so writes and
-            // reads agree on the collection-id key (no tenant
-            // resolution diverges between paths in embedded mode).
-            // Cursor + limit are applied at this layer; pushing them
-            // into the WAL streaming layer is TD-099 acceptance (3c)
-            // — out of scope for this slice.
-            let records = self
+            // TD-099(3d): push cursor + limit into the WAL streaming layer via
+            // the same VectorOperationsService pathway used by
+            // `insert_proxima_records`, so writes and reads agree on the
+            // collection-id key. Embedded mode is single-tenant (no predicate).
+            let (page, next) = self
                 .shared_services
                 .vector_operations_service
-                .scan_records_with_tenant_context(collection, None, true, true, None)
+                .scan_records_paginated(
+                    collection,
+                    inbound_cursor.as_ref(),
+                    limit,
+                    true,
+                    true,
+                    None,
+                    now_ns,
+                )
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
                 })?;
-
-            let (page, next) = crate::services::scan_cursor::apply_scan_cursor(
-                records,
-                inbound_cursor.as_ref(),
-                limit,
-                collection,
-                now_ns,
-            );
 
             let next_str = match next {
                 Some(c) => Some(c.encode().map_err(

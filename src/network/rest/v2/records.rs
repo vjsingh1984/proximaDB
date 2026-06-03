@@ -2013,9 +2013,7 @@ pub async fn delete_record_v2(
 // `EmbeddedProximaDB::scan_records`). REST-specific error mapping
 // (HTTP 400 / 410) happens at the handler boundary; the codec itself
 // stays protocol-agnostic.
-pub(crate) use crate::services::scan_cursor::{
-    ScanCursor, ScanCursorDecodeError, apply_scan_cursor,
-};
+pub(crate) use crate::services::scan_cursor::{ScanCursor, ScanCursorDecodeError};
 
 /// Map the shared codec's decode errors onto our HTTP-mapped
 /// ApiError variants. Kept thin so the codec stays protocol-neutral.
@@ -2110,17 +2108,19 @@ pub async fn scan_records(
         _ => None,
     };
 
-    // The underlying service still materializes the collection; cursor
-    // semantics are enforced at the handler. Streaming WAL push-down
-    // is a future slice — see TD-099 acceptance (3) follow-ups.
-    let records = state
+    // TD-099(3d): cursor + limit + tenant predicate are pushed into the WAL
+    // streaming layer; the handler returns a single ordered page plus the next
+    // cursor (O(log d + limit) per page once the scan index is warm).
+    let (page, next_cursor) = state
         .request_handlers
-        .handle_record_scan_for_tenant(
+        .handle_record_scan_paginated_for_tenant(
             &collection_id,
-            None, // pull everything; handler will apply cursor + limit
+            inbound_cursor.as_ref(),
+            effective_limit,
             include_vector,
             include_props,
             Some(&tenant.tenant_id),
+            now_ns,
         )
         .await
         .map_err(|e| {
@@ -2130,14 +2130,6 @@ pub async fn scan_records(
                 ApiError::Internal(format!("scan_records failed: {}", e))
             }
         })?;
-
-    let (page, next_cursor) = apply_scan_cursor(
-        records,
-        inbound_cursor.as_ref(),
-        effective_limit,
-        &collection_id,
-        now_ns,
-    );
 
     let scanned_count = page.len() as u64;
     let serialized: Vec<RecordV2Response> = page
