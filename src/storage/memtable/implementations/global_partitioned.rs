@@ -115,6 +115,21 @@ struct ScanIndex {
     has_empty_oid: bool,
 }
 
+/// Operational kill-switch for the TD-099(3d) scan index. Set
+/// `PROXIMADB_SCAN_INDEX_DISABLE=1` (or `true`) to bypass the cached index and
+/// serve paginated scans via the legacy full scan. The index is always
+/// correctness-equivalent, so this exists purely as a memory-pressure escape
+/// hatch. Read once per process.
+fn scan_index_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_SCAN_INDEX_DISABLE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
 /// Collection partition within the global memtable
 ///
 /// Each collection gets its own isolated partition to enable:
@@ -1039,6 +1054,15 @@ impl GlobalPartitionedMemtable {
         predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
         now_ns: i64,
     ) -> Result<Vec<ProximaRecord>> {
+        // Operational kill-switch: serve via the legacy full scan, never building
+        // the index. Correctness-equivalent; a memory-pressure escape hatch.
+        if scan_index_disabled() {
+            let collections = self.collections.read().await;
+            return Ok(match collections.get(collection_id) {
+                Some(partition) => partition.scan_paginated_legacy(after, limit, predicate, now_ns),
+                None => Vec::new(),
+            });
+        }
         // Fast path: index warm → shared read lock → concurrent scans.
         {
             let collections = self.collections.read().await;
@@ -2154,6 +2178,86 @@ mod tests {
             .unwrap();
         assert_eq!(oids(&got), oracle(&m, c).await);
         assert_eq!(oids(&got), vec!["c".to_string()]);
+    }
+
+    /// Demonstrates the TD-099(3d) win: warming the scan index once and
+    /// range-seeking each page is far cheaper than the baseline (full MVCC dedup
+    /// + sort per page). `#[ignore]`d (timing, not a CI gate); run with:
+    /// `cargo test --lib perf_indexed_pages_beat_baseline -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "perf demonstration; run with --ignored --nocapture"]
+    async fn perf_indexed_pages_beat_baseline_fullscan() {
+        use std::time::Instant;
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        let n = 20_000usize;
+        let mut recs = Vec::with_capacity(n);
+        for i in 0..n {
+            recs.push(rec_at(&format!("oid{i:06}"), i as i64, 1, None));
+        }
+        m.add_wal_batch(c, batch_of(recs)).await.unwrap();
+        let now = test_now_ns();
+        let pages = 50usize;
+        let limit = 100usize;
+
+        // Indexed: build once on the first page, then O(log d + limit) per page.
+        let t0 = Instant::now();
+        let mut after: Option<(i64, String)> = None;
+        let mut indexed_total = 0usize;
+        for _ in 0..pages {
+            let after_ref = after.as_ref().map(|(t, o)| (*t, o.as_str()));
+            let page = m
+                .scan_collection_paginated(c, after_ref, limit, None, now)
+                .await
+                .unwrap();
+            indexed_total += page.len();
+            match page.last() {
+                Some(last) => after = Some((last.updated_at_ns, last.oid.clone())),
+                None => break,
+            }
+        }
+        let indexed_elapsed = t0.elapsed();
+
+        // Baseline: today's per-page cost — full dedup + sort + filter + take.
+        let t1 = Instant::now();
+        let mut bafter: Option<(i64, String)> = None;
+        let mut baseline_total = 0usize;
+        for _ in 0..pages {
+            let mut all = m.get_collection_vectors(c).await.unwrap();
+            all.sort_by(|a, b| {
+                (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
+            });
+            let page: Vec<_> = all
+                .into_iter()
+                .filter(|r| match &bafter {
+                    Some((t, o)) => (r.updated_at_ns, r.oid.as_str()) > (*t, o.as_str()),
+                    None => true,
+                })
+                .take(limit)
+                .collect();
+            baseline_total += page.len();
+            match page.last() {
+                Some(last) => bafter = Some((last.updated_at_ns, last.oid.clone())),
+                None => break,
+            }
+        }
+        let baseline_elapsed = t1.elapsed();
+
+        println!(
+            "TD-099(3d) perf: N={n} pages={pages} limit={limit}\n  \
+             indexed : {indexed_elapsed:?} ({indexed_total} records)\n  \
+             baseline: {baseline_elapsed:?} ({baseline_total} records)\n  \
+             speedup : {:.1}x",
+            baseline_elapsed.as_secs_f64() / indexed_elapsed.as_secs_f64().max(1e-9)
+        );
+        assert_eq!(
+            indexed_total, baseline_total,
+            "both paths return identical pages"
+        );
+        assert!(
+            indexed_elapsed < baseline_elapsed,
+            "indexed pagination must beat full-scan-per-page"
+        );
     }
 
     fn make_proxima_record(

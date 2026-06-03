@@ -807,8 +807,8 @@ impl VectorOperationsService {
 
         // Tenant predicate mirrors the legacy `records.retain(...)` rule exactly,
         // applied inside the storage scan before the limit is reached.
-        let tenant_pred: Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> =
-            tenant_context.map(|tc| {
+        let tenant_pred: Option<Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>> = tenant_context
+            .map(|tc| {
                 let tid = tc.tenant_id.clone();
                 Box::new(move |r: &ProximaRecord| r.tenant_id.is_empty() || r.tenant_id == tid)
                     as Box<dyn Fn(&ProximaRecord) -> bool + Send + Sync>
