@@ -629,10 +629,22 @@ mod tests {
             metadata: HashMap::new(),
         };
         // Two decisions in session "s1", one in "s1b" (boundary), one other tenant.
-        engine.append_event(ev("memory-consolidation:acme:s1:m1")).await.unwrap();
-        engine.append_event(ev("memory-consolidation:acme:s1:m2")).await.unwrap();
-        engine.append_event(ev("memory-consolidation:acme:s1b:m9")).await.unwrap();
-        engine.append_event(ev("memory-consolidation:other:s1:m1")).await.unwrap();
+        engine
+            .append_event(ev("memory-consolidation:acme:s1:m1"))
+            .await
+            .unwrap();
+        engine
+            .append_event(ev("memory-consolidation:acme:s1:m2"))
+            .await
+            .unwrap();
+        engine
+            .append_event(ev("memory-consolidation:acme:s1b:m9"))
+            .await
+            .unwrap();
+        engine
+            .append_event(ev("memory-consolidation:other:s1:m1"))
+            .await
+            .unwrap();
 
         // Trailing-colon prefix is a true session boundary: matches s1, NOT s1b.
         let got = engine
@@ -643,8 +655,14 @@ mod tests {
         assert_eq!(ids.len(), 2, "exactly the two s1 decisions: {ids:?}");
         assert!(ids.contains(&"memory-consolidation:acme:s1:m1"));
         assert!(ids.contains(&"memory-consolidation:acme:s1:m2"));
-        assert!(!ids.iter().any(|i| i.contains(":s1b:")), "must not bleed into s1b");
-        assert!(!ids.iter().any(|i| i.contains(":other:")), "must not cross tenant");
+        assert!(
+            !ids.iter().any(|i| i.contains(":s1b:")),
+            "must not bleed into s1b"
+        );
+        assert!(
+            !ids.iter().any(|i| i.contains(":other:")),
+            "must not cross tenant"
+        );
         // Sequence order ascending.
         assert!(got[0].data["entity"].as_str().unwrap().ends_with("m1"));
 

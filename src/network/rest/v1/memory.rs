@@ -261,6 +261,9 @@ mod tests {
         assert_eq!(clamp_audit_limit(None), AUDIT_DEFAULT_LIMIT);
         assert_eq!(clamp_audit_limit(Some(0)), AUDIT_DEFAULT_LIMIT);
         assert_eq!(clamp_audit_limit(Some(50)), 50);
-        assert_eq!(clamp_audit_limit(Some(AUDIT_MAX_LIMIT + 1)), AUDIT_MAX_LIMIT);
+        assert_eq!(
+            clamp_audit_limit(Some(AUDIT_MAX_LIMIT + 1)),
+            AUDIT_MAX_LIMIT
+        );
     }
 }

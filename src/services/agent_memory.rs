@@ -132,12 +132,7 @@ pub trait MemoryStore: Send + Sync {
         k: usize,
     ) -> Result<Vec<MemoryHit>>;
     async fn add(&self, scope: &MemoryWriteScope, fact: &ExtractedFact) -> Result<String>;
-    async fn update(
-        &self,
-        scope: &MemoryWriteScope,
-        id: &str,
-        fact: &ExtractedFact,
-    ) -> Result<()>;
+    async fn update(&self, scope: &MemoryWriteScope, id: &str, fact: &ExtractedFact) -> Result<()>;
     async fn delete(&self, scope: &MemoryWriteScope, id: &str) -> Result<()>;
 }
 
@@ -221,7 +216,9 @@ impl MemoryWriteEngine {
         // (derived from the authenticated request context at the route), not a
         // caller-supplied body field.
         if scope.tenant_id.trim().is_empty() {
-            return Err(anyhow!("agent-memory write requires a non-empty tenant scope"));
+            return Err(anyhow!(
+                "agent-memory write requires a non-empty tenant scope"
+            ));
         }
         let facts = self.extractor.extract(pair).await?;
         let mut applied = Vec::with_capacity(facts.len());
@@ -596,12 +593,7 @@ impl MemoryStore for VectorMemoryStore {
         Ok(oid)
     }
 
-    async fn update(
-        &self,
-        scope: &MemoryWriteScope,
-        id: &str,
-        fact: &ExtractedFact,
-    ) -> Result<()> {
+    async fn update(&self, scope: &MemoryWriteScope, id: &str, fact: &ExtractedFact) -> Result<()> {
         // Upsert by oid — `insert_batch_with_tenant_context` overwrites on match.
         self.write_record(scope, fact, id.to_string()).await
     }
@@ -783,9 +775,7 @@ impl ConsolidationAuditReader {
 }
 
 /// Best-effort extraction of a string from a proto `SqlValue`.
-fn sql_value_as_string(
-    val: &crate::proto::proximadb_v1::sql_value::Value,
-) -> Option<String> {
+fn sql_value_as_string(val: &crate::proto::proximadb_v1::sql_value::Value) -> Option<String> {
     use crate::proto::proximadb_v1::sql_value::Value as V;
     match val {
         V::StringValue(s) => Some(s.clone()),
@@ -903,12 +893,16 @@ mod tests {
         let store = Arc::new(RecordingStore::default());
 
         let engine = MemoryWriteEngine::new(extractor, consolidator, store.clone());
-        let applied = engine.ingest(&scope(), &MessagePair {
-            user: "hi".to_string(),
-            assistant: "hello".to_string(),
-        })
-        .await
-        .expect("ingest");
+        let applied = engine
+            .ingest(
+                &scope(),
+                &MessagePair {
+                    user: "hi".to_string(),
+                    assistant: "hello".to_string(),
+                },
+            )
+            .await
+            .expect("ingest");
 
         assert_eq!(applied.len(), 3);
         assert_eq!(applied[0].kind, "add");
@@ -1136,10 +1130,13 @@ mod tests {
         let engine =
             MemoryWriteEngine::new(extractor, consolidator, store).with_audit_sink(audit.clone());
         engine
-            .ingest(&scope(), &MessagePair {
-                user: "hi".to_string(),
-                assistant: "hello".to_string(),
-            })
+            .ingest(
+                &scope(),
+                &MessagePair {
+                    user: "hi".to_string(),
+                    assistant: "hello".to_string(),
+                },
+            )
             .await
             .expect("ingest");
 
@@ -1152,7 +1149,10 @@ mod tests {
         assert_eq!(events[2].memory_id.as_deref(), Some("m-7"));
         // The decision carries the candidate set it was made against (the "why").
         assert_eq!(events[0].similar_count, 2);
-        assert_eq!(events[0].similar_ids, vec!["h1".to_string(), "h2".to_string()]);
+        assert_eq!(
+            events[0].similar_ids,
+            vec!["h1".to_string(), "h2".to_string()]
+        );
         assert_eq!(events[0].tenant_id, "acme");
         assert_eq!(events[0].session_id, "sess-1");
     }
@@ -1167,10 +1167,13 @@ mod tests {
         // Plain `new` — no audit sink.
         let engine = MemoryWriteEngine::new(extractor, consolidator, store);
         let applied = engine
-            .ingest(&scope(), &MessagePair {
-                user: "u".to_string(),
-                assistant: "a".to_string(),
-            })
+            .ingest(
+                &scope(),
+                &MessagePair {
+                    user: "u".to_string(),
+                    assistant: "a".to_string(),
+                },
+            )
             .await
             .expect("ingest");
         assert_eq!(applied.len(), 1);
@@ -1188,10 +1191,13 @@ mod tests {
             .with_audit_sink(Arc::new(FailingAuditSink));
         // The audit sink errors, but ingest must still succeed (non-fatal).
         let applied = engine
-            .ingest(&scope(), &MessagePair {
-                user: "u".to_string(),
-                assistant: "a".to_string(),
-            })
+            .ingest(
+                &scope(),
+                &MessagePair {
+                    user: "u".to_string(),
+                    assistant: "a".to_string(),
+                },
+            )
             .await
             .expect("ingest must not fail when audit sink errors");
         assert_eq!(applied.len(), 1);
@@ -1247,13 +1253,19 @@ mod tests {
             ..scope()
         };
         let result = engine
-            .ingest(&empty_tenant, &MessagePair {
-                user: "u".to_string(),
-                assistant: "a".to_string(),
-            })
+            .ingest(
+                &empty_tenant,
+                &MessagePair {
+                    user: "u".to_string(),
+                    assistant: "a".to_string(),
+                },
+            )
             .await;
 
-        assert!(result.is_err(), "empty tenant must be rejected, not run unscoped");
+        assert!(
+            result.is_err(),
+            "empty tenant must be rejected, not run unscoped"
+        );
         assert_eq!(
             *extractor.calls.lock().unwrap(),
             0,
@@ -1289,15 +1301,22 @@ mod tests {
         )
         .await
         .expect("local fs");
-        let fs = Arc::new(crate::storage::persistence::filesystem::UnifiedCachingFilesystem::new(
-            Arc::new(local),
-            format!("memaudit_{name}"),
-            "eventlog".to_string(),
-        ));
+        let fs = Arc::new(
+            crate::storage::persistence::filesystem::UnifiedCachingFilesystem::new(
+                Arc::new(local),
+                format!("memaudit_{name}"),
+                "eventlog".to_string(),
+            ),
+        );
         Arc::new(EventLogEngine::new(cfg, fs).expect("eventlog engine"))
     }
 
-    fn decision(tenant: &str, session: &str, action: &str, memory_id: Option<&str>) -> ConsolidationAuditEvent {
+    fn decision(
+        tenant: &str,
+        session: &str,
+        action: &str,
+        memory_id: Option<&str>,
+    ) -> ConsolidationAuditEvent {
         ConsolidationAuditEvent {
             collection: "mem".to_string(),
             tenant_id: tenant.to_string(),
@@ -1319,27 +1338,53 @@ mod tests {
 
         // Two decisions in (acme, s1); decoys in a sibling session, sibling
         // tenant, and a session whose name is a prefix-superstring of s1.
-        sink.emit(&decision("acme", "s1", "add", Some("m1"))).await.unwrap();
-        sink.emit(&decision("acme", "s1", "update", Some("m2"))).await.unwrap();
-        sink.emit(&decision("acme", "s1b", "add", Some("m9"))).await.unwrap();
-        sink.emit(&decision("evil", "s1", "add", Some("m1"))).await.unwrap();
-        sink.emit(&decision("acme", "s1", "noop", None)).await.unwrap();
+        sink.emit(&decision("acme", "s1", "add", Some("m1")))
+            .await
+            .unwrap();
+        sink.emit(&decision("acme", "s1", "update", Some("m2")))
+            .await
+            .unwrap();
+        sink.emit(&decision("acme", "s1b", "add", Some("m9")))
+            .await
+            .unwrap();
+        sink.emit(&decision("evil", "s1", "add", Some("m1")))
+            .await
+            .unwrap();
+        sink.emit(&decision("acme", "s1", "noop", None))
+            .await
+            .unwrap();
 
         let reader = ConsolidationAuditReader::new(log);
-        let got = reader.list_session_decisions("acme", "s1", 100).await.unwrap();
+        let got = reader
+            .list_session_decisions("acme", "s1", 100)
+            .await
+            .unwrap();
 
         // Exactly the three (acme, s1) decisions — not s1b, not the evil tenant.
         assert_eq!(got.len(), 3, "got: {got:?}");
-        assert!(got.iter().all(|d| d.tenant_id == "acme" && d.session_id == "s1"));
+        assert!(
+            got.iter()
+                .all(|d| d.tenant_id == "acme" && d.session_id == "s1")
+        );
         let actions: Vec<&str> = got.iter().map(|d| d.action.as_str()).collect();
-        assert_eq!(actions, vec!["add", "update", "noop"], "append order preserved");
+        assert_eq!(
+            actions,
+            vec!["add", "update", "noop"],
+            "append order preserved"
+        );
 
         // limit is honored.
-        let one = reader.list_session_decisions("acme", "s1", 1).await.unwrap();
+        let one = reader
+            .list_session_decisions("acme", "s1", 1)
+            .await
+            .unwrap();
         assert_eq!(one.len(), 1);
 
         // Unknown session → empty, not error.
-        let none = reader.list_session_decisions("acme", "nope", 100).await.unwrap();
+        let none = reader
+            .list_session_decisions("acme", "nope", 100)
+            .await
+            .unwrap();
         assert!(none.is_empty());
 
         let _ = std::fs::remove_dir_all("/tmp/test_memaudit_roundtrip");
