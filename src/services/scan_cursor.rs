@@ -45,7 +45,9 @@ pub struct ScanCursor {
 pub enum ScanCursorDecodeError {
     /// The cursor's collection_id field doesn't match the URL/method
     /// collection target.
-    #[error("scan cursor was issued for collection '{cursor_collection}', not '{requested_collection}'")]
+    #[error(
+        "scan cursor was issued for collection '{cursor_collection}', not '{requested_collection}'"
+    )]
     CollectionMismatch {
         cursor_collection: String,
         requested_collection: String,
@@ -111,9 +113,8 @@ pub fn apply_scan_cursor(
     collection_id: &str,
     now_ns: i64,
 ) -> (Vec<ProximaRecord>, Option<ScanCursor>) {
-    records.sort_by(|a, b| {
-        (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
-    });
+    records
+        .sort_by(|a, b| (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str())));
 
     let filtered: Vec<ProximaRecord> = if let Some(c) = cursor {
         records

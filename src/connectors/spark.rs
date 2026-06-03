@@ -577,7 +577,9 @@ pub fn spark_plan_input_partitions(
 /// calls take `&EmbeddedProximaDB` as a separate parameter so the
 /// reader stays trivially `Send + Sync` (Spark serializes / scatters
 /// reader handles across executors).
-pub fn spark_create_partition_reader(partition_json: &str) -> Result<SparkPartitionReader, SparkError> {
+pub fn spark_create_partition_reader(
+    partition_json: &str,
+) -> Result<SparkPartitionReader, SparkError> {
     let partition: SparkInputPartition = serde_json::from_str(partition_json)
         .map_err(|e| SparkError::invalid_argument(format!("decode partition JSON: {e}")))?;
     SparkPartitionReader::new(partition, 1024)
@@ -596,7 +598,11 @@ pub fn spark_read_next_batch(
         return Ok(Vec::new());
     }
     let (records, next_cursor) = emb
-        .scan_records(reader.collection.clone().as_str(), reader.cursor.clone(), reader.batch_size)
+        .scan_records(
+            reader.collection.clone().as_str(),
+            reader.cursor.clone(),
+            reader.batch_size,
+        )
         .map_err(SparkError::embedded)?;
 
     if records.is_empty() {
@@ -672,7 +678,9 @@ pub fn spark_write_batch(
     emb.insert_proxima_records(&writer.collection, records)
         .map_err(SparkError::embedded)?;
     writer.records_written = writer.records_written.saturating_add(count as u64);
-    writer.bytes_written = writer.bytes_written.saturating_add(arrow_bytes.len() as u64);
+    writer.bytes_written = writer
+        .bytes_written
+        .saturating_add(arrow_bytes.len() as u64);
     Ok(())
 }
 
@@ -783,12 +791,7 @@ fn proxima_records_to_record_batch(
     }
     let values_arr = Arc::new(arrow::array::Float32Array::from(flat));
     let field = Arc::new(Field::new("item", DataType::Float32, false));
-    let vector_arr = ListArray::new(
-        field,
-        OffsetBuffer::new(offsets.into()),
-        values_arr,
-        None,
-    );
+    let vector_arr = ListArray::new(field, OffsetBuffer::new(offsets.into()), values_arr, None);
 
     let schema = Arc::new(ArrowSchema::new(vec![
         Field::new("id", DataType::Utf8, false),
@@ -816,18 +819,17 @@ fn record_batch_to_proxima_records(
     let vec_col = batch
         .column_by_name("vector")
         .and_then(|c| c.as_any().downcast_ref::<ListArray>())
-        .ok_or_else(|| SparkError::invalid_argument("batch missing List<Float32> `vector` column"))?;
+        .ok_or_else(|| {
+            SparkError::invalid_argument("batch missing List<Float32> `vector` column")
+        })?;
 
     let mut out = Vec::with_capacity(batch.num_rows());
     for row in 0..batch.num_rows() {
         let oid = id_col.value(row).to_string();
         let raw = vec_col.value(row);
-        let vals = raw
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .ok_or_else(|| {
-                SparkError::invalid_argument("vector column inner type must be Float32")
-            })?;
+        let vals = raw.as_any().downcast_ref::<Float32Array>().ok_or_else(|| {
+            SparkError::invalid_argument("vector column inner type must be Float32")
+        })?;
         let v: Vec<f32> = vals.values().to_vec();
         let dim = v.len() as u32;
         out.push(ProximaRecord {
@@ -861,9 +863,7 @@ fn record_batch_to_proxima_records(
 /// Encode a multi-column `RecordBatch` as Arrow IPC stream bytes
 /// (schema + batch). Used by `jni_read_next_batch` to ship a page of
 /// records back to Java for Spark to consume.
-pub fn record_batch_to_arrow_ipc(
-    batch: &RecordBatch,
-) -> Result<Vec<u8>, arrow::error::ArrowError> {
+pub fn record_batch_to_arrow_ipc(batch: &RecordBatch) -> Result<Vec<u8>, arrow::error::ArrowError> {
     use arrow::ipc::writer::StreamWriter;
     let schema = batch.schema();
     let mut buf: Vec<u8> = Vec::new();
@@ -879,9 +879,7 @@ pub fn record_batch_to_arrow_ipc(
 /// `RecordBatch`. Used by `jni_write_batch` to consume a page Spark
 /// hands across the JNI boundary. Returns the first batch in the
 /// stream (Spark sends exactly one batch per call).
-pub fn arrow_ipc_to_record_batch(
-    bytes: &[u8],
-) -> Result<RecordBatch, arrow::error::ArrowError> {
+pub fn arrow_ipc_to_record_batch(bytes: &[u8]) -> Result<RecordBatch, arrow::error::ArrowError> {
     use arrow::error::ArrowError;
     use arrow::ipc::reader::StreamReader;
     let mut reader = StreamReader::try_new(bytes, None)?;
@@ -997,8 +995,7 @@ mod tests {
 
     fn build_spark_test_db() -> (EmbeddedProximaDB, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().expect("tempdir");
-        let mut config =
-            EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
+        let mut config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
         config.enable_wal = true;
         let db = EmbeddedProximaDB::new(config).expect("embedded db");
         (db, temp_dir)
@@ -1023,9 +1020,13 @@ mod tests {
     #[test]
     fn test_spark_get_table_schema_returns_collection_shape() {
         let (db, _td) = build_spark_test_db();
-        db.create_collection("spark_sch_col", 4, None).expect("create");
+        db.create_collection("spark_sch_col", 4, None)
+            .expect("create");
         let json = spark_get_table_schema(&db, "spark_sch_col");
-        assert!(json.contains("\"name\""), "schema must include name: {json}");
+        assert!(
+            json.contains("\"name\""),
+            "schema must include name: {json}"
+        );
         assert!(
             json.contains("spark_sch_col"),
             "schema must include collection name: {json}"
@@ -1036,7 +1037,10 @@ mod tests {
     fn test_spark_get_table_schema_missing_collection_returns_error_envelope() {
         let (db, _td) = build_spark_test_db();
         let json = spark_get_table_schema(&db, "no_such_col");
-        assert!(json.contains("\"error\""), "must wrap error in JSON: {json}");
+        assert!(
+            json.contains("\"error\""),
+            "must wrap error in JSON: {json}"
+        );
         assert!(
             json.contains("no_such_col"),
             "error must surface the bad collection name: {json}"
@@ -1046,7 +1050,8 @@ mod tests {
     #[test]
     fn test_spark_plan_input_partitions_returns_single_partition_json() {
         let (db, _td) = build_spark_test_db();
-        db.create_collection("spark_part_col", 4, None).expect("create");
+        db.create_collection("spark_part_col", 4, None)
+            .expect("create");
         let json = spark_plan_input_partitions(&db, "spark_part_col", "{}", 8);
         let parsed: Vec<SparkInputPartition> = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed.len(), 1, "single-partition fallback: {parsed:?}");
@@ -1058,7 +1063,8 @@ mod tests {
     #[test]
     fn test_spark_create_partition_reader_parses_collection_uri() {
         let (db, _td) = build_spark_test_db();
-        db.create_collection("spark_rdr_col", 4, None).expect("create");
+        db.create_collection("spark_rdr_col", 4, None)
+            .expect("create");
         let json = spark_plan_input_partitions(&db, "spark_rdr_col", "{}", 1);
         let partitions: Vec<SparkInputPartition> = serde_json::from_str(&json).unwrap();
         let part_json = serde_json::to_string(&partitions[0]).unwrap();
@@ -1095,7 +1101,8 @@ mod tests {
     #[test]
     fn test_spark_read_next_batch_returns_empty_when_collection_empty() {
         let (db, _td) = build_spark_test_db();
-        db.create_collection("empty_spark_col", 4, None).expect("create");
+        db.create_collection("empty_spark_col", 4, None)
+            .expect("create");
         let json = spark_plan_input_partitions(&db, "empty_spark_col", "{}", 1);
         let partitions: Vec<SparkInputPartition> = serde_json::from_str(&json).unwrap();
         let mut reader =
@@ -1109,11 +1116,13 @@ mod tests {
     #[test]
     fn test_spark_read_next_batch_round_trips_inserted_records() {
         let (db, _td) = build_spark_test_db();
-        db.create_collection("spark_rt_col", 4, None).expect("create");
+        db.create_collection("spark_rt_col", 4, None)
+            .expect("create");
         let recs = (0..3)
             .map(|i| make_spark_record(&format!("spark_rec_{i}")))
             .collect();
-        db.insert_proxima_records("spark_rt_col", recs).expect("insert");
+        db.insert_proxima_records("spark_rt_col", recs)
+            .expect("insert");
 
         let json = spark_plan_input_partitions(&db, "spark_rt_col", "{}", 1);
         let partitions: Vec<SparkInputPartition> = serde_json::from_str(&json).unwrap();
@@ -1136,8 +1145,7 @@ mod tests {
     fn test_spark_create_data_writer_parses_schema_json() {
         let schema_json =
             r#"{"fields":[{"name":"id","data_type":"Utf8","nullable":false}],"metadata":{}}"#;
-        let writer =
-            spark_create_data_writer("write_col", schema_json, 7).expect("create writer");
+        let writer = spark_create_data_writer("write_col", schema_json, 7).expect("create writer");
         assert_eq!(writer.collection(), "write_col");
         assert_eq!(writer.partition_id(), 7);
         assert_eq!(writer.records_written(), 0);
@@ -1152,11 +1160,11 @@ mod tests {
     #[test]
     fn test_spark_write_batch_inserts_records_into_collection() {
         let (db, _td) = build_spark_test_db();
-        db.create_collection("spark_wr_col", 4, None).expect("create");
+        db.create_collection("spark_wr_col", 4, None)
+            .expect("create");
         let schema_json =
             r#"{"fields":[{"name":"id","data_type":"Utf8","nullable":false}],"metadata":{}}"#;
-        let mut writer =
-            spark_create_data_writer("spark_wr_col", schema_json, 0).expect("writer");
+        let mut writer = spark_create_data_writer("spark_wr_col", schema_json, 0).expect("writer");
         let recs = vec![make_spark_record("w_001"), make_spark_record("w_002")];
         let batch = proxima_records_to_record_batch(&recs).expect("encode rb");
         let bytes = record_batch_to_arrow_ipc(&batch).expect("encode ipc");
@@ -1168,14 +1176,19 @@ mod tests {
     #[test]
     fn test_spark_commit_writer_returns_commit_message_json() {
         let (db, _td) = build_spark_test_db();
-        db.create_collection("spark_cm_col", 4, None).expect("create");
+        db.create_collection("spark_cm_col", 4, None)
+            .expect("create");
         let schema_json =
             r#"{"fields":[{"name":"id","data_type":"Utf8","nullable":false}],"metadata":{}}"#;
         let mut writer = spark_create_data_writer("spark_cm_col", schema_json, 3).expect("writer");
         let recs = vec![make_spark_record("c1")];
         let batch = proxima_records_to_record_batch(&recs).unwrap();
-        spark_write_batch(&db, &mut writer, &record_batch_to_arrow_ipc(&batch).unwrap())
-            .expect("write");
+        spark_write_batch(
+            &db,
+            &mut writer,
+            &record_batch_to_arrow_ipc(&batch).unwrap(),
+        )
+        .expect("write");
         let json = spark_commit_writer(&db, writer).expect("commit");
         let parsed: SparkWriteCommitMessage = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed.partition_id, 3);
@@ -1191,12 +1204,12 @@ mod tests {
     fn test_spark_read_after_write_round_trip() {
         use std::collections::HashSet;
         let (db, _td) = build_spark_test_db();
-        db.create_collection("spark_e2e_col", 4, None).expect("create");
+        db.create_collection("spark_e2e_col", 4, None)
+            .expect("create");
 
         let schema_json =
             r#"{"fields":[{"name":"id","data_type":"Utf8","nullable":false}],"metadata":{}}"#;
-        let mut writer =
-            spark_create_data_writer("spark_e2e_col", schema_json, 0).expect("writer");
+        let mut writer = spark_create_data_writer("spark_e2e_col", schema_json, 0).expect("writer");
         let recs: Vec<ProximaRecord> = (0..50)
             .map(|i| make_spark_record(&format!("e2e_{i:03}")))
             .collect();

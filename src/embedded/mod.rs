@@ -2035,9 +2035,9 @@ impl EmbeddedProximaDB {
             .unwrap_or(0);
 
         let inbound_cursor = match cursor.as_deref() {
-            Some(raw) if !raw.is_empty() => {
-                Some(crate::services::scan_cursor::ScanCursor::decode(raw, collection, now_ns)?)
-            }
+            Some(raw) if !raw.is_empty() => Some(crate::services::scan_cursor::ScanCursor::decode(
+                raw, collection, now_ns,
+            )?),
             _ => None,
         };
 
@@ -2052,9 +2052,7 @@ impl EmbeddedProximaDB {
             let records = self
                 .shared_services
                 .vector_operations_service
-                .scan_records_with_tenant_context(
-                    collection, None, true, true, None,
-                )
+                .scan_records_with_tenant_context(collection, None, true, true, None)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))

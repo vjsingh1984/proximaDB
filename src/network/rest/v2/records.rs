@@ -1517,8 +1517,7 @@ pub async fn search_with_typed_filters(
             let downgraded =
                 crate::observability::predicate_diagnostics::take_quantized_downgrade();
             // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
-            let cold_stage1 =
-                crate::observability::predicate_diagnostics::take_cold_stage1_only();
+            let cold_stage1 = crate::observability::predicate_diagnostics::take_cold_stage1_only();
             // Phase K (Quantization Trait Convergence Plan): TurboQuant
             // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
             // the scope because the task-local binding ends when this
@@ -1528,8 +1527,7 @@ pub async fn search_with_typed_filters(
             // serialization time via the `skip_serializing_if` on
             // `SearchPlanHints.turboquant` (Phase J) and
             // `VectorHints.turboquant` (Phase F).
-            let tq_hints =
-                crate::observability::predicate_diagnostics::take_turboquant_hints();
+            let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
             (outcome, downgraded, cold_stage1, tq_hints)
         })
         .await;
@@ -2028,8 +2026,9 @@ fn decode_scan_cursor(
 ) -> Result<ScanCursor, ApiError> {
     ScanCursor::decode(raw, requested_collection, now_ns).map_err(|e| match e {
         ScanCursorDecodeError::Expired => ApiError::Gone(e.to_string()),
-        ScanCursorDecodeError::CollectionMismatch { .. }
-        | ScanCursorDecodeError::Malformed(_) => ApiError::InvalidArgument(e.to_string()),
+        ScanCursorDecodeError::CollectionMismatch { .. } | ScanCursorDecodeError::Malformed(_) => {
+            ApiError::InvalidArgument(e.to_string())
+        }
     })
 }
 
@@ -2147,9 +2146,10 @@ pub async fn scan_records(
         .collect();
 
     let next_cursor_str = match next_cursor {
-        Some(c) => Some(c.encode().map_err(|e| {
-            ApiError::Internal(format!("cursor encode failed: {e}"))
-        })?),
+        Some(c) => Some(
+            c.encode()
+                .map_err(|e| ApiError::Internal(format!("cursor encode failed: {e}")))?,
+        ),
         None => None,
     };
 
@@ -2244,7 +2244,10 @@ mod tests {
     fn test_clamp_scan_limit_passes_through_small_values() {
         assert_eq!(clamp_scan_limit(Some(1)), 1);
         assert_eq!(clamp_scan_limit(Some(42)), 42);
-        assert_eq!(clamp_scan_limit(Some(SCAN_RECORDS_MAX_PAGE as u32)), SCAN_RECORDS_MAX_PAGE);
+        assert_eq!(
+            clamp_scan_limit(Some(SCAN_RECORDS_MAX_PAGE as u32)),
+            SCAN_RECORDS_MAX_PAGE
+        );
     }
 
     #[test]
@@ -2323,9 +2326,12 @@ mod tests {
 
         let mut record = ProximaRecord::default();
         record.oid = "rec-2".to_string();
-        record
-            .embeddings
-            .push(EmbeddingCell::new_fp32("model-x", "vector", 2, vec![1.0, 2.0]));
+        record.embeddings.push(EmbeddingCell::new_fp32(
+            "model-x",
+            "vector",
+            2,
+            vec![1.0, 2.0],
+        ));
 
         let resp = proxima_record_to_response(record, false, true);
         assert!(resp.vector.is_none(), "include_vector=false → None");
@@ -2369,7 +2375,10 @@ mod tests {
         // Collection mismatch.
         match decode_scan_cursor(&raw, "col-OTHER", now_ns) {
             Err(ApiError::InvalidArgument(msg)) => {
-                assert!(msg.contains("col-a"), "msg must surface issuing collection: {msg}");
+                assert!(
+                    msg.contains("col-a"),
+                    "msg must surface issuing collection: {msg}"
+                );
                 assert!(msg.contains("col-OTHER"), "msg must surface target: {msg}");
             }
             other => panic!("expected ApiError::InvalidArgument, got {:?}", other),

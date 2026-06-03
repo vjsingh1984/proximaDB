@@ -1044,9 +1044,7 @@ mod tests {
     /// visible to `scan_records` via the canonical WAL/memtable scan.
     fn build_test_db() -> (EmbeddedProximaDB, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().expect("tempdir");
-        let mut config = EmbeddedConfig::for_low_memory(
-            temp_dir.path().to_string_lossy().as_ref(),
-        );
+        let mut config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
         config.enable_wal = true;
         let db = EmbeddedProximaDB::new(config).expect("create embedded db");
         (db, temp_dir)
@@ -1101,7 +1099,8 @@ mod tests {
     #[test]
     fn test_get_collection_schema_surfaces_vector_count() {
         let (db, _td) = build_test_db();
-        db.create_collection("counted_col", 4, None).expect("create");
+        db.create_collection("counted_col", 4, None)
+            .expect("create");
         let schema = db
             .get_collection_schema("counted_col")
             .expect("schema call")
@@ -1118,9 +1117,7 @@ mod tests {
     fn test_scan_records_empty_collection_returns_empty_page() {
         let (db, _td) = build_test_db();
         db.create_collection("empty_col", 4, None).expect("create");
-        let (records, next_cursor) = db
-            .scan_records("empty_col", None, 100)
-            .expect("scan call");
+        let (records, next_cursor) = db.scan_records("empty_col", None, 100).expect("scan call");
         assert!(records.is_empty(), "empty collection ⇒ no records");
         assert!(next_cursor.is_none(), "empty collection ⇒ no next cursor");
     }
@@ -1139,9 +1136,7 @@ mod tests {
         db.insert_proxima_records("scan_col", records)
             .expect("insert");
 
-        let (page, next_cursor) = db
-            .scan_records("scan_col", None, 100)
-            .expect("scan call");
+        let (page, next_cursor) = db.scan_records("scan_col", None, 100).expect("scan call");
         // Sort order is (updated_at_ns, oid): a(10), b(20), c(30).
         assert_eq!(page.len(), 3, "all 3 records: {page:?}");
         assert_eq!(page[0].oid, "a");
@@ -1157,7 +1152,8 @@ mod tests {
         let records = (0..5)
             .map(|i| make_test_record(&format!("r{i:02}"), 100 + i as i64))
             .collect();
-        db.insert_proxima_records("paged_col", records).expect("insert");
+        db.insert_proxima_records("paged_col", records)
+            .expect("insert");
 
         // First page (limit=2).
         let (page1, cursor1) = db.scan_records("paged_col", None, 2).expect("p1");
@@ -1218,8 +1214,7 @@ mod tests {
         assert_eq!(partitions[0].partition_id, 0);
         assert_eq!(partitions[0].splits.len(), 1);
         assert_eq!(
-            partitions[0].splits[0].file_path,
-            "collection://part_col",
+            partitions[0].splits[0].file_path, "collection://part_col",
             "split must carry the logical collection URI"
         );
     }

@@ -52,8 +52,7 @@ use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jbyteArray, jint, jlong, jstring};
 use proximadb::connectors::spark::{
     SparkDataWriter, SparkPartitionReader, spark_abort_writer, spark_close_partition_reader,
     spark_commit_writer, spark_create_data_writer, spark_create_partition_reader,
-    spark_get_table_schema, spark_plan_input_partitions, spark_read_next_batch,
-    spark_write_batch,
+    spark_get_table_schema, spark_plan_input_partitions, spark_read_next_batch, spark_write_batch,
 };
 use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
 
@@ -240,10 +239,7 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_readNextBatch<'l
     let reader = match unsafe { jni_handle::borrow_mut::<SparkPartitionReader>(reader_handle) } {
         Some(r) => r,
         None => {
-            throw_runtime_exception(
-                &mut env,
-                "readNextBatch: null reader handle".to_string(),
-            );
+            throw_runtime_exception(&mut env, "readNextBatch: null reader handle".to_string());
             return std::ptr::null_mut();
         }
     };
@@ -355,10 +351,7 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_commitWriter<'lo
     let writer = match unsafe { jni_handle::take::<SparkDataWriter>(writer_handle) } {
         Some(w) => *w,
         None => {
-            throw_runtime_exception(
-                &mut env,
-                "commitWriter: null writer handle".to_string(),
-            );
+            throw_runtime_exception(&mut env, "commitWriter: null writer handle".to_string());
             return std::ptr::null_mut();
         }
     };
