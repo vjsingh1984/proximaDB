@@ -61,6 +61,7 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::Schema as ArrowSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::storage::formats::FileSplit;
 use crate::storage::schema::ProximaSchema;
 
@@ -236,6 +237,110 @@ pub enum SparkFilterType {
     AlwaysTrue,
     /// Always-false constant predicate
     AlwaysFalse,
+}
+
+/// Lower Spark's pushed-down filters (a JSON array of [`SparkFilter`]) into the
+/// canonical [`FilterExpression`] boolean tree, or `None` when nothing can be
+/// pushed.
+///
+/// Each TOP-LEVEL filter is lowered all-or-nothing: a filter that references an
+/// unrepresentable shape — a nested struct-path column, `AlwaysTrue`/`AlwaysFalse`,
+/// or an `And`/`Or`/`Not` whose subtree has any unrepresentable node — is
+/// DROPPED, never partially applied. So what we push is always evaluated
+/// exactly, and a (future) JVM DataSource V2 connector re-applies the dropped
+/// filters on its side (standard best-effort push-down). The resulting
+/// expression is evaluated against the record property tree (`record.props`).
+pub fn lower_spark_filters_to_expression(
+    filters_json: &str,
+) -> Result<Option<FilterExpression>, SparkError> {
+    let trimmed = filters_json.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let filters: Vec<SparkFilter> = serde_json::from_str(trimmed)
+        .map_err(|e| SparkError::invalid_argument(format!("invalid filters_json: {e}")))?;
+    let mut lowered: Vec<FilterExpression> =
+        filters.iter().filter_map(try_lower_spark_filter).collect();
+    Ok(match lowered.len() {
+        0 => None,
+        1 => Some(lowered.pop().expect("len checked above")),
+        // Spark's pushed filter array is an implicit conjunction.
+        _ => Some(FilterExpression::And(lowered)),
+    })
+}
+
+/// Recursively lower one [`SparkFilter`]; `None` if it (or any node in its
+/// subtree) cannot be represented exactly.
+fn try_lower_spark_filter(filter: &SparkFilter) -> Option<FilterExpression> {
+    match filter.filter_type {
+        SparkFilterType::EqualTo
+        | SparkFilterType::NotEqualTo
+        | SparkFilterType::GreaterThan
+        | SparkFilterType::GreaterThanOrEqual
+        | SparkFilterType::LessThan
+        | SparkFilterType::LessThanOrEqual
+        | SparkFilterType::StringStartsWith
+        | SparkFilterType::StringEndsWith
+        | SparkFilterType::StringContains
+        | SparkFilterType::In => Some(FilterExpression::Comparison {
+            field: simple_column(filter)?,
+            operator: spark_op_to_comparison_op(filter.filter_type)?,
+            value: filter.value.clone()?,
+        }),
+        SparkFilterType::IsNull | SparkFilterType::IsNotNull => Some(FilterExpression::Comparison {
+            field: simple_column(filter)?,
+            operator: spark_op_to_comparison_op(filter.filter_type)?,
+            value: serde_json::Value::Null,
+        }),
+        SparkFilterType::And => Some(FilterExpression::And(lower_children(filter)?)),
+        SparkFilterType::Or => Some(FilterExpression::Or(lower_children(filter)?)),
+        SparkFilterType::Not => Some(FilterExpression::Not(Box::new(try_lower_spark_filter(
+            filter.children.first()?,
+        )?))),
+        // No literal-bool node in FilterExpression; drop and let Spark re-apply.
+        SparkFilterType::AlwaysTrue | SparkFilterType::AlwaysFalse => None,
+    }
+}
+
+/// A simple top-level column name — rejects empty and nested struct paths
+/// (`a.b`), which can't be addressed as a single property-tree leaf here.
+fn simple_column(filter: &SparkFilter) -> Option<String> {
+    let column = filter.column.as_ref()?;
+    if column.is_empty() || column.contains('.') {
+        return None;
+    }
+    Some(column.clone())
+}
+
+/// Lower every child all-or-nothing (any unrepresentable child fails the whole
+/// node). Empty child lists are rejected.
+fn lower_children(filter: &SparkFilter) -> Option<Vec<FilterExpression>> {
+    if filter.children.is_empty() {
+        return None;
+    }
+    filter.children.iter().map(try_lower_spark_filter).collect()
+}
+
+fn spark_op_to_comparison_op(filter_type: SparkFilterType) -> Option<ComparisonOperator> {
+    Some(match filter_type {
+        SparkFilterType::EqualTo => ComparisonOperator::Equals,
+        SparkFilterType::NotEqualTo => ComparisonOperator::NotEquals,
+        SparkFilterType::GreaterThan => ComparisonOperator::GreaterThan,
+        SparkFilterType::GreaterThanOrEqual => ComparisonOperator::GreaterThanOrEqual,
+        SparkFilterType::LessThan => ComparisonOperator::LessThan,
+        SparkFilterType::LessThanOrEqual => ComparisonOperator::LessThanOrEqual,
+        SparkFilterType::In => ComparisonOperator::In,
+        SparkFilterType::StringStartsWith => ComparisonOperator::StartsWith,
+        SparkFilterType::StringEndsWith => ComparisonOperator::EndsWith,
+        SparkFilterType::StringContains => ComparisonOperator::Contains,
+        SparkFilterType::IsNull => ComparisonOperator::IsNull,
+        SparkFilterType::IsNotNull => ComparisonOperator::IsNotNull,
+        SparkFilterType::And
+        | SparkFilterType::Or
+        | SparkFilterType::Not
+        | SparkFilterType::AlwaysTrue
+        | SparkFilterType::AlwaysFalse => return None,
+    })
 }
 
 impl SparkScanBuilder {
@@ -930,6 +1035,155 @@ mod tests {
 
         assert_eq!(filter.filter_type, SparkFilterType::EqualTo);
         assert_eq!(filter.column, Some("category".to_string()));
+    }
+
+    #[test]
+    fn lower_filters_empty_returns_none() {
+        assert!(lower_spark_filters_to_expression("").unwrap().is_none());
+        assert!(lower_spark_filters_to_expression("[]").unwrap().is_none());
+    }
+
+    #[test]
+    fn lower_filters_malformed_returns_err() {
+        let err = lower_spark_filters_to_expression("not json").unwrap_err();
+        assert!(matches!(err, SparkError::InvalidArgument(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn lower_filters_equal_to() {
+        let json =
+            r#"[{"filter_type":"EqualTo","column":"category","value":"science","children":[]}]"#;
+        let expr = lower_spark_filters_to_expression(json).unwrap().unwrap();
+        assert_eq!(
+            expr,
+            FilterExpression::Comparison {
+                field: "category".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("science"),
+            }
+        );
+    }
+
+    #[test]
+    fn lower_filters_comparison_and_string_operators_map() {
+        for (ft, op) in [
+            ("GreaterThan", ComparisonOperator::GreaterThan),
+            ("LessThanOrEqual", ComparisonOperator::LessThanOrEqual),
+            ("StringContains", ComparisonOperator::Contains),
+            ("StringStartsWith", ComparisonOperator::StartsWith),
+            ("NotEqualTo", ComparisonOperator::NotEquals),
+        ] {
+            let json =
+                format!(r#"[{{"filter_type":"{ft}","column":"c","value":"v","children":[]}}]"#);
+            let expr = lower_spark_filters_to_expression(&json).unwrap().unwrap();
+            match expr {
+                FilterExpression::Comparison { operator, .. } => assert_eq!(operator, op, "{ft}"),
+                other => panic!("expected comparison for {ft}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn lower_filters_in_keeps_array_value() {
+        let json = r#"[{"filter_type":"In","column":"c","value":["a","b"],"children":[]}]"#;
+        let expr = lower_spark_filters_to_expression(json).unwrap().unwrap();
+        assert_eq!(
+            expr,
+            FilterExpression::Comparison {
+                field: "c".to_string(),
+                operator: ComparisonOperator::In,
+                value: serde_json::json!(["a", "b"]),
+            }
+        );
+    }
+
+    #[test]
+    fn lower_filters_is_null_uses_null_value() {
+        let json = r#"[{"filter_type":"IsNull","column":"c","value":null,"children":[]}]"#;
+        let expr = lower_spark_filters_to_expression(json).unwrap().unwrap();
+        assert!(matches!(
+            expr,
+            FilterExpression::Comparison {
+                operator: ComparisonOperator::IsNull,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn lower_filters_and_or_not_nest() {
+        let json = r#"[{"filter_type":"And","column":null,"value":null,"children":[
+            {"filter_type":"EqualTo","column":"a","value":1,"children":[]},
+            {"filter_type":"Or","column":null,"value":null,"children":[
+                {"filter_type":"EqualTo","column":"b","value":2,"children":[]},
+                {"filter_type":"Not","column":null,"value":null,"children":[
+                    {"filter_type":"EqualTo","column":"c","value":3,"children":[]}
+                ]}
+            ]}
+        ]}]"#;
+        let expr = lower_spark_filters_to_expression(json).unwrap().unwrap();
+        match expr {
+            FilterExpression::And(children) => {
+                assert_eq!(children.len(), 2);
+                assert!(matches!(children[1], FilterExpression::Or(_)));
+            }
+            other => panic!("expected And, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lower_filters_always_true_false_dropped() {
+        let t = r#"[{"filter_type":"AlwaysTrue","column":null,"value":null,"children":[]}]"#;
+        assert!(lower_spark_filters_to_expression(t).unwrap().is_none());
+        let f = r#"[{"filter_type":"AlwaysFalse","column":null,"value":null,"children":[]}]"#;
+        assert!(lower_spark_filters_to_expression(f).unwrap().is_none());
+    }
+
+    #[test]
+    fn lower_filters_struct_path_column_dropped() {
+        let json = r#"[{"filter_type":"EqualTo","column":"user.email","value":"x","children":[]}]"#;
+        assert!(lower_spark_filters_to_expression(json).unwrap().is_none());
+    }
+
+    #[test]
+    fn lower_filters_partial_top_level_drops_only_unsupported() {
+        // One supported + one unsupported (struct path): keep only the supported.
+        let json = r#"[
+            {"filter_type":"EqualTo","column":"category","value":"a","children":[]},
+            {"filter_type":"EqualTo","column":"user.email","value":"x","children":[]}
+        ]"#;
+        let expr = lower_spark_filters_to_expression(json).unwrap().unwrap();
+        assert_eq!(
+            expr,
+            FilterExpression::Comparison {
+                field: "category".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("a"),
+            }
+        );
+    }
+
+    #[test]
+    fn lower_filters_multiple_top_level_anded() {
+        let json = r#"[
+            {"filter_type":"EqualTo","column":"a","value":1,"children":[]},
+            {"filter_type":"GreaterThan","column":"b","value":2,"children":[]}
+        ]"#;
+        let expr = lower_spark_filters_to_expression(json).unwrap().unwrap();
+        match expr {
+            FilterExpression::And(children) => assert_eq!(children.len(), 2),
+            other => panic!("expected And, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lower_filters_and_with_unrepresentable_child_drops_whole_node() {
+        // An And containing a struct-path leaf can't be partially pushed → drop it all.
+        let json = r#"[{"filter_type":"And","column":null,"value":null,"children":[
+            {"filter_type":"EqualTo","column":"a","value":1,"children":[]},
+            {"filter_type":"EqualTo","column":"x.y","value":2,"children":[]}
+        ]}]"#;
+        assert!(lower_spark_filters_to_expression(json).unwrap().is_none());
     }
 
     #[test]
