@@ -995,8 +995,8 @@ impl FilesystemFactory {
         #[cfg(feature = "aws")]
         match aws_s3::AwsS3FileSystem::new(Self::aws_s3_config_from_env()).await {
             Ok(backend) => {
-                let fs = self
-                    .maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
+                let fs =
+                    self.maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
                 self.filesystems.insert("s3".to_string(), fs);
             }
             Err(e) => tracing::warn!("S3 FileSystem not registered: {e}"),
@@ -1004,8 +1004,8 @@ impl FilesystemFactory {
         #[cfg(feature = "azure")]
         match azure_blob::AzureBlobFileSystem::new(Self::azure_config_from_env()).await {
             Ok(backend) => {
-                let fs = self
-                    .maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
+                let fs =
+                    self.maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
                 for scheme in ["adls", "abfs", "az", "azure"] {
                     self.filesystems.insert(scheme.to_string(), fs.clone());
                 }
@@ -1015,8 +1015,8 @@ impl FilesystemFactory {
         #[cfg(feature = "gcp")]
         match gcs_store::GcsFileSystem::new(Self::gcs_config_from_env()).await {
             Ok(backend) => {
-                let fs = self
-                    .maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
+                let fs =
+                    self.maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
                 for scheme in ["gcs", "gs"] {
                     self.filesystems.insert(scheme.to_string(), fs.clone());
                 }

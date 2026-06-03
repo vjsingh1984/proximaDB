@@ -74,9 +74,9 @@ impl GcsFileSystem {
             .strip_prefix("gs://")
             .or_else(|| path.strip_prefix("gcs://"))
             .ok_or_else(|| FilesystemError::InvalidPath(format!("not a gs:// path: {path}")))?;
-        let (bucket, object) = rest
-            .split_once('/')
-            .ok_or_else(|| FilesystemError::InvalidPath(format!("missing object in gs path: {path}")))?;
+        let (bucket, object) = rest.split_once('/').ok_or_else(|| {
+            FilesystemError::InvalidPath(format!("missing object in gs path: {path}"))
+        })?;
         if bucket.is_empty() || object.is_empty() {
             return Err(FilesystemError::InvalidPath(format!("bad gs path: {path}")));
         }

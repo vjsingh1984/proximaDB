@@ -87,7 +87,9 @@ impl AzureBlobFileSystem {
             FilesystemError::InvalidPath(format!("missing blob in azure path: {path}"))
         })?;
         if container.is_empty() || blob.is_empty() {
-            return Err(FilesystemError::InvalidPath(format!("bad azure path: {path}")));
+            return Err(FilesystemError::InvalidPath(format!(
+                "bad azure path: {path}"
+            )));
         }
         Ok((container.to_string(), blob.to_string()))
     }

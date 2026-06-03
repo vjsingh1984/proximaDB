@@ -84,9 +84,9 @@ impl AwsS3FileSystem {
             .strip_prefix("s3://")
             .or_else(|| path.strip_prefix("s3a://"))
             .ok_or_else(|| FilesystemError::InvalidPath(format!("not an s3 path: {path}")))?;
-        let (bucket, key) = rest
-            .split_once('/')
-            .ok_or_else(|| FilesystemError::InvalidPath(format!("missing key in s3 path: {path}")))?;
+        let (bucket, key) = rest.split_once('/').ok_or_else(|| {
+            FilesystemError::InvalidPath(format!("missing key in s3 path: {path}"))
+        })?;
         if bucket.is_empty() || key.is_empty() {
             return Err(FilesystemError::InvalidPath(format!("bad s3 path: {path}")));
         }
