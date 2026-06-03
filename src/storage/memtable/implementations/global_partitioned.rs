@@ -69,8 +69,9 @@
 //! - **AXIS Indexing**: Supplies vectors for index building
 
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Debug;
+use std::ops::Bound;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
@@ -82,6 +83,37 @@ use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, SimilarityResult, UnifiedDistanceCompute,
 };
 use proximadb_records::ProximaRecord;
+
+/// Locator into a partition's `wal_batches` identifying one physical record.
+///
+/// Stored in [`ScanIndex`] instead of a cloned `ProximaRecord` so the index is
+/// O(distinct-oids) *small* entries rather than O(distinct-oids) full records.
+#[derive(Debug, Clone)]
+struct RecordLocator {
+    /// base62 batch-id key into `wal_batches`.
+    batch_key: String,
+    /// Index into the batch's `vector_records`.
+    idx: usize,
+}
+
+/// Cached, deduped, time-ordered projection of a partition's UNFLUSHED records,
+/// used to serve paginated scans in O(log d + limit) instead of re-running the
+/// O(N) MVCC-dedup + sort on every page.
+///
+/// This is a pure projection of `wal_batches`: it is invalidated (`scan_index`
+/// set to `None`) on every partition mutation and rebuilt lazily on the next
+/// read, so it can never durably diverge from the authoritative
+/// [`CollectionPartition::get_all_vectors`] semantics it is built from.
+#[derive(Debug)]
+struct ScanIndex {
+    /// Deduped winner per oid, keyed by the canonical scan tuple
+    /// `(updated_at_ns, oid)` so a page is `ordered.range(after..).take(limit)`.
+    ordered: BTreeMap<(i64, String), RecordLocator>,
+    /// Set when the partition holds at least one empty-oid record. Such records
+    /// cannot be stably keyed/deduped, so the paginated read falls back to the
+    /// legacy full scan to preserve exact parity with `get_all_vectors`.
+    has_empty_oid: bool,
+}
 
 /// Collection partition within the global memtable
 ///
@@ -117,6 +149,11 @@ struct CollectionPartition {
     timestamp: std::time::SystemTime, // Last modification time
     #[allow(dead_code)]
     created_at: std::time::SystemTime, // Partition creation time
+
+    /// Lazily-built, deduped, time-ordered scan projection. `None` means
+    /// dirty/not-built; rebuilt on the next paginated read. Invalidated on every
+    /// mutation (see the `scan_index = None` resets in the mutation paths).
+    scan_index: Option<ScanIndex>,
 }
 
 impl CollectionPartition {
@@ -130,6 +167,7 @@ impl CollectionPartition {
             last_flush_sequence: 0,
             timestamp: std::time::SystemTime::now(),
             created_at: std::time::SystemTime::now(),
+            scan_index: None,
         }
     }
 
@@ -410,6 +448,158 @@ impl CollectionPartition {
 
         vectors.extend(vectors_without_id);
         vectors
+    }
+
+    /// Rebuild the deduped, time-ordered [`ScanIndex`] from `wal_batches`.
+    ///
+    /// Winner selection per oid uses the SAME MVCC rule as
+    /// [`Self::get_all_vectors`] — highest `record_version`, then highest
+    /// batch-timestamp sequence — so the indexed scan returns byte-identical
+    /// results. Only locators are recorded (no record clones). TTL is applied at
+    /// READ time (a record can expire after the index is built), matching
+    /// `get_all_vectors`.
+    fn rebuild_scan_index(&mut self) {
+        // oid -> (winner_updated_at_ns, locator, winner_seq, winner_version)
+        let mut winners: HashMap<String, (i64, RecordLocator, u64, u64)> = HashMap::new();
+        let mut has_empty_oid = false;
+
+        for (batch_key, batch) in self.wal_batches.iter() {
+            let seq = batch
+                .timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            for (idx, rec) in batch.vector_records.iter().enumerate() {
+                if rec.oid.is_empty() {
+                    has_empty_oid = true;
+                    continue;
+                }
+                let version = rec.record_version;
+                let is_newer = match winners.get(&rec.oid) {
+                    Some((_, _, existing_seq, existing_version)) => {
+                        version > *existing_version
+                            || (version == *existing_version && seq > *existing_seq)
+                    }
+                    None => true,
+                };
+                if is_newer {
+                    winners.insert(
+                        rec.oid.clone(),
+                        (
+                            rec.updated_at_ns,
+                            RecordLocator {
+                                batch_key: batch_key.clone(),
+                                idx,
+                            },
+                            seq,
+                            version,
+                        ),
+                    );
+                }
+            }
+        }
+
+        let mut ordered = BTreeMap::new();
+        for (oid, (updated_at_ns, locator, _, _)) in winners {
+            ordered.insert((updated_at_ns, oid), locator);
+        }
+        self.scan_index = Some(ScanIndex {
+            ordered,
+            has_empty_oid,
+        });
+    }
+
+    /// Paginated, deduped, time-ordered scan: up to `limit` records whose
+    /// canonical key `(updated_at_ns, oid)` is strictly greater than `after`, in
+    /// ascending order, passing `predicate`, excluding TTL-expired-at-`now_ns`.
+    ///
+    /// Rebuilds the index if dirty, then serves it. `&mut self` because the
+    /// lazy rebuild mutates the cached index.
+    fn scan_paginated(
+        &mut self,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Vec<ProximaRecord> {
+        if self.scan_index.is_none() {
+            self.rebuild_scan_index();
+        }
+        self.serve_from_index(after, limit, predicate, now_ns)
+    }
+
+    /// Serve a page from an already-built index (read-only). Falls back to the
+    /// legacy full scan when the partition holds empty-oid records.
+    fn serve_from_index(
+        &self,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Vec<ProximaRecord> {
+        let index = match self.scan_index.as_ref() {
+            Some(i) => i,
+            // Should not happen (callers ensure built), but stay correct.
+            None => return self.scan_paginated_legacy(after, limit, predicate, now_ns),
+        };
+        if index.has_empty_oid {
+            return self.scan_paginated_legacy(after, limit, predicate, now_ns);
+        }
+
+        let lower = match after {
+            Some((ts, oid)) => Bound::Excluded((ts, oid.to_string())),
+            None => Bound::Unbounded,
+        };
+        let batches = &self.wal_batches;
+        let mut out = Vec::with_capacity(limit.min(1024));
+        for (_key, locator) in index.ordered.range((lower, Bound::Unbounded)) {
+            if out.len() >= limit {
+                break;
+            }
+            let Some(rec) = batches
+                .get(&locator.batch_key)
+                .and_then(|b| b.vector_records.get(locator.idx))
+            else {
+                continue;
+            };
+            // Read-time TTL filter — matches `get_all_vectors`.
+            if rec.valid_to_ns.map(|exp| exp < now_ns).unwrap_or(false) {
+                continue;
+            }
+            if let Some(p) = predicate
+                && !p(rec)
+            {
+                continue;
+            }
+            out.push(rec.clone());
+        }
+        out
+    }
+
+    /// Fallback paginated scan over the authoritative `get_all_vectors`
+    /// projection (already deduped + TTL-filtered). Used when the index can't be
+    /// served (empty-oid records present). Same result as the indexed path, just
+    /// O(N) per call.
+    fn scan_paginated_legacy(
+        &self,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        _now_ns: i64,
+    ) -> Vec<ProximaRecord> {
+        let mut records = self.get_all_vectors();
+        records.sort_by(|a, b| {
+            (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
+        });
+        records
+            .into_iter()
+            .filter(|r| match after {
+                Some((ts, oid)) => (r.updated_at_ns, r.oid.as_str()) > (ts, oid),
+                None => true,
+            })
+            .filter(|r| predicate.map(|p| p(r)).unwrap_or(true))
+            .take(limit)
+            .collect()
     }
 
     /// Search for similar vectors using native batch processing with MVCC + logical deletes
@@ -817,6 +1007,45 @@ impl GlobalPartitionedMemtable {
             );
 
             Ok(vectors)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Paginated, deduped, time-ordered scan of a collection's unflushed records.
+    ///
+    /// Returns up to `limit` records with key `(updated_at_ns, oid)` strictly
+    /// greater than `after`, in ascending order, passing `predicate`, excluding
+    /// TTL-expired-at-`now_ns`. Results are byte-identical to
+    /// `get_collection_vectors` + sort + cursor-filter + take, but O(log d +
+    /// limit) per page once the per-collection scan index is warm.
+    ///
+    /// Concurrency: the warm path (index already built) serves under a shared
+    /// read lock, so concurrent scans don't serialize. Only the rebuild (after a
+    /// mutation invalidated the index) takes the exclusive lock.
+    pub async fn scan_collection_paginated(
+        &self,
+        collection_id: &str,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Result<Vec<ProximaRecord>> {
+        // Fast path: index warm → shared read lock → concurrent scans.
+        {
+            let collections = self.collections.read().await;
+            match collections.get(collection_id) {
+                None => return Ok(Vec::new()),
+                Some(partition) if partition.scan_index.is_some() => {
+                    return Ok(partition.serve_from_index(after, limit, predicate, now_ns));
+                }
+                Some(_) => { /* dirty → fall through to rebuild under write lock */ }
+            }
+        }
+        // Slow path: rebuild under the exclusive lock, then serve.
+        let mut collections = self.collections.write().await;
+        if let Some(partition) = collections.get_mut(collection_id) {
+            Ok(partition.scan_paginated(after, limit, predicate, now_ns))
         } else {
             Ok(Vec::new())
         }
@@ -1610,6 +1839,186 @@ mod tests {
 
         let (count, _) = memtable.get_collection_stats("test_collection").await;
         assert_eq!(count, 0);
+    }
+
+    // ---- TD-099(3d): deduped, time-ordered scan-index tests ----
+
+    fn test_now_ns() -> i64 {
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    }
+
+    /// A record with an explicit `(updated_at_ns, record_version, valid_to_ns)`.
+    fn rec_at(
+        oid: &str,
+        updated_at_ns: i64,
+        version: u64,
+        valid_to_ns: Option<i64>,
+    ) -> ProximaRecord {
+        let mut r = make_proxima_record(oid, vec![0.1, 0.2, 0.3], version, valid_to_ns);
+        r.updated_at_ns = updated_at_ns;
+        r
+    }
+
+    fn batch_of(records: Vec<ProximaRecord>) -> WALVectorBatch {
+        WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(records),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        }
+    }
+
+    fn oids(records: &[ProximaRecord]) -> Vec<String> {
+        records.iter().map(|r| r.oid.clone()).collect()
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_dedups_to_latest_version() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        m.add_wal_batch(c, batch_of(vec![rec_at("x", 100, 1, None)]))
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("x", 200, 2, None)]))
+            .await
+            .unwrap();
+        let page = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["x".to_string()]);
+        assert_eq!(page[0].record_version, 2);
+        assert_eq!(page[0].updated_at_ns, 200);
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_respects_after_and_limit() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        for (oid, ts) in [("a", 10), ("b", 20), ("c", 30), ("d", 40), ("e", 50)] {
+            m.add_wal_batch(c, batch_of(vec![rec_at(oid, ts, 1, None)]))
+                .await
+                .unwrap();
+        }
+        // after (30,"c"), limit 1 → "d" only.
+        let page = m
+            .scan_collection_paginated(c, Some((30, "c")), 1, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["d".to_string()]);
+        // no cursor, limit 2 → smallest two.
+        let page = m
+            .scan_collection_paginated(c, None, 2, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_skips_ttl_expired() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        let now_ns = test_now_ns();
+        m.add_wal_batch(c, batch_of(vec![rec_at("live", 10, 1, None)]))
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("dead", 20, 1, Some(now_ns - 1))]))
+            .await
+            .unwrap();
+        let page = m
+            .scan_collection_paginated(c, None, 10, None, now_ns)
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["live".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_predicate_filters_before_limit() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        for (oid, ts) in [("a1", 10), ("a2", 20), ("a3", 30), ("a4", 40)] {
+            m.add_wal_batch(c, batch_of(vec![rec_at(oid, ts, 1, None)]))
+                .await
+                .unwrap();
+        }
+        // Smallest two are a1,a2 — but a1 fails the predicate. Predicate-before-limit
+        // must yield a2,a4 (the two smallest PASSING records), not just a2.
+        let pred = |r: &ProximaRecord| r.oid.ends_with('2') || r.oid.ends_with('4');
+        let page = m
+            .scan_collection_paginated(
+                c,
+                None,
+                2,
+                Some(&pred as &(dyn Fn(&ProximaRecord) -> bool + Send + Sync)),
+                test_now_ns(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["a2".to_string(), "a4".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_empty_oid_falls_back() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        // An empty-oid record forces the legacy fallback path; result must still
+        // match the authoritative full scan.
+        m.add_wal_batch(
+            c,
+            batch_of(vec![rec_at("", 10, 1, None), rec_at("k", 20, 1, None)]),
+        )
+        .await
+        .unwrap();
+        let page = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        let mut got = oids(&page);
+        got.sort();
+        assert_eq!(got, vec!["".to_string(), "k".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn index_rebuild_matches_get_all_vectors() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        let now_ns = test_now_ns();
+        m.add_wal_batch(
+            c,
+            batch_of(vec![rec_at("x", 10, 1, None), rec_at("y", 15, 1, None)]),
+        )
+        .await
+        .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("x", 30, 2, None)])) // x v2 supersedes v1
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("z", 40, 1, Some(now_ns - 1))])) // expired
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("w", 25, 1, None)]))
+            .await
+            .unwrap();
+
+        let indexed = m
+            .scan_collection_paginated(c, None, 1000, None, now_ns)
+            .await
+            .unwrap();
+
+        // Authoritative oracle: get_all_vectors already dedups + TTL-filters.
+        let mut legacy = m.get_collection_vectors(c).await.unwrap();
+        legacy.sort_by(|a, b| {
+            (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
+        });
+
+        assert_eq!(oids(&indexed), oids(&legacy));
+        let x = indexed.iter().find(|r| r.oid == "x").unwrap();
+        assert_eq!(x.record_version, 2, "dedup must keep latest version");
+        assert!(
+            indexed.iter().all(|r| r.oid != "z"),
+            "TTL-expired record must be excluded"
+        );
     }
 
     fn make_proxima_record(
