@@ -1504,7 +1504,8 @@ impl DmlService {
 
         let table_schema = catalog.get_table(&table_id).await?;
         let ids_to_update = if let Some(ref wc) = where_clause {
-            self.extract_ids_from_where(wc, &table_schema)?
+            self.resolve_matching_ids(&table_schema, &table_id.name, wc)
+                .await?
         } else {
             return Err(anyhow!("UPDATE without WHERE clause is not allowed"));
         };
@@ -1607,7 +1608,8 @@ impl DmlService {
 
         // Get IDs to delete based on WHERE clause
         let ids_to_delete = if let Some(ref wc) = where_clause {
-            self.extract_ids_from_where(wc, &table_schema)?
+            self.resolve_matching_ids(&table_schema, &table_id.name, wc)
+                .await?
         } else {
             return Err(anyhow!(
                 "DELETE without WHERE clause is not allowed. Use WHERE primary key IN (...) to delete specific rows."
@@ -2427,19 +2429,86 @@ impl DmlService {
     }
 
     /// Extract IDs from WHERE clause using the catalog primary key.
-    fn extract_ids_from_where(
+    /// Resolve the canonical OIDs of the rows an UPDATE/DELETE `WHERE` clause
+    /// targets, honoring the FULL predicate (any catalog column), not just the
+    /// primary key. Reuses the same predicate evaluator + scan push-down as
+    /// SELECT, so mixed `pk = x AND col = y` no longer mutates rows that fail the
+    /// non-PK part (the prior silent bug), and non-PK `WHERE` now works.
+    async fn resolve_matching_ids(
+        &self,
+        table_schema: &CatalogTableSchema,
+        table_id_name: &str,
+        where_clause: &WhereClause,
+    ) -> Result<Vec<String>> {
+        let predicates = self.where_clause_to_select_predicates(where_clause, table_schema)?;
+        let primary_key = table_schema.primary_key.first().map(String::as_str);
+
+        // PK fast-path: when the WHERE pins primary-key `=`/`IN` candidates, fetch
+        // them by key (cheap point lookups) and keep only those that ALSO satisfy
+        // the full predicate.
+        let pk_candidates = self.extract_pk_candidate_ids(where_clause, table_schema)?;
+        if !pk_candidates.is_empty() {
+            let mut ids = Vec::new();
+            for candidate in pk_candidates {
+                let Some(rich) = self
+                    .record_store
+                    .get_by_key(
+                        table_schema,
+                        TableRecordGetRequest {
+                            table_id: table_id_name.to_string(),
+                            key: candidate,
+                            include_vector: true,
+                            include_props: true,
+                        },
+                        None,
+                    )
+                    .await?
+                else {
+                    continue;
+                };
+                let record = Self::rich_result_to_record(rich);
+                if Self::record_matches_select_predicates(&record, &predicates, primary_key) {
+                    ids.push(record.oid);
+                }
+            }
+            return Ok(ids);
+        }
+
+        // No PK predicate: push the full predicate into the store scan.
+        let pred = |record: &ProximaRecord| {
+            Self::record_matches_select_predicates(record, &predicates, primary_key)
+        };
+        let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
+        let records = self
+            .record_store
+            .scan_records_filtered(
+                table_schema,
+                TableRecordScanRequest {
+                    table_id: table_id_name.to_string(),
+                    limit: None,
+                    include_vector: true,
+                    include_props: true,
+                },
+                predicate,
+                None,
+            )
+            .await?;
+        Ok(records.into_iter().map(|record| record.oid).collect())
+    }
+
+    /// Extract primary-key `=`/`IN` candidate OIDs from a WHERE clause. Returns
+    /// an empty Vec (NOT an error) when the clause has no usable PK predicate, so
+    /// the caller can fall back to a predicate scan. Candidates are still
+    /// re-checked against the full predicate by [`Self::resolve_matching_ids`].
+    fn extract_pk_candidate_ids(
         &self,
         where_clause: &WhereClause,
         table_schema: &CatalogTableSchema,
     ) -> Result<Vec<String>> {
         let Some(primary_key_column) = Self::primary_key_column(table_schema) else {
-            return Err(anyhow!(
-                "Table '{}' has no single-column primary key/id column for DML key extraction",
-                table_schema.name
-            ));
+            return Ok(Vec::new());
         };
         let mut ids = Vec::new();
-
         for condition in &where_clause.conditions {
             match condition {
                 Condition::Comparison {
@@ -2463,16 +2532,142 @@ impl DmlService {
                 _ => {}
             }
         }
+        Ok(ids)
+    }
 
-        if ids.is_empty() {
+    /// Convert an UPDATE/DELETE `WhereClause` into the catalog-resolved
+    /// `RelationalSelectPredicate` set used by the shared predicate evaluator.
+    /// Shapes the AND-only matcher cannot express are REJECTED with a clear error
+    /// (never silently dropped, which was the prior bug).
+    fn where_clause_to_select_predicates(
+        &self,
+        where_clause: &WhereClause,
+        table_schema: &CatalogTableSchema,
+    ) -> Result<Vec<RelationalSelectPredicate>> {
+        if where_clause.conditions.len() > 1
+            && matches!(where_clause.operator, LogicalOperator::Or)
+        {
             return Err(anyhow!(
-                "WHERE clause must include {} = 'value' or {} IN (...) for DML operations",
-                primary_key_column,
-                primary_key_column
+                "OR conditions in UPDATE/DELETE WHERE are not yet supported (only AND of simple predicates)"
             ));
         }
+        let mut inputs: Vec<RelationalSelectPredicateInput> = Vec::new();
+        for condition in &where_clause.conditions {
+            self.push_condition_as_predicate_inputs(condition, &mut inputs)?;
+        }
+        if inputs.is_empty() {
+            return Err(anyhow!(
+                "WHERE clause has no usable predicates for UPDATE/DELETE"
+            ));
+        }
+        Self::resolve_select_predicates(table_schema, &inputs)
+    }
 
-        Ok(ids)
+    /// Lower one `Condition` into one or more syntax-level predicate inputs.
+    /// `BETWEEN` expands to `>= low AND <= high`; `NOT BETWEEN`, nested trees,
+    /// and OR are rejected (the flat-AND matcher can't represent them).
+    fn push_condition_as_predicate_inputs(
+        &self,
+        condition: &Condition,
+        inputs: &mut Vec<RelationalSelectPredicateInput>,
+    ) -> Result<()> {
+        match condition {
+            Condition::Comparison {
+                column,
+                operator,
+                value,
+            } => inputs.push(RelationalSelectPredicateInput {
+                column_name: column.clone(),
+                condition: RelationalSelectPredicateCondition::Comparison {
+                    operator: Self::map_comparison_operator(*operator),
+                    literal: self.literal_to_string(value)?,
+                },
+            }),
+            Condition::In {
+                column,
+                values,
+                negated,
+            } => {
+                let literals = values
+                    .iter()
+                    .map(|value| self.literal_to_string(value))
+                    .collect::<Result<Vec<_>>>()?;
+                inputs.push(RelationalSelectPredicateInput {
+                    column_name: column.clone(),
+                    condition: RelationalSelectPredicateCondition::In {
+                        literals,
+                        negated: *negated,
+                    },
+                });
+            }
+            Condition::Like {
+                column,
+                pattern,
+                negated,
+            } => inputs.push(RelationalSelectPredicateInput {
+                column_name: column.clone(),
+                condition: RelationalSelectPredicateCondition::Like {
+                    pattern: pattern.clone(),
+                    negated: *negated,
+                },
+            }),
+            Condition::IsNull { column, negated } => {
+                inputs.push(RelationalSelectPredicateInput {
+                    column_name: column.clone(),
+                    condition: RelationalSelectPredicateCondition::IsNull { negated: *negated },
+                })
+            }
+            Condition::Between {
+                column,
+                low,
+                high,
+                negated: false,
+            } => {
+                // col BETWEEN low AND high  ≡  col >= low AND col <= high
+                inputs.push(RelationalSelectPredicateInput {
+                    column_name: column.clone(),
+                    condition: RelationalSelectPredicateCondition::Comparison {
+                        operator: RelationalSelectPredicateOperator::GreaterThanOrEqual,
+                        literal: self.literal_to_string(low)?,
+                    },
+                });
+                inputs.push(RelationalSelectPredicateInput {
+                    column_name: column.clone(),
+                    condition: RelationalSelectPredicateCondition::Comparison {
+                        operator: RelationalSelectPredicateOperator::LessThanOrEqual,
+                        literal: self.literal_to_string(high)?,
+                    },
+                });
+            }
+            Condition::Between { negated: true, .. } => {
+                return Err(anyhow!(
+                    "NOT BETWEEN in UPDATE/DELETE WHERE is not yet supported"
+                ));
+            }
+            Condition::Nested { .. } => {
+                return Err(anyhow!(
+                    "Nested conditions in UPDATE/DELETE WHERE are not yet supported"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn map_comparison_operator(
+        operator: ComparisonOperator,
+    ) -> RelationalSelectPredicateOperator {
+        match operator {
+            ComparisonOperator::Equal => RelationalSelectPredicateOperator::Equal,
+            ComparisonOperator::NotEqual => RelationalSelectPredicateOperator::NotEqual,
+            ComparisonOperator::LessThan => RelationalSelectPredicateOperator::LessThan,
+            ComparisonOperator::LessThanOrEqual => {
+                RelationalSelectPredicateOperator::LessThanOrEqual
+            }
+            ComparisonOperator::GreaterThan => RelationalSelectPredicateOperator::GreaterThan,
+            ComparisonOperator::GreaterThanOrEqual => {
+                RelationalSelectPredicateOperator::GreaterThanOrEqual
+            }
+        }
     }
 
     fn effective_insert_literal(
@@ -3765,6 +3960,139 @@ mod tests {
             "deleted row must not appear in scan"
         );
         assert_eq!(after_delete.rows.len(), 1, "only i1 must remain");
+    }
+
+    /// UPDATE/DELETE WHERE must honor NON-primary-key predicates (and the full
+    /// predicate of a mixed `pk = x AND col = y`), via the shared scan-filter
+    /// push-down — not the prior PK-only `extract_ids_from_where` which silently
+    /// ignored non-PK conditions.
+    #[tokio::test]
+    async fn update_delete_honor_non_primary_key_where_predicates() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-nonpk.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE orders (id TEXT NOT NULL, status TEXT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(&wal_path)
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        async fn exec(dml: &DmlService, parser: &crate::query::sql_frontend::SqlFrontendParser, sql: &str) -> DmlResult {
+            let stmt = parser.parse_dml(sql).expect("parse").expect("dml stmt");
+            dml.execute(stmt).await.expect("execute")
+        }
+        async fn status_of(dml: &DmlService, id: &str) -> Option<String> {
+            let sel = dml
+                .select_table_records_with_projection(
+                    "orders",
+                    &["id".to_string(), "status".to_string()],
+                    None,
+                    &[RelationalSelectPredicateInput {
+                        column_name: "id".to_string(),
+                        condition: RelationalSelectPredicateCondition::Comparison {
+                            operator: RelationalSelectPredicateOperator::Equal,
+                            literal: id.to_string(),
+                        },
+                    }],
+                )
+                .await
+                .expect("select");
+            sel.rows.first().map(|row| match &row[1] {
+                ProximaValue::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            })
+        }
+
+        for (id, status) in [("o1", "active"), ("o2", "active"), ("o3", "inactive")] {
+            exec(
+                &dml,
+                &parser,
+                &format!("INSERT INTO orders (id, status) VALUES ('{id}', '{status}');"),
+            )
+            .await;
+        }
+
+        // (1) Non-PK WHERE UPDATE: only the two 'active' rows change.
+        let r = exec(
+            &dml,
+            &parser,
+            "UPDATE orders SET status = 'archived' WHERE status = 'active';",
+        )
+        .await;
+        assert!(r.success);
+        assert_eq!(r.rows_affected, 2, "only the two active rows update");
+        assert_eq!(status_of(&dml, "o1").await.as_deref(), Some("archived"));
+        assert_eq!(status_of(&dml, "o2").await.as_deref(), Some("archived"));
+        assert_eq!(
+            status_of(&dml, "o3").await.as_deref(),
+            Some("inactive"),
+            "non-matching row must be untouched"
+        );
+
+        // (2) Mixed pk + non-pk, the silent-bug fix: o3 is 'inactive', so the
+        // `AND status = 'active'` must prevent the update even though id matches.
+        let r = exec(
+            &dml,
+            &parser,
+            "UPDATE orders SET status = 'hacked' WHERE id = 'o3' AND status = 'active';",
+        )
+        .await;
+        assert!(r.success);
+        assert_eq!(r.rows_affected, 0, "id matches but the non-PK condition fails");
+        assert_eq!(
+            status_of(&dml, "o3").await.as_deref(),
+            Some("inactive"),
+            "row must NOT be mutated when the full predicate is not satisfied"
+        );
+
+        // (3) Non-PK WHERE DELETE: removes only the archived rows.
+        let r = exec(
+            &dml,
+            &parser,
+            "DELETE FROM orders WHERE status = 'archived';",
+        )
+        .await;
+        assert!(r.success);
+        assert_eq!(r.rows_affected, 2);
+        assert_eq!(status_of(&dml, "o1").await, None, "o1 deleted");
+        assert_eq!(status_of(&dml, "o2").await, None, "o2 deleted");
+        assert_eq!(
+            status_of(&dml, "o3").await.as_deref(),
+            Some("inactive"),
+            "o3 survives"
+        );
     }
 
     /// INSERT and DELETE through `DmlService` bump catalog row-count statistics
