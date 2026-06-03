@@ -40,6 +40,8 @@
 //! symbol names, type-correct args/returns) is complete and proven by
 //! `clients/jvm/spark-connector/src/test/java/org/proximadb/spark/NativeProximaDBTest.java`.
 
+pub mod jni_handle;
+
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jbyteArray, jint, jlong, jstring};

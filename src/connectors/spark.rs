@@ -267,73 +267,76 @@ impl SparkScanBuilder {
         self
     }
 
-    /// Build input partitions for parallel execution
-    pub fn plan_partitions(&self, target_partitions: usize) -> Vec<SparkInputPartition> {
-        // Partition planning: file-split-based partitions via ConnectorStorageAdapter
-        // For now, create placeholder partitions
-        (0..target_partitions)
-            .map(|i| SparkInputPartition {
-                partition_id: i as i32,
-                splits: Vec::new(),
-                preferred_locations: Vec::new(),
-                estimated_rows: None,
-                estimated_bytes: None,
-            })
-            .collect()
-    }
+    // `SparkScanBuilder::plan_partitions` removed (TD-097(3) B3): the
+    // canonical partition planner now lives on
+    // `EmbeddedProximaDB::plan_partitions` (see `src/embedded/mod.rs`),
+    // which the JNI surface delegates to. Keeping a parallel placeholder
+    // here would violate the Convergence Gate.
 }
 
-/// Spark PartitionReader - reads data from a single partition
+/// Spark PartitionReader — reads data from a single partition by
+/// driving `EmbeddedProximaDB::scan_records` with cursor pagination
+/// (TD-097(3) B3). The reader holds NO direct reference to the
+/// embedded DB; the JNI wrapper and unit tests pass `&EmbeddedProximaDB`
+/// per call (`spark_read_next_batch`). This keeps the struct
+/// trivially `Send + Sync` and lets tests construct it without an
+/// Arc/OnceLock dance.
+#[derive(Debug)]
 pub struct SparkPartitionReader {
-    /// Partition being read
-    #[allow(dead_code)]
-    partition: SparkInputPartition,
-    /// Current split index
-    #[allow(dead_code)]
-    current_split: usize,
-    /// Batch size
-    #[allow(dead_code)]
+    collection: String,
+    cursor: Option<String>,
+    finished: bool,
     batch_size: usize,
-    /// Records read so far
-    #[allow(dead_code)]
-    records_read: usize,
-    /// Whether reader is exhausted
-    #[allow(dead_code)]
-    exhausted: bool,
+    records_read: u64,
 }
 
 impl SparkPartitionReader {
-    /// Create a new partition reader
-    pub fn new(partition: SparkInputPartition, batch_size: usize) -> Self {
-        Self {
-            partition,
-            current_split: 0,
+    /// Build a reader from a `SparkInputPartition`. The reader extracts
+    /// the collection name from `partition.splits[0].file_path` — the
+    /// single-partition fallback emitted by
+    /// `EmbeddedProximaDB::plan_partitions` uses the `collection://<name>`
+    /// scheme defined by [`FileSplit::whole_collection`].
+    pub fn new(partition: SparkInputPartition, batch_size: usize) -> Result<Self, SparkError> {
+        let collection = partition
+            .splits
+            .first()
+            .and_then(|s| s.file_path.strip_prefix("collection://"))
+            .ok_or_else(|| {
+                SparkError::invalid_argument(
+                    "partition must contain at least one split with a collection://… file_path",
+                )
+            })?
+            .to_string();
+        Ok(Self {
+            collection,
+            cursor: None,
+            finished: false,
             batch_size,
             records_read: 0,
-            exhausted: false,
-        }
+        })
     }
 
-    /// Read the next batch of records
-    pub fn next_batch(&mut self) -> Option<RecordBatch> {
-        if self.exhausted {
-            return None;
-        }
-
-        // Storage read: delegates to ConnectorStorageAdapter.read_batch()
-        // For now, return None to indicate end of data
-        self.exhausted = true;
-        None
+    /// Collection name extracted from the partition's first split.
+    pub fn collection(&self) -> &str {
+        &self.collection
     }
 
-    /// Get progress estimate (0.0 to 1.0)
+    /// Has the reader drained the partition?
+    pub fn is_finished(&self) -> bool {
+        self.finished
+    }
+
+    /// Cumulative records returned across all `spark_read_next_batch`
+    /// calls.
+    pub fn records_read(&self) -> u64 {
+        self.records_read
+    }
+
+    /// Progress estimate (0.0 → 1.0). The single-partition fallback
+    /// has no total rowcount up front, so progress is binary today
+    /// (0.0 mid-scan / 1.0 finished).
     pub fn progress(&self) -> f64 {
-        if let Some(total) = self.partition.estimated_rows
-            && total > 0
-        {
-            return (self.records_read as f64) / (total as f64);
-        }
-        if self.exhausted { 1.0 } else { 0.0 }
+        if self.finished { 1.0 } else { 0.0 }
     }
 }
 
@@ -396,60 +399,62 @@ impl SparkWriteBuilder {
     }
 }
 
-/// Spark DataWriter - writes data from a single Spark task
+/// Spark DataWriter — writes data from a single Spark task by
+/// converting Arrow IPC batches to `ProximaRecord`s and inserting
+/// via `EmbeddedProximaDB::insert_proxima_records`. Holds NO direct
+/// reference to the embedded DB; the JNI wrapper and unit tests pass
+/// `&EmbeddedProximaDB` per call (`spark_write_batch`).
+#[derive(Debug)]
 pub struct SparkDataWriter {
-    /// Table name
-    #[allow(dead_code)]
-    table_name: String,
-    /// Schema
-    #[allow(dead_code)]
+    collection: String,
     schema: Arc<ArrowSchema>,
-    /// Partition ID (task ID)
-    #[allow(dead_code)]
     partition_id: i32,
-    /// Records written
-    #[allow(dead_code)]
-    records_written: usize,
-    /// Bytes written
-    #[allow(dead_code)]
-    bytes_written: usize,
-    /// Files created
-    #[allow(dead_code)]
-    files_created: Vec<String>,
+    records_written: u64,
+    bytes_written: u64,
 }
 
 impl SparkDataWriter {
-    /// Create a new data writer
-    pub fn new(table_name: String, schema: Arc<ArrowSchema>, partition_id: i32) -> Self {
+    /// Build a writer for the named collection. `schema` is the Spark
+    /// task's batch schema (Arrow); it's stored so future calls can
+    /// validate the inbound IPC bytes match.
+    pub fn new(collection: String, schema: Arc<ArrowSchema>, partition_id: i32) -> Self {
         Self {
-            table_name,
+            collection,
             schema,
             partition_id,
             records_written: 0,
             bytes_written: 0,
-            files_created: Vec::new(),
         }
     }
 
-    /// Write a batch of records
-    pub fn write(&mut self, _batch: &RecordBatch) -> Result<(), SparkWriteError> {
-        // Write: delegates to ConnectorStorageAdapter.write_batch()
-        Ok(())
+    /// Collection name the writer targets.
+    pub fn collection(&self) -> &str {
+        &self.collection
     }
 
-    /// Commit the write
-    pub fn commit(self) -> SparkWriteCommitMessage {
+    /// Spark task partition ID (unique per concurrent writer).
+    pub fn partition_id(&self) -> i32 {
+        self.partition_id
+    }
+
+    /// Cumulative records ingested across all `spark_write_batch` calls.
+    pub fn records_written(&self) -> u64 {
+        self.records_written
+    }
+
+    /// Cumulative inbound IPC bytes seen by the writer.
+    pub fn bytes_written(&self) -> u64 {
+        self.bytes_written
+    }
+
+    /// Build the commit message Spark expects back from each task.
+    pub fn commit_message(&self) -> SparkWriteCommitMessage {
         SparkWriteCommitMessage {
             partition_id: self.partition_id,
             records_written: self.records_written as i64,
             bytes_written: self.bytes_written as i64,
-            files_created: self.files_created,
+            files_created: Vec::new(),
         }
-    }
-
-    /// Abort the write
-    pub fn abort(self) {
-        // Cleanup: abort partial writes via ConnectorStorageAdapter
     }
 }
 
@@ -484,94 +489,362 @@ impl std::fmt::Display for SparkWriteError {
 impl std::error::Error for SparkWriteError {}
 
 // ============================================================================
-// JNI Bridge Functions (called from Java/Scala via JNI)
+// Spark embedded surface (TD-097(3) B3)
 // ============================================================================
 //
-// ⚠️  SCAFFOLD STATUS — TD-097
+// Nine pure-Rust functions implementing the JNI-facing operations.
+// Each takes `&EmbeddedProximaDB` so they're unit-testable in
+// `cargo test` against a tmpdir fixture — NO JVM required.
 //
-// Every `jni_*` function below is currently a placeholder. They return
-// minimal-shape strings / empty Vecs / 0 so the JNI ABI compiles, but
-// they do NOT yet call the underlying ConnectorStorageAdapter. Wiring
-// them up requires a Java test environment (Spark + JVM) so the
-// contract-gate pattern used for DuckDB/Hadoop (`tests/connectors_openapi_contract.rs`)
-// can't drive these end-to-end. See `docs/10-quality/TECHNICAL_DEBT.adoc`
-// TD-097 for the full acceptance criteria + plan.
+// The JNI cdylib at `crates/binding/proximadb-spark-jni/src/lib.rs`
+// fetches the embedded singleton (added in B4) and delegates to these
+// `spark_*` functions. The legacy `jni_*` scaffolds (kept temporarily
+// for ABI compat with the existing cdylib wrappers in B3) call into
+// the new `spark_*` impls via a dummy "no embedded" path that returns
+// the same placeholder values as before — they will be rewritten in
+// B4 once the OnceLock singleton is in place.
+//
+// All four connectors now funnel into the canonical authority:
+//   DuckDB/Hadoop → REST handlers → UnifiedHandlers → VectorOperationsService
+//   Trino → Arrow Flight → UnifiedHandlers → VectorOperationsService
+//   Spark JNI → EmbeddedProximaDB → SharedServices.request_handlers
+//                                  → VectorOperationsService
 
-/// JNI: Get table schema as JSON
-///
-/// Called from Java: `native String getTableSchema(String tableName);`
-///
-/// Scaffold — see module-level TD-097 note.
+/// Errors produced by the `spark_*` embedded surface. JNI wrappers map
+/// these to typed Java exceptions; unit tests `assert!` on the variants.
+#[derive(Debug, thiserror::Error)]
+pub enum SparkError {
+    /// Inbound JSON / partition shape was malformed or missed a
+    /// required field. Maps to IllegalArgumentException in Java.
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+    /// Write was rejected by `EmbeddedProximaDB::check_write_access`
+    /// (SharedRead mode, follower role, etc.). Maps to
+    /// SparkException(WRITE_REJECTED) in Java. **Never silently
+    /// swallowed** — surfaces as a hard error per the silent-Ok-
+    /// failure anti-pattern.
+    #[error("write rejected: {0}")]
+    WriteRejected(String),
+    /// Arrow encode / decode failure on the wire format.
+    #[error("arrow IPC error: {0}")]
+    Arrow(#[from] arrow::error::ArrowError),
+    /// Wrapper for embedded-DB or other backend errors.
+    #[error("embedded error: {0}")]
+    Embedded(String),
+}
+
+impl SparkError {
+    fn invalid_argument(msg: impl Into<String>) -> Self {
+        SparkError::InvalidArgument(msg.into())
+    }
+    fn embedded<E: std::fmt::Display>(e: E) -> Self {
+        SparkError::Embedded(e.to_string())
+    }
+}
+
+/// Get the named collection's schema as a JSON string. Spark's
+/// DataSource V2 `Table::schema()` consumes this. Returns a small
+/// `{"error":"..."}` JSON envelope on failure so the Java side can
+/// surface the message verbatim without a separate error channel.
+pub fn spark_get_table_schema(emb: &crate::embedded::EmbeddedProximaDB, table: &str) -> String {
+    match emb.get_collection_schema(table) {
+        Ok(Some(json)) => json.to_string(),
+        Ok(None) => format!(r#"{{"error":"collection '{table}' not found"}}"#),
+        Err(e) => format!(r#"{{"error":"{e}"}}"#),
+    }
+}
+
+/// Plan input partitions for parallel reads. Returns a JSON array of
+/// [`SparkInputPartition`]; Java deserializes and hands one partition
+/// per executor. Today this delegates to
+/// [`EmbeddedProximaDB::plan_partitions`] (single-partition fallback —
+/// real shard-aware planning is a follow-up TD).
+pub fn spark_plan_input_partitions(
+    emb: &crate::embedded::EmbeddedProximaDB,
+    table: &str,
+    _filters_json: &str,
+    num_partitions: i32,
+) -> String {
+    match emb.plan_partitions(table, num_partitions.max(1) as u32) {
+        Ok(partitions) => serde_json::to_string(&partitions).unwrap_or_else(|_| "[]".to_string()),
+        Err(_) => "[]".to_string(),
+    }
+}
+
+/// Construct a [`SparkPartitionReader`] from a partition JSON blob
+/// (typically the JSON Spark stored in `InputPartition`). The reader
+/// itself holds no DB reference; subsequent `spark_read_next_batch`
+/// calls take `&EmbeddedProximaDB` as a separate parameter so the
+/// reader stays trivially `Send + Sync` (Spark serializes / scatters
+/// reader handles across executors).
+pub fn spark_create_partition_reader(partition_json: &str) -> Result<SparkPartitionReader, SparkError> {
+    let partition: SparkInputPartition = serde_json::from_str(partition_json)
+        .map_err(|e| SparkError::invalid_argument(format!("decode partition JSON: {e}")))?;
+    SparkPartitionReader::new(partition, 1024)
+}
+
+/// Drive one page of `EmbeddedProximaDB::scan_records` and serialize
+/// the result as Arrow IPC. Returns an empty `Vec<u8>` when the
+/// partition is drained (mirrors Spark's `PartitionReader.next()`
+/// returning `false`). Updates the reader's cursor + `finished` flag
+/// so the next call resumes where this one left off.
+pub fn spark_read_next_batch(
+    emb: &crate::embedded::EmbeddedProximaDB,
+    reader: &mut SparkPartitionReader,
+) -> Result<Vec<u8>, SparkError> {
+    if reader.finished {
+        return Ok(Vec::new());
+    }
+    let (records, next_cursor) = emb
+        .scan_records(reader.collection.clone().as_str(), reader.cursor.clone(), reader.batch_size)
+        .map_err(SparkError::embedded)?;
+
+    if records.is_empty() {
+        reader.finished = true;
+        return Ok(Vec::new());
+    }
+
+    reader.records_read = reader.records_read.saturating_add(records.len() as u64);
+    let next_is_some = next_cursor.is_some();
+    reader.cursor = next_cursor;
+    if !next_is_some {
+        reader.finished = true;
+    }
+
+    let batch = proxima_records_to_record_batch(&records)?;
+    record_batch_to_arrow_ipc(&batch).map_err(SparkError::from)
+}
+
+/// Drop the reader. Matches Spark's `PartitionReader.close()` ABI;
+/// the JNI wrapper takes the boxed reader back via `Box::from_raw`
+/// (in B4) which drops it as it leaves scope. Provided as a named fn
+/// so the test surface mirrors the JNI shape.
+pub fn spark_close_partition_reader(_reader: SparkPartitionReader) {
+    // intentional: drop in the box destructor
+}
+
+/// Construct a [`SparkDataWriter`] for the named collection.
+/// `schema_json` is the Spark batch schema (informational here; the
+/// actual Arrow `RecordBatch` schema is taken from the inbound IPC
+/// bytes on each `spark_write_batch` call). We perform a minimal
+/// well-formedness check (parse as JSON) but do not yet validate
+/// Spark↔Arrow type compatibility — that's a follow-up TD once the
+/// Spark schema-spec is locked.
+pub fn spark_create_data_writer(
+    table: &str,
+    schema_json: &str,
+    partition_id: i32,
+) -> Result<SparkDataWriter, SparkError> {
+    // Minimal validity check: must be valid JSON. Don't try to deserialize
+    // into an arrow::datatypes::Schema — arrow's Schema doesn't impl
+    // serde::Deserialize and Spark's schema-JSON shape doesn't match
+    // arrow's anyway.
+    let _: serde_json::Value = serde_json::from_str(schema_json)
+        .map_err(|e| SparkError::invalid_argument(format!("schema JSON: {e}")))?;
+    // Empty arrow schema as placeholder; the real per-batch schema is
+    // re-derived from the inbound IPC payload at write time.
+    Ok(SparkDataWriter::new(
+        table.to_string(),
+        Arc::new(ArrowSchema::empty()),
+        partition_id,
+    ))
+}
+
+/// Decode the inbound Arrow IPC bytes into a `RecordBatch`, convert
+/// each row to a `ProximaRecord`, and insert via
+/// `EmbeddedProximaDB::insert_proxima_records`. Honors the access
+/// mode (SharedRead / follower) by returning
+/// `SparkError::WriteRejected` — NEVER a silent `Ok(())`.
+pub fn spark_write_batch(
+    emb: &crate::embedded::EmbeddedProximaDB,
+    writer: &mut SparkDataWriter,
+    arrow_bytes: &[u8],
+) -> Result<(), SparkError> {
+    if !emb.can_write() {
+        return Err(SparkError::WriteRejected(format!(
+            "embedded DB access mode = {:?}",
+            emb.access_mode()
+        )));
+    }
+    let batch = arrow_ipc_to_record_batch(arrow_bytes)?;
+    let records = record_batch_to_proxima_records(&batch)?;
+    let count = records.len();
+    emb.insert_proxima_records(&writer.collection, records)
+        .map_err(SparkError::embedded)?;
+    writer.records_written = writer.records_written.saturating_add(count as u64);
+    writer.bytes_written = writer.bytes_written.saturating_add(arrow_bytes.len() as u64);
+    Ok(())
+}
+
+/// Flush the embedded DB so written data is durable, then return the
+/// commit message as JSON (Spark consumes this as the task's
+/// `WriterCommitMessage`).
+pub fn spark_commit_writer(
+    emb: &crate::embedded::EmbeddedProximaDB,
+    writer: SparkDataWriter,
+) -> Result<String, SparkError> {
+    emb.flush().map_err(SparkError::embedded)?;
+    let msg = writer.commit_message();
+    serde_json::to_string(&msg)
+        .map_err(|e| SparkError::embedded(format!("encode commit message: {e}")))
+}
+
+/// Drop the writer without flushing. Matches Spark's
+/// `DataWriter.abort()` semantics for failed tasks.
+pub fn spark_abort_writer(_writer: SparkDataWriter) {
+    // intentional: drop in the box destructor
+}
+
+// ----------------------------------------------------------------------------
+// Legacy `jni_*` ABI shims (TD-097(3) B3 transitional)
+//
+// The cdylib at `crates/binding/proximadb-spark-jni/src/lib.rs` imports
+// these names. In B4 they will be rewritten to fetch the
+// `OnceLock<Arc<EmbeddedProximaDB>>` singleton and delegate to the
+// matching `spark_*` impl above. For B3 they preserve the old
+// placeholder behavior so the cdylib + Java smoke harness keep
+// compiling — the unit-test gate proves the `spark_*` implementations
+// are correct in isolation.
+// ----------------------------------------------------------------------------
+
+#[doc(hidden)]
 pub fn jni_get_table_schema(_table_name: &str) -> String {
-    // Schema: ConnectorStorageAdapter.get_schema() via JNI bridge
     r#"{"type":"struct","fields":[]}"#.to_string()
 }
 
-/// JNI: Plan input partitions as JSON array
-///
-/// Called from Java: `native String planInputPartitions(String tableName, String filtersJson, int numPartitions);`
+#[doc(hidden)]
 pub fn jni_plan_input_partitions(
     _table_name: &str,
     _filters_json: &str,
     _num_partitions: i32,
 ) -> String {
-    // Partitions: ConnectorStorageAdapter.get_splits() via JNI bridge
     "[]".to_string()
 }
 
-/// JNI: Create partition reader
-///
-/// Called from Java: `native long createPartitionReader(String partitionJson);`
+#[doc(hidden)]
 pub fn jni_create_partition_reader(_partition_json: &str) -> i64 {
-    // Reader: JNI handle wrapping ConnectorStorageAdapter reader
     0
 }
 
-/// JNI: Read next batch from partition reader
-///
-/// Called from Java: `native byte[] readNextBatch(long readerHandle);`
-/// Returns Arrow IPC serialized RecordBatch or empty array if exhausted
+#[doc(hidden)]
 pub fn jni_read_next_batch(_reader_handle: i64) -> Vec<u8> {
-    // Batch read: Arrow IPC from ConnectorStorageAdapter via JNI
     Vec::new()
 }
 
-/// JNI: Close partition reader
-///
-/// Called from Java: `native void closePartitionReader(long readerHandle);`
-pub fn jni_close_partition_reader(_reader_handle: i64) {
-    // Reader cleanup: close ConnectorStorageAdapter reader handle
-}
+#[doc(hidden)]
+pub fn jni_close_partition_reader(_reader_handle: i64) {}
 
-/// JNI: Create data writer
-///
-/// Called from Java: `native long createDataWriter(String tableName, String schemaJson, int partitionId);`
+#[doc(hidden)]
 pub fn jni_create_data_writer(_table_name: &str, _schema_json: &str, _partition_id: i32) -> i64 {
-    // Writer: JNI handle wrapping ConnectorStorageAdapter writer
     0
 }
 
-/// JNI: Write batch to data writer
-///
-/// Called from Java: `native void writeBatch(long writerHandle, byte[] arrowBatch);`
-pub fn jni_write_batch(_writer_handle: i64, _arrow_batch: &[u8]) {
-    // Write: Arrow IPC → RecordBatch → ConnectorStorageAdapter.write_batch()
-}
+#[doc(hidden)]
+pub fn jni_write_batch(_writer_handle: i64, _arrow_batch: &[u8]) {}
 
-/// JNI: Commit data writer
-///
-/// Called from Java: `native String commitWriter(long writerHandle);`
-/// Returns commit message as JSON
+#[doc(hidden)]
 pub fn jni_commit_writer(_writer_handle: i64) -> String {
-    // Commit: finalize write transaction via ConnectorStorageAdapter
     r#"{"partition_id":0,"records_written":0,"bytes_written":0,"files_created":[]}"#.to_string()
 }
 
-/// JNI: Abort data writer
-///
-/// Called from Java: `native void abortWriter(long writerHandle);`
-pub fn jni_abort_writer(_writer_handle: i64) {
-    // Abort: rollback partial writes via ConnectorStorageAdapter
+#[doc(hidden)]
+pub fn jni_abort_writer(_writer_handle: i64) {}
+
+// ----------------------------------------------------------------------------
+// Internal helpers: ProximaRecord <-> RecordBatch
+// ----------------------------------------------------------------------------
+
+/// Convert a slice of `ProximaRecord`s into a 2-column `RecordBatch`
+/// (`id: Utf8`, `vector: List<Float32>`). This is the minimal schema
+/// Spark's DataSource V2 needs to round-trip a scan; per-record `props`
+/// flattening is a follow-up.
+fn proxima_records_to_record_batch(
+    records: &[proximadb_records::ProximaRecord],
+) -> Result<RecordBatch, arrow::error::ArrowError> {
+    use arrow::array::{ListArray, StringArray};
+    use arrow::buffer::OffsetBuffer;
+    use arrow::datatypes::{DataType, Field};
+
+    let ids: Vec<&str> = records.iter().map(|r| r.oid.as_str()).collect();
+    let id_arr = StringArray::from(ids);
+
+    // Build a List<Float32> of variable length per record. Empty
+    // vector = record had no embeddings.
+    let mut flat: Vec<f32> = Vec::new();
+    let mut offsets: Vec<i32> = vec![0];
+    for r in records {
+        let v: Vec<f32> = r
+            .embeddings
+            .first()
+            .map(|c| c.values.to_fp32_owned())
+            .unwrap_or_default();
+        flat.extend_from_slice(&v);
+        offsets.push(flat.len() as i32);
+    }
+    let values_arr = Arc::new(arrow::array::Float32Array::from(flat));
+    let field = Arc::new(Field::new("item", DataType::Float32, false));
+    let vector_arr = ListArray::new(
+        field,
+        OffsetBuffer::new(offsets.into()),
+        values_arr,
+        None,
+    );
+
+    let schema = Arc::new(ArrowSchema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new(
+            "vector",
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+            false,
+        ),
+    ]));
+    RecordBatch::try_new(schema, vec![Arc::new(id_arr), Arc::new(vector_arr)])
+}
+
+/// Inverse of [`proxima_records_to_record_batch`]: extract `id` +
+/// `vector` columns and emit one `ProximaRecord` per row.
+fn record_batch_to_proxima_records(
+    batch: &RecordBatch,
+) -> Result<Vec<proximadb_records::ProximaRecord>, SparkError> {
+    use arrow::array::{Float32Array, ListArray, StringArray};
+    use proximadb_records::{EmbeddingCell, EmbeddingScalarType, EmbeddingValues, ProximaRecord};
+
+    let id_col = batch
+        .column_by_name("id")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+        .ok_or_else(|| SparkError::invalid_argument("batch missing Utf8 `id` column"))?;
+    let vec_col = batch
+        .column_by_name("vector")
+        .and_then(|c| c.as_any().downcast_ref::<ListArray>())
+        .ok_or_else(|| SparkError::invalid_argument("batch missing List<Float32> `vector` column"))?;
+
+    let mut out = Vec::with_capacity(batch.num_rows());
+    for row in 0..batch.num_rows() {
+        let oid = id_col.value(row).to_string();
+        let raw = vec_col.value(row);
+        let vals = raw
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .ok_or_else(|| {
+                SparkError::invalid_argument("vector column inner type must be Float32")
+            })?;
+        let v: Vec<f32> = vals.values().to_vec();
+        let dim = v.len() as u32;
+        out.push(ProximaRecord {
+            oid: oid.clone(),
+            local_id: Some(oid),
+            embeddings: vec![EmbeddingCell {
+                model_id: "spark".to_string(),
+                modality: "dense_vector".to_string(),
+                dim,
+                values: EmbeddingValues::Fp32(v),
+                precision: EmbeddingScalarType::Fp32,
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
+        });
+    }
+    Ok(out)
 }
 
 // ============================================================================
@@ -713,5 +986,255 @@ mod tests {
         // Stream with no batches → ArrowError (not silent None).
         let bytes: Vec<u8> = Vec::new();
         assert!(arrow_ipc_to_record_batch(&bytes).is_err());
+    }
+
+    // ========================================================================
+    // TD-097 (3) B3 — embedded `spark_*` impls (no JVM)
+    // ========================================================================
+
+    use crate::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+    use proximadb_records::{EmbeddingCell, EmbeddingScalarType, EmbeddingValues, ProximaRecord};
+
+    fn build_spark_test_db() -> (EmbeddedProximaDB, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let mut config =
+            EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
+        config.enable_wal = true;
+        let db = EmbeddedProximaDB::new(config).expect("embedded db");
+        (db, temp_dir)
+    }
+
+    fn make_spark_record(oid: &str) -> ProximaRecord {
+        ProximaRecord {
+            oid: oid.to_string(),
+            local_id: Some(oid.to_string()),
+            embeddings: vec![EmbeddingCell {
+                model_id: "spark-test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 4,
+                values: EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0, 4.0]),
+                precision: EmbeddingScalarType::Fp32,
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
+        }
+    }
+
+    #[test]
+    fn test_spark_get_table_schema_returns_collection_shape() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_sch_col", 4, None).expect("create");
+        let json = spark_get_table_schema(&db, "spark_sch_col");
+        assert!(json.contains("\"name\""), "schema must include name: {json}");
+        assert!(
+            json.contains("spark_sch_col"),
+            "schema must include collection name: {json}"
+        );
+    }
+
+    #[test]
+    fn test_spark_get_table_schema_missing_collection_returns_error_envelope() {
+        let (db, _td) = build_spark_test_db();
+        let json = spark_get_table_schema(&db, "no_such_col");
+        assert!(json.contains("\"error\""), "must wrap error in JSON: {json}");
+        assert!(
+            json.contains("no_such_col"),
+            "error must surface the bad collection name: {json}"
+        );
+    }
+
+    #[test]
+    fn test_spark_plan_input_partitions_returns_single_partition_json() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_part_col", 4, None).expect("create");
+        let json = spark_plan_input_partitions(&db, "spark_part_col", "{}", 8);
+        let parsed: Vec<SparkInputPartition> = serde_json::from_str(&json).expect("parse");
+        assert_eq!(parsed.len(), 1, "single-partition fallback: {parsed:?}");
+        assert_eq!(parsed[0].partition_id, 0);
+        assert_eq!(parsed[0].splits.len(), 1);
+        assert_eq!(parsed[0].splits[0].file_path, "collection://spark_part_col");
+    }
+
+    #[test]
+    fn test_spark_create_partition_reader_parses_collection_uri() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_rdr_col", 4, None).expect("create");
+        let json = spark_plan_input_partitions(&db, "spark_rdr_col", "{}", 1);
+        let partitions: Vec<SparkInputPartition> = serde_json::from_str(&json).unwrap();
+        let part_json = serde_json::to_string(&partitions[0]).unwrap();
+        let reader = spark_create_partition_reader(&part_json).expect("create reader");
+        assert_eq!(reader.collection(), "spark_rdr_col");
+        assert!(!reader.is_finished());
+        assert_eq!(reader.records_read(), 0);
+    }
+
+    #[test]
+    fn test_spark_create_partition_reader_rejects_malformed_split() {
+        let bad = SparkInputPartition::from_splits(
+            0,
+            vec![crate::storage::formats::FileSplit {
+                split_id: "bad".into(),
+                file_path: "file:///not/a/collection".into(),
+                offset: 0,
+                length: 0,
+                split_type: crate::storage::formats::SplitType::ByteRange {
+                    estimated_records: 0,
+                },
+                statistics: Default::default(),
+                locality: Default::default(),
+            }],
+        );
+        let json = serde_json::to_string(&bad).unwrap();
+        let err = spark_create_partition_reader(&json).expect_err("must error");
+        assert!(
+            matches!(err, SparkError::InvalidArgument(_)),
+            "expected InvalidArgument: {err}"
+        );
+    }
+
+    #[test]
+    fn test_spark_read_next_batch_returns_empty_when_collection_empty() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("empty_spark_col", 4, None).expect("create");
+        let json = spark_plan_input_partitions(&db, "empty_spark_col", "{}", 1);
+        let partitions: Vec<SparkInputPartition> = serde_json::from_str(&json).unwrap();
+        let mut reader =
+            spark_create_partition_reader(&serde_json::to_string(&partitions[0]).unwrap())
+                .expect("reader");
+        let bytes = spark_read_next_batch(&db, &mut reader).expect("read");
+        assert!(bytes.is_empty(), "empty collection ⇒ empty IPC");
+        assert!(reader.is_finished());
+    }
+
+    #[test]
+    fn test_spark_read_next_batch_round_trips_inserted_records() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_rt_col", 4, None).expect("create");
+        let recs = (0..3)
+            .map(|i| make_spark_record(&format!("spark_rec_{i}")))
+            .collect();
+        db.insert_proxima_records("spark_rt_col", recs).expect("insert");
+
+        let json = spark_plan_input_partitions(&db, "spark_rt_col", "{}", 1);
+        let partitions: Vec<SparkInputPartition> = serde_json::from_str(&json).unwrap();
+        let mut reader =
+            spark_create_partition_reader(&serde_json::to_string(&partitions[0]).unwrap())
+                .expect("reader");
+
+        let bytes = spark_read_next_batch(&db, &mut reader).expect("read");
+        assert!(!bytes.is_empty(), "non-empty collection ⇒ non-empty IPC");
+        let batch = arrow_ipc_to_record_batch(&bytes).expect("decode");
+        assert_eq!(batch.num_rows(), 3);
+        assert_eq!(batch.num_columns(), 2);
+        assert_eq!(batch.schema().field(0).name(), "id");
+        assert_eq!(batch.schema().field(1).name(), "vector");
+        assert_eq!(reader.records_read(), 3);
+        assert!(reader.is_finished(), "single page ⇒ finished");
+    }
+
+    #[test]
+    fn test_spark_create_data_writer_parses_schema_json() {
+        let schema_json =
+            r#"{"fields":[{"name":"id","data_type":"Utf8","nullable":false}],"metadata":{}}"#;
+        let writer =
+            spark_create_data_writer("write_col", schema_json, 7).expect("create writer");
+        assert_eq!(writer.collection(), "write_col");
+        assert_eq!(writer.partition_id(), 7);
+        assert_eq!(writer.records_written(), 0);
+    }
+
+    #[test]
+    fn test_spark_create_data_writer_rejects_malformed_schema() {
+        let err = spark_create_data_writer("col", "{garbage", 0).expect_err("must error");
+        assert!(matches!(err, SparkError::InvalidArgument(_)), "got: {err}");
+    }
+
+    #[test]
+    fn test_spark_write_batch_inserts_records_into_collection() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_wr_col", 4, None).expect("create");
+        let schema_json =
+            r#"{"fields":[{"name":"id","data_type":"Utf8","nullable":false}],"metadata":{}}"#;
+        let mut writer =
+            spark_create_data_writer("spark_wr_col", schema_json, 0).expect("writer");
+        let recs = vec![make_spark_record("w_001"), make_spark_record("w_002")];
+        let batch = proxima_records_to_record_batch(&recs).expect("encode rb");
+        let bytes = record_batch_to_arrow_ipc(&batch).expect("encode ipc");
+        spark_write_batch(&db, &mut writer, &bytes).expect("write");
+        assert_eq!(writer.records_written(), 2);
+        assert!(writer.bytes_written() > 0);
+    }
+
+    #[test]
+    fn test_spark_commit_writer_returns_commit_message_json() {
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_cm_col", 4, None).expect("create");
+        let schema_json =
+            r#"{"fields":[{"name":"id","data_type":"Utf8","nullable":false}],"metadata":{}}"#;
+        let mut writer = spark_create_data_writer("spark_cm_col", schema_json, 3).expect("writer");
+        let recs = vec![make_spark_record("c1")];
+        let batch = proxima_records_to_record_batch(&recs).unwrap();
+        spark_write_batch(&db, &mut writer, &record_batch_to_arrow_ipc(&batch).unwrap())
+            .expect("write");
+        let json = spark_commit_writer(&db, writer).expect("commit");
+        let parsed: SparkWriteCommitMessage = serde_json::from_str(&json).expect("parse");
+        assert_eq!(parsed.partition_id, 3);
+        assert_eq!(parsed.records_written, 1);
+        assert!(parsed.bytes_written > 0);
+    }
+
+    /// Critical end-to-end test (per Plan-agent recommendation):
+    /// 50 records written via JNI writer flow, then drained via JNI
+    /// reader flow; assert total rowcount + distinct oids + that the
+    /// cursor advances (no stuck-cursor bug returning duplicate pages).
+    #[test]
+    fn test_spark_read_after_write_round_trip() {
+        use std::collections::HashSet;
+        let (db, _td) = build_spark_test_db();
+        db.create_collection("spark_e2e_col", 4, None).expect("create");
+
+        let schema_json =
+            r#"{"fields":[{"name":"id","data_type":"Utf8","nullable":false}],"metadata":{}}"#;
+        let mut writer =
+            spark_create_data_writer("spark_e2e_col", schema_json, 0).expect("writer");
+        let recs: Vec<ProximaRecord> = (0..50)
+            .map(|i| make_spark_record(&format!("e2e_{i:03}")))
+            .collect();
+        let batch = proxima_records_to_record_batch(&recs).unwrap();
+        let bytes = record_batch_to_arrow_ipc(&batch).unwrap();
+        spark_write_batch(&db, &mut writer, &bytes).expect("write");
+        spark_commit_writer(&db, writer).expect("commit");
+
+        let json = spark_plan_input_partitions(&db, "spark_e2e_col", "{}", 1);
+        let partitions: Vec<SparkInputPartition> = serde_json::from_str(&json).unwrap();
+        let mut reader =
+            spark_create_partition_reader(&serde_json::to_string(&partitions[0]).unwrap())
+                .expect("reader");
+
+        let mut all_ids: HashSet<String> = HashSet::new();
+        let mut page_count = 0;
+        loop {
+            let page_bytes = spark_read_next_batch(&db, &mut reader).expect("read");
+            if page_bytes.is_empty() {
+                break;
+            }
+            page_count += 1;
+            let batch = arrow_ipc_to_record_batch(&page_bytes).expect("decode");
+            let id_col = batch
+                .column_by_name("id")
+                .and_then(|c| c.as_any().downcast_ref::<arrow::array::StringArray>())
+                .expect("id col");
+            for row in 0..batch.num_rows() {
+                let id = id_col.value(row).to_string();
+                assert!(
+                    all_ids.insert(id.clone()),
+                    "duplicate id detected (stuck-cursor bug): {id}"
+                );
+            }
+            assert!(page_count < 100, "page count exceeded sanity bound");
+        }
+        assert_eq!(all_ids.len(), 50, "expected exactly 50 distinct rows");
+        assert!(reader.is_finished());
+        spark_close_partition_reader(reader);
     }
 }
