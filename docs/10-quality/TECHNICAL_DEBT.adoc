@@ -1366,10 +1366,19 @@ physical layouts.
 | Migrate proto-v1 internal mirrors to canonical types (seam S3)
 | P2
 | MEDIUM
-| Open — convergence
-| CONVERGENCE_AUDIT S3. `VectorRecord` / `SqlValue` / `SqlObject` (proto v1) are still used internally; canonical is `ProximaRecord` / `ProximaValue` / `ProximaType`. Keep proto v1 for the wire only; migrate internal usage one handler file at a time, leaving parse→convert edge adapters in place.
-| 2-3 sprints
-| Acceptance: (1) Internal code paths use canonical types; proto v1 confined to wire adapters. (2) No internal `VectorRecord`/`SqlValue` construction outside edge adapters. (3) Tests green.
+| Group A DONE (2026-06-03); Group B/C pending
+| CONVERGENCE_AUDIT S3. The document row is `DocumentRecord{document: SqlObject}` (proto v1); canonical is `ProximaRecord`/`ProximaValue`/`ProximaTree` (adapters already exist; durable authority is already `ProximaRecord`, so `SqlObject` is an in-memory COMPUTE type only). **Group A SHIPPED** (`1723c0faf` filter kernel, `0d0dfbab3` filter path, `c01f826a8` agg accumulators, `fbd587c68` agg value-read): the document compute VALUE path runs on `ProximaValue`; proto `SqlValue` is confined to row-field edges. Added canonical `json_to_proxima` to `proximadb-records/conversions.rs`. **Pending**: Group B (Slice 5) flip the aggregation working set `Vec<SqlObject>`→`Vec<ProximaTree>` across aggregation.rs + service.rs; Group C (S6/S7) dual-carry `props: ProximaTree` on `DocumentRecord` then drop `document: SqlObject` (touches `DocumentStorageEngine`). Full HLD/LLD/spec + resume prompt: `docs/12-design/TD106_DOCUMENT_CANONICAL_MIGRATION_HANDOFF_2026_06_03.adoc`.
+| 2-3 sprints (Group A done; B/C remain)
+| Acceptance: (1) Internal code paths use canonical types; proto v1 confined to wire adapters. (2) No internal `SqlValue`/`SqlObject` construction outside `canonical_adapter.rs` + `DocumentRecord::{from_proto,to_proto_content}` + `services/dml` edges — mechanical check: `grep "SqlObject\|SqlValue" src/storage/document/`. (3) Tests green.
+
+| TD-109
+| Consolidate json↔proxima value converters (proliferation)
+| P3
+| LOW
+| Open — proposed (2026-06-03)
+| Surfaced during TD-106. Three scattered private `json→ProximaValue` copies exist (`network/arrow_ipc/codec.rs:640`, `network/rest/websocket.rs:105`, `network/rest/v2/query.rs:58`) plus a separate `proxima→json` pair (`core/search/sql_value_filter.rs:236`/`:304`). Canonical `json_to_proxima` now lives in `proximadb-records/src/conversions.rs` (added by TD-106 Slice 2). Converge the three copies onto it and relocate `proxima_value_to_json`/`proxima_tree_to_json_map` into the same crate so both directions share one home.
+| 1-2 days
+| Acceptance: one `json↔proxima` converter pair in `proximadb-records`; no duplicate private copies; tests green.
 
 | TD-107
 | Consolidate CDC/cluster configs into proximadb-config (seam S4)
