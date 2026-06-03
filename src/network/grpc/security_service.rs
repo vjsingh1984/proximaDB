@@ -20,7 +20,6 @@ use tonic::{Request, Response, Status};
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1;
-use crate::proto::proximadb_v1::security_service_server::{SecurityService, SecurityServiceServer};
 use crate::security::auth_service::{AuthenticationData, UnifiedAuthService};
 use crate::security::rbac_service::{
     ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
@@ -150,15 +149,14 @@ impl SecurityServiceImpl {
             _ => Ok(UnifiedPermission::SystemAdmin), // Fallback for unknown operations
         }
     }
-
-    /// Convert to gRPC service
-    pub fn into_server(self) -> SecurityServiceServer<Self> {
-        SecurityServiceServer::new(self)
-    }
 }
 
-#[tonic::async_trait]
-impl SecurityService for SecurityServiceImpl {
+// Inherent security operation handlers. These hold the real RBAC/auth logic
+// behind `SecurityPort` (below); the canonical tonic `SecurityService` wire
+// adapter lives in crates/platform/proximadb-api/src/grpc/v1/security.rs. TD-105
+// Phase B converted this from a (never-served) tonic `impl SecurityService` into
+// plain inherent methods.
+impl SecurityServiceImpl {
     async fn validate_access(
         &self,
         request: Request<proximadb_v1::ValidateAccessRequest>,
@@ -471,8 +469,9 @@ impl SecurityService for SecurityServiceImpl {
 
 // ── SecurityPort impl ─────────────────────────────────────────────────────────
 //
-// Delegates every port method to the real tonic SecurityService impl above,
-// so the logic is written once and the port is a thin unwrap/wrap layer.
+// Delegates every port method to the inherent handlers above, so the logic is
+// written once and the port is a thin unwrap/wrap layer. `authenticate` is the
+// one port-only method (no inherent handler) and carries its own logic.
 
 #[async_trait::async_trait]
 impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
@@ -480,7 +479,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::ValidateAccessRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::ValidateAccessResponse> {
-        SecurityService::validate_access(self, tonic::Request::new(request))
+        self.validate_access(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -490,7 +489,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::BatchValidateAccessRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::BatchValidateAccessResponse> {
-        SecurityService::batch_validate_access(self, tonic::Request::new(request))
+        self.batch_validate_access(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -500,7 +499,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::CreateRoleRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::CreateRoleResponse> {
-        SecurityService::create_role(self, tonic::Request::new(request))
+        self.create_role(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -510,7 +509,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::ListRolesRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::ListRolesResponse> {
-        SecurityService::list_roles(self, tonic::Request::new(request))
+        self.list_roles(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -520,7 +519,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::DeleteRoleRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::DeleteRoleResponse> {
-        SecurityService::delete_role(self, tonic::Request::new(request))
+        self.delete_role(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -530,7 +529,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::AssignRoleRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::AssignRoleResponse> {
-        SecurityService::assign_role(self, tonic::Request::new(request))
+        self.assign_role(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -540,7 +539,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::RevokeRoleRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::RevokeRoleResponse> {
-        SecurityService::revoke_role(self, tonic::Request::new(request))
+        self.revoke_role(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -550,7 +549,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::ListUserRolesRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::ListUserRolesResponse> {
-        SecurityService::list_user_roles(self, tonic::Request::new(request))
+        self.list_user_roles(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -560,7 +559,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::ListAuditEventsRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::ListAuditEventsResponse> {
-        SecurityService::list_audit_events(self, tonic::Request::new(request))
+        self.list_audit_events(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -570,7 +569,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::GetTenantSecurityPolicyRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::GetTenantSecurityPolicyResponse> {
-        SecurityService::get_tenant_security_policy(self, tonic::Request::new(request))
+        self.get_tenant_security_policy(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
@@ -580,7 +579,7 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
         &self,
         request: crate::proto::proximadb_v1::SetTenantSecurityPolicyRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::SetTenantSecurityPolicyResponse> {
-        SecurityService::set_tenant_security_policy(self, tonic::Request::new(request))
+        self.set_tenant_security_policy(tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
