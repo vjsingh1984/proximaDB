@@ -575,6 +575,50 @@ pub fn jni_abort_writer(_writer_handle: i64) {
 }
 
 // ============================================================================
+// Arrow IPC helpers (TD-097 B2 — Spark DataSource V2 wire format)
+//
+// Spark DataSource V2 expects a single multi-column Arrow `RecordBatch`
+// per `readNextBatch` / `writeBatch` call, encoded as plain Arrow IPC
+// **stream** format (schema message + record-batch message). This is
+// distinct from Trino's per-column block format
+// (`record_batch_to_trino_page` in `src/connectors/trino.rs`) — DO NOT
+// reuse the Trino helpers here.
+// ============================================================================
+
+/// Encode a multi-column `RecordBatch` as Arrow IPC stream bytes
+/// (schema + batch). Used by `jni_read_next_batch` to ship a page of
+/// records back to Java for Spark to consume.
+pub fn record_batch_to_arrow_ipc(
+    batch: &RecordBatch,
+) -> Result<Vec<u8>, arrow::error::ArrowError> {
+    use arrow::ipc::writer::StreamWriter;
+    let schema = batch.schema();
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buf, &schema)?;
+        writer.write(batch)?;
+        writer.finish()?;
+    }
+    Ok(buf)
+}
+
+/// Decode Arrow IPC stream bytes into a single multi-column
+/// `RecordBatch`. Used by `jni_write_batch` to consume a page Spark
+/// hands across the JNI boundary. Returns the first batch in the
+/// stream (Spark sends exactly one batch per call).
+pub fn arrow_ipc_to_record_batch(
+    bytes: &[u8],
+) -> Result<RecordBatch, arrow::error::ArrowError> {
+    use arrow::error::ArrowError;
+    use arrow::ipc::reader::StreamReader;
+    let mut reader = StreamReader::try_new(bytes, None)?;
+    let batch = reader
+        .next()
+        .ok_or_else(|| ArrowError::IpcError("arrow IPC stream contained no batches".to_string()))?;
+    batch
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -624,5 +668,50 @@ mod tests {
                 .with_mode(SparkWriteMode::Overwrite);
 
         assert_eq!(builder.mode, SparkWriteMode::Overwrite);
+    }
+
+    #[test]
+    fn test_record_batch_arrow_ipc_round_trip() {
+        use arrow::array::{Array, Int64Array, StringArray};
+        use arrow::datatypes::{DataType, Field};
+
+        // 2-column batch (Int64, Utf8) with 3 rows including a null.
+        let schema = Arc::new(ArrowSchema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let original = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2, 3])),
+                Arc::new(StringArray::from(vec![Some("a"), None, Some("c")])),
+            ],
+        )
+        .unwrap();
+
+        let ipc = record_batch_to_arrow_ipc(&original).expect("encode");
+        assert!(!ipc.is_empty(), "encoded IPC must be non-empty");
+
+        let decoded = arrow_ipc_to_record_batch(&ipc).expect("decode");
+        assert_eq!(decoded.num_columns(), 2);
+        assert_eq!(decoded.num_rows(), 3);
+        assert_eq!(decoded.schema().field(0).name(), "id");
+        assert_eq!(decoded.schema().field(1).name(), "name");
+        // Verify the null in column 1 round-trips.
+        let name_col = decoded
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("Utf8");
+        assert!(name_col.is_null(1), "null at row 1 must survive round trip");
+        assert_eq!(name_col.value(0), "a");
+        assert_eq!(name_col.value(2), "c");
+    }
+
+    #[test]
+    fn test_arrow_ipc_to_record_batch_empty_stream_errors() {
+        // Stream with no batches → ArrowError (not silent None).
+        let bytes: Vec<u8> = Vec::new();
+        assert!(arrow_ipc_to_record_batch(&bytes).is_err());
     }
 }
