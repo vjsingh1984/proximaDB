@@ -15,14 +15,14 @@ use std::collections::HashMap;
 use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
 use proximadb_data_model::ProximaValue;
-use proximadb_records::conversions::{proxima_to_sql_value, sql_value_to_proxima};
+use proximadb_records::conversions::{json_to_proxima, proxima_to_sql_value};
 use serde_json::Value as JsonValue;
 use tracing::debug;
 
 use crate::proto::proximadb_v1::{
     Aggregation, AggregationStage, AggregationType, DocumentFilter, GroupStage, LimitStage,
-    LookupStage, MatchStage, ProjectStage, SkipStage, SortOrder, SortStage, SqlArray, SqlObject,
-    SqlValue, UnwindStage, aggregation_stage::Stage, sql_value::Value as SqlValueVariant,
+    LookupStage, MatchStage, ProjectStage, SkipStage, SortOrder, SortStage, SqlObject, SqlValue,
+    UnwindStage, aggregation_stage::Stage, sql_value::Value as SqlValueVariant,
 };
 
 #[cfg(test)]
@@ -312,7 +312,7 @@ impl AggregationExecutor {
     fn agg_first(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
         for doc in docs {
             if let Some(val) = self.extract_value(doc, path) {
-                return Ok(sql_value_to_proxima(&val));
+                return Ok(val);
             }
         }
 
@@ -323,7 +323,7 @@ impl AggregationExecutor {
     fn agg_last(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
         for doc in docs.iter().rev() {
             if let Some(val) = self.extract_value(doc, path) {
-                return Ok(sql_value_to_proxima(&val));
+                return Ok(val);
             }
         }
 
@@ -335,7 +335,6 @@ impl AggregationExecutor {
         let values: Vec<ProximaValue> = docs
             .iter()
             .filter_map(|doc| self.extract_value(doc, path))
-            .map(|v| sql_value_to_proxima(&v))
             .collect();
 
         Ok(ProximaValue::Array(values))
@@ -343,22 +342,18 @@ impl AggregationExecutor {
 
     /// ADD_TO_SET aggregation - collects unique values into an array
     fn agg_add_to_set(&self, docs: &[&SqlObject], path: &str) -> Result<ProximaValue> {
-        // Dedup on the extracted proto values (reusing the existing equality), then
-        // canonicalize the surviving set. Preserves first-seen ordering + semantics.
-        let mut seen: Vec<SqlValue> = Vec::new();
+        // Dedup on the canonical values (first-seen ordering preserved).
+        let mut seen: Vec<ProximaValue> = Vec::new();
 
         for doc in docs {
-            if let Some(val) = self.extract_value(doc, path) {
-                let is_duplicate = seen.iter().any(|v| self.sql_values_equal(v, &val));
-                if !is_duplicate {
-                    seen.push(val);
-                }
+            if let Some(val) = self.extract_value(doc, path)
+                && !seen.contains(&val)
+            {
+                seen.push(val);
             }
         }
 
-        Ok(ProximaValue::Array(
-            seen.iter().map(sql_value_to_proxima).collect(),
-        ))
+        Ok(ProximaValue::Array(seen))
     }
 
     // =========================================================================
@@ -407,10 +402,13 @@ impl AggregationExecutor {
             result.fields = doc.fields.clone();
         }
 
-        // Handle computed fields
+        // Handle computed fields. The evaluator is canonical (`ProximaValue`);
+        // convert back to the proto row field at this insertion edge.
         for (output_field, expression) in &project_stage.computed {
             if let Some(val) = self.evaluate_expression(doc, expression) {
-                result.fields.insert(output_field.clone(), val);
+                result
+                    .fields
+                    .insert(output_field.clone(), proxima_to_sql_value(&val));
             }
         }
 
@@ -418,7 +416,7 @@ impl AggregationExecutor {
     }
 
     /// Evaluate a computed field expression
-    fn evaluate_expression(&self, doc: &SqlObject, expression: &str) -> Option<SqlValue> {
+    fn evaluate_expression(&self, doc: &SqlObject, expression: &str) -> Option<ProximaValue> {
         // Simple implementation: treat expression as a JSON path
         self.extract_value(doc, expression)
     }
@@ -455,8 +453,14 @@ impl AggregationExecutor {
 
     /// Compare two documents by a JSON path
     fn compare_by_path(&self, a: &SqlObject, b: &SqlObject, path: &str) -> std::cmp::Ordering {
-        let val_a = self.extract_value(a, path);
-        let val_b = self.extract_value(b, path);
+        // Sort still compares on proto `SqlValue` (`compare_sql_values`); convert the
+        // canonical extracted values back at this edge until the comparator migrates (Group B).
+        let val_a = self
+            .extract_value(a, path)
+            .map(|v| proxima_to_sql_value(&v));
+        let val_b = self
+            .extract_value(b, path)
+            .map(|v| proxima_to_sql_value(&v));
 
         match (val_a, val_b) {
             (None, None) => std::cmp::Ordering::Equal,
@@ -550,7 +554,11 @@ impl AggregationExecutor {
         let mut results = Vec::new();
 
         for doc in documents {
-            let array_val = self.extract_value(doc, path);
+            // Unwind shapes the proto array via `set_path_value` (SqlObject working set);
+            // convert the canonical extracted value back at this edge until Group B.
+            let array_val = self
+                .extract_value(doc, path)
+                .map(|v| proxima_to_sql_value(&v));
 
             match array_val {
                 Some(SqlValue {
@@ -728,12 +736,9 @@ impl AggregationExecutor {
 
     /// Extract text value from a path
     fn extract_text_value(&self, doc: &SqlObject, path: &str) -> Option<String> {
-        self.extract_value(doc, path).and_then(|val| {
-            if let Some(SqlValueVariant::StringValue(s)) = val.value {
-                Some(s)
-            } else {
-                None
-            }
+        self.extract_value(doc, path).and_then(|val| match val {
+            ProximaValue::String(s) => Some(s),
+            _ => None,
         })
     }
 
@@ -742,7 +747,7 @@ impl AggregationExecutor {
     // =========================================================================
 
     /// Extract a value from a document using JSON path
-    fn extract_value(&self, doc: &SqlObject, path: &str) -> Option<SqlValue> {
+    fn extract_value(&self, doc: &SqlObject, path: &str) -> Option<ProximaValue> {
         let json_doc = self.sql_object_to_json(doc);
         let normalized_path = self.normalize_path(path);
 
@@ -752,12 +757,12 @@ impl AggregationExecutor {
                     if arr[0].is_null() {
                         None
                     } else {
-                        self.json_to_sql_value(&arr[0])
+                        Some(json_to_proxima(&arr[0]))
                     }
                 }
                 JsonValue::Array(arr) if arr.is_empty() => None,
                 JsonValue::Null => None,
-                _ => self.json_to_sql_value(&result),
+                _ => Some(json_to_proxima(&result)),
             },
             Err(_) => None,
         }
@@ -765,12 +770,11 @@ impl AggregationExecutor {
 
     /// Extract a numeric value from a document using JSON path
     fn extract_numeric_value(&self, doc: &SqlObject, path: &str) -> Option<f64> {
-        self.extract_value(doc, path)
-            .and_then(|val| match val.value {
-                Some(SqlValueVariant::Int64Value(i)) => Some(i as f64),
-                Some(SqlValueVariant::NumberValue(f)) => Some(f),
-                _ => None,
-            })
+        self.extract_value(doc, path).and_then(|val| match val {
+            ProximaValue::Int64(i) => Some(i as f64),
+            ProximaValue::Float64(f) => Some(f),
+            _ => None,
+        })
     }
 
     /// Normalize a JSON path expression
@@ -820,52 +824,6 @@ impl AggregationExecutor {
         }
     }
 
-    /// Convert serde_json::Value to SqlValue
-    fn json_to_sql_value(&self, value: &JsonValue) -> Option<SqlValue> {
-        match value {
-            JsonValue::Null => Some(SqlValue {
-                value: Some(SqlValueVariant::NullValue(0)),
-            }),
-            JsonValue::Bool(b) => Some(SqlValue {
-                value: Some(SqlValueVariant::BoolValue(*b)),
-            }),
-            JsonValue::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Some(SqlValue {
-                        value: Some(SqlValueVariant::Int64Value(i)),
-                    })
-                } else {
-                    n.as_f64().map(|f| SqlValue {
-                        value: Some(SqlValueVariant::NumberValue(f)),
-                    })
-                }
-            }
-            JsonValue::String(s) => Some(SqlValue {
-                value: Some(SqlValueVariant::StringValue(s.clone())),
-            }),
-            JsonValue::Array(arr) => {
-                let sql_values: Vec<SqlValue> = arr
-                    .iter()
-                    .filter_map(|v| self.json_to_sql_value(v))
-                    .collect();
-                Some(SqlValue {
-                    value: Some(SqlValueVariant::ArrayValue(SqlArray { values: sql_values })),
-                })
-            }
-            JsonValue::Object(obj) => {
-                let mut fields = std::collections::HashMap::new();
-                for (k, v) in obj {
-                    if let Some(sql_val) = self.json_to_sql_value(v) {
-                        fields.insert(k.clone(), sql_val);
-                    }
-                }
-                Some(SqlValue {
-                    value: Some(SqlValueVariant::ObjectValue(SqlObject { fields })),
-                })
-            }
-        }
-    }
-
     /// Convert a JSON value to string representation for grouping
     fn json_value_to_string(&self, value: &JsonValue) -> String {
         match value {
@@ -875,36 +833,6 @@ impl AggregationExecutor {
             JsonValue::String(s) => s.clone(),
             JsonValue::Array(_) => value.to_string(),
             JsonValue::Object(_) => value.to_string(),
-        }
-    }
-
-    /// Compare two SqlValue instances for equality
-    fn sql_values_equal(&self, a: &SqlValue, b: &SqlValue) -> bool {
-        match (&a.value, &b.value) {
-            (Some(SqlValueVariant::NullValue(_)), Some(SqlValueVariant::NullValue(_))) => true,
-            (Some(SqlValueVariant::BoolValue(va)), Some(SqlValueVariant::BoolValue(vb))) => {
-                va == vb
-            }
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::Int64Value(vb))) => {
-                va == vb
-            }
-            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::NumberValue(vb))) => {
-                (va - vb).abs() < f64::EPSILON
-            }
-            (Some(SqlValueVariant::StringValue(va)), Some(SqlValueVariant::StringValue(vb))) => {
-                va == vb
-            }
-            (Some(SqlValueVariant::BytesValue(va)), Some(SqlValueVariant::BytesValue(vb))) => {
-                va == vb
-            }
-            // Cross-type numeric comparison
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::NumberValue(vb))) => {
-                (*va as f64 - vb).abs() < f64::EPSILON
-            }
-            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::Int64Value(vb))) => {
-                (va - *vb as f64).abs() < f64::EPSILON
-            }
-            _ => false,
         }
     }
 }
