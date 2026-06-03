@@ -767,7 +767,9 @@ fn json_to_aggregation_stage(value: &serde_json::Value) -> ApiResult<Aggregation
 fn document_record_to_response(record: &DocumentRecord) -> ApiResult<DocumentResponse> {
     Ok(DocumentResponse {
         id: record.id.clone(),
-        document: sql_object_to_json(&record.document),
+        document: sql_object_to_json(&crate::storage::document::proxima_tree_to_sql_object(
+            &record.props,
+        )),
         version: record.version,
         updated_at_ns: record.updated_at_ns,
     })

@@ -2417,7 +2417,9 @@ impl PostgresProtocol {
                 let mut count = 0;
                 for doc in &result.documents {
                     let id = &doc.id;
-                    let document = self.sql_object_to_json(&doc.document);
+                    let document = self.sql_object_to_json(
+                        &crate::storage::document::proxima_tree_to_sql_object(&doc.props),
+                    );
                     let version = doc.version.to_string();
 
                     self.send_data_row(&[id, &document, &version]).await?;
@@ -3990,8 +3992,7 @@ impl PostgresProtocol {
         // `$N` placeholders. Without this `ParameterDescription` reports 0
         // parameters and the client aborts Bind with `Parameters(expected, 0)`.
         if param_types.is_empty() {
-            param_types =
-                crate::network::postgres::pgvector_params::infer_param_types(&query);
+            param_types = crate::network::postgres::pgvector_params::infer_param_types(&query);
         }
 
         // Translate and store prepared statement
@@ -4186,10 +4187,9 @@ impl PostgresProtocol {
                     // streamed during Execute. A vector-search SELECT returns
                     // (id, distance, metadata); other statements report no
                     // columns (NoData-equivalent empty descriptor) as before.
-                    let fields =
-                        crate::network::postgres::pgvector_params::described_result_fields(
-                            &stmt_query,
-                        );
+                    let fields = crate::network::postgres::pgvector_params::described_result_fields(
+                        &stmt_query,
+                    );
                     self.send_row_description(&fields).await?;
                 } else {
                     self.send_error("ERROR", "26000", "Prepared statement does not exist")

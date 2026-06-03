@@ -33,7 +33,7 @@ use crate::proto::proximadb_v1::{
     IndexDefinition, SortField, SqlObject,
 };
 
-pub use self::canonical_adapter::sql_object_to_proxima_tree;
+pub use self::canonical_adapter::{proxima_tree_to_sql_object, sql_object_to_proxima_tree};
 pub use self::service::DocumentService;
 
 // ---------------------------------------------------------------------------
@@ -113,18 +113,13 @@ pub trait DocumentStorageEngine: Send + Sync {
 pub struct DocumentRecord {
     /// Unique document ID
     pub id: String,
-    /// Document content as nested JSON (legacy v1 proto shape).
+    /// Canonical NF² property tree — the document content (TD-106 Slice 7).
     ///
-    /// TD-106 Group C: retained as the wire/compat edge only; the canonical
-    /// in-memory representation is [`Self::props`]. Removed in Slice 7.
-    pub document: SqlObject,
-    /// Canonical NF² property tree mirroring [`Self::document`].
-    ///
-    /// TD-106 Slice 6 (dual-carry): internal compute reads this canonical tree
-    /// instead of converting `document` per call. `#[serde(default)]` keeps any
-    /// legacy-serialized record (which predates this field) deserializable; the
-    /// in-memory facade is never the durable shape (durable authority is
-    /// `ProximaRecord`).
+    /// This is the single in-memory representation of the document body; the
+    /// legacy v1 proto `SqlObject` survives only at the wire edges
+    /// (`from_proto`/`to_proto_*`) via `canonical_adapter`. `#[serde(default)]`
+    /// keeps any legacy-serialized record deserializable; the in-memory facade is
+    /// never the durable shape (durable authority is `ProximaRecord`).
     #[serde(default)]
     pub props: ProximaTree,
     /// Version number for optimistic locking
@@ -142,11 +137,9 @@ pub struct DocumentRecord {
 impl DocumentRecord {
     /// Create a new document record
     pub fn new(id: String, document: SqlObject, collection_id: String) -> Self {
-        let props = sql_object_to_proxima_tree(&document);
         Self {
             id,
-            document,
-            props,
+            props: sql_object_to_proxima_tree(&document),
             version: 1,
             collection_id,
             updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
@@ -157,11 +150,9 @@ impl DocumentRecord {
 
     /// Create from proto DocumentContent
     pub fn from_proto(id: String, content: DocumentContent, collection_id: String) -> Result<Self> {
-        let document = content.document.unwrap_or_default();
-        let props = sql_object_to_proxima_tree(&document);
+        let props = sql_object_to_proxima_tree(&content.document.unwrap_or_default());
         Ok(Self {
             id,
-            document,
             props,
             version: 1,
             collection_id,
@@ -179,7 +170,7 @@ impl DocumentRecord {
     /// Convert to proto DocumentContent with indexed paths
     pub fn to_proto_content_with_paths(&self, indexed_paths: &[String]) -> DocumentContent {
         DocumentContent {
-            document: Some(self.document.clone()),
+            document: Some(proxima_tree_to_sql_object(&self.props)),
             schema_id: self.schema_id.clone(),
             indexed_paths: indexed_paths.to_vec(),
             document_type: self.document_type.clone(),
@@ -200,7 +191,7 @@ impl DocumentRecord {
     pub fn to_proto_result(&self, score: Option<f32>) -> DocumentResult {
         DocumentResult {
             id: self.id.clone(),
-            document: Some(self.document.clone()),
+            document: Some(proxima_tree_to_sql_object(&self.props)),
             version: self.version,
             score,
         }

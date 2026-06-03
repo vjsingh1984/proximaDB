@@ -40,11 +40,10 @@ use super::canonical_adapter::legacy_document_to_proxima_record;
 use super::canonical_adapter::proxima_record_to_legacy_document;
 use super::canonical_adapter::{proxima_tree_to_sql_object, sql_value_to_tree_node};
 use proximadb_data_model::ProximaValue;
-use proximadb_records::ProximaTreeNode;
 use proximadb_records::conversions::sql_value_to_proxima;
+use proximadb_records::{ProximaTreeNode, tree_get};
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
-use super::query::path_parser::JsonPath;
 use super::{
     DocumentCollection, DocumentIngestResult, DocumentQueryParams, DocumentQueryResult,
     DocumentRecord, FlushToStorageResult,
@@ -635,7 +634,7 @@ impl DocumentService {
         doc: &DocumentRecord,
         collection: &str,
     ) -> Option<proximadb_records::ProximaRecord> {
-        let doc_json = match serde_json::to_string(&doc.document) {
+        let doc_json = match serde_json::to_string(&proxima_tree_to_sql_object(&doc.props)) {
             Ok(json) => json,
             Err(e) => {
                 warn!("Failed to serialize document {}: {}", doc.id, e);
@@ -1001,7 +1000,7 @@ impl DocumentService {
                 if let Some(fields) = projection
                     && !fields.is_empty()
                 {
-                    result.document = self.apply_projection(&result.document, &fields);
+                    result.props = self.apply_projection(&result.props, &fields);
                 }
 
                 return Ok(Some(result));
@@ -1021,7 +1020,7 @@ impl DocumentService {
             if let Some(fields) = projection
                 && !fields.is_empty()
             {
-                result.document = self.apply_projection(&result.document, &fields);
+                result.props = self.apply_projection(&result.props, &fields);
             }
 
             return Ok(Some(result));
@@ -1030,24 +1029,20 @@ impl DocumentService {
         Ok(None)
     }
 
-    /// Apply field projection to a document
-    fn apply_projection(&self, document: &SqlObject, fields: &[String]) -> SqlObject {
-        let mut projected = SqlObject {
-            fields: HashMap::new(),
-        };
+    /// Apply field projection over the canonical props tree (TD-106 Slice 7e).
+    ///
+    /// Nested scalar paths (`a.b`) project under their last segment; top-level
+    /// object/array fields are copied whole.
+    fn apply_projection(&self, props: &ProximaTree, fields: &[String]) -> ProximaTree {
+        let mut projected = ProximaTree::new();
 
         for field in fields {
-            // Parse field as JSON path and extract value
-            if let Ok(path) = JsonPath::parse(&format!("$.{}", field)) {
-                let values = path.evaluate(document);
-                if let Some(value) = values.into_iter().next() {
-                    // Use the field name as key (simplified - doesn't handle nested paths)
-                    let key = field.split('.').next_back().unwrap_or(field);
-                    projected.fields.insert(key.to_string(), value);
-                }
-            } else if let Some(value) = document.fields.get(field) {
-                // Direct field access if path parsing fails
-                projected.fields.insert(field.clone(), value.clone());
+            let key = field.split('.').next_back().unwrap_or(field);
+            if let Some(value) = tree_get(props, field.trim_start_matches("$.")) {
+                projected.insert(key.to_string(), ProximaTreeNode::Value(value.clone()));
+            } else if let Some(node) = props.get(field) {
+                // Top-level object/array (or a field whose path traverses an object).
+                projected.insert(field.clone(), node.clone());
             }
         }
 
@@ -1097,10 +1092,6 @@ impl DocumentService {
                 return Err(e);
             }
         }
-
-        // Keep the legacy `document` edge in sync with the mutated canonical
-        // `props` until Slice 7e removes the field.
-        record.document = proxima_tree_to_sql_object(&record.props);
 
         // Increment version
         let new_version = record.version + 1;
@@ -1867,7 +1858,7 @@ use proximadb_kernel::error::ProximaDBError;
 fn to_trait_doc_record(doc: &DocumentRecord) -> TraitDocRecord {
     TraitDocRecord {
         id: doc.id.clone(),
-        document: doc.document.clone(),
+        document: proxima_tree_to_sql_object(&doc.props),
         version: doc.version,
         // Use updated_at_ns for both since internal type doesn't have created_at_ns
         created_at_ns: doc.updated_at_ns,
@@ -2082,7 +2073,7 @@ impl LookupFetcher for DocumentServiceLookupFetcher {
             Ok(result
                 .documents
                 .into_iter()
-                .map(|doc| doc.document)
+                .map(|doc| proxima_tree_to_sql_object(&doc.props))
                 .collect())
         })
     }
@@ -2202,7 +2193,7 @@ impl proximadb_runtime::DocumentPort for DocumentService {
             .map_err(|e| anyhow!("Failed to get document: {}", e))?
         {
             Some(record) => Ok(crate::proto::proximadb_v1::GetDocumentResponse {
-                document: Some(record.document),
+                document: Some(proxima_tree_to_sql_object(&record.props)),
                 version: record.version,
                 found: true,
             }),
@@ -2265,7 +2256,7 @@ impl proximadb_runtime::DocumentPort for DocumentService {
             .into_iter()
             .map(|d| crate::proto::proximadb_v1::DocumentResult {
                 id: d.id,
-                document: Some(d.document),
+                document: Some(proxima_tree_to_sql_object(&d.props)),
                 version: d.version,
                 score: None,
             })
@@ -2483,7 +2474,17 @@ mod tests {
         assert_eq!(left.version, right.version);
         assert_eq!(left.schema_id, right.schema_id);
         assert_eq!(left.document_type, right.document_type);
-        assert_eq!(left.document.fields, right.document.fields);
+        assert_eq!(left.props, right.props);
+    }
+
+    /// Read a top-level field from a record's canonical props as a legacy
+    /// `SqlValue` (test convenience after TD-106 Slice 7e removed `document`).
+    fn field(rec: &DocumentRecord, key: &str) -> SqlValue {
+        proxima_tree_to_sql_object(&rec.props)
+            .fields
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| panic!("{key} field"))
     }
 
     // =========================================================================
@@ -2519,7 +2520,7 @@ mod tests {
         assert_eq!(fetched.version, 1);
 
         // Verify field contents
-        let title_val = fetched.document.fields.get("title").expect("title field");
+        let title_val = field(&fetched, "title");
         assert_eq!(
             title_val.value,
             Some(sql_value::Value::StringValue(
@@ -2527,7 +2528,7 @@ mod tests {
             ))
         );
 
-        let year_val = fetched.document.fields.get("year").expect("year field");
+        let year_val = field(&fetched, "year");
         assert_eq!(year_val.value, Some(sql_value::Value::Int64Value(2024)));
     }
 
@@ -2564,7 +2565,7 @@ mod tests {
             .expect("get should succeed")
             .expect("document should exist");
 
-        let email = fetched.document.fields.get("email").expect("email field");
+        let email = field(&fetched, "email");
         assert_eq!(
             email.value,
             Some(sql_value::Value::StringValue(
@@ -2573,20 +2574,13 @@ mod tests {
         );
 
         // Original field should still be present
-        let name = fetched.document.fields.get("name").expect("name field");
+        let name = field(&fetched, "name");
         assert_eq!(
             name.value,
             Some(sql_value::Value::StringValue("Alice".to_string()))
         );
 
-        // TD-106 dual-carry invariant: Slice 7d mutates the canonical `props`
-        // tree, and the legacy `document` edge is derived from it — they must
-        // stay in sync after update_document.
-        assert_eq!(
-            fetched.document,
-            proxima_tree_to_sql_object(&fetched.props),
-            "document must stay derived from the mutated props after update_document"
-        );
+        // TD-106 Slice 7: the update mutates the canonical props tree directly.
         match fetched.props.get("email") {
             Some(proximadb_records::ProximaTreeNode::Value(
                 proximadb_data_model::ProximaValue::String(s),
@@ -2649,7 +2643,7 @@ mod tests {
             .expect("document should exist");
 
         // The second insert should have overwritten the first
-        let val = fetched.document.fields.get("val").expect("val field");
+        let val = field(&fetched, "val");
         assert_eq!(
             val.value,
             Some(sql_value::Value::StringValue("second".to_string())),
@@ -2698,7 +2692,7 @@ mod tests {
                 .await
                 .expect("get should succeed")
                 .expect("document should exist");
-            let idx_val = doc.document.fields.get("index").expect("index field");
+            let idx_val = field(&doc, "index");
             assert_eq!(idx_val.value, Some(sql_value::Value::Int64Value(i)));
         }
     }
@@ -2778,7 +2772,7 @@ mod tests {
 
         // Verify all returned docs are in the electronics category
         for doc in &result.documents {
-            let cat = doc.document.fields.get("category").expect("category field");
+            let cat = field(doc, "category");
             assert_eq!(
                 cat.value,
                 Some(sql_value::Value::StringValue("electronics".to_string()))
@@ -3127,11 +3121,7 @@ mod tests {
             .expect("get recovered")
             .expect("document recovered through canonical store");
         assert_eq!(
-            recovered
-                .document
-                .fields
-                .get("title")
-                .and_then(|v| v.value.clone()),
+            field(&recovered, "title").value,
             Some(sql_value::Value::StringValue("Recovered".to_string()))
         );
     }

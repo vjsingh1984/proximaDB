@@ -22,7 +22,7 @@ pub fn legacy_document_to_canonical(record: &DocumentRecord) -> CanonicalDocumen
     let mut canonical = CanonicalDocument::new(
         record.collection_id.clone(),
         record.id.clone(),
-        sql_object_to_proxima_tree(&record.document),
+        record.props.clone(),
     );
 
     canonical.metadata = DocumentRecordMetadata {
@@ -47,7 +47,6 @@ pub fn legacy_document_to_proxima_record(record: &DocumentRecord) -> ProximaReco
 pub fn canonical_document_to_legacy(document: CanonicalDocument) -> DocumentRecord {
     DocumentRecord {
         id: document.key.document_id,
-        document: proxima_tree_to_sql_object(&document.document),
         props: document.document,
         version: document.metadata.version,
         collection_id: document.key.collection_id,
@@ -151,7 +150,6 @@ mod tests {
         let props = sql_object_to_proxima_tree(&document);
         DocumentRecord {
             id: "doc-1".to_string(),
-            document,
             props,
             version: 7,
             collection_id: "papers".to_string(),
@@ -193,15 +191,12 @@ mod tests {
         assert_eq!(rebuilt.updated_at_ns, legacy.updated_at_ns);
         assert_eq!(rebuilt.schema_id, legacy.schema_id);
         assert_eq!(rebuilt.document_type, legacy.document_type);
-        assert_eq!(
-            rebuilt.document.fields.get("title"),
-            legacy.document.fields.get("title")
-        );
+        assert_eq!(rebuilt.props.get("title"), legacy.props.get("title"));
 
-        let author = rebuilt.document.fields.get("author").expect("author field");
+        // The nested author object round-trips as an NF² sub-tree.
         assert!(matches!(
-            &author.value,
-            Some(sql_value::Value::ObjectValue(object)) if object.fields.contains_key("name")
+            rebuilt.props.get("author"),
+            Some(ProximaTreeNode::Object(tree)) if tree.contains_key("name")
         ));
     }
 

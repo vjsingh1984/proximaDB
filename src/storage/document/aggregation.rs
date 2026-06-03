@@ -147,12 +147,10 @@ impl AggregationExecutor {
         Ok(documents
             .iter()
             .filter(|doc| {
-                // Slice 7a: the filter reads the canonical `props` tree, so the temp
-                // record carries the working tree as `props`; `document` is the
-                // vestigial field (removed in S7e) and left default.
+                // The filter reads the canonical `props` tree; the temp record
+                // carries the working tree directly (TD-106 Slice 7).
                 let record = DocumentRecord {
                     id: String::new(),
-                    document: SqlObject::default(),
                     props: (*doc).clone(),
                     version: 0,
                     collection_id: String::new(),

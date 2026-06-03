@@ -398,7 +398,6 @@ mod tests {
             DocumentRecord {
                 id: "doc1".to_string(),
                 props: crate::storage::document::sql_object_to_proxima_tree(&doc1),
-                document: doc1,
                 version: 1,
                 collection_id: "users".to_string(),
                 updated_at_ns: 0,
@@ -408,7 +407,6 @@ mod tests {
             DocumentRecord {
                 id: "doc2".to_string(),
                 props: crate::storage::document::sql_object_to_proxima_tree(&doc2),
-                document: doc2,
                 version: 1,
                 collection_id: "users".to_string(),
                 updated_at_ns: 0,

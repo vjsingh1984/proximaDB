@@ -3805,7 +3805,11 @@ impl EmbeddedProximaDB {
                     Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
-            Ok(record.map(|r| Self::sql_object_to_json(&r.document)))
+            Ok(record.map(|r| {
+                Self::sql_object_to_json(&crate::storage::document::proxima_tree_to_sql_object(
+                    &r.props,
+                ))
+            }))
         })
     }
 
@@ -3870,7 +3874,10 @@ impl EmbeddedProximaDB {
             Ok(result
                 .documents
                 .into_iter()
-                .map(|r| (r.id, Self::sql_object_to_json(&r.document)))
+                .map(|r| {
+                    let obj = crate::storage::document::proxima_tree_to_sql_object(&r.props);
+                    (r.id, Self::sql_object_to_json(&obj))
+                })
                 .collect())
         })
     }

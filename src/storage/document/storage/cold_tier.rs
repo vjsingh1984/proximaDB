@@ -248,7 +248,6 @@ impl StorageEngineColdTierRetriever {
         let props = crate::storage::document::sql_object_to_proxima_tree(&document);
         Some(DocumentRecord {
             id: original_id,
-            document,
             props,
             collection_id: collection_name,
             version,

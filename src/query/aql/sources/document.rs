@@ -123,7 +123,7 @@ impl AqlSource for DocumentAqlSource {
             let mut row = HashMap::new();
             row.insert("_id".to_string(), AqlValue::String(doc.id.clone()));
 
-            for (k, v) in doc.document.fields {
+            for (k, v) in crate::storage::document::proxima_tree_to_sql_object(&doc.props).fields {
                 if let Some(val) = v.value {
                     let aql_val = Self::sql_data_to_aql(&val);
                     row.insert(k.clone(), aql_val.clone());

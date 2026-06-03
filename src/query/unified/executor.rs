@@ -510,7 +510,12 @@ async fn execute_document_query(
             let records: Vec<UnifiedRecord> = query_result
                 .documents
                 .into_iter()
-                .map(|doc| build_document_query_record(&doc.id, &doc.document))
+                .map(|doc| {
+                    build_document_query_record(
+                        &doc.id,
+                        &crate::storage::document::proxima_tree_to_sql_object(&doc.props),
+                    )
+                })
                 .collect();
 
             let count = records.len() as u64;
