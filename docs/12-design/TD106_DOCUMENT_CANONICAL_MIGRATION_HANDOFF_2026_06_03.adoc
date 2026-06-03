@@ -228,6 +228,14 @@ project, not one atomic commit.
   `StdDevAccumulator` — **test-only / unwired** (no production callers; only `execute_lookup` is wired).
   Decision needed: wire them, delete them, or migrate-for-acceptance. Recommend **delete or wire** before
   declaring the seam closed (they construct internal `SqlValue`).
++
+**Deletion entanglement (verified 2026-06-03):** the wired `$lookup` tests
+(`test_lookup_*`, `TestFetcher`) and the orphan `test_accumulator_push/add_to_set` tests reuse the
+file-level helpers `sql_values_equal` / `string_val` / `#[cfg(test)] int_val` / `make_doc`. A delete
+must keep `execute_lookup`/`LookupConfig`/`LookupFetcher` and either retain those helpers or move them
+into the test module — don't delete them wholesale or the lookup tests break. Migrate-to-`ProximaValue`
+keeps the (genuinely useful) MongoDB-style `$add/$cond/$concat` + Welford stddev features while closing
+the seam; delete is lower-effort but loses a parallel-but-unwired expression model.
 
 == 6. New tech debt surfaced — TD-109 (proposed): consolidate json<->proxima converters
 Found **3+ scattered private copies** of `json -> ProximaValue` and a separate `proxima -> json`:
@@ -240,7 +248,29 @@ Found **3+ scattered private copies** of `json -> ProximaValue` and a separate `
 Canonical home now exists: `proximadb_records::conversions::json_to_proxima` (added in Slice 2).
 **TD-109**: converge the 3 json->proxima copies onto it, and move `proxima_value_to_json` /
 `proxima_tree_to_json_map` into `conversions.rs` (or a shared `proximadb-records` json module) so both
-directions live in one place. Low risk, high tidiness; do opportunistically.
+directions live in one place.
+
+[IMPORTANT]
+====
+**The 3 copies are NOT identical (verified 2026-06-03) — it is not a safe drop-in.**
+The canonical `json_to_proxima` maps numbers as `as_i64 -> Int64` else `as_f64 -> Float64`
+(no `UInt64`; mirrors the `SqlValue` path, which has no u64).
+
+* `network/rest/v2/query.rs:58` and `network/arrow_ipc/codec.rs:640` — add a **`UInt64`** branch
+  (`as_i64 -> Int64`, `as_u64 -> UInt64`, `as_f64 -> Float64`). Converging onto canonical drops
+  `UInt64 -> Float64` for json numbers in `(i64::MAX, u64::MAX]` (param-bind / arrow-ingest edge).
+* `network/rest/websocket.rs:105` — **lossy / divergent**: only handles String/Number/Bool;
+  Null and **Array/Object are stringified** (`v.to_string()`), not mapped to `Null`/`Array`/`Map`.
+  Converging is a behavior change at the WS protocol boundary (more correct, but must verify consumers).
+
+**Recommended TD-109 path:** add a `UInt64` branch to canonical `json_to_proxima` (makes it a true
+superset of query/codec), AND add `UInt64` arms to the document filter kernel
+(`filter.rs::proxima_values_equal`/`proxima_value_to_f64`) + `aggregation.rs::extract_numeric_value`
+— otherwise a document field holding a json number `> i64::MAX` becomes `UInt64` and silently stops
+matching (the filter kernel currently only has Int64/Float64 arms). Then replace query/codec copies
+(`&value` vs owned — adjust call sites) and decide websocket separately. NOT the trivial drop-in the
+ticket assumed; needs the UInt64 semantics decision + a small test.
+====
 
 == 7. Other open convergence seams (refined this session)
 * **S1 / TD-104** (handler extraction) — OPEN, large. Refined finding: there are **two**
