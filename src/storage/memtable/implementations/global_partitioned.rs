@@ -481,7 +481,7 @@ impl CollectionPartition {
     /// results. Only locators are recorded (no record clones). TTL is applied at
     /// READ time (a record can expire after the index is built), matching
     /// `get_all_vectors`.
-    fn rebuild_scan_index(&mut self) {
+    fn rebuild_scan_index(&mut self, collection_id: &str) {
         // oid -> (winner_updated_at_ns, locator, winner_seq, winner_version)
         let mut winners: HashMap<String, (i64, RecordLocator, u64, u64)> = HashMap::new();
         let mut has_empty_oid = false;
@@ -526,6 +526,11 @@ impl CollectionPartition {
         for (oid, (updated_at_ns, locator, _, _)) in winners {
             ordered.insert((updated_at_ns, oid), locator);
         }
+        // Operator gauge: distinct indexed oids ≈ the index's resident size.
+        crate::metrics::wal_scan_metrics::set_unflushed_distinct_oids(
+            collection_id,
+            ordered.len() as i64,
+        );
         self.scan_index = Some(ScanIndex {
             ordered,
             has_empty_oid,
@@ -540,13 +545,14 @@ impl CollectionPartition {
     /// lazy rebuild mutates the cached index.
     fn scan_paginated(
         &mut self,
+        collection_id: &str,
         after: Option<(i64, &str)>,
         limit: usize,
         predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
         now_ns: i64,
     ) -> Vec<ProximaRecord> {
         if self.scan_index.is_none() {
-            self.rebuild_scan_index();
+            self.rebuild_scan_index(collection_id);
         }
         self.serve_from_index(after, limit, predicate, now_ns)
     }
@@ -1077,7 +1083,7 @@ impl GlobalPartitionedMemtable {
         // Slow path: rebuild under the exclusive lock, then serve.
         let mut collections = self.collections.write().await;
         if let Some(partition) = collections.get_mut(collection_id) {
-            Ok(partition.scan_paginated(after, limit, predicate, now_ns))
+            Ok(partition.scan_paginated(collection_id, after, limit, predicate, now_ns))
         } else {
             Ok(Vec::new())
         }

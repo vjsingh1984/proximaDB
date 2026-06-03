@@ -190,6 +190,16 @@ async fn prometheus_metrics_endpoint(
         }
         text.push_str(&rank_text);
     }
+    // TD-099(3d): append the WAL scan-index family
+    // (proximadb_wal_unflushed_distinct_oids). Empty until the first paginated
+    // scan rebuilds an index, so the response stays valid otherwise.
+    let wal_scan_text = crate::metrics::wal_scan_metrics::scrape_text();
+    if !wal_scan_text.is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&wal_scan_text);
+    }
     Ok(text)
 }
 
