@@ -171,6 +171,43 @@ tests). Confirm no per-stage conversion remains (only the two outermost edges + 
 * **Hot branch** — `git commit -o <files>` only; a red `cargo test --lib` may be *foreign* WIP
   (check error file paths before assuming it's yours — happened in Slice 4 with dml/record_store).
 
+== 3bis. Group C status (2026-06-03 session 2) — S6 SHIPPED; S7 re-scoped
+
+* **Slice 5 (Group B) SHIPPED** `58a4f4ac4` — aggregation working set is `Vec<ProximaTree>`; `SqlObject` only at the input/output/filter/lookup edges.
+* **Slice 6 (Group C dual-carry) SHIPPED** `32d4436b3` — `DocumentRecord` now carries `props: ProximaTree` (`#[serde(default)]`) beside `document: SqlObject`, populated at every construction site (`new`/`from_proto` + the `canonical_adapter`/`cold_tier`/aggregation-temp/query-test literals). The aggregation **input edges** (`execute()`/fulltext/lookup-arc) now clone `doc.props` natively — the Slice-5 per-record `sql_object_to_proxima_tree` conversions are gone. `DocumentRecord` is an in-memory facade (durable authority is `ProximaRecord`), so the new field changes **no on-disk/wire format**.
+
+=== Real DocumentRecord blast radius (corrected)
+The "~110 sites / 454 `.fields`" figure conflated the **trait** `DocumentRecord`
+(`src/storage/traits/document.rs`; fields `id/document/version/created_at_ns/updated_at_ns`,
+used in `query/federated/**` + `multimodel/transaction/**`) with the **storage**
+`DocumentRecord` (`src/storage/document/mod.rs`). The storage type has only:
+
+* **~7 struct-literal construction sites** (all updated in S6): canonical_adapter ×2, aggregation temp ×2, cold_tier ×1, query test ×2; plus `new`/`from_proto`.
+* **1 mutation** of `.document`: `service.rs:apply_update(&mut record.document, …)`.
+* **~25 reads** of `.document`, almost all at proto/WAL/persistence edges.
+
+=== S7 is NOT just field deletion — it must migrate three SqlObject-native compute engines
+Deleting `document: SqlObject` forces every reader onto `props`. The blocker is that
+the document compute layer is built on **proto `SqlObject`/`SqlValue`**, not just the record field:
+
+. **`query::path_parser::JsonPath`** (`src/storage/document/query/path_parser.rs`) — `parse()` + `evaluate(&SqlObject) -> Vec<SqlValue>`. Used by `indexes::extract_path_value`/`extract_array_values` **and** `service::apply_projection`.
+. **`indexes::fulltext::FullTextIndex`** — `index_document(&SqlObject)` + `extract_text(&SqlObject)`.
+. **The update-mutation family** in `service.rs` (`apply_update` + `set_path_value`/`unset_path`/`increment_path`/`push_to_array`/`pull_from_array`/`add_to_set`/`rename_path`, ~330 LOC) — path navigation/mutation over `&mut SqlObject`/`SqlValue`.
+. `filter.rs::evaluate_condition`/`extract_path_value` — already half-canonical (comparison kernel is `ProximaValue` since Slice 1/2); cheap to flip to `&ProximaTree` via `proxima_tree_to_json_map`.
+
+Wrapping these engines with per-record `proxima_tree_to_sql_object(&rec.props)` would
+delete the field but **re-introduce per-record conversions in the index-build / query-sort
+/ filter hot paths** — a perf regression and not real convergence. Therefore S7 must
+**migrate the engines to `ProximaTree`/`ProximaValue` natively**, which is a multi-slice
+project, not one atomic commit.
+
+=== S7 recommended slicing (each its own `git commit -o`, builds+tests green)
+* **S7a — filter onto props.** `FilterEvaluator::evaluate` reads `&document.props`; `evaluate_condition(&ProximaTree)`; `extract_path_value` renders via `proxima_tree_to_json_map` (delete filter.rs `sql_object_to_json`/`sql_value_to_json`). Aggregation temp records then carry **only** props (drop the `proxima_tree_to_sql_object` in `process_match`). Cheap, self-contained.
+* **S7b — ProximaTree path engine.** Add a canonical path evaluator (either teach `JsonPath::evaluate` a `&ProximaTree` overload returning `Vec<ProximaValue>`, or reuse the jsonpath/`proxima_tree_to_json_map` bridge already used in `aggregation.rs`/`filter.rs`). Point `indexes::extract_path_value`/`extract_array_values` and `service::apply_projection` at it (reading `doc.props`).
+* **S7c — fulltext onto props.** `FullTextIndex::index_document(&ProximaTree)` + `extract_text(&ProximaTree)`; `indexes::index_document_with_key` passes `&document.props`.
+* **S7d — update-mutation family onto props.** Rewrite the 8 methods to navigate/mutate `ProximaTree`/`ProximaTreeNode`; lift the wire `update.value: Option<SqlValue>` via `sql_value_to_proxima` at the boundary; `apply_update(&mut record.props, …)`.
+* **S7e — delete `document` + wire edges.** Remove the field; `new`/`from_proto` compute only props; persistence `_document` JSON serializes `proxima_tree_to_sql_object(&doc.props)` (keeps the cold_tier on-disk format — legitimate edge); proto results (`to_proto_*`, `Some(record.document)` sites, `to_trait_doc_record`) convert from props at the wire edge; migrate the ~7 test assertions (`.document.fields.get` → read props or a converted SqlObject). Acceptance: `grep -rn "SqlObject\|SqlValue" src/storage/document/` then hits only `canonical_adapter.rs`, `DocumentRecord::{from_proto,to_proto_content,to_proto_result}`, `document_to_proxima_record`/`cold_tier` persistence-`_document` edge, and the path/fulltext engine wire boundaries.
+
 == 4. Group C — Slices 6/7: DocumentRecord dual-carry (HLD + LLD)
 
 * **S6** — add `props: ProximaTree` to `DocumentRecord` beside `document: SqlObject`; populate on
