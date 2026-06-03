@@ -6,6 +6,7 @@
 use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
 use proximadb_data_model::ProximaValue;
+use proximadb_records::conversions::sql_value_to_proxima;
 use regex::Regex;
 use serde_json::Value as JsonValue;
 
@@ -64,30 +65,32 @@ impl FilterEvaluator {
         let operator = DocFilterOperator::try_from(condition.operator)
             .unwrap_or(DocFilterOperator::Unspecified);
 
-        // Extract value from document
-        let doc_value = self.extract_path_value(document, path);
+        // Extract the document value (still proto at the jsonpath edge — Slice 2),
+        // then lift it and the filter operands into canonical `ProximaValue` ONCE so the
+        // comparison kernel below operates on canonical types (TD-106 seam S3, Slice 1).
+        // `condition.value`/`condition.values` are proto wire operands off `DocFilterCondition`
+        // — a legitimate edge; we convert, not mutate them.
+        let doc_value = self
+            .extract_path_value(document, path)
+            .as_ref()
+            .map(sql_value_to_proxima);
+        let cond_value = condition.value.as_ref().map(sql_value_to_proxima);
+        let cond_values: Vec<ProximaValue> =
+            condition.values.iter().map(sql_value_to_proxima).collect();
 
         match operator {
-            DocFilterOperator::Eq => self.eval_eq(&doc_value, &condition.value),
-            DocFilterOperator::Ne => !self.eval_eq(&doc_value, &condition.value),
-            DocFilterOperator::Gt => {
-                self.eval_comparison(&doc_value, &condition.value, |a, b| a > b)
-            }
-            DocFilterOperator::Gte => {
-                self.eval_comparison(&doc_value, &condition.value, |a, b| a >= b)
-            }
-            DocFilterOperator::Lt => {
-                self.eval_comparison(&doc_value, &condition.value, |a, b| a < b)
-            }
-            DocFilterOperator::Lte => {
-                self.eval_comparison(&doc_value, &condition.value, |a, b| a <= b)
-            }
-            DocFilterOperator::In => self.eval_in(&doc_value, &condition.values),
-            DocFilterOperator::NotIn => !self.eval_in(&doc_value, &condition.values),
-            DocFilterOperator::Contains => self.eval_contains(&doc_value, &condition.value),
-            DocFilterOperator::Regex => self.eval_regex(&doc_value, &condition.value),
-            DocFilterOperator::Exists => self.eval_exists(&doc_value, &condition.value),
-            DocFilterOperator::Type => self.eval_type(&doc_value, &condition.value),
+            DocFilterOperator::Eq => self.eval_eq(&doc_value, &cond_value),
+            DocFilterOperator::Ne => !self.eval_eq(&doc_value, &cond_value),
+            DocFilterOperator::Gt => self.eval_comparison(&doc_value, &cond_value, |a, b| a > b),
+            DocFilterOperator::Gte => self.eval_comparison(&doc_value, &cond_value, |a, b| a >= b),
+            DocFilterOperator::Lt => self.eval_comparison(&doc_value, &cond_value, |a, b| a < b),
+            DocFilterOperator::Lte => self.eval_comparison(&doc_value, &cond_value, |a, b| a <= b),
+            DocFilterOperator::In => self.eval_in(&doc_value, &cond_values),
+            DocFilterOperator::NotIn => !self.eval_in(&doc_value, &cond_values),
+            DocFilterOperator::Contains => self.eval_contains(&doc_value, &cond_value),
+            DocFilterOperator::Regex => self.eval_regex(&doc_value, &cond_value),
+            DocFilterOperator::Exists => self.eval_exists(&doc_value, &cond_value),
+            DocFilterOperator::Type => self.eval_type(&doc_value, &cond_value),
             DocFilterOperator::Fulltext => {
                 // Full-text search is handled by the index, not here
                 true
@@ -241,38 +244,41 @@ impl FilterEvaluator {
     }
 
     /// Evaluate equality
-    fn eval_eq(&self, doc_value: &Option<SqlValue>, filter_value: &Option<SqlValue>) -> bool {
+    fn eval_eq(
+        &self,
+        doc_value: &Option<ProximaValue>,
+        filter_value: &Option<ProximaValue>,
+    ) -> bool {
         match (doc_value, filter_value) {
-            (Some(a), Some(b)) => self.sql_values_equal(a, b),
+            (Some(a), Some(b)) => self.proxima_values_equal(a, b),
             (None, None) => true,
             _ => false,
         }
     }
 
-    /// Compare two SqlValue instances for equality
-    fn sql_values_equal(&self, a: &SqlValue, b: &SqlValue) -> bool {
-        match (&a.value, &b.value) {
-            (Some(SqlValueVariant::NullValue(_)), Some(SqlValueVariant::NullValue(_))) => true,
-            (Some(SqlValueVariant::BoolValue(va)), Some(SqlValueVariant::BoolValue(vb))) => {
-                va == vb
-            }
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::Int64Value(vb))) => {
-                va == vb
-            }
-            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::NumberValue(vb))) => {
+    /// Compare two `ProximaValue` instances for equality (document-filter semantics).
+    ///
+    /// Mirrors the prior proto-`SqlValue` comparison: scalar equality per type, f64
+    /// epsilon for floats, and cross-type `Int64`/`Float64` numeric equality. Byte
+    /// payloads land as `Binary` or `Jsonb` via `sql_value_to_proxima`, compared within
+    /// their variant (identical bytes map to the same variant, so this preserves the old
+    /// raw-bytes equality).
+    fn proxima_values_equal(&self, a: &ProximaValue, b: &ProximaValue) -> bool {
+        match (a, b) {
+            (ProximaValue::Null, ProximaValue::Null) => true,
+            (ProximaValue::Boolean(va), ProximaValue::Boolean(vb)) => va == vb,
+            (ProximaValue::Int64(va), ProximaValue::Int64(vb)) => va == vb,
+            (ProximaValue::Float64(va), ProximaValue::Float64(vb)) => {
                 (va - vb).abs() < f64::EPSILON
             }
-            (Some(SqlValueVariant::StringValue(va)), Some(SqlValueVariant::StringValue(vb))) => {
-                va == vb
-            }
-            (Some(SqlValueVariant::BytesValue(va)), Some(SqlValueVariant::BytesValue(vb))) => {
-                va == vb
-            }
+            (ProximaValue::String(va), ProximaValue::String(vb)) => va == vb,
+            (ProximaValue::Binary(va), ProximaValue::Binary(vb)) => va == vb,
+            (ProximaValue::Jsonb(va), ProximaValue::Jsonb(vb)) => va == vb,
             // Cross-type numeric comparison
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::NumberValue(vb))) => {
+            (ProximaValue::Int64(va), ProximaValue::Float64(vb)) => {
                 (*va as f64 - vb).abs() < f64::EPSILON
             }
-            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::Int64Value(vb))) => {
+            (ProximaValue::Float64(va), ProximaValue::Int64(vb)) => {
                 (va - *vb as f64).abs() < f64::EPSILON
             }
             _ => false,
@@ -282,8 +288,8 @@ impl FilterEvaluator {
     /// Evaluate numeric comparison
     fn eval_comparison<F>(
         &self,
-        doc_value: &Option<SqlValue>,
-        filter_value: &Option<SqlValue>,
+        doc_value: &Option<ProximaValue>,
+        filter_value: &Option<ProximaValue>,
         cmp: F,
     ) -> bool
     where
@@ -291,9 +297,7 @@ impl FilterEvaluator {
     {
         match (doc_value, filter_value) {
             (Some(a), Some(b)) => {
-                let a_num = self.sql_value_to_f64(a);
-                let b_num = self.sql_value_to_f64(b);
-                match (a_num, b_num) {
+                match (self.proxima_value_to_f64(a), self.proxima_value_to_f64(b)) {
                     (Some(a), Some(b)) => cmp(a, b),
                     _ => false,
                 }
@@ -302,54 +306,49 @@ impl FilterEvaluator {
         }
     }
 
-    /// Convert SqlValue to f64 for comparison
-    fn sql_value_to_f64(&self, value: &SqlValue) -> Option<f64> {
-        match &value.value {
-            Some(SqlValueVariant::Int64Value(v)) => Some(*v as f64),
-            Some(SqlValueVariant::NumberValue(v)) => Some(*v),
+    /// Convert a `ProximaValue` to f64 for comparison
+    fn proxima_value_to_f64(&self, value: &ProximaValue) -> Option<f64> {
+        match value {
+            ProximaValue::Int64(v) => Some(*v as f64),
+            ProximaValue::Float64(v) => Some(*v),
             _ => None,
         }
     }
 
     /// Evaluate IN operator
-    fn eval_in(&self, doc_value: &Option<SqlValue>, values: &[SqlValue]) -> bool {
+    fn eval_in(&self, doc_value: &Option<ProximaValue>, values: &[ProximaValue]) -> bool {
         if let Some(doc) = doc_value {
-            values.iter().any(|v| self.sql_values_equal(doc, v))
+            values.iter().any(|v| self.proxima_values_equal(doc, v))
         } else {
             false
         }
     }
 
     /// Evaluate CONTAINS operator (array containment)
-    fn eval_contains(&self, doc_value: &Option<SqlValue>, filter_value: &Option<SqlValue>) -> bool {
+    fn eval_contains(
+        &self,
+        doc_value: &Option<ProximaValue>,
+        filter_value: &Option<ProximaValue>,
+    ) -> bool {
         match (doc_value, filter_value) {
-            (Some(doc), Some(filter)) => {
-                if let Some(SqlValueVariant::ArrayValue(arr)) = &doc.value {
-                    arr.values.iter().any(|v| self.sql_values_equal(v, filter))
-                } else {
-                    false
-                }
+            (Some(ProximaValue::Array(arr)), Some(filter)) => {
+                arr.iter().any(|v| self.proxima_values_equal(v, filter))
             }
             _ => false,
         }
     }
 
     /// Evaluate REGEX operator
-    fn eval_regex(&self, doc_value: &Option<SqlValue>, filter_value: &Option<SqlValue>) -> bool {
+    fn eval_regex(
+        &self,
+        doc_value: &Option<ProximaValue>,
+        filter_value: &Option<ProximaValue>,
+    ) -> bool {
         match (doc_value, filter_value) {
-            (Some(doc), Some(filter)) => {
-                if let (
-                    Some(SqlValueVariant::StringValue(doc_str)),
-                    Some(SqlValueVariant::StringValue(pattern)),
-                ) = (&doc.value, &filter.value)
-                {
-                    if let Ok(regex) = Regex::new(pattern) {
-                        regex.is_match(doc_str)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
+            (Some(ProximaValue::String(doc_str)), Some(ProximaValue::String(pattern))) => {
+                match Regex::new(pattern) {
+                    Ok(regex) => regex.is_match(doc_str),
+                    Err(_) => false,
                 }
             }
             _ => false,
@@ -357,43 +356,43 @@ impl FilterEvaluator {
     }
 
     /// Evaluate EXISTS operator
-    fn eval_exists(&self, doc_value: &Option<SqlValue>, filter_value: &Option<SqlValue>) -> bool {
-        let should_exist = filter_value
-            .as_ref()
-            .and_then(|v| match &v.value {
-                Some(SqlValueVariant::BoolValue(b)) => Some(*b),
-                _ => None,
-            })
-            .unwrap_or(true);
+    fn eval_exists(
+        &self,
+        doc_value: &Option<ProximaValue>,
+        filter_value: &Option<ProximaValue>,
+    ) -> bool {
+        let should_exist = match filter_value {
+            Some(ProximaValue::Boolean(b)) => *b,
+            _ => true,
+        };
 
         doc_value.is_some() == should_exist
     }
 
     /// Evaluate TYPE operator
-    fn eval_type(&self, doc_value: &Option<SqlValue>, filter_value: &Option<SqlValue>) -> bool {
-        let expected_type = filter_value.as_ref().and_then(|v| match &v.value {
-            Some(SqlValueVariant::StringValue(s)) => Some(s.as_str()),
+    fn eval_type(
+        &self,
+        doc_value: &Option<ProximaValue>,
+        filter_value: &Option<ProximaValue>,
+    ) -> bool {
+        let expected_type = match filter_value {
+            Some(ProximaValue::String(s)) => Some(s.as_str()),
             _ => None,
-        });
+        };
 
         match (doc_value, expected_type) {
             (Some(doc), Some(expected)) => {
-                let actual_type = match &doc.value {
-                    Some(SqlValueVariant::NullValue(_)) => "null",
-                    Some(SqlValueVariant::BoolValue(_)) => "boolean",
-                    Some(SqlValueVariant::Int64Value(_)) => "integer",
-                    Some(SqlValueVariant::NumberValue(_)) => "number",
-                    Some(SqlValueVariant::StringValue(_)) => "string",
-                    Some(SqlValueVariant::BytesValue(bytes)) => {
-                        if ProximaValue::from_jsonb_slice(bytes).is_ok() {
-                            "jsonb"
-                        } else {
-                            "bytes"
-                        }
-                    }
-                    Some(SqlValueVariant::ArrayValue(_)) => "array",
-                    Some(SqlValueVariant::ObjectValue(_)) => "object",
-                    None => "undefined",
+                let actual_type = match doc {
+                    ProximaValue::Null => "null",
+                    ProximaValue::Boolean(_) => "boolean",
+                    ProximaValue::Int64(_) => "integer",
+                    ProximaValue::Float64(_) => "number",
+                    ProximaValue::String(_) => "string",
+                    ProximaValue::Jsonb(_) => "jsonb",
+                    ProximaValue::Binary(_) => "bytes",
+                    ProximaValue::Array(_) => "array",
+                    ProximaValue::Map(_) => "object",
+                    _ => "undefined",
                 };
                 actual_type == expected
             }
@@ -434,17 +433,23 @@ mod tests {
     }
 
     #[test]
-    fn test_sql_values_equal() {
+    fn test_proxima_values_equal() {
         let evaluator = FilterEvaluator::new();
 
-        let a = SqlValue {
-            value: Some(SqlValueVariant::Int64Value(42)),
-        };
-        let b = SqlValue {
-            value: Some(SqlValueVariant::Int64Value(42)),
-        };
-
-        assert!(evaluator.sql_values_equal(&a, &b));
+        // Same-type equality
+        assert!(evaluator.proxima_values_equal(&ProximaValue::Int64(42), &ProximaValue::Int64(42)));
+        assert!(!evaluator.proxima_values_equal(&ProximaValue::Int64(42), &ProximaValue::Int64(7)));
+        // Cross-type numeric equality (Int64 vs Float64), preserved from the proto kernel
+        assert!(
+            evaluator.proxima_values_equal(&ProximaValue::Int64(42), &ProximaValue::Float64(42.0))
+        );
+        // Null equality
+        assert!(evaluator.proxima_values_equal(&ProximaValue::Null, &ProximaValue::Null));
+        // Distinct variants are not equal
+        assert!(
+            !evaluator
+                .proxima_values_equal(&ProximaValue::String("42".into()), &ProximaValue::Int64(42))
+        );
     }
 
     #[test]
@@ -599,7 +604,10 @@ mod tests {
             let back = evaluator.json_to_sql_value(&json.unwrap());
             assert!(back.is_some(), "Should convert back to SqlValue");
             assert!(
-                evaluator.sql_values_equal(&original, &back.unwrap()),
+                evaluator.proxima_values_equal(
+                    &sql_value_to_proxima(&original),
+                    &sql_value_to_proxima(&back.unwrap())
+                ),
                 "Round-trip should preserve value"
             );
         }
