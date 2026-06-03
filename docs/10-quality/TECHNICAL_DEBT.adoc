@@ -1357,10 +1357,10 @@ physical layouts.
 | Remove deprecated gRPC shims (seam S2)
 | P3
 | LOW
-| Open — target v0.2
-| CONVERGENCE_AUDIT S2. `src/network/grpc/{entity,document,graph,security,hybrid_search,streaming,observability}_service.rs` carry `// DEPRECATED … removed in version 0.3.0` markers over the migrated impls in `crates/platform/proximadb-api/src/grpc/v1/`. Land in v0.2: pull the removal forward and update/remove the stale `0.3.0` markers.
+| DONE (2026-06-03)
+| CONVERGENCE_AUDIT S2. KEY FINDING: the `src/network/grpc/*_service.rs` files were mislabeled "deprecated shims" — they were the LIVE `*Port` backends the `crates/platform/proximadb-api/src/grpc/v1/` tonic adapters delegate to (`Arc<dyn *Port>`). The real dead code was the (never-served) tonic `impl *Service` blocks they hosted. Phase A (`a6c80f90f`) deleted the 3 genuinely-dead files (entity/document/hybrid). Phase B converged the 4 live Port backends off their dead tonic surfaces: observability `979fdf18d`, streaming `18e3485a4` (also deleted ~250 LOC dead server-streaming RPCs), graph `08e719e75` (also deleted 7 `#[cfg(any())]` PULSAR/QUASAR RPCs), security `1380cb11d`. `rank_service.rs` was already Port-only. The stale `0.3.0` headers were replaced with accurate "port backend" descriptions.
 | 1 week (v0.2)
-| Acceptance: (1) Shims deleted in v0.2; the `0.3.0` removal markers updated/removed. (2) No remaining importers. (3) gRPC tests green against the platform-crate impls.
+| Acceptance MET: (1) No `*_service.rs` carries a tonic `impl *Service` surface; the misleading `0.3.0` headers are gone. (2) All construction sites bind `Arc<dyn *Port>` — zero importer churn. (3) Build green; observability/streaming/graph/security unit tests pass.
 
 | TD-106
 | Migrate proto-v1 internal mirrors to canonical types (seam S3)

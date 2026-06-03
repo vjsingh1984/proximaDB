@@ -59,10 +59,10 @@ invariant: edge-divergence is a cleanup; core-divergence is a defect.
 | Finish the extraction: move handler bodies into `proximadb-api`/`proximadb-runtime`, leave the root crate composing ports only. Do it endpoint-group at a time (commit each group immediately — linter displaces unstaged files). Target: one home per handler.
 | TD-104
 
-| S2 Deprecated gRPC shims
-| `src/network/grpc/{entity,document,graph,security,hybrid_search,streaming,observability}_service.rs` carry `// DEPRECATED … removed in version 0.3.0` headers; real impls already migrated to `crates/platform/proximadb-api/src/grpc/v1/`.
-| Land in v0.2: verify no remaining importers, delete the shims, and update/remove the `0.3.0` removal markers (they predate the decision to land this in v0.2). Pull the removal forward — do not carry the shims past v0.2.
-| TD-105
+| S2 Deprecated gRPC shims — RESOLVED (2026-06-03)
+| RESOLVED. The `*_service.rs` files were NOT shims — they were the live `*Port` backends the `crates/platform/proximadb-api/src/grpc/v1/` tonic adapters delegate to; the dead code was the never-served tonic `impl *Service` blocks. Phase A deleted the 3 truly-dead files (entity/document/hybrid, `a6c80f90f`); Phase B converged the 4 live backends (observability/streaming/graph/security) off their dead tonic surfaces and removed the stale `0.3.0` headers.
+| Done: no `*_service.rs` carries a tonic `impl *Service`; all consumers bind `Arc<dyn *Port>`; build + unit tests green.
+| TD-105 (DONE)
 
 | S3 Proto-v1 internal mirrors
 | `VectorRecord`, `SqlValue`, `SqlObject` (proto v1) are still used as *internal* types; canonical is `ProximaRecord` / `ProximaValue` / `ProximaType`. Handlers parse proto v1 then convert.
