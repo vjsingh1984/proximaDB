@@ -1031,4 +1031,208 @@ mod tests {
         let crate_name = env!("CARGO_PKG_NAME");
         assert_eq!(crate_name, "proximadb");
     }
+
+    // ========================================================================
+    // TD-097 (Spark JNI) + TD-099 (cursor) embedded surfaces:
+    //   - get_collection_schema
+    //   - scan_records (cursor pagination)
+    //   - plan_partitions (single-partition fallback)
+    // ========================================================================
+
+    /// Helper: spin up a fresh EmbeddedProximaDB on a tempdir. WAL is
+    /// explicitly enabled so `insert_proxima_records` writes are
+    /// visible to `scan_records` via the canonical WAL/memtable scan.
+    fn build_test_db() -> (EmbeddedProximaDB, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let mut config = EmbeddedConfig::for_low_memory(
+            temp_dir.path().to_string_lossy().as_ref(),
+        );
+        config.enable_wal = true;
+        let db = EmbeddedProximaDB::new(config).expect("create embedded db");
+        (db, temp_dir)
+    }
+
+    /// Helper: build a minimal ProximaRecord for scan tests. Mirrors
+    /// the shape used by the existing fp16/fp32 e2e tests (oid +
+    /// local_id + a single dense_vector embedding cell).
+    fn make_test_record(oid: &str, updated_at_ns: i64) -> proximadb_records::ProximaRecord {
+        proximadb_records::ProximaRecord {
+            oid: oid.to_string(),
+            local_id: Some(oid.to_string()),
+            updated_at_ns,
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "test-model".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 4,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1, 0.2, 0.3, 0.4]),
+                precision: proximadb_records::EmbeddingScalarType::Fp32,
+                ..Default::default()
+            }],
+            ..proximadb_records::ProximaRecord::default()
+        }
+    }
+
+    #[test]
+    fn test_get_collection_schema_returns_none_for_missing_collection() {
+        let (db, _td) = build_test_db();
+        let result = db
+            .get_collection_schema("does_not_exist")
+            .expect("call must not error");
+        assert!(result.is_none(), "missing collection ⇒ None");
+    }
+
+    #[test]
+    fn test_get_collection_schema_returns_named_collection() {
+        let (db, _td) = build_test_db();
+        db.create_collection("test_col", 4, None)
+            .expect("create_collection");
+        let schema = db
+            .get_collection_schema("test_col")
+            .expect("schema call")
+            .expect("collection must exist");
+        assert_eq!(schema["name"], serde_json::json!("test_col"));
+        assert_eq!(schema["dimension"], serde_json::json!(4));
+        assert!(
+            schema.get("storage_engine").is_some(),
+            "schema must expose storage_engine: {schema}"
+        );
+    }
+
+    #[test]
+    fn test_get_collection_schema_surfaces_vector_count() {
+        let (db, _td) = build_test_db();
+        db.create_collection("counted_col", 4, None).expect("create");
+        let schema = db
+            .get_collection_schema("counted_col")
+            .expect("schema call")
+            .expect("collection exists");
+        // Even with zero records, vector_count must be a Number (not
+        // missing), so downstream consumers can rely on its presence.
+        assert!(
+            schema["vector_count"].is_number(),
+            "vector_count must be present + numeric: {schema}"
+        );
+    }
+
+    #[test]
+    fn test_scan_records_empty_collection_returns_empty_page() {
+        let (db, _td) = build_test_db();
+        db.create_collection("empty_col", 4, None).expect("create");
+        let (records, next_cursor) = db
+            .scan_records("empty_col", None, 100)
+            .expect("scan call");
+        assert!(records.is_empty(), "empty collection ⇒ no records");
+        assert!(next_cursor.is_none(), "empty collection ⇒ no next cursor");
+    }
+
+    #[test]
+    fn test_scan_records_returns_inserted_records_in_stable_order() {
+        let (db, _td) = build_test_db();
+        db.create_collection("scan_col", 4, None).expect("create");
+
+        // Insert 3 records OUT of (updated_at_ns, oid) order.
+        let records = vec![
+            make_test_record("c", 30),
+            make_test_record("a", 10),
+            make_test_record("b", 20),
+        ];
+        db.insert_proxima_records("scan_col", records)
+            .expect("insert");
+
+        let (page, next_cursor) = db
+            .scan_records("scan_col", None, 100)
+            .expect("scan call");
+        // Sort order is (updated_at_ns, oid): a(10), b(20), c(30).
+        assert_eq!(page.len(), 3, "all 3 records: {page:?}");
+        assert_eq!(page[0].oid, "a");
+        assert_eq!(page[1].oid, "b");
+        assert_eq!(page[2].oid, "c");
+        assert!(next_cursor.is_none(), "short page ⇒ no next cursor");
+    }
+
+    #[test]
+    fn test_scan_records_paginates_via_cursor_round_trip() {
+        let (db, _td) = build_test_db();
+        db.create_collection("paged_col", 4, None).expect("create");
+        let records = (0..5)
+            .map(|i| make_test_record(&format!("r{i:02}"), 100 + i as i64))
+            .collect();
+        db.insert_proxima_records("paged_col", records).expect("insert");
+
+        // First page (limit=2).
+        let (page1, cursor1) = db.scan_records("paged_col", None, 2).expect("p1");
+        assert_eq!(page1.len(), 2);
+        let cur = cursor1.expect("full page ⇒ next cursor");
+
+        // Second page resumes from cursor.
+        let (page2, cursor2) = db.scan_records("paged_col", Some(cur), 2).expect("p2");
+        assert_eq!(page2.len(), 2);
+        let cur2 = cursor2.expect("still full page ⇒ next cursor");
+
+        // Third page is short ⇒ no next cursor.
+        let (page3, cursor3) = db.scan_records("paged_col", Some(cur2), 2).expect("p3");
+        assert_eq!(page3.len(), 1, "5 total - 4 returned = 1 remaining");
+        assert!(cursor3.is_none(), "short page ⇒ no next cursor");
+
+        // Round-trip: union of (page1, page2, page3) covers all 5
+        // records exactly once.
+        let mut all_oids: Vec<String> = page1
+            .iter()
+            .chain(page2.iter())
+            .chain(page3.iter())
+            .map(|r| r.oid.clone())
+            .collect();
+        all_oids.sort();
+        all_oids.dedup();
+        assert_eq!(all_oids.len(), 5, "exactly 5 distinct oids: {all_oids:?}");
+    }
+
+    #[test]
+    fn test_scan_records_rejects_stale_cursor() {
+        use crate::services::scan_cursor::ScanCursor;
+        let (db, _td) = build_test_db();
+        db.create_collection("stale_col", 4, None).expect("create");
+
+        // Forge a cursor with epoch from > 24h ago.
+        let stale = ScanCursor {
+            collection_id: "stale_col".to_string(),
+            last_updated_at_ns: 0,
+            last_oid: "x".to_string(),
+            epoch_ns: 0, // wall clock is now ~> 24h since this
+        };
+        let raw = stale.encode().unwrap();
+        let err = db.scan_records("stale_col", Some(raw), 10).unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("expired"),
+            "stale cursor error must say 'expired': {err}"
+        );
+    }
+
+    #[test]
+    fn test_plan_partitions_returns_single_partition_for_existing_collection() {
+        let (db, _td) = build_test_db();
+        db.create_collection("part_col", 4, None).expect("create");
+        let partitions = db.plan_partitions("part_col", 8).expect("plan");
+        // Single-partition fallback regardless of requested count.
+        assert_eq!(partitions.len(), 1, "fallback: 1 partition: {partitions:?}");
+        assert_eq!(partitions[0].partition_id, 0);
+        assert_eq!(partitions[0].splits.len(), 1);
+        assert_eq!(
+            partitions[0].splits[0].file_path,
+            "collection://part_col",
+            "split must carry the logical collection URI"
+        );
+    }
+
+    #[test]
+    fn test_plan_partitions_errors_on_missing_collection() {
+        let (db, _td) = build_test_db();
+        let err = db
+            .plan_partitions("does_not_exist", 1)
+            .expect_err("missing collection must error");
+        assert!(
+            err.to_string().contains("does_not_exist"),
+            "error must name the missing collection: {err}"
+        );
+    }
 }

@@ -171,6 +171,32 @@ pub enum CacheStatus {
 }
 
 impl FileSplit {
+    /// Create a single split that nominally covers an entire
+    /// collection. Used by callers that don't (yet) have shard-aware
+    /// split-planning — Spark's `EmbeddedProximaDB::plan_partitions`
+    /// returns one such split per partition for its initial
+    /// single-partition fallback (TD-097 follow-up will replace this
+    /// with real AXIS/SST shard-aware planning that returns the
+    /// per-block / per-row-group splits).
+    ///
+    /// The `file_path` is set to a logical `collection://<name>` URI
+    /// (not a real path); downstream readers ignore it because the
+    /// scan flows through the canonical record path, not via
+    /// arbitrary file reads.
+    pub fn whole_collection(collection: &str) -> Self {
+        Self {
+            split_id: format!("collection:{}:whole", collection),
+            file_path: format!("collection://{}", collection),
+            offset: 0,
+            length: 0,
+            split_type: SplitType::ByteRange {
+                estimated_records: 0,
+            },
+            statistics: SplitStatistics::default(),
+            locality: SplitLocality::default(),
+        }
+    }
+
     /// Create a new block-based split (for SST engine)
     pub fn new_block(
         file_path: String,

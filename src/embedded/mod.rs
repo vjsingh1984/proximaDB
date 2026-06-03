@@ -1967,6 +1967,159 @@ impl EmbeddedProximaDB {
         })
     }
 
+    // ========================================================================
+    // Connector-binding surfaces (TD-097 Spark JNI + TD-099 cursor scan)
+    //
+    // These three methods (`get_collection_schema`, `scan_records`,
+    // `plan_partitions`) are the in-process equivalent of the
+    // REST/Flight handlers the other connectors dial. The Spark JNI
+    // cdylib calls them directly; future NodeJS/C-FFI DataFrame surfaces
+    // can reuse the same methods. They are intentionally sync (each
+    // wraps `self.runtime.block_on`) so JNI / FFI callers don't need to
+    // know about tokio.
+    // ========================================================================
+
+    /// Return the named collection's schema as a JSON value matching
+    /// the OpenAPI `SchemaDefinition` shape. Used by Spark JNI's
+    /// `getTableSchema` and by future embedded callers that need to
+    /// introspect a collection without going through the REST handler.
+    /// Returns `Ok(None)` when the collection doesn't exist.
+    pub fn get_collection_schema(
+        &self,
+        collection: &str,
+    ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+        self.runtime.block_on(async {
+            let opt = self
+                .collection_port
+                .get_collection(collection, None)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                })?;
+            Ok(opt.map(|c| {
+                let cfg = c.config.unwrap_or_default();
+                serde_json::json!({
+                    "name": cfg.name,
+                    "dimension": cfg.dimension,
+                    "distance_metric": cfg.distance_metric,
+                    "storage_engine": cfg.storage_engine,
+                    "vector_count": c.stats.map_or(0, |s| s.vector_count),
+                })
+            }))
+        })
+    }
+
+    /// Scan one page of records via the same canonical pipeline used
+    /// by the REST `scanRecords` handler — `UnifiedHandlers::handle_record_scan_for_tenant`
+    /// then [`apply_scan_cursor`](crate::services::scan_cursor::apply_scan_cursor)
+    /// for stable-sorted, cursor-paginated output. Returns
+    /// `(records, next_cursor)`: the cursor is `None` when the page is
+    /// short (definite end-of-scan).
+    ///
+    /// `cursor`: opaque continuation token from the previous call; pass
+    /// `None` to start at the beginning. Stale cursors (>24h) and
+    /// collection-mismatched cursors error out via
+    /// [`ScanCursorDecodeError`](crate::services::scan_cursor::ScanCursorDecodeError).
+    pub fn scan_records(
+        &self,
+        collection: &str,
+        cursor: Option<String>,
+        limit: usize,
+    ) -> Result<
+        (Vec<proximadb_records::ProximaRecord>, Option<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+
+        let inbound_cursor = match cursor.as_deref() {
+            Some(raw) if !raw.is_empty() => {
+                Some(crate::services::scan_cursor::ScanCursor::decode(raw, collection, now_ns)?)
+            }
+            _ => None,
+        };
+
+        self.runtime.block_on(async {
+            // Pull everything via the same VectorOperationsService
+            // pathway used by `insert_proxima_records` so writes and
+            // reads agree on the collection-id key (no tenant
+            // resolution diverges between paths in embedded mode).
+            // Cursor + limit are applied at this layer; pushing them
+            // into the WAL streaming layer is TD-099 acceptance (3c)
+            // — out of scope for this slice.
+            let records = self
+                .shared_services
+                .vector_operations_service
+                .scan_records_with_tenant_context(
+                    collection, None, true, true, None,
+                )
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                })?;
+
+            let (page, next) = crate::services::scan_cursor::apply_scan_cursor(
+                records,
+                inbound_cursor.as_ref(),
+                limit,
+                collection,
+                now_ns,
+            );
+
+            let next_str = match next {
+                Some(c) => Some(c.encode().map_err(
+                    |e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(e))
+                    },
+                )?),
+                None => None,
+            };
+
+            Ok((page, next_str))
+        })
+    }
+
+    /// Plan input partitions for parallel reads. Returns a list of
+    /// [`SparkInputPartition`](crate::connectors::spark::SparkInputPartition)
+    /// — each carries `FileSplit`s that subsequent
+    /// `create_partition_reader` calls consume.
+    ///
+    /// **Single-partition fallback** (TD-097 first-slice): this
+    /// implementation returns exactly ONE partition spanning the whole
+    /// collection, regardless of the requested `num_partitions`. It's
+    /// correct-but-not-parallel — readers will still drain the entire
+    /// collection via cursor pagination inside the single partition.
+    /// Real AXIS/SST shard-aware split generation (so Spark gets actual
+    /// parallelism per executor) is a follow-up TD that wires this
+    /// method through the existing `FileSplit` infrastructure that
+    /// Trino already uses.
+    pub fn plan_partitions(
+        &self,
+        collection: &str,
+        _num_partitions: u32,
+    ) -> Result<
+        Vec<crate::connectors::spark::SparkInputPartition>,
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        use crate::connectors::spark::SparkInputPartition;
+        use crate::storage::formats::FileSplit;
+
+        // Validate the collection exists before producing splits, so
+        // a typo on the JNI side fails fast (vs. emitting a "ghost"
+        // split that yields zero rows).
+        match self.get_collection_schema(collection)? {
+            None => Err(Box::new(std::io::Error::other(format!(
+                "collection '{collection}' not found"
+            )))),
+            Some(_) => Ok(vec![SparkInputPartition::from_splits(
+                0,
+                vec![FileSplit::whole_collection(collection)],
+            )]),
+        }
+    }
+
     /// Flush all pending writes to disk
     ///
     /// This forces all in-memory data (memtable/WAL) to be persisted to storage engine files.
