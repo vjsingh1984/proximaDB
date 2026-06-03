@@ -153,6 +153,26 @@ those root types** as-is. S3 therefore requires, in order:
 **Not a mechanical switch** — it's a cross-crate type relocation + a new port + un-verifiable Arrow
 runtime behavior. Do it design-first, in its own session, with a Flight smoke-test.
 
+**Additional wrinkles found (2026-06-03), why this is gated on a running Flight loop:**
+
+* **Result type** — `RecordOpsPort` in `proximadb-runtime` cannot return root-crate
+  `BatchOperationResult`. Either move `BatchOperationResult` down (8 files import it) or define a
+  port-local `RecordBatchOutcome` and adapt at Arrow's `do_put` result-consumption site. The
+  records input is fine: `RichRecordBatchRequest.records` is already `Vec<ProximaRecord>` and
+  `proximadb-runtime` can add a `proximadb-records` dep (valid foundation→platform direction, no cycle).
+* **Collection type identity** — Arrow `list_flights` (service.rs:1028/1049) reads the
+  `CollectionService::collection`/`list_collections` result to build `FlightInfo`. `CollectionPort`
+  returns `Result<Option<Collection>>` / `Result<Vec<Collection>>`, but it must be confirmed that the
+  port's `Collection` is the **same** type the `FlightInfo` builder consumes (vs a runtime DTO needing
+  a field-by-field conversion). This is a correctness question that a compile check alone won't fully
+  settle and that no `cargo test --lib` covers.
+
+Because these are correctness unknowns on a **wire-protocol ingest/list path** with no local
+verification loop, S3 should be executed where a Flight client smoke-test (DoPut insert/upsert/delete +
+DoGet search + ListFlights) can confirm it — not landed blind on a shared branch. S1/S2 were safe to
+land compile-only because they were same-trait reference swaps with no type-mapping uncertainty; S3 is
+not in that category.
+
 == 5. Convergence Gate notes
 
 * New ports (`MetricsPort`, `DocumentPort`) must declare authority mode / policy boundary in
