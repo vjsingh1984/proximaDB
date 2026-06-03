@@ -87,50 +87,9 @@ impl TenantBudgetExceeded {
     }
 }
 
-/// Configuration for the routing service
-#[derive(Debug, Clone)]
-pub struct RoutingConfig {
-    /// Enable read replicas for load distribution
-    pub enable_read_replicas: bool,
-    /// Maximum number of retries for failed requests
-    pub max_retries: u32,
-    /// Timeout for routing decisions in milliseconds
-    pub routing_timeout_ms: u64,
-    /// Enable sticky sessions for consistency
-    pub sticky_sessions: bool,
-    /// Load balancing strategy
-    pub load_balancing: LoadBalancingStrategy,
-    /// Enable locality-aware routing
-    pub locality_aware: bool,
-}
-
-impl Default for RoutingConfig {
-    fn default() -> Self {
-        Self {
-            enable_read_replicas: true,
-            max_retries: 3,
-            routing_timeout_ms: 100,
-            sticky_sessions: false,
-            load_balancing: LoadBalancingStrategy::RoundRobin,
-            locality_aware: true,
-        }
-    }
-}
-
-/// Load balancing strategies
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LoadBalancingStrategy {
-    /// Round-robin across available nodes
-    RoundRobin,
-    /// Route to node with lowest load
-    LeastLoaded,
-    /// Route to node with lowest latency
-    LeastLatency,
-    /// Random node selection
-    Random,
-    /// Weighted round-robin based on node capacity
-    WeightedRoundRobin,
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::{LoadBalancingStrategy, RoutingConfig};
 
 /// Result of a routing decision
 #[derive(Debug, Clone)]

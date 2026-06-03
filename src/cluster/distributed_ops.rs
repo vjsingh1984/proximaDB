@@ -22,75 +22,11 @@ use super::rpc::{
 };
 use super::shard::{Shard, ShardId, ShardManager, ShardState};
 
-/// Configuration for distributed operations
-#[derive(Debug, Clone)]
-pub struct DistributedOpsConfig {
-    /// Timeout for distributed operations in milliseconds
-    pub operation_timeout_ms: u64,
-    /// Maximum concurrent shard operations
-    pub max_concurrent_ops: usize,
-    /// Enable parallel shard queries
-    pub parallel_queries: bool,
-    /// Consistency level for writes
-    pub write_consistency: ConsistencyLevel,
-    /// Consistency level for reads
-    pub read_consistency: ConsistencyLevel,
-    /// Retry configuration
-    pub retry_config: DistributedRetryConfig,
-}
-
-impl Default for DistributedOpsConfig {
-    fn default() -> Self {
-        Self {
-            operation_timeout_ms: 30000,
-            max_concurrent_ops: 16,
-            parallel_queries: true,
-            write_consistency: ConsistencyLevel::Quorum,
-            read_consistency: ConsistencyLevel::One,
-            retry_config: DistributedRetryConfig::default(),
-        }
-    }
-}
-
-/// Backwards-compat alias for [`DistributedRetryConfig`].
-pub type RetryConfig = DistributedRetryConfig;
-
-/// Retry configuration for failed operations
-#[derive(Debug, Clone)]
-pub struct DistributedRetryConfig {
-    /// Maximum number of retries
-    pub max_retries: u32,
-    /// Initial backoff in milliseconds
-    pub initial_backoff_ms: u64,
-    /// Maximum backoff in milliseconds
-    pub max_backoff_ms: u64,
-    /// Backoff multiplier
-    pub backoff_multiplier: f64,
-}
-
-impl Default for DistributedRetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            initial_backoff_ms: 100,
-            max_backoff_ms: 5000,
-            backoff_multiplier: 2.0,
-        }
-    }
-}
-
-/// Consistency levels for distributed operations
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum ConsistencyLevel {
-    /// Only one node needs to acknowledge
-    One,
-    /// Majority of nodes must acknowledge
-    Quorum,
-    /// All nodes must acknowledge
-    All,
-    /// Local datacenter quorum
-    LocalQuorum,
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::{
+    ConsistencyLevel, DistributedOpsConfig, DistributedRetryConfig, RetryConfig,
+};
 
 /// Result of a distributed search operation
 #[derive(Debug, Clone)]

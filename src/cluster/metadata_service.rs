@@ -26,29 +26,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
-/// Configuration for the metadata service
-#[derive(Debug, Clone)]
-pub struct MetadataServiceConfig {
-    /// Maximum entries in metadata cache
-    pub cache_size: usize,
-    /// TTL for cached entries in seconds
-    pub cache_ttl_secs: u64,
-    /// Enable persistent storage of metadata
-    pub persistent: bool,
-    /// Storage path for persistent metadata
-    pub storage_path: Option<String>,
-}
-
-impl Default for MetadataServiceConfig {
-    fn default() -> Self {
-        Self {
-            cache_size: 10000,
-            cache_ttl_secs: 300,
-            persistent: true,
-            storage_path: None,
-        }
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::{ClusterConfiguration, MetadataServiceConfig};
 
 /// Cluster-wide metadata
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -116,30 +96,6 @@ pub enum ShardState {
     Migrating,
     /// Shard is offline
     Offline,
-}
-
-/// Cluster-wide configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClusterConfiguration {
-    /// Default replication factor for new collections
-    pub default_replication_factor: u32,
-    /// Default shard count for new collections
-    pub default_shard_count: u32,
-    /// Enable automatic rebalancing
-    pub auto_rebalance: bool,
-    /// Rebalance threshold (load difference percentage)
-    pub rebalance_threshold: f32,
-}
-
-impl Default for ClusterConfiguration {
-    fn default() -> Self {
-        Self {
-            default_replication_factor: 1,
-            default_shard_count: 1,
-            auto_rebalance: true,
-            rebalance_threshold: 0.2,
-        }
-    }
 }
 
 /// Metadata service for cluster-wide metadata management

@@ -37,62 +37,9 @@ use super::shard::{Shard, ShardId};
 /// Backwards-compat alias for [`ClusterReplicationConfig`].
 pub type ReplicationConfig = ClusterReplicationConfig;
 
-/// Configuration for replication
-#[derive(Debug, Clone)]
-pub struct ClusterReplicationConfig {
-    /// Maximum replication lag allowed in milliseconds
-    pub max_lag_ms: u64,
-    /// Replication timeout in milliseconds
-    pub replication_timeout_ms: u64,
-    /// Batch size for replication
-    pub batch_size: usize,
-    /// Enable async replication (vs sync)
-    pub async_replication: bool,
-    /// Buffer size for replication queue
-    pub queue_buffer_size: usize,
-    /// Enable compression for replication
-    pub enable_compression: bool,
-    /// Retry configuration
-    pub retry_config: ReplicationRetryConfig,
-}
-
-impl Default for ClusterReplicationConfig {
-    fn default() -> Self {
-        Self {
-            max_lag_ms: 1000,
-            replication_timeout_ms: 5000,
-            batch_size: 100,
-            async_replication: false,
-            queue_buffer_size: 10000,
-            enable_compression: true,
-            retry_config: ReplicationRetryConfig::default(),
-        }
-    }
-}
-
-/// Retry configuration for failed replications
-#[derive(Debug, Clone)]
-pub struct ReplicationRetryConfig {
-    /// Maximum retry attempts
-    pub max_retries: u32,
-    /// Initial backoff in milliseconds
-    pub initial_backoff_ms: u64,
-    /// Maximum backoff in milliseconds
-    pub max_backoff_ms: u64,
-    /// Backoff multiplier
-    pub backoff_multiplier: f64,
-}
-
-impl Default for ReplicationRetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            initial_backoff_ms: 50,
-            max_backoff_ms: 2000,
-            backoff_multiplier: 2.0,
-        }
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::{ClusterReplicationConfig, ReplicationRetryConfig};
 
 /// A replication entry representing a write operation
 #[derive(Debug, Clone, Serialize, Deserialize)]

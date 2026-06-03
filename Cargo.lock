@@ -6730,6 +6730,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -7303,6 +7304,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

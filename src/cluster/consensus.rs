@@ -38,32 +38,9 @@ use super::rpc::{
 // Re-export for external use
 pub use super::rpc::{RequestVoteResponse, RpcResult};
 
-/// Configuration for the Raft consensus module
-#[derive(Debug, Clone)]
-pub struct ConsensusConfig {
-    /// Election timeout range (min, max) in milliseconds
-    pub election_timeout_ms: (u64, u64),
-    /// Heartbeat interval in milliseconds
-    pub heartbeat_interval_ms: u64,
-    /// Maximum entries per append entries RPC
-    pub max_entries_per_request: usize,
-    /// Snapshot threshold (number of log entries before snapshot)
-    pub snapshot_threshold: u64,
-    /// Enable pre-vote to prevent disruptions from partitioned nodes
-    pub enable_pre_vote: bool,
-}
-
-impl Default for ConsensusConfig {
-    fn default() -> Self {
-        Self {
-            election_timeout_ms: (150, 300),
-            heartbeat_interval_ms: 50,
-            max_entries_per_request: 100,
-            snapshot_threshold: 10000,
-            enable_pre_vote: true,
-        }
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::ConsensusConfig;
 
 /// State of a node in the Raft protocol
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -4,6 +4,7 @@
 //! bootstrap stay in platform/root layers until those boundaries are independently extracted.
 
 pub mod cdc_config;
+pub mod cluster_config;
 pub mod llm_config;
 
 pub use cdc_config::{

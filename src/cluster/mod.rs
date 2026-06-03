@@ -119,44 +119,9 @@ pub use rpc::{
     SearchFanout,
 };
 
-/// Cluster configuration
-#[derive(Debug, Clone)]
-pub struct ClusterConfig {
-    /// Unique cluster identifier
-    pub cluster_id: String,
-    /// This node's identifier
-    pub node_id: String,
-    /// This node's advertised address
-    pub advertise_addr: String,
-    /// List of seed nodes for discovery
-    pub seed_nodes: Vec<String>,
-    /// Metadata service configuration
-    pub metadata: MetadataServiceConfig,
-    /// Node registry configuration
-    pub node_registry: NodeRegistryConfig,
-    /// Consensus configuration
-    pub consensus: ConsensusConfig,
-    /// Routing configuration
-    pub routing: RoutingConfig,
-    /// Shard configuration
-    pub shard: ShardConfig,
-}
-
-impl Default for ClusterConfig {
-    fn default() -> Self {
-        Self {
-            cluster_id: "proximadb-cluster".to_string(),
-            node_id: uuid::Uuid::new_v4().to_string(),
-            advertise_addr: "127.0.0.1:5679".to_string(),
-            seed_nodes: vec![],
-            metadata: MetadataServiceConfig::default(),
-            node_registry: NodeRegistryConfig::default(),
-            consensus: ConsensusConfig::default(),
-            routing: RoutingConfig::default(),
-            shard: ShardConfig::default(),
-        }
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::ClusterConfig;
 
 /// Main cluster manager that coordinates all distributed components
 pub struct ClusterManager {

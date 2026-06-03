@@ -57,93 +57,9 @@ use super::types::{NodeEndpoint, ServingStatus};
 // CONFIGURATION
 // ============================================================================
 
-/// Configuration for connection pool behavior
-#[derive(Debug, Clone)]
-pub struct ConnectionPoolConfig {
-    /// Maximum number of connections per node
-    pub max_connections_per_node: usize,
-
-    /// Idle timeout for connections (after which they may be closed)
-    pub idle_timeout: Duration,
-
-    /// Connection timeout for establishing new connections
-    pub connect_timeout: Duration,
-
-    /// Request timeout for individual RPC calls
-    pub request_timeout: Duration,
-
-    /// Health check interval
-    pub health_check_interval: Duration,
-
-    /// Health cache TTL (how long to cache health status)
-    pub health_cache_ttl: Duration,
-
-    /// Whether to use TLS for connections
-    pub use_tls: bool,
-
-    /// TCP keepalive interval
-    pub tcp_keepalive: Option<Duration>,
-
-    /// HTTP/2 keep-alive interval
-    pub http2_keepalive_interval: Option<Duration>,
-
-    /// HTTP/2 keep-alive timeout
-    pub http2_keepalive_timeout: Option<Duration>,
-}
-
-impl Default for ConnectionPoolConfig {
-    fn default() -> Self {
-        Self {
-            max_connections_per_node: 10,
-            idle_timeout: Duration::from_secs(300), // 5 minutes
-            connect_timeout: Duration::from_secs(5), // 5 seconds
-            request_timeout: Duration::from_secs(30), // 30 seconds
-            health_check_interval: Duration::from_secs(10), // 10 seconds
-            health_cache_ttl: Duration::from_secs(5), // 5 seconds
-            use_tls: false,
-            tcp_keepalive: Some(Duration::from_secs(60)),
-            http2_keepalive_interval: Some(Duration::from_secs(30)),
-            http2_keepalive_timeout: Some(Duration::from_secs(10)),
-        }
-    }
-}
-
-impl ConnectionPoolConfig {
-    /// Create a new configuration with custom settings
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set maximum connections per node
-    pub fn with_max_connections(mut self, max: usize) -> Self {
-        self.max_connections_per_node = max;
-        self
-    }
-
-    /// Set idle timeout
-    pub fn with_idle_timeout(mut self, timeout: Duration) -> Self {
-        self.idle_timeout = timeout;
-        self
-    }
-
-    /// Set connection timeout
-    pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
-        self.connect_timeout = timeout;
-        self
-    }
-
-    /// Set request timeout
-    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
-        self.request_timeout = timeout;
-        self
-    }
-
-    /// Enable TLS
-    pub fn with_tls(mut self, use_tls: bool) -> Self {
-        self.use_tls = use_tls;
-        self
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::ConnectionPoolConfig;
 
 // ============================================================================
 // CACHED HEALTH
