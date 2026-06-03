@@ -511,8 +511,11 @@ avx512 = []
 distributed = []
 standalone = []
 # Cluster mode - enables distributed consensus (Raft), replication, and health services
-# Used for multi-node deployments with leader election and data replication
-cluster = []
+# Used for multi-node deployments with leader election and data replication.
+# Forwards to proximadb-runtime/cluster so the `ClusterServerConfig` re-export and
+# the `MultiServerConfig::cluster_config` field (both `#[cfg(feature = "cluster")]`
+# in bootstrap_config.rs) actually compile when this feature is on.
+cluster = ["proximadb-runtime/cluster"]
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 
 # Cloud storage features (optional to avoid linking issues during testing)
