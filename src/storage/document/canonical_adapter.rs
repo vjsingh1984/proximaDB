@@ -84,7 +84,10 @@ pub fn proxima_tree_to_sql_object(tree: &ProximaTree) -> SqlObject {
     }
 }
 
-fn sql_value_to_tree_node(value: &SqlValue) -> ProximaTreeNode {
+/// Lift a legacy v1 `SqlValue` into an NF² tree node (object values become
+/// nested sub-trees; everything else a canonical leaf). Used by the document
+/// update-mutation path when applying a proto `$set` value onto `props`.
+pub fn sql_value_to_tree_node(value: &SqlValue) -> ProximaTreeNode {
     match &value.value {
         Some(sql_value::Value::ObjectValue(object)) => {
             ProximaTreeNode::Object(sql_object_to_proxima_tree(object))

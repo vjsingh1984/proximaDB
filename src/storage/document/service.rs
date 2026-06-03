@@ -38,7 +38,10 @@ use super::aggregation_extensions::LookupFetcher;
 #[cfg(feature = "canonical-document-store")]
 use super::canonical_adapter::legacy_document_to_proxima_record;
 use super::canonical_adapter::proxima_record_to_legacy_document;
-use super::canonical_adapter::{proxima_tree_to_sql_object, sql_object_to_proxima_tree};
+use super::canonical_adapter::{proxima_tree_to_sql_object, sql_value_to_tree_node};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::ProximaTreeNode;
+use proximadb_records::conversions::sql_value_to_proxima;
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
@@ -1087,19 +1090,17 @@ impl DocumentService {
             ));
         }
 
-        // Apply updates
+        // Apply updates onto the canonical props tree (TD-106 Slice 7d).
         for update in &updates {
-            if let Err(e) = self.apply_update(&mut record.document, update) {
+            if let Err(e) = self.apply_update(&mut record.props, update) {
                 self.record_update_metrics(start, true).await;
                 return Err(e);
             }
         }
 
-        // TD-106 dual-carry invariant: `apply_update` mutates the legacy
-        // `document` (SqlObject); resync the canonical `props` tree so the
-        // record persisted to the in-memory store (non-canonical mode) and read
-        // back by filter/aggregation reflects the update.
-        record.props = sql_object_to_proxima_tree(&record.document);
+        // Keep the legacy `document` edge in sync with the mutated canonical
+        // `props` until Slice 7e removes the field.
+        record.document = proxima_tree_to_sql_object(&record.props);
 
         // Increment version
         let new_version = record.version + 1;
@@ -1149,44 +1150,59 @@ impl DocumentService {
         Ok(record)
     }
 
-    /// Apply a single update operation to a document
-    fn apply_update(&self, document: &mut SqlObject, update: &DocumentUpdate) -> Result<()> {
+    /// Apply a single update operation to the canonical props tree.
+    ///
+    /// TD-106 Slice 7d: navigation/mutation is `ProximaTree`-native; the proto
+    /// `update.value` (SqlValue wire operand) is lifted to canonical at this
+    /// boundary (`$set` keeps object structure via `sql_value_to_tree_node`;
+    /// array/scalar ops lift via `sql_value_to_proxima`).
+    fn apply_update(&self, props: &mut ProximaTree, update: &DocumentUpdate) -> Result<()> {
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
         let path = &update.path;
         let value = update.value.as_ref();
 
         match UpdateOperation::try_from(update.operation).unwrap_or(UpdateOperation::Unspecified) {
             UpdateOperation::Set => {
                 if let Some(v) = value {
-                    self.set_path_value(document, path, v.clone())?;
+                    self.set_path_value(props, path, sql_value_to_tree_node(v))?;
                 }
             }
             UpdateOperation::Unset => {
-                self.unset_path(document, path)?;
+                self.unset_path(props, path)?;
             }
             UpdateOperation::Inc => {
                 if let Some(v) = value {
-                    self.increment_path(document, path, v)?;
+                    let inc = match &v.value {
+                        Some(SqlVal::Int64Value(i)) => *i as f64,
+                        Some(SqlVal::NumberValue(f)) => *f,
+                        _ => return Err(anyhow!("Increment value must be numeric")),
+                    };
+                    self.increment_path(props, path, inc)?;
                 }
             }
             UpdateOperation::Push => {
                 if let Some(v) = value {
-                    self.push_to_array(document, path, v.clone())?;
+                    self.push_to_array(props, path, sql_value_to_proxima(v))?;
                 }
             }
             UpdateOperation::Pull => {
                 if let Some(v) = value {
-                    self.pull_from_array(document, path, v)?;
+                    self.pull_from_array(props, path, &sql_value_to_proxima(v))?;
                 }
             }
             UpdateOperation::AddToSet => {
                 if let Some(v) = value {
-                    self.add_to_set(document, path, v.clone())?;
+                    self.add_to_set(props, path, sql_value_to_proxima(v))?;
                 }
             }
             UpdateOperation::Rename => {
                 if let Some(v) = value {
-                    // Value should be the new path name
-                    self.rename_path(document, path, v)?;
+                    // Value should be the new field name.
+                    let new_name = match &v.value {
+                        Some(SqlVal::StringValue(s)) => s.clone(),
+                        _ => return Err(anyhow!("New name must be a string")),
+                    };
+                    self.rename_path(props, path, &new_name)?;
                 }
             }
             UpdateOperation::Unspecified => {
@@ -1197,333 +1213,173 @@ impl DocumentService {
         Ok(())
     }
 
-    // Path manipulation helpers
+    // Path manipulation helpers (canonical ProximaTree, TD-106 Slice 7d)
 
-    /// Set a value at a JSON path
-    fn set_path_value(&self, doc: &mut SqlObject, path: &str, value: SqlValue) -> Result<()> {
-        // Parse path segments (simplified: handle dot notation)
+    /// Split `$.a.b.c` into segments; errors on an empty path.
+    fn path_segments(path: &str) -> Result<Vec<&str>> {
         let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
-
         if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
             return Err(anyhow!("Empty path"));
         }
+        Ok(parts)
+    }
 
-        // Navigate to parent and set final field
+    /// Set a node at a dotted path, creating intermediate objects as needed.
+    fn set_path_value(&self, doc: &mut ProximaTree, path: &str, node: ProximaTreeNode) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts.split_last().expect("non-empty path");
+
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - set the value
-                current.fields.insert(part.to_string(), value.clone());
-            } else {
-                // Navigate to nested object, creating if needed
-                let entry = current
-                    .fields
-                    .entry(part.to_string())
-                    .or_insert_with(|| SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                            SqlObject {
-                                fields: HashMap::new(),
-                            },
-                        )),
-                    });
-
-                // Get mutable reference to nested object
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
+        for part in parents {
+            let entry = current
+                .entry(part.to_string())
+                .or_insert_with(|| ProximaTreeNode::Object(ProximaTree::new()));
+            match entry {
+                ProximaTreeNode::Object(sub) => current = sub,
+                _ => return Err(anyhow!("Path {} is not an object", part)),
             }
         }
-
+        current.insert(last.to_string(), node);
         Ok(())
     }
 
-    /// Remove a field at a JSON path
-    fn unset_path(&self, doc: &mut SqlObject, path: &str) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Remove a field at a dotted path.
+    fn unset_path(&self, doc: &mut ProximaTree, path: &str) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts.split_last().expect("non-empty path");
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to parent
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - remove the field
-                current.fields.remove(*part);
-                return Ok(());
-            } else {
-                // Navigate to nested object
-                if let Some(entry) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                        ref mut obj,
-                    )) = entry.value
-                    {
-                        current = obj;
-                    } else {
-                        return Err(anyhow!("Path {} is not an object", part));
-                    }
-                } else {
-                    return Ok(()); // Path doesn't exist, nothing to unset
-                }
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Ok(()), // path doesn't exist, nothing to unset
             }
         }
-
+        current.remove(*last);
         Ok(())
     }
 
-    /// Increment a numeric value at a path
-    fn increment_path(&self, doc: &mut SqlObject, path: &str, value: &SqlValue) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Increment a numeric leaf at a dotted path (creating it if absent).
+    fn increment_path(&self, doc: &mut ProximaTree, path: &str, inc: f64) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts.split_last().expect("non-empty path");
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Get the increment value
-        let inc = match &value.value {
-            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => *i as f64,
-            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => *f,
-            _ => return Err(anyhow!("Increment value must be numeric")),
-        };
-
-        // Navigate to the field and increment
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - increment the value
-                if let Some(field) = current.fields.get_mut(*part) {
-                    match &mut field.value {
-                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(v)) => {
-                            *v += inc as i64;
-                        }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(v)) => {
-                            *v += inc;
-                        }
-                        _ => return Err(anyhow!("Field at path {} is not numeric", path)),
-                    }
-                } else {
-                    // Initialize to increment value
-                    current.fields.insert(
-                        part.to_string(),
-                        SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                inc,
-                            )),
-                        },
-                    );
-                }
-                return Ok(());
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Err(anyhow!("Path {} does not exist", part));
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Err(anyhow!("Path {} does not exist", part)),
             }
         }
-
+        match current.get_mut(*last) {
+            Some(ProximaTreeNode::Value(ProximaValue::Int64(v))) => *v += inc as i64,
+            Some(ProximaTreeNode::Value(ProximaValue::Float64(v))) => *v += inc,
+            Some(_) => return Err(anyhow!("Field at path {} is not numeric", path)),
+            None => {
+                current.insert(
+                    last.to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Float64(inc)),
+                );
+            }
+        }
         Ok(())
     }
 
-    /// Push a value to an array at a path
-    fn push_to_array(&self, doc: &mut SqlObject, path: &str, value: SqlValue) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Push a value onto an array leaf at a dotted path (creating it if absent).
+    fn push_to_array(&self, doc: &mut ProximaTree, path: &str, value: ProximaValue) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts.split_last().expect("non-empty path");
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to the field and push
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - push to array
-                if let Some(field) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                        ref mut arr,
-                    )) = field.value
-                    {
-                        arr.values.push(value);
-                        return Ok(());
-                    } else {
-                        return Err(anyhow!("Field at path {} is not an array", path));
-                    }
-                } else {
-                    // Initialize as new array with single value
-                    current.fields.insert(
-                        part.to_string(),
-                        SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                                crate::proto::proximadb_v1::SqlArray {
-                                    values: vec![value],
-                                },
-                            )),
-                        },
-                    );
-                    return Ok(());
-                }
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Err(anyhow!("Path {} does not exist", part));
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Err(anyhow!("Path {} does not exist", part)),
             }
         }
-
+        match current.get_mut(*last) {
+            Some(ProximaTreeNode::Value(ProximaValue::Array(arr))) => arr.push(value),
+            Some(_) => return Err(anyhow!("Field at path {} is not an array", path)),
+            None => {
+                current.insert(
+                    last.to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Array(vec![value])),
+                );
+            }
+        }
         Ok(())
     }
 
-    /// Pull (remove) a value from an array at a path
-    fn pull_from_array(&self, doc: &mut SqlObject, path: &str, value: &SqlValue) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Pull (remove) matching values from an array leaf at a dotted path.
+    fn pull_from_array(&self, doc: &mut ProximaTree, path: &str, value: &ProximaValue) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts.split_last().expect("non-empty path");
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to the field and pull
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                if let Some(field) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                        ref mut arr,
-                    )) = field.value
-                    {
-                        arr.values.retain(|v| v != value);
-                        return Ok(());
-                    } else {
-                        return Err(anyhow!("Field at path {} is not an array", path));
-                    }
-                }
-                return Ok(()); // Field doesn't exist
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Ok(()); // Path doesn't exist
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Ok(()), // path doesn't exist
             }
         }
-
+        match current.get_mut(*last) {
+            Some(ProximaTreeNode::Value(ProximaValue::Array(arr))) => arr.retain(|v| v != value),
+            Some(_) => return Err(anyhow!("Field at path {} is not an array", path)),
+            None => {} // field doesn't exist
+        }
         Ok(())
     }
 
-    /// Add a value to a set (array with unique values) at a path
-    fn add_to_set(&self, doc: &mut SqlObject, path: &str, value: SqlValue) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Add a value to a set (array with unique values) at a dotted path.
+    fn add_to_set(&self, doc: &mut ProximaTree, path: &str, value: ProximaValue) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts.split_last().expect("non-empty path");
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to the field and add if not exists
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                if let Some(field) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                        ref mut arr,
-                    )) = field.value
-                    {
-                        // Only add if not already present
-                        if !arr.values.contains(&value) {
-                            arr.values.push(value);
-                        }
-                        return Ok(());
-                    } else {
-                        return Err(anyhow!("Field at path {} is not an array", path));
-                    }
-                } else {
-                    // Initialize as new array with single value
-                    current.fields.insert(
-                        part.to_string(),
-                        SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                                crate::proto::proximadb_v1::SqlArray {
-                                    values: vec![value],
-                                },
-                            )),
-                        },
-                    );
-                    return Ok(());
-                }
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Err(anyhow!("Path {} does not exist", part));
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Err(anyhow!("Path {} does not exist", part)),
             }
         }
-
+        match current.get_mut(*last) {
+            Some(ProximaTreeNode::Value(ProximaValue::Array(arr))) => {
+                if !arr.contains(&value) {
+                    arr.push(value);
+                }
+            }
+            Some(_) => return Err(anyhow!("Field at path {} is not an array", path)),
+            None => {
+                current.insert(
+                    last.to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Array(vec![value])),
+                );
+            }
+        }
         Ok(())
     }
 
-    /// Rename a field at a path
-    fn rename_path(&self, doc: &mut SqlObject, old_path: &str, new_name: &SqlValue) -> Result<()> {
-        // Get new name from SqlValue
-        let new_field_name = match &new_name.value {
-            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-            _ => return Err(anyhow!("New name must be a string")),
-        };
+    /// Rename a field at a dotted path. `new_name` is the new (leaf) field name.
+    fn rename_path(&self, doc: &mut ProximaTree, old_path: &str, new_name: &str) -> Result<()> {
+        let parts = Self::path_segments(old_path)?;
+        let (last, parents) = parts.split_last().expect("non-empty path");
 
-        let parts: Vec<&str> = old_path.trim_start_matches("$.").split('.').collect();
-
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to parent and rename
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - rename the field
-                if let Some(value) = current.fields.remove(*part) {
-                    current.fields.insert(new_field_name, value);
-                }
-                return Ok(());
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Ok(()); // Path doesn't exist
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Ok(()), // path doesn't exist
             }
         }
-
+        if let Some(node) = current.remove(*last) {
+            current.insert(new_name.to_string(), node);
+        }
         Ok(())
     }
 
@@ -2723,12 +2579,13 @@ mod tests {
             Some(sql_value::Value::StringValue("Alice".to_string()))
         );
 
-        // TD-106 dual-carry invariant: after an update the canonical `props` tree
-        // must mirror the mutated `document` (filter/aggregation read `props`).
+        // TD-106 dual-carry invariant: Slice 7d mutates the canonical `props`
+        // tree, and the legacy `document` edge is derived from it — they must
+        // stay in sync after update_document.
         assert_eq!(
-            fetched.props,
-            sql_object_to_proxima_tree(&fetched.document),
-            "props must stay in sync with document after update_document"
+            fetched.document,
+            proxima_tree_to_sql_object(&fetched.props),
+            "document must stay derived from the mutated props after update_document"
         );
         match fetched.props.get("email") {
             Some(proximadb_records::ProximaTreeNode::Value(
