@@ -7,7 +7,6 @@
 // - Query planning and optimization
 
 pub mod filter;
-pub mod path_parser;
 
 use anyhow::Result;
 use jsonpath_rust::JsonPathQuery;
