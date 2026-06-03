@@ -355,8 +355,9 @@ impl IndexManager {
 
     /// Map a canonical scalar leaf to an `IndexValue`. Objects/arrays/maps and
     /// non-scalar variants are not directly indexable (matches the prior
-    /// `SqlValue` scalar-only behavior).
-    fn proxima_value_to_index_value(value: &ProximaValue) -> Option<IndexValue> {
+    /// `SqlValue` scalar-only behavior). Shared with the query-operand path so
+    /// index build and index query agree on the canonical mapping (TD-106).
+    pub fn proxima_value_to_index_value(value: &ProximaValue) -> Option<IndexValue> {
         match value {
             ProximaValue::Null => Some(IndexValue::Null),
             ProximaValue::Boolean(b) => Some(IndexValue::Bool(*b)),

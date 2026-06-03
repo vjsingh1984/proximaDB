@@ -8,7 +8,7 @@
 
 pub mod filter;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
 use serde_json::Value as JsonValue;
 use tracing::debug;
@@ -17,7 +17,7 @@ use proximadb_document::DocumentRecordKey;
 
 use proximadb_data_model::ProximaValue;
 use proximadb_records::ProximaTree;
-use proximadb_records::conversions::json_to_proxima;
+use proximadb_records::conversions::{json_to_proxima, sql_value_to_proxima};
 
 use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
 use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, SortField, SortOrder};
@@ -138,7 +138,10 @@ impl DocumentQueryExecutor {
             DocFilterOperator::Eq => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Eq(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None
@@ -147,7 +150,10 @@ impl DocumentQueryExecutor {
             DocFilterOperator::Gt => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Gt(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None
@@ -156,7 +162,10 @@ impl DocumentQueryExecutor {
             DocFilterOperator::Gte => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Gte(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None
@@ -165,7 +174,10 @@ impl DocumentQueryExecutor {
             DocFilterOperator::Lt => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Lt(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None
@@ -174,7 +186,10 @@ impl DocumentQueryExecutor {
             DocFilterOperator::Lte => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Lte(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None

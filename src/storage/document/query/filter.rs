@@ -3,7 +3,6 @@
 // Evaluates filter conditions against documents at query time.
 // Used for conditions that cannot be accelerated by indexes.
 
-use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
 use proximadb_data_model::ProximaValue;
 use proximadb_records::ProximaTree;
@@ -12,13 +11,9 @@ use regex::Regex;
 use serde_json::Value as JsonValue;
 
 use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
-use crate::proto::proximadb_v1::{
-    DocFilterCondition, DocFilterOperator, DocumentFilter, SqlValue,
-    sql_value::Value as SqlValueVariant,
-};
+use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, DocumentFilter};
 
 use super::super::DocumentRecord;
-use super::super::indexes::IndexValue;
 
 /// Filter evaluator for document queries
 pub struct FilterEvaluator {
@@ -309,19 +304,6 @@ impl FilterEvaluator {
             _ => false,
         }
     }
-
-    /// Convert SqlValue to IndexValue for index queries
-    pub fn sql_value_to_index_value(&self, value: &SqlValue) -> Result<IndexValue> {
-        match &value.value {
-            Some(SqlValueVariant::NullValue(_)) => Ok(IndexValue::Null),
-            Some(SqlValueVariant::BoolValue(b)) => Ok(IndexValue::Bool(*b)),
-            Some(SqlValueVariant::Int64Value(i)) => Ok(IndexValue::Int(*i)),
-            Some(SqlValueVariant::NumberValue(f)) => Ok(IndexValue::Float(*f)),
-            Some(SqlValueVariant::StringValue(s)) => Ok(IndexValue::String(s.clone())),
-            Some(SqlValueVariant::BytesValue(b)) => Ok(IndexValue::Bytes(b.clone())),
-            _ => Err(anyhow!("Cannot convert complex value to index value")),
-        }
-    }
 }
 
 impl Default for FilterEvaluator {
@@ -369,18 +351,6 @@ mod tests {
             !evaluator
                 .proxima_values_equal(&ProximaValue::String("42".into()), &ProximaValue::Int64(42))
         );
-    }
-
-    #[test]
-    fn test_sql_value_to_index_value() {
-        let evaluator = FilterEvaluator::new();
-
-        let value = SqlValue {
-            value: Some(SqlValueVariant::StringValue("test".to_string())),
-        };
-
-        let index_value = evaluator.sql_value_to_index_value(&value).unwrap();
-        assert!(matches!(index_value, IndexValue::String(s) if s == "test"));
     }
 
     #[test]
