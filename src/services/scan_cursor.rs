@@ -99,20 +99,16 @@ impl ScanCursor {
 }
 
 /// Stable-sort `records` by `(updated_at_ns, oid)`, drop everything at
-/// or before the inbound `cursor` tuple, take the first `limit`
-/// records, and emit a next cursor when the page is FULL (i.e. more
-/// records may exist). Returns `(page, next_cursor)`.
-///
-/// The caller passes `now_ns` (wall-clock) so tests can pin the epoch
-/// and so the embedded path can use the same clock as the rest of
-/// the server.
-pub fn apply_scan_cursor(
+/// or before the inbound `cursor` tuple, and take the first `limit`
+/// records. This is the LEGACY full-materialization path: it sorts and
+/// filters the entire input. The TD-099(3d) push-down path skips this —
+/// storage returns an already-ordered, already-filtered, already-limited
+/// page — and calls [`derive_next_cursor`] directly.
+pub fn select_page(
     mut records: Vec<ProximaRecord>,
     cursor: Option<&ScanCursor>,
     limit: usize,
-    collection_id: &str,
-    now_ns: i64,
-) -> (Vec<ProximaRecord>, Option<ScanCursor>) {
+) -> Vec<ProximaRecord> {
     records
         .sort_by(|a, b| (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str())));
 
@@ -128,9 +124,22 @@ pub fn apply_scan_cursor(
     };
 
     let truncate_at = filtered.len().min(limit);
-    let page: Vec<ProximaRecord> = filtered.into_iter().take(truncate_at).collect();
+    filtered.into_iter().take(truncate_at).collect()
+}
 
-    let next_cursor = if page.len() == limit {
+/// Emit a next cursor when `page` is FULL (i.e. more records may exist), else
+/// `None`. Used by BOTH the legacy and push-down paths. Must NOT sort or filter
+/// — `page` is already the final, ordered page.
+///
+/// The caller passes `now_ns` (wall-clock) so tests can pin the epoch and so the
+/// embedded path uses the same clock as the rest of the server.
+pub fn derive_next_cursor(
+    page: &[ProximaRecord],
+    limit: usize,
+    collection_id: &str,
+    now_ns: i64,
+) -> Option<ScanCursor> {
+    if page.len() == limit {
         page.last().map(|last| ScanCursor {
             collection_id: collection_id.to_string(),
             last_updated_at_ns: last.updated_at_ns,
@@ -139,9 +148,22 @@ pub fn apply_scan_cursor(
         })
     } else {
         None
-    };
+    }
+}
 
-    (page, next_cursor)
+/// Legacy convenience wrapper: sort+filter+take, then derive the next cursor.
+/// Retained for non-pushed callers and existing tests. New paginated callers use
+/// the storage push-down + [`derive_next_cursor`] instead.
+pub fn apply_scan_cursor(
+    records: Vec<ProximaRecord>,
+    cursor: Option<&ScanCursor>,
+    limit: usize,
+    collection_id: &str,
+    now_ns: i64,
+) -> (Vec<ProximaRecord>, Option<ScanCursor>) {
+    let page = select_page(records, cursor, limit);
+    let next = derive_next_cursor(&page, limit, collection_id, now_ns);
+    (page, next)
 }
 
 #[cfg(test)]
@@ -155,6 +177,46 @@ mod tests {
             last_oid: "rec-077".to_string(),
             epoch_ns: 1_700_000_000_000_000_000,
         }
+    }
+
+    fn rec(oid: &str, updated_at_ns: i64) -> ProximaRecord {
+        ProximaRecord {
+            oid: oid.to_string(),
+            updated_at_ns,
+            ..Default::default()
+        }
+    }
+
+    fn oids(records: &[ProximaRecord]) -> Vec<String> {
+        records.iter().map(|r| r.oid.clone()).collect()
+    }
+
+    #[test]
+    fn select_page_plus_derive_next_cursor_equals_apply_scan_cursor() {
+        let recs = vec![rec("c", 30), rec("a", 10), rec("b", 20), rec("d", 40)];
+        let cur = ScanCursor {
+            collection_id: "col".to_string(),
+            last_updated_at_ns: 10,
+            last_oid: "a".to_string(),
+            epoch_ns: 0,
+        };
+        let now = 999;
+
+        // Wrapper must equal the split it now delegates to.
+        let (page_w, next_w) = apply_scan_cursor(recs.clone(), Some(&cur), 2, "col", now);
+        let page_s = select_page(recs, Some(&cur), 2);
+        let next_s = derive_next_cursor(&page_s, 2, "col", now);
+        assert_eq!(oids(&page_w), oids(&page_s));
+        assert_eq!(next_w, next_s);
+
+        // Concrete: after (10,"a"), limit 2 → [b, c]; full page → cursor at "c".
+        assert_eq!(oids(&page_s), vec!["b".to_string(), "c".to_string()]);
+        let n = next_s.expect("a full page must emit a next cursor");
+        assert_eq!((n.last_updated_at_ns, n.last_oid.as_str()), (30, "c"));
+
+        // Short page → no next cursor.
+        let short = select_page(vec![rec("a", 10)], None, 5);
+        assert!(derive_next_cursor(&short, 5, "col", now).is_none());
     }
 
     #[test]

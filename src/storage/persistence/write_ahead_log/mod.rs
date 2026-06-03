@@ -2921,6 +2921,25 @@ impl WriteAheadLogManager {
         }
     }
 
+    /// Paginated, deduped, time-ordered scan of a collection's unflushed records
+    /// (TD-099(3d) push-down). See
+    /// [`WALBehaviorWrapper::stream_unflushed_records`]. `after` is the raw
+    /// `(last_updated_at_ns, last_oid)` cursor tuple.
+    pub async fn stream_unflushed_records(
+        &self,
+        collection_id: &str,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&proximadb_records::ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        wal_behavior
+            .stream_unflushed_records(collection_id, after, limit, predicate, now_ns)
+            .await
+    }
+
     /// Read all vector batches for a collection (modern API)
     pub async fn read_all_batches(
         &self,

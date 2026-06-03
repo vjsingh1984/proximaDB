@@ -854,6 +854,29 @@ impl WALBehaviorWrapper {
         Ok(vectors)
     }
 
+    /// Paginated, deduped, time-ordered scan of a collection's unflushed records
+    /// (TD-099(3d) push-down). Returns up to `limit` records with canonical key
+    /// `(updated_at_ns, oid)` strictly greater than `after`, in ascending order,
+    /// passing `predicate`, excluding TTL-expired-at-`now_ns`. Byte-identical to
+    /// `get_collection_vectors` + sort + cursor-filter + take, but O(log d +
+    /// limit) per page once the per-collection scan index is warm.
+    ///
+    /// `after` is the raw `(last_updated_at_ns, last_oid)` cursor tuple — kept
+    /// protocol-agnostic so the storage layer stays free of the `ScanCursor`
+    /// codec (and reusable for future predicate push-downs).
+    pub async fn stream_unflushed_records(
+        &self,
+        collection_id: &str,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Result<Vec<ProximaRecord>> {
+        self.inner
+            .scan_collection_paginated(collection_id, after, limit, predicate, now_ns)
+            .await
+    }
+
     /// Get current size in bytes (with actual vector data size calculation)
     pub async fn size_bytes(&self) -> usize {
         // Direct access to GlobalPartitionedMemtable
