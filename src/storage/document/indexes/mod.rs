@@ -166,7 +166,7 @@ impl IndexManager {
 
             // Update full-text index
             if let Some(ref ft_index) = collection_indexes.fulltext_index {
-                ft_index.index_document(projection_key, &document.document)?;
+                ft_index.index_document(projection_key, &document.props)?;
             }
         }
 
