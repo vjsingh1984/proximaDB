@@ -276,6 +276,9 @@ impl CollectionPartition {
         self.vector_count += vector_count;
         self.batch_count += 1;
 
+        // Invalidate the cached scan projection — rebuilt lazily on next read.
+        self.scan_index = None;
+
         Ok(())
     }
 
@@ -378,6 +381,11 @@ impl CollectionPartition {
         self.vector_count = self.vector_count.saturating_sub(cleared_count);
         self.total_size = self.total_size.saturating_sub(removed_size);
         // No longer tracking sequences
+
+        // Removed batches invalidate any locators in the cached scan projection.
+        if cleared_count > 0 {
+            self.scan_index = None;
+        }
 
         cleared_count
     }
@@ -1352,6 +1360,8 @@ impl GlobalPartitionedMemtable {
             for batch in partition.wal_batches.values_mut() {
                 batch.is_flushed = true;
             }
+            // Flushed batches leave the unflushed scan view — invalidate.
+            partition.scan_index = None;
         }
         Ok(())
     }
@@ -1377,6 +1387,9 @@ impl GlobalPartitionedMemtable {
                     partition.vector_id_index.remove(&vector_record.oid);
                 }
             }
+
+            // Removed batch invalidates cached scan locators.
+            partition.scan_index = None;
 
             // Update global metrics
             let mut metrics = self.metrics.write().await;
@@ -1542,6 +1555,7 @@ impl GlobalPartitionedMemtable {
             for batch in partition.wal_batches.values_mut() {
                 batch.is_flushed = true;
             }
+            partition.scan_index = None;
             Ok(())
         } else {
             Err(anyhow::anyhow!("Collection not found"))
@@ -2019,6 +2033,127 @@ mod tests {
             indexed.iter().all(|r| r.oid != "z"),
             "TTL-expired record must be excluded"
         );
+    }
+
+    // ---- Slice B: lazy-cache invalidation ----
+
+    /// Authoritative oracle: `get_collection_vectors` (dedup+TTL) re-sorted by
+    /// the canonical key. The indexed scan must equal this after every mutation.
+    async fn oracle(m: &GlobalPartitionedMemtable, c: &str) -> Vec<String> {
+        let mut legacy = m.get_collection_vectors(c).await.unwrap();
+        legacy.sort_by(|a, b| {
+            (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
+        });
+        oids(&legacy)
+    }
+
+    #[tokio::test]
+    async fn index_invalidated_on_insert() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        m.add_wal_batch(c, batch_of(vec![rec_at("a", 10, 1, None)]))
+            .await
+            .unwrap();
+        let p1 = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&p1), vec!["a".to_string()]); // builds the index
+        // A later insert must invalidate the cached projection.
+        m.add_wal_batch(c, batch_of(vec![rec_at("b", 20, 1, None)]))
+            .await
+            .unwrap();
+        let p2 = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&p2), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn index_invalidated_on_flush() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        m.add_wal_batch(c, batch_of(vec![rec_at("a", 10, 1, None)]))
+            .await
+            .unwrap();
+        let _ = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap(); // build
+        m.mark_all_batches_flushed(c).await.unwrap(); // invalidate (content unchanged)
+        let cleared = m.clear_flushed_batches(c).await.unwrap(); // remove + invalidate
+        assert!(cleared >= 1);
+        let p = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        assert!(p.is_empty(), "cleared records must not appear in scan");
+    }
+
+    #[tokio::test]
+    async fn scan_consistent_after_interleaved_insert_flush_remove() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        let now = test_now_ns();
+
+        // insert a,b
+        m.add_wal_batch(
+            c,
+            batch_of(vec![rec_at("a", 10, 1, None), rec_at("b", 20, 1, None)]),
+        )
+        .await
+        .unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+
+        // supersede a with v2
+        m.add_wal_batch(c, batch_of(vec![rec_at("a", 30, 2, None)]))
+            .await
+            .unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+
+        // flush + clear → empty
+        m.mark_all_batches_flushed(c).await.unwrap();
+        m.clear_flushed_batches(c).await.unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+        assert!(got.is_empty());
+
+        // insert d (capture its batch key), then c
+        let dkey = {
+            let b = batch_of(vec![rec_at("d", 50, 1, None)]);
+            let k = b.batch_id.to_base62();
+            m.add_wal_batch(c, b).await.unwrap();
+            k
+        };
+        m.add_wal_batch(c, batch_of(vec![rec_at("c", 40, 1, None)]))
+            .await
+            .unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+
+        // remove d's batch → only c remains
+        m.remove_batch(c, &dkey).await.unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+        assert_eq!(oids(&got), vec!["c".to_string()]);
     }
 
     fn make_proxima_record(
