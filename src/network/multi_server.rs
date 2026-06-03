@@ -297,9 +297,17 @@ impl MultiServer {
         let services = self.shared_services.clone();
         let mut handles = Vec::new();
 
-        // Holds port-backed service objects created inside the gRPC block so the
-        // REST server (a sibling block) can also use them.
-        let mut rest_ports_opt: Option<crate::network::rest::server::RestServerPorts> = None;
+        // TD-104 S1: always carry the runtime port-based `api_handlers` so the
+        // REST server uses it for collection/vector dispatch even when gRPC is
+        // disabled (the document/graph/observability route ports are filled in
+        // below when the gRPC block builds them).
+        let mut rest_ports_opt: Option<crate::network::rest::server::RestServerPorts> =
+            Some(crate::network::rest::server::RestServerPorts {
+                doc_port: None,
+                graph_port: None,
+                obs_port: None,
+                api_handlers: services.api_handlers.clone(),
+            });
 
         // Start gRPC server on port 5679 if configured
         if self.config.grpc_config.enable_grpc {
@@ -464,9 +472,9 @@ impl MultiServer {
 
             // Clone ports for REST server before they are consumed by the gRPC factory
             rest_ports_opt = Some(crate::network::rest::server::RestServerPorts {
-                doc_port: doc_port.clone(),
-                graph_port: graph_port.clone(),
-                obs_port: obs_port.clone(),
+                doc_port: Some(doc_port.clone()),
+                graph_port: Some(graph_port.clone()),
+                obs_port: Some(obs_port.clone()),
                 api_handlers: self.shared_services.api_handlers.clone(),
             });
 
@@ -841,9 +849,9 @@ impl MultiServer {
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service.clone()),
             );
             crate::network::rest::server::RestServerPorts {
-                doc_port,
-                graph_port,
-                obs_port,
+                doc_port: Some(doc_port),
+                graph_port: Some(graph_port),
+                obs_port: Some(obs_port),
                 api_handlers: services.api_handlers.clone(),
             }
         };

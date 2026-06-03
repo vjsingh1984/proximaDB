@@ -54,10 +54,14 @@ pub struct RestServer {
 /// served by the port-backed handlers from `proximadb-api` instead of the
 /// legacy root-crate handlers.
 pub struct RestServerPorts {
-    pub doc_port: std::sync::Arc<dyn proximadb_runtime::DocumentPort>,
-    pub graph_port: std::sync::Arc<dyn proximadb_runtime::GraphPort>,
-    pub obs_port: std::sync::Arc<dyn proximadb_runtime::ObservabilityPort>,
-    /// Port-backed handler for collection/vector routes (Phase 9.10).
+    /// Document/graph/observability route ports. Optional: TD-104 S1 lets the
+    /// multi-port REST server carry `api_handlers` even when these are not built
+    /// (e.g. gRPC disabled), so collection/vector dispatch always reaches the
+    /// runtime port-based handler instead of falling back to the root handler.
+    pub doc_port: Option<std::sync::Arc<dyn proximadb_runtime::DocumentPort>>,
+    pub graph_port: Option<std::sync::Arc<dyn proximadb_runtime::GraphPort>>,
+    pub obs_port: Option<std::sync::Arc<dyn proximadb_runtime::ObservabilityPort>>,
+    /// Port-backed handler for collection/vector routes (Phase 9.10). Always set.
     pub api_handlers: std::sync::Arc<dyn proximadb_runtime::ApiHandlersPort>,
 }
 
@@ -438,8 +442,15 @@ impl RestServer {
             base_state = base_state.with_external_collection_service(external);
         }
         let state = if let Some(p) = ports {
-            let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
-            s.with_api_handlers(p.api_handlers)
+            // Always wire the runtime port-based api_handlers (TD-104 S1); the
+            // document/graph/observability route ports are mounted only when present.
+            let mut s = base_state.with_api_handlers(p.api_handlers);
+            if let (Some(doc_port), Some(graph_port), Some(obs_port)) =
+                (p.doc_port, p.graph_port, p.obs_port)
+            {
+                s = s.with_ports(doc_port, graph_port, obs_port);
+            }
+            s
         } else {
             base_state
         };
@@ -720,8 +731,15 @@ impl RestServer {
             base_state = base_state.with_external_collection_service(external);
         }
         let state = if let Some(p) = ports {
-            let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
-            s.with_api_handlers(p.api_handlers)
+            // Always wire the runtime port-based api_handlers (TD-104 S1); the
+            // document/graph/observability route ports are mounted only when present.
+            let mut s = base_state.with_api_handlers(p.api_handlers);
+            if let (Some(doc_port), Some(graph_port), Some(obs_port)) =
+                (p.doc_port, p.graph_port, p.obs_port)
+            {
+                s = s.with_ports(doc_port, graph_port, obs_port);
+            }
+            s
         } else {
             base_state
         };
@@ -812,9 +830,7 @@ impl RestServer {
         let mut router = base_router.layer(tenant_layer);
         if let Some(auth) = auth_layer {
             router = router.layer(auth);
-            tracing::info!(
-                "🔒 Unified-port REST auth: ENABLED (auth_middleware_unified attached)"
-            );
+            tracing::info!("🔒 Unified-port REST auth: ENABLED (auth_middleware_unified attached)");
         } else {
             tracing::info!(
                 "🔓 Unified-port REST auth: DISABLED (no security coordinator supplied)"
