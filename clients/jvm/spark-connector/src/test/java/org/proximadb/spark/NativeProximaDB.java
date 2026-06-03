@@ -33,7 +33,18 @@ public final class NativeProximaDB {
         // utility class; not instantiable
     }
 
-    /** Fetch the table schema. Scaffold returns {@code {"type":"struct","fields":[]}}. */
+    /**
+     * Bootstrap the embedded ProximaDB instance the JNI shim wraps.
+     * MUST be called exactly once per JVM process before any other
+     * native method below. Returns {@code true} on success,
+     * {@code false} if it was already initialized OR if the embedded
+     * DB construction failed. Set-once-strict: a second
+     * {@code initialize(differentDir)} returns false rather than
+     * silently reconfiguring.
+     */
+    public static native boolean initialize(String dataDir);
+
+    /** Fetch the table schema. Returns {@code {"error":"..."}} JSON envelope on failure. */
     public static native String getTableSchema(String tableName);
 
     /**

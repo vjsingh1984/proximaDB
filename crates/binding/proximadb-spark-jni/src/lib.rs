@@ -42,15 +42,71 @@
 
 pub mod jni_handle;
 
+use std::sync::Arc;
+use std::sync::OnceLock;
+
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jbyteArray, jint, jlong, jstring};
+use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jbyteArray, jint, jlong, jstring};
 
 use proximadb::connectors::spark::{
-    jni_abort_writer, jni_close_partition_reader, jni_commit_writer, jni_create_data_writer,
-    jni_create_partition_reader, jni_get_table_schema, jni_plan_input_partitions,
-    jni_read_next_batch, jni_write_batch,
+    SparkDataWriter, SparkPartitionReader, spark_abort_writer, spark_close_partition_reader,
+    spark_commit_writer, spark_create_data_writer, spark_create_partition_reader,
+    spark_get_table_schema, spark_plan_input_partitions, spark_read_next_batch,
+    spark_write_batch,
 };
+use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+
+/// Process-singleton embedded database. Set once by
+/// `Java_..._initialize`; read by every other JNI wrapper. Tests
+/// construct their own `EmbeddedProximaDB` directly and call the
+/// pure-Rust `spark_*` impls — they do NOT touch this singleton.
+///
+/// Holds `Arc<EmbeddedProximaDB>` rather than `EmbeddedProximaDB`
+/// directly so the JNI wrappers can clone the Arc cheaply per call
+/// without contending on the OnceLock.
+static EMBEDDED: OnceLock<Arc<EmbeddedProximaDB>> = OnceLock::new();
+
+/// Get a clone of the embedded singleton's Arc handle. Returns `None`
+/// if `initialize` has never been called.
+fn embedded() -> Option<Arc<EmbeddedProximaDB>> {
+    EMBEDDED.get().cloned()
+}
+
+/// JNI export: bootstrap the embedded database. Java callers MUST call
+/// `initialize(dataDir)` exactly once before any other native method;
+/// returns `true` on success, `false` if it's already been called
+/// (set-once-strict: a second call with a DIFFERENT data_dir is a hard
+/// programming error, but we return false instead of panicking
+/// because JNI panics tear down the JVM).
+///
+/// Java: `static native boolean initialize(String dataDir);`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_initialize<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    data_dir: JString<'local>,
+) -> jboolean {
+    let dir = jstring_to_string(&mut env, data_dir);
+    if dir.is_empty() {
+        return JNI_FALSE;
+    }
+    if EMBEDDED.get().is_some() {
+        // Already initialized — second call is a no-op and returns
+        // false so callers can detect dup-init in tests.
+        return JNI_FALSE;
+    }
+    let mut config = EmbeddedConfig::for_low_memory(&dir);
+    config.enable_wal = true;
+    let db = match EmbeddedProximaDB::new(config) {
+        Ok(db) => db,
+        Err(_) => return JNI_FALSE,
+    };
+    match EMBEDDED.set(Arc::new(db)) {
+        Ok(()) => JNI_TRUE,
+        Err(_) => JNI_FALSE,
+    }
+}
 
 /// Read a `JString` argument into an owned Rust `String`. Falls back to
 /// an empty string on a JVM-level decode error (e.g. invalid UTF-16
@@ -67,6 +123,16 @@ fn string_to_jstring<'local>(env: &mut JNIEnv<'local>, s: String) -> jstring {
     env.new_string(s)
         .map(|js| js.into_raw())
         .unwrap_or(std::ptr::null_mut())
+}
+
+/// Throw a `java.lang.RuntimeException` and return — used by JNI
+/// wrappers that hit a `SparkError` they can't silently swallow
+/// (writes, commits, malformed handles). Never panics; logs internally
+/// on JNI failure since there's nothing safe to do at that point.
+fn throw_runtime_exception<'local>(env: &mut JNIEnv<'local>, msg: String) {
+    if env.throw_new("java/lang/RuntimeException", &msg).is_err() {
+        eprintln!("proximadb-spark-jni: failed to throw java.lang.RuntimeException: {msg}");
+    }
 }
 
 /// JNI export wrapping [`jni_get_table_schema`].
@@ -99,7 +165,11 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_getTableSchema<'
     table_name: JString<'local>,
 ) -> jstring {
     let table_name = jstring_to_string(&mut env, table_name);
-    let schema_json = jni_get_table_schema(&table_name);
+    let schema_json = match embedded() {
+        Some(db) => spark_get_table_schema(&db, &table_name),
+        None => r#"{"error":"not initialized — call NativeProximaDB.initialize(dataDir) first"}"#
+            .to_string(),
+    };
     string_to_jstring(&mut env, schema_json)
 }
 
@@ -118,7 +188,10 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_planInputPartiti
 ) -> jstring {
     let table = jstring_to_string(&mut env, table_name);
     let filters = jstring_to_string(&mut env, filters_json);
-    let partitions_json = jni_plan_input_partitions(&table, &filters, num_partitions);
+    let partitions_json = match embedded() {
+        Some(db) => spark_plan_input_partitions(&db, &table, &filters, num_partitions),
+        None => "[]".to_string(),
+    };
     string_to_jstring(&mut env, partitions_json)
 }
 
@@ -132,7 +205,13 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_createPartitionR
     partition_json: JString<'local>,
 ) -> jlong {
     let partition = jstring_to_string(&mut env, partition_json);
-    jni_create_partition_reader(&partition)
+    match spark_create_partition_reader(&partition) {
+        Ok(reader) => jni_handle::leak::<SparkPartitionReader>(reader),
+        Err(e) => {
+            throw_runtime_exception(&mut env, format!("createPartitionReader: {e}"));
+            0
+        }
+    }
 }
 
 /// JNI export wrapping [`jni_read_next_batch`].
@@ -144,11 +223,37 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_createPartitionR
 /// pointer (Java sees a null byte[]).
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_readNextBatch<'local>(
-    env: JNIEnv<'local>,
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     reader_handle: jlong,
 ) -> jbyteArray {
-    let bytes = jni_read_next_batch(reader_handle);
+    let Some(db) = embedded() else {
+        throw_runtime_exception(
+            &mut env,
+            "readNextBatch: not initialized — call initialize(dataDir) first".to_string(),
+        );
+        return std::ptr::null_mut();
+    };
+    // SAFETY: caller (Java) guarantees the handle was produced by
+    // createPartitionReader and not yet closed; the JNI ABI is single-
+    // threaded per Spark task so no concurrent borrow / take.
+    let reader = match unsafe { jni_handle::borrow_mut::<SparkPartitionReader>(reader_handle) } {
+        Some(r) => r,
+        None => {
+            throw_runtime_exception(
+                &mut env,
+                "readNextBatch: null reader handle".to_string(),
+            );
+            return std::ptr::null_mut();
+        }
+    };
+    let bytes = match spark_read_next_batch(&db, reader) {
+        Ok(b) => b,
+        Err(e) => {
+            throw_runtime_exception(&mut env, format!("readNextBatch: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
     match env.byte_array_from_slice(&bytes) {
         Ok(arr) => arr.into_raw(),
         Err(_) => std::ptr::null_mut(),
@@ -164,7 +269,12 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_closePartitionRe
     _class: JClass<'local>,
     reader_handle: jlong,
 ) {
-    jni_close_partition_reader(reader_handle);
+    // SAFETY: Java side guarantees one close call per handle (matches
+    // Spark `PartitionReader.close()` ABI). Null handles are silently
+    // ignored — double-close is idempotent.
+    if let Some(reader) = unsafe { jni_handle::take::<SparkPartitionReader>(reader_handle) } {
+        spark_close_partition_reader(*reader);
+    }
 }
 
 /// JNI export wrapping [`jni_create_data_writer`].
@@ -182,7 +292,13 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_createDataWriter
 ) -> jlong {
     let table = jstring_to_string(&mut env, table_name);
     let schema = jstring_to_string(&mut env, schema_json);
-    jni_create_data_writer(&table, &schema, partition_id)
+    match spark_create_data_writer(&table, &schema, partition_id) {
+        Ok(writer) => jni_handle::leak::<SparkDataWriter>(writer),
+        Err(e) => {
+            throw_runtime_exception(&mut env, format!("createDataWriter: {e}"));
+            0
+        }
+    }
 }
 
 /// JNI export wrapping [`jni_write_batch`].
@@ -190,13 +306,32 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_createDataWriter
 /// Java: `static native void writeBatch(long writerHandle, byte[] arrowBatch);`
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_writeBatch<'local>(
-    env: JNIEnv<'local>,
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     writer_handle: jlong,
     arrow_batch: JByteArray<'local>,
 ) {
+    let Some(db) = embedded() else {
+        throw_runtime_exception(
+            &mut env,
+            "writeBatch: not initialized — call initialize(dataDir) first".to_string(),
+        );
+        return;
+    };
     let bytes = env.convert_byte_array(&arrow_batch).unwrap_or_default();
-    jni_write_batch(writer_handle, &bytes);
+    // SAFETY: Java guarantees the handle was produced by
+    // createDataWriter and is not yet committed/aborted; single-task
+    // ABI means no concurrent borrow.
+    let writer = match unsafe { jni_handle::borrow_mut::<SparkDataWriter>(writer_handle) } {
+        Some(w) => w,
+        None => {
+            throw_runtime_exception(&mut env, "writeBatch: null writer handle".to_string());
+            return;
+        }
+    };
+    if let Err(e) = spark_write_batch(&db, writer, &bytes) {
+        throw_runtime_exception(&mut env, format!("writeBatch: {e}"));
+    }
 }
 
 /// JNI export wrapping [`jni_commit_writer`].
@@ -208,7 +343,32 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_commitWriter<'lo
     _class: JClass<'local>,
     writer_handle: jlong,
 ) -> jstring {
-    let commit_json = jni_commit_writer(writer_handle);
+    let Some(db) = embedded() else {
+        throw_runtime_exception(
+            &mut env,
+            "commitWriter: not initialized — call initialize(dataDir) first".to_string(),
+        );
+        return std::ptr::null_mut();
+    };
+    // SAFETY: caller-asserted (one commit call per handle, no live
+    // borrows).
+    let writer = match unsafe { jni_handle::take::<SparkDataWriter>(writer_handle) } {
+        Some(w) => *w,
+        None => {
+            throw_runtime_exception(
+                &mut env,
+                "commitWriter: null writer handle".to_string(),
+            );
+            return std::ptr::null_mut();
+        }
+    };
+    let commit_json = match spark_commit_writer(&db, writer) {
+        Ok(j) => j,
+        Err(e) => {
+            throw_runtime_exception(&mut env, format!("commitWriter: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
     string_to_jstring(&mut env, commit_json)
 }
 
@@ -221,5 +381,9 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_abortWriter<'loc
     _class: JClass<'local>,
     writer_handle: jlong,
 ) {
-    jni_abort_writer(writer_handle);
+    // SAFETY: caller-asserted; double-abort silently ignored (null
+    // handle short-circuits in `take`).
+    if let Some(writer) = unsafe { jni_handle::take::<SparkDataWriter>(writer_handle) } {
+        spark_abort_writer(*writer);
+    }
 }
