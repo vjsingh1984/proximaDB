@@ -21,6 +21,7 @@ use arrow_flight::{FlightData, FlightDescriptor, Ticket};
 use arrow_ipc::writer::IpcWriteOptions;
 use arrow_schema::{DataType, Field, Fields, Schema, TimeUnit as ArrowTimeUnit};
 use proximadb_data_model::{ProximaValue, TimeUnit};
+use proximadb_records::conversions::json_to_proxima;
 use proximadb_records::{EdgeShape, EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -605,8 +606,8 @@ impl ArrowProtoCodec {
             let json: serde_json::Value = serde_json::from_str(string_array.value(row))?;
             if let serde_json::Value::Object(map) = json {
                 return Ok(map
-                    .into_iter()
-                    .map(|(key, value)| (key, Self::json_to_proxima_value(value)))
+                    .iter()
+                    .map(|(key, value)| (key.clone(), json_to_proxima(value)))
                     .collect());
             }
             return Ok(Vec::new());
@@ -635,37 +636,6 @@ impl ArrowProtoCodec {
         }
 
         Ok(Vec::new())
-    }
-
-    fn json_to_proxima_value(value: serde_json::Value) -> ProximaValue {
-        match value {
-            serde_json::Value::Null => ProximaValue::Null,
-            serde_json::Value::Bool(value) => ProximaValue::Boolean(value),
-            serde_json::Value::Number(value) => {
-                if let Some(value) = value.as_i64() {
-                    ProximaValue::Int64(value)
-                } else if let Some(value) = value.as_u64() {
-                    ProximaValue::UInt64(value)
-                } else if let Some(value) = value.as_f64() {
-                    ProximaValue::Float64(value)
-                } else {
-                    ProximaValue::String(value.to_string())
-                }
-            }
-            serde_json::Value::String(value) => ProximaValue::String(value),
-            serde_json::Value::Array(values) => ProximaValue::Array(
-                values
-                    .into_iter()
-                    .map(Self::json_to_proxima_value)
-                    .collect(),
-            ),
-            serde_json::Value::Object(values) => ProximaValue::Map(
-                values
-                    .into_iter()
-                    .map(|(key, value)| (key, Self::json_to_proxima_value(value)))
-                    .collect(),
-            ),
-        }
     }
 
     /// Extract vectors from Arrow array (handles multiple formats)

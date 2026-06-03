@@ -6,6 +6,7 @@
 
 use axum::{Json, extract::State};
 use proximadb_data_model::ProximaValue;
+use proximadb_records::conversions::json_to_proxima;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
@@ -51,31 +52,10 @@ fn validate_query(language: QueryLanguage, query: &str) -> ApiResult<()> {
     Ok(())
 }
 
+/// Lower JSON query parameters to canonical `ProximaValue` via the shared
+/// `proximadb_records::conversions::json_to_proxima` (TD-109).
 fn json_to_proxima_values(params: Option<Vec<serde_json::Value>>) -> Option<Vec<ProximaValue>> {
-    params.map(|values| values.into_iter().map(json_to_proxima_value).collect())
-}
-
-fn json_to_proxima_value(value: serde_json::Value) -> ProximaValue {
-    match value {
-        serde_json::Value::Null => ProximaValue::Null,
-        serde_json::Value::Bool(value) => ProximaValue::Boolean(value),
-        serde_json::Value::Number(value) => value
-            .as_i64()
-            .map(ProximaValue::Int64)
-            .or_else(|| value.as_u64().map(ProximaValue::UInt64))
-            .or_else(|| value.as_f64().map(ProximaValue::Float64))
-            .unwrap_or(ProximaValue::Null),
-        serde_json::Value::String(value) => ProximaValue::String(value),
-        serde_json::Value::Array(values) => {
-            ProximaValue::Array(values.into_iter().map(json_to_proxima_value).collect())
-        }
-        serde_json::Value::Object(fields) => ProximaValue::Map(
-            fields
-                .into_iter()
-                .map(|(key, value)| (key, json_to_proxima_value(value)))
-                .collect(),
-        ),
-    }
+    params.map(|values| values.iter().map(json_to_proxima).collect())
 }
 
 /// POST /api/v2/query

@@ -101,22 +101,6 @@ fn safe_serialize<T: Serialize>(msg: &T) -> Option<String> {
     }
 }
 
-/// Convert JSON value to ProximaValue at the protocol boundary
-fn json_value_to_proxima_value(v: &serde_json::Value) -> proximadb_data_model::ProximaValue {
-    match v {
-        serde_json::Value::String(s) => proximadb_data_model::ProximaValue::String(s.clone()),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                proximadb_data_model::ProximaValue::Int64(i)
-            } else {
-                proximadb_data_model::ProximaValue::Float64(n.as_f64().unwrap_or(0.0))
-            }
-        }
-        serde_json::Value::Bool(b) => proximadb_data_model::ProximaValue::Boolean(*b),
-        _ => proximadb_data_model::ProximaValue::String(v.to_string()),
-    }
-}
-
 /// WebSocket streaming state shared across handlers
 #[derive(Clone)]
 pub struct WebSocketState {
@@ -374,7 +358,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                                 let dim = v.vector.len() as u32;
                                 let mut props = proximadb_records::ProximaTree::new();
                                 for (k, jv) in v.metadata {
-                                    let pv = json_value_to_proxima_value(&jv);
+                                    let pv = proximadb_records::conversions::json_to_proxima(&jv);
                                     props.insert(k, proximadb_records::ProximaTreeNode::Value(pv));
                                 }
                                 proximadb_records::ProximaRecord {
