@@ -15,7 +15,8 @@ use proximadb_catalog::{
     CatalogPhysicalFormat, CatalogStorageSpecialization, CatalogTableSchema, CatalogWorkloadProfile,
 };
 use proximadb_records::{
-    ProximaRecord, ProximaTreeNode, RecordKey, RecordScanOptions, RecordStorage,
+    ProximaRecord, ProximaTreeNode, RecordKey, RecordScanOptions, RecordScanPredicate,
+    RecordStorage,
 };
 use proximadb_storage_common::{
     CanonicalOpenTableFormat, CanonicalOperation, CanonicalWalEntry, ProjectionDirective,
@@ -221,6 +222,39 @@ pub trait TableRecordStore: Send + Sync {
             table_schema.name
         ))
     }
+
+    /// Scan with a row `predicate` pushed into the store (relational `WHERE`
+    /// push-down). Returns up to `request.limit` records matching `predicate`;
+    /// the store applies it, so callers must NOT re-filter afterward. This lets
+    /// the backing store filter during iteration and stop at the limit instead
+    /// of materializing the whole table.
+    ///
+    /// Default delegates to `scan_records` (materialize) then applies `predicate`
+    /// in-memory — correct for any impl; hot stores override for early-stop.
+    async fn scan_records_filtered(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordScanRequest,
+        predicate: Option<&RecordScanPredicate<'_>>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        let limit = request.limit.unwrap_or(usize::MAX);
+        let mut req = request;
+        req.limit = None;
+        let mut all = self.scan_records(table_schema, req, tenant_context).await?;
+        let mut kept = 0usize;
+        all.retain(|record| {
+            if kept >= limit {
+                return false;
+            }
+            let keep = predicate.map_or(true, |p| p(record));
+            if keep {
+                kept += 1;
+            }
+            keep
+        });
+        Ok(all)
+    }
 }
 
 /// xCatalog-routed table-record store.
@@ -293,6 +327,18 @@ impl TableRecordStore for CatalogRoutingTableRecordStore {
     ) -> Result<TableRecordScanResponse> {
         self.store_for_schema(table_schema)
             .scan_records(table_schema, request, tenant_context)
+            .await
+    }
+
+    async fn scan_records_filtered(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordScanRequest,
+        predicate: Option<&RecordScanPredicate<'_>>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        self.store_for_schema(table_schema)
+            .scan_records_filtered(table_schema, request, predicate, tenant_context)
             .await
     }
 }
@@ -494,6 +540,51 @@ impl TableRecordStore for RecordStorageTableRecordStore {
         }
         Ok(records)
     }
+
+    async fn scan_records_filtered(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordScanRequest,
+        predicate: Option<&RecordScanPredicate<'_>>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        let mut options = request
+            .limit
+            .map(RecordScanOptions::limit)
+            .unwrap_or_else(RecordScanOptions::unbounded);
+        if let Some(tenant_context) = tenant_context {
+            options = options.with_tenant_id(tenant_context.tenant_id.clone());
+        }
+
+        // Fold the table-membership (variation_id) check INTO the pushed-down
+        // predicate so the store's early-stop counts only fully-matching rows —
+        // a post-scan retain would under-return against the limit.
+        let table_name = table_schema.name.as_str();
+        let combined = |record: &ProximaRecord| {
+            let belongs = record
+                .variation_id
+                .as_deref()
+                .map(|variation| variation == table_name)
+                .unwrap_or(true);
+            belongs && predicate.is_none_or(|p| p(record))
+        };
+        let mut records = self
+            .storage
+            .scan_records_filtered(options, Some(&combined))
+            .await?;
+
+        if !request.include_vector {
+            for record in &mut records {
+                record.embeddings.clear();
+            }
+        }
+        if !request.include_props {
+            for record in &mut records {
+                record.props.clear();
+            }
+        }
+        Ok(records)
+    }
 }
 
 /// Direct Proxima-authoritative table writer.
@@ -648,6 +739,18 @@ impl TableRecordStore for DirectWalTableRecordStore {
     ) -> Result<TableRecordScanResponse> {
         RecordStorageTableRecordStore::new(self.storage.clone())
             .scan_records(table_schema, request, tenant_context)
+            .await
+    }
+
+    async fn scan_records_filtered(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordScanRequest,
+        predicate: Option<&RecordScanPredicate<'_>>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        RecordStorageTableRecordStore::new(self.storage.clone())
+            .scan_records_filtered(table_schema, request, predicate, tenant_context)
             .await
     }
 }
@@ -897,6 +1000,56 @@ mod tests {
                 .cloned()
                 .collect())
         }
+    }
+
+    #[tokio::test]
+    async fn record_storage_scan_records_filtered_pushes_predicate_and_table_membership() {
+        let storage = Arc::new(MemoryRecordStorage::default());
+        let store = RecordStorageTableRecordStore::new(storage.clone());
+        let schema = CatalogTableSchema::new("orders");
+
+        for (oid, variation, version) in [
+            ("keep-1", "orders", 1u64),
+            ("keep-2", "orders", 2),
+            ("skip-pred", "orders", 3),  // belongs to table but fails predicate
+            ("skip-table", "other", 1),  // matches predicate but is another table
+        ] {
+            storage
+                .upsert_record(ProximaRecord {
+                    oid: oid.to_string(),
+                    variation_id: Some(variation.to_string()),
+                    record_version: version,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
+
+        // Predicate (the "WHERE"): oid starts with "keep". The store must apply
+        // BOTH table membership (variation_id) AND the predicate.
+        let pred = |r: &ProximaRecord| r.oid.starts_with("keep");
+        let got = store
+            .scan_records_filtered(
+                &schema,
+                TableRecordScanRequest {
+                    table_id: "orders".to_string(),
+                    limit: None,
+                    include_vector: true,
+                    include_props: true,
+                },
+                Some(&pred),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let mut oids: Vec<_> = got.iter().map(|r| r.oid.clone()).collect();
+        oids.sort();
+        assert_eq!(
+            oids,
+            vec!["keep-1".to_string(), "keep-2".to_string()],
+            "only rows that belong to the table AND match the predicate"
+        );
     }
 
     #[tokio::test]

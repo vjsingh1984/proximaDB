@@ -9,8 +9,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use proximadb_records::{
-    ProximaRecord, RecordKey, RecordRecoverySummary, RecordScan, RecordScanOptions, RecordStore,
-    RecordStoreResult,
+    ProximaRecord, RecordKey, RecordRecoverySummary, RecordScan, RecordScanOptions,
+    RecordScanPredicate, RecordStore, RecordStoreResult,
 };
 use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry};
 
@@ -106,6 +106,28 @@ impl RecordScan for MemtableRecordStorage {
             .take(limit)
             .collect())
     }
+
+    /// Push-down override: evaluate `options` + `predicate` during a single
+    /// DashMap pass and stop at `options.limit`, cloning only matching records.
+    /// Avoids the materialize-whole-table-then-filter cost the default impl pays.
+    async fn scan_records_filtered(
+        &self,
+        options: RecordScanOptions,
+        predicate: Option<&RecordScanPredicate<'_>>,
+    ) -> RecordStoreResult<Vec<ProximaRecord>> {
+        let limit = options.limit.unwrap_or(usize::MAX);
+        let mut out = Vec::new();
+        for entry in self.records.iter() {
+            if out.len() >= limit {
+                break;
+            }
+            let record = entry.value();
+            if options.matches_record(record) && predicate.is_none_or(|p| p(record)) {
+                out.push(record.clone());
+            }
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -193,6 +215,60 @@ mod tests {
         assert_eq!(scanned.len(), 1);
         assert_eq!(scanned[0].oid, "order-2");
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn scan_records_filtered_early_stops_at_limit() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let storage = MemtableRecordStorage::new();
+        for i in 0..100u32 {
+            storage
+                .upsert_record(record(&format!("o{i:03}"), "tenant-a"))
+                .await?;
+        }
+        // Predicate matches everything; limit is 5. The push-down must evaluate
+        // the predicate only until 5 matches are collected — NOT all 100 rows.
+        let calls = AtomicUsize::new(0);
+        let pred = |_r: &ProximaRecord| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            true
+        };
+        let got = storage
+            .scan_records_filtered(RecordScanOptions::limit(5), Some(&pred))
+            .await?;
+        assert_eq!(got.len(), 5, "capped at limit");
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            5,
+            "predicate evaluated only until the limit — not across the whole 100-row table"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn scan_records_filtered_returns_only_matching_rows() -> Result<()> {
+        use proximadb_data_model::ProximaValue;
+        let storage = MemtableRecordStorage::new();
+        storage.upsert_record(record("keep", "tenant-a")).await?; // status=open
+        let mut closed = record("drop", "tenant-a");
+        closed.props.insert(
+            "status".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("closed".to_string())),
+        );
+        storage.upsert_record(closed).await?;
+
+        let pred = |r: &ProximaRecord| {
+            matches!(
+                r.props.get("status"),
+                Some(ProximaTreeNode::Value(ProximaValue::String(s))) if s == "open"
+            )
+        };
+        let got = storage
+            .scan_records_filtered(RecordScanOptions::unbounded(), Some(&pred))
+            .await?;
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].oid, "keep");
         Ok(())
     }
 }

@@ -618,33 +618,29 @@ impl DmlService {
             ));
         }
 
-        let scan_limit = if predicates.is_empty() { limit } else { None };
-        let mut records = self
+        // Push the resolved `WHERE` predicate + limit INTO the scan so the store
+        // filters during iteration and stops at the limit — instead of cloning
+        // the whole table (embeddings included) and filtering in memory here.
+        let primary_key = table_schema.primary_key.first().map(String::as_str);
+        let pred = |record: &ProximaRecord| {
+            Self::record_matches_select_predicates(record, predicates, primary_key)
+        };
+        let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> =
+            if predicates.is_empty() { None } else { Some(&pred) };
+        let records = self
             .record_store
-            .scan_records(
+            .scan_records_filtered(
                 table_schema,
                 TableRecordScanRequest {
                     table_id: table_id_name.to_string(),
-                    limit: scan_limit,
+                    limit,
                     include_vector: true,
                     include_props: true,
                 },
+                predicate,
                 None,
             )
             .await?;
-        if !predicates.is_empty() {
-            let primary_key = table_schema.primary_key.first().map(String::as_str);
-            let mut filtered = Vec::new();
-            for record in records {
-                if Self::record_matches_select_predicates(&record, predicates, primary_key) {
-                    filtered.push(record);
-                    if limit.is_some_and(|limit| filtered.len() >= limit) {
-                        break;
-                    }
-                }
-            }
-            records = filtered;
-        }
 
         Ok((RelationalSelectAccessPath::TableScan, records))
     }
@@ -2006,8 +2002,8 @@ impl DmlService {
         // `props` — because the auto-registered schema is `id` + `vector`
         // only and treats anything else as unknown. Reconciled 2026-05-28 for
         // the v0.2 v2 INSERT→SEARCH gap.
-        let all_records_are_vector_shaped = !records.is_empty()
-            && records.iter().all(|r| !r.embeddings.is_empty());
+        let all_records_are_vector_shaped =
+            !records.is_empty() && records.iter().all(|r| !r.embeddings.is_empty());
         if all_records_are_vector_shaped {
             return Ok(());
         }
