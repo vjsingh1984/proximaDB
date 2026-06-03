@@ -102,14 +102,14 @@ use anyhow::{Result, anyhow};
 use tokio::sync::RwLock;
 use tracing::info;
 
-pub use self::cache::CatalogCache;
 pub use self::partition_pruning::{
     PartitionInfo, PartitionPruner, PruningResult, parse_partition_path,
 };
 pub use self::traits::*;
-pub use self::types::*;
+pub use proximadb_catalog::cache::CatalogCache;
+pub use proximadb_catalog::*;
 // Explicitly re-export the local Catalog trait to disambiguate from proximadb_catalog::Catalog
-// (which is also pulled in via `pub use self::types::*` through proximadb_catalog::*).
+// (which is also pulled in via `pub use proximadb_catalog::*`).
 pub use self::traits::{Catalog, CatalogHealth};
 
 /// Catalog manager - manages multiple catalog instances
@@ -168,15 +168,19 @@ impl CatalogManager {
         name: &str,
         storage_url: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use native::NativeCatalogConfig;
+        use proximadb_catalog::native::NativeCatalogConfig;
 
         let config = NativeCatalogConfig {
             storage_url: storage_url.to_string(),
             ..Default::default()
         };
 
-        let catalog =
-            native::NativeCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::native::NativeCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -189,14 +193,16 @@ impl CatalogManager {
         name: &str,
         thrift_uri: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use hive::HiveCatalogConfig;
+        use proximadb_catalog::hive::HiveCatalogConfig;
 
         let config = HiveCatalogConfig {
             thrift_uri: thrift_uri.to_string(),
             ..Default::default()
         };
 
-        let catalog = hive::HiveCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog =
+            proximadb_catalog::hive::HiveCatalog::new(name.to_string(), config, self.cache.clone())
+                .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -210,7 +216,7 @@ impl CatalogManager {
         uri: &str,
         warehouse: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use iceberg::IcebergCatalogConfig;
+        use proximadb_catalog::iceberg::IcebergCatalogConfig;
 
         let config = IcebergCatalogConfig {
             uri: uri.to_string(),
@@ -218,8 +224,12 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog =
-            iceberg::IcebergCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::iceberg::IcebergCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -246,7 +256,7 @@ impl CatalogManager {
         region: &str,
         catalog_id: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use glue::GlueCatalogConfig;
+        use proximadb_catalog::glue::GlueCatalogConfig;
 
         let config = GlueCatalogConfig {
             region: region.to_string(),
@@ -254,7 +264,9 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog = glue::GlueCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog =
+            proximadb_catalog::glue::GlueCatalog::new(name.to_string(), config, self.cache.clone())
+                .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -302,7 +314,7 @@ impl CatalogManager {
         token: &str,
         catalog_name: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use unity::UnityCatalogConfig;
+        use proximadb_catalog::unity::UnityCatalogConfig;
 
         let config = UnityCatalogConfig {
             workspace_url: workspace_url.to_string(),
@@ -311,8 +323,12 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog =
-            unity::UnityCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::unity::UnityCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -361,7 +377,7 @@ impl CatalogManager {
         warehouse: &str,
         credential: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use polaris::PolarisCatalogConfig;
+        use proximadb_catalog::polaris::PolarisCatalogConfig;
 
         let config = PolarisCatalogConfig {
             uri: uri.to_string(),
@@ -370,8 +386,12 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog =
-            polaris::PolarisCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::polaris::PolarisCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -414,15 +434,19 @@ impl CatalogManager {
         name: &str,
         storage_url: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use delta::DeltaCatalogConfig;
+        use proximadb_catalog::delta::DeltaCatalogConfig;
 
         let config = DeltaCatalogConfig {
             storage_url: storage_url.to_string(),
             ..Default::default()
         };
 
-        let catalog =
-            delta::DeltaCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::delta::DeltaCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -456,12 +480,14 @@ impl CatalogManager {
         name: &str,
         connection_string: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        let config = oltp::OltpCatalogConfig {
+        let config = proximadb_catalog::oltp::OltpCatalogConfig {
             connection_string: connection_string.to_string(),
             ..Default::default()
         };
 
-        let catalog = oltp::OltpCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog =
+            proximadb_catalog::oltp::OltpCatalog::new(name.to_string(), config, self.cache.clone())
+                .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -609,6 +635,48 @@ impl Default for CatalogManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // TD-108: the local `types` shim (`pub use proximadb_catalog::*`) was deleted.
+    // Alias the canonical crate so the existing `types::Catalog*` test paths keep
+    // resolving to exactly what the shim pointed at — no test churn.
+    use proximadb_catalog as types;
+
+    // ============================================================
+    // Re-export surface guard (TD-108 regression)
+    // ============================================================
+    // The `crate::catalog::*` facade must keep re-exporting the canonical
+    // xCatalog contract types from `proximadb-catalog`. TD-108 deleted the
+    // local `types`/`cache`/backend shim modules; this guard fails to COMPILE
+    // if any of those re-exports is dropped or a type is renamed/moved,
+    // catching the exact regression where the facade dangled against a
+    // removed module. Pure type-level references — no runtime assertions.
+    #[allow(dead_code, unused_imports)]
+    mod reexport_surface_guard {
+        // Contract types (were `crate::catalog::types::*`).
+        use crate::catalog::{
+            CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogProjection,
+            CatalogTableSchema, TableIdentifier,
+        };
+        // Cache surface (was `crate::catalog::cache::CatalogCache`).
+        use crate::catalog::CatalogCache;
+        // Local trait re-exported explicitly to win over `proximadb_catalog::Catalog`.
+        use crate::catalog::{Catalog, CatalogHealth};
+
+        // Force each path to be a real, named item (not just a glob hit).
+        fn _surface(
+            _id: TableIdentifier,
+            _schema: CatalogTableSchema,
+            _col: CatalogColumn,
+            _dt: CatalogDataType,
+            _idx: CatalogIndex,
+            _idxt: CatalogIndexType,
+            _proj: CatalogProjection,
+            _cache: &CatalogCache,
+            _h: CatalogHealth,
+        ) {
+        }
+        // Trait object reachability through the facade.
+        type _CatalogDyn = dyn Catalog;
+    }
 
     // ========================
     // TableIdentifier Tests

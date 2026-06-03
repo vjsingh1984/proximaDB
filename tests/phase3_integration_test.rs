@@ -1471,8 +1471,10 @@ mod catalog_tests {
 #[cfg(feature = "delta-lake")]
 mod delta_catalog_tests {
     use super::*;
-    use proximadb::catalog::types::{CatalogColumn, CatalogDataType, CatalogTableSchema};
-    use proximadb::catalog::{Catalog, CatalogManager, TableIdentifier};
+    use proximadb::catalog::{
+        Catalog, CatalogColumn, CatalogDataType, CatalogManager, CatalogTableSchema,
+        TableIdentifier,
+    };
 
     fn temp_catalog_dir(name: &str) -> std::path::PathBuf {
         std::env::temp_dir()
