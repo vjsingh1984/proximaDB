@@ -334,22 +334,6 @@ pub use catalog::{
 // Storage-Compute Separation Re-exports (Hadoop-style architecture)
 // ============================================================================
 
-// Re-export key compute types for the pluggable compute layer
-pub use compute::{
-    ComputeCapabilities,
-    // Compute plan types
-    ComputePlan,
-    // Compute provider interface
-    ComputeProvider,
-    // Compute scheduler
-    ComputeScheduler,
-    CostEstimate,
-    Expr as ComputeExpr,
-    LocalComputeProvider,
-    PlanNode,
-    SchedulingPolicy,
-};
-
 // Re-export key connector types for external system integration
 pub use connectors::{
     DataReader,

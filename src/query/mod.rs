@@ -119,7 +119,6 @@ pub mod authority_context; // Shared xCatalog authority conversion for planner/E
 pub mod cache; // C2: Query result caching for agentic AI workloads with repetitive queries
 pub mod capability; // Capability registry for query validation and API parity
 pub mod columnar; // M2: Dual Columnar Execution - ColumnarReadProvider abstraction
-pub mod compute_bridge; // Bridge to Hadoop-style storage-compute separation
 pub mod compute_scheduler; // Course-correction §5 P0: read-side multi-engine route selection
 pub mod ddl_dml; // DDL/DML execution (CREATE TABLE, INSERT, UPDATE, DELETE)
 pub mod distributed; // Distributed query coordination across cluster nodes
@@ -178,12 +177,6 @@ pub use federated::{
     CrossModelOptimizer, ExecutionResult as FederatedExecutionResult, FederatedExecutor,
     FederatedParser, FederatedQuery, FederatedQueryContext, FederatedQueryPlan, PlanNode,
     QueryType as FederatedQueryType,
-};
-
-// Re-export compute bridge types for storage-compute separation
-pub use compute_bridge::{
-    BridgeConfig, BridgeStatistics, ComputeBridge, ExecutionResult as ComputeExecutionResult,
-    QueryContext as ComputeQueryContext,
 };
 
 // Re-export unified facade types - PREFERRED ENTRY POINT

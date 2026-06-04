@@ -183,7 +183,6 @@ pub mod hybrid_search;
 pub mod metrics_service;
 /// HTTP middleware stack (auth, CORS, rate limiting, TLS)
 pub mod middleware;
-pub mod multi_protocol_handler;
 /// Multi-protocol server orchestration (REST + gRPC + Arrow Flight)
 pub mod multi_server;
 /// Unified port protocol multiplexer (HTTP/gRPC auto-detection)
@@ -202,10 +201,6 @@ pub mod tls;
 
 pub use metrics_service::*;
 pub use middleware::*;
-pub use multi_protocol_handler::{
-    RequestProtocol, ResponseData, ResponseMetadata, UnifiedQueryHandler, UnifiedQueryRequest,
-    UnifiedQueryResponse,
-};
 pub use multi_server::{
     ArrowIpcServerConfig, GrpcHttpServerConfig, MultiServer, MultiServerConfig,
     RestHttpServerConfig,

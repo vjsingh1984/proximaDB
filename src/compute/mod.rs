@@ -168,14 +168,11 @@ pub mod pipeline_executor;
 pub mod proximacodec;
 pub mod quantization;
 
-// Pluggable compute provider interface (Hadoop-style storage-compute separation)
-pub mod provider;
-
-// Serializable compute plans for storage-compute separation
-pub mod plan;
-
-// Compute scheduler for routing plans to optimal providers
-pub mod scheduler;
+// NOTE (2026-06-04): the pluggable `provider` / `plan` / `scheduler` "Hadoop-style
+// storage-compute separation" scaffold was DELETED — a dead stub
+// (`LocalComputeProvider::execute` returned empty streams) with zero live callers,
+// superseded by the DataFusion-direct OLAP path. A real distributed worker model,
+// when needed, is a fresh coordinator/worker design, not this.
 
 // Legacy distance module removed - all functionality moved to distance_computation::core
 
@@ -187,29 +184,6 @@ pub mod scheduler;
 pub use distance_computation::*;
 pub use pipeline_executor::*;
 pub use quantization::*;
-
-// ============================================================================
-// Storage-Compute Separation Re-exports (Hadoop-style architecture)
-// ============================================================================
-
-// Re-export compute provider types for pluggable compute engines
-pub use provider::{
-    ComputeCapabilities, ComputeProvider, CostEstimate, ExecutionContext, LocalComputeProvider,
-    ProviderMetrics,
-};
-
-// Re-export compute plan types for serializable query plans
-pub use plan::{
-    AggExpr, AggFunction, BinaryOp, ComputePlan, Expr, JoinCondition, JoinStrategy, JoinType,
-    LiteralValue, Partitioning, PlanHints, PlanNode, ProjectExpr, SortExpr, TraversalDirection,
-    TraversalSpec, UnaryOp,
-};
-
-// Re-export compute scheduler types for provider selection and routing
-pub use scheduler::{
-    ComputeScheduler, ComputeSchedulerBuilder, CostWeights, ProviderStatistics, SchedulerConfig,
-    SchedulerStatistics, SchedulingPolicy,
-};
 
 /// Vector computation configuration
 #[derive(Debug, Clone)]
