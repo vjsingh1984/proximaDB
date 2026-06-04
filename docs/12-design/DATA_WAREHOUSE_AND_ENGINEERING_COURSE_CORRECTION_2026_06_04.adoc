@@ -20,7 +20,7 @@ While ProximaDB supports documents, graphs, and vectors, the core execution and 
 
 === 1.3. Object Storage First (Decoupled Storage & Compute)
 The storage layer must be fully decoupled from the execution layer from day one, utilizing local filesystem API-driven object storage abstractions (e.g., `object_store` crate) that can seamlessly scale to S3/GCS/Azure Blob.
-* **Why:** Snowflake and Databricks won by scaling compute independently from storage. ProximaDB's storage layout will prioritize open table formats (Parquet/Arrow/Iceberg) layered over object storage, utilizing advanced optimizations like header/filter-driven caches and late materialization to minimize I/O overhead.
+* **Why:** Snowflake and Databricks won by scaling compute independently from storage. ProximaDB's OLAP layout will prioritize open table formats (Parquet/Arrow/Iceberg) layered over object storage, utilizing advanced optimizations like header/filter-driven caches and late materialization to minimize I/O overhead. Mutable PostgreSQL-style OLTP tables still require a native WAL plus row/delta authority for low-latency DML, MVCC visibility, and constraint enforcement before they are published into OLAP snapshots.
 
 === 1.4. Rust-Native Distributed Execution (Spark-like)
 Instead of purely delegating large-scale transformations to external Spark clusters, ProximaDB will build a **Rust-native distributed execution engine** close to the data, capable of PySpark-style API execution.
@@ -49,7 +49,7 @@ The MVP will construct a single-node platform that simulates distributed executi
 
 * **Update to `DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR`:** The anchor must reflect that local Rust execution is not just for HTAP, but the foundation for a distributed MPP warehouse.
 * **Update to `COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY`:** Shift from "Delegate MPP to Spark/Trino" to "Build Rust-native MPP using DataFusion/Ballista concepts, outcompeting Spark/Trino on efficiency."
-* **Storage Layer:** Deprioritize highly specialized proprietary file formats in favor of optimized Parquet/Iceberg execution over object storage to match Lakehouse architectures.
+* **Storage Layer:** Deprioritize duplicated proprietary authorities in favor of a tiered HTAP model: xCatalog/WAL/`ProximaRecord` as authority, native OLTP row/delta storage for strong-freshness writes, Parquet/Iceberg snapshots for DataFusion/warehouse scans, and PAX/specialized layouts only as cataloged access methods or projections.
 
 == 4. Grounded Reality vs Vision (code audit 2026-06-04)
 
@@ -90,17 +90,20 @@ are unwired. The roadmap is therefore *gap closure + a deliberate multi-engine s
 not a green-field build.
 
 **Target storage decomposition (per the revised LLD + storage-format docs,
-2026-06-04 — aspirational, not yet coded):** the relational durable format moves from
-PAX block-modes to **Parquet/Iceberg over object storage**, via two NEW crates —
-`proximadb-object-store` (an `object_store`-crate wrapper) and `proximadb-iceberg-engine`
-(the Parquet/Iceberg primary store for relational/document/graph/observability). **PAX
-and the SST/VIPER/NOVA/HELIX/RAPTOR/SWIFT engines are reserved EXCLUSIVELY for the
-vector/ANN modality.** WAL+`RecordStorage` is NOT removed: it becomes the **OLTP
-write-ahead + freshness/delta tier** in front of the Iceberg durable tier — Volcano
-serves strong-freshness reads from the delta, a background flush/compaction promotes it
-to Parquet/Iceberg, and DataFusion/Polars read the base snapshots (optionally unioning
-the delta per the §5 freshness boundary). This doc (not the now-[SUPERSEDED]
-`MULTIMODAL_OVERHAUL_SPEC`) is the storage-model authority.
+2026-06-04 — aspirational, not yet coded):** the relational storage model is tiered, not
+Parquet-only. xCatalog owns schemas, constraints, workload profiles, authority modes, and
+freshness. WAL plus `RecordStorage`/the OLTP row-delta tier is the **write-ahead +
+strong-freshness authority** for PostgreSQL-style DML, primary keys, unique checks, check
+constraints, and local foreign-key enforcement. Parquet/Iceberg over object storage is the
+**OLAP base/publication tier** for DataFusion/MPP scans and lakehouse interoperability,
+implemented via future `proximadb-object-store` and `proximadb-iceberg-engine` crates.
+PAX row-family remains an internal HTAP block-layout candidate where row-directory point
+access plus column stripes are useful; SST/VIPER/NOVA/HELIX/RAPTOR/SWIFT remain specialized
+vector/ANN access methods unless they implement the shared relational metadata and visibility
+contracts. Volcano serves strong-freshness reads from the delta, a background
+flush/compaction promotes eligible state to Parquet/Iceberg, and DataFusion reads the base
+snapshots with an explicit delta-union path when freshness requires it. This doc (not the
+now-[SUPERSEDED] `MULTIMODAL_OVERHAUL_SPEC`) is the storage-model authority.
 
 == 5. Intelligent Multi-Engine Routing (Policy to RL Evolution)
 
@@ -111,6 +114,8 @@ DECISION (2026-06-04): The architecture is not a binary choice between Volcano a
 ### 5.1. The Routing Destinations
 The Query Router evaluates cardinality, partition counts, and freshness SLAs to select the optimal physical engine:
 * **Volcano (OLTP):** Selected for point lookups, high-concurrency single-row DML (INSERT/UPDATE/DELETE), and queries demanding immediate, strong freshness against the WAL/Memtable.
+  Also selected for primary-key/unique/check/foreign-key enforcement and any plan that cannot
+  safely tolerate an OLAP snapshot watermark.
 * **Polars (Local Analytics):** Selected for single-partition queries, lightweight aggregations, and local data transformations. Bypasses the overhead of DataFusion's distributed worker context, acting as the high-speed local execution seam.
 * **DataFusion (MPP/OLAP):** Selected for multi-table joins, distributed processing, large-scale Parquet/Iceberg object storage scans, and complex window functions.
 * **Specialized Engines (Vector/ANN):** Selected for similarity search, routing execution down to SST, VIPER, NOVA, HELIX, RAPTOR, SWIFT via the PAX block layout.
@@ -176,21 +181,30 @@ yet; WIRE = code exists but unwired; LIVE = extend an existing live path).
   bypasses DataFusion's worker context. _(Polars = NEW dependency + second
   logical-lowering target; do NOT build speculatively — Volcano+DataFusion are the
   pillars, Polars is an optimization.)_
-. **P3 — Object-store Parquet/Iceberg write seam (the relational durable target).**
+. **P3 — Object-store Parquet/Iceberg publication seam (the OLAP durable base).**
   Stand up the two new crates — `proximadb-object-store` (`object_store` wrapper) and
-  `proximadb-iceberg-engine` (Parquet/Iceberg primary store) — and wire
+  `proximadb-iceberg-engine` (Parquet/Iceberg OLAP base/publication store) — and wire
   `proximadb-iceberg-engine` as a `TableRecordStore` impl behind
   `CatalogRoutingTableRecordStore`, selectable for relational/OLAP-profile tables. This
-  is the durable BASE tier; WAL+`RecordStorage` stays as the OLTP write-ahead +
+  is the analytical BASE tier; WAL+`RecordStorage` stays as the OLTP write-ahead +
   freshness DELTA in front of it, with a background flush/compaction promoting
-  delta→Parquet/Iceberg (the staging/durable tiering from §4). Vector tables keep
-  PAX/SST/VIPER/etc. over `proximadb-object-store` (`ObjectStoreVectorRecordStore`
-  later). _(both crates NEW; object_store is read-only today; phase the cutover —
-  OLAP-profile tables first, OLTP/HTAP once delta-union read is proven.)_
-. **P4 — Shared logical lowering.** Lower `proximadb-relational-algebra::LogicalNode`
-  into a DataFusion `LogicalPlan` (and a Polars frame), so every destination consumes
-  the SAME frontend/algebra the Volcano path uses — discharging the "shared logical
-  plane, split physical plane" guarantee of §5 in code. _(NEW lowering.)_
+  delta→Parquet/Iceberg (the staging/publication tiering from §4). Do not route
+  constraint-sensitive OLTP commits directly to Parquet/Iceberg until the OLTP row/delta
+  commit path, indexes, and delta-union read are proven. Vector tables keep
+  SST/VIPER/etc. over `proximadb-object-store` (`ObjectStoreVectorRecordStore` later);
+  PAX row-family remains available as an HTAP candidate when it implements the shared
+  metadata/visibility contract. _(both crates NEW; object_store is read-only today; phase the
+  cutover — OLAP-profile tables first, OLTP/HTAP once delta-union read is proven.)_
+. **P4 — Shared logical lowering. DONE + WIRED.** `lower_logical_node`
+  (`src/datafusion/logical_lowering.rs`, `30a906bd7`) lowers
+  `proximadb-relational-algebra::LogicalNode` → DataFusion `LogicalPlan`
+  (Scan/Filter/Project/Aggregate/Sort/Limit; Join/Union/Distinct pending). **Wired into
+  the live P1 route `2cc16aa44`**: `run_datafusion_select` now lowers via the SHARED
+  relational frontend (`lower_sql`→`LogicalNode`→`lower_logical_node`) instead of
+  re-parsing with `ctx.sql` — the "shared logical plane, split physical plane" §5
+  guarantee is now REAL in the live route (guard test prevents silent fallback). JOIN/
+  UNION fall back to `ctx.sql` until the lowering covers them (next P4 increment). A
+  Polars-frame lowering is only needed if/when P2 is built.
 . **P5 — Pseudo-distributed worker seam.** Replace the dead
   `LocalComputeProvider::execute` stub with a real DataFusion-backed `ExecutionEngine`
   + the notebook blueprint's coordinator/worker model (multi-process/thread). Async
