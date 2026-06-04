@@ -115,6 +115,28 @@ The Query Router evaluates cardinality, partition counts, and freshness SLAs to 
 * **DataFusion (MPP/OLAP):** Selected for multi-table joins, distributed processing, large-scale Parquet/Iceberg object storage scans, and complex window functions.
 * **Specialized Engines (Vector/ANN):** Selected for similarity search, routing execution down to SST, VIPER, NOVA, HELIX, RAPTOR, SWIFT via the PAX block layout.
 
+[NOTE]
+.Implementation priority — Polars is benchmark-gated, not a day-one third engine (2026-06-04)
+====
+The four destinations above are the *target* taxonomy. For build order, the two
+load-bearing analytical pillars are **Volcano** (OLTP + strong-freshness reads over
+live WAL/`RecordStorage`) and **DataFusion** (OLAP/MPP over object-store
+Parquet/Iceberg). DataFusion is strategically non-negotiable: it is the *only*
+destination with a distributed/MPP path (Ballista-style), which is the entire point
+of the Rust-native warehouse — Polars is single-node by design and cannot be the MPP
+engine.
+
+**Polars is an optimization, not a pillar.** Its niche — single-partition, lightweight
+OLAP over Parquet — overlaps DataFusion's (already fast) low end and is adjacent to
+Volcano's OLTP fast-path. Standing up a second Arrow analytical engine (a second
+logical-lowering target in P4, more to maintain) is exactly the kind of parallel
+surface the Convergence Gate says to justify with data, not speculation. **Therefore:
+ship DataFusion-only first; add the `PolarsLocal` arm (P2) ONLY when profiling shows
+DataFusion's small/single-partition OLAP overhead is a *measured* problem.** The
+`ComputeBackend::PolarsLocal` slot stays reserved so the arm can drop in later behind
+a benchmark, without reshaping the seam.
+====
+
 ### 5.2. Routing Evolution: From Policy to Reinforcement Learning
 * **Phase 1: Policy & Heuristic-Driven (MVP)**
   For the SaaS MVP, routing must be predictable and explicitly tied to SLAs and budgets. The `ComputeScheduler` relies on strict, rule-based policies. For example: if `partitions == 1` and `join_count == 0`, route to Polars. If `point_lookup == true`, route to Volcano.
@@ -133,7 +155,9 @@ yet; WIRE = code exists but unwired; LIVE = extend an existing live path).
 
 . **P0 — `ComputeScheduler` skeleton + route contract + EXPLAIN (no behavior
   change).** Introduce `ComputeRoute { Volcano | Polars | DataFusion | Specialized }`
-  and a policy/heuristic `ComputeScheduler` (the §5.2 Phase-1 rule engine) at the
+  and map it onto the typed backend vocabulary used elsewhere
+  (`Native`, `PolarsLocal`, `DataFusionLocal`, `DataFusionDistributed`). Add a
+  policy/heuristic `ComputeScheduler` (the §5.2 Phase-1 rule engine) at the
   pgwire planner boundary. For now the rules ALWAYS pick `Volcano` for relational and
   `Specialized` for vector (today's behavior), but the decision is materialized: emit
   `compute_route`/`workload_profile`/`freshness_sla` + an `EXPLAIN` line, and register
@@ -145,10 +169,13 @@ yet; WIRE = code exists but unwired; LIVE = extend an existing live path).
   a DataFusion `SessionContext` over the existing `FilesystemParquetSplitReader` —
   turning `src/datafusion/**` into a real query path for the first time. pgwire
   smoke-test; default stays Volcano, opt-in by table/feature. _(WIRE.)_
-. **P2 — Polars local-analytics seam.** Add the §5.1 Polars destination: a
-  single-partition / lightweight-aggregation rule (`partitions == 1 && join_count ==
-  0`) routes to a Polars adapter that bypasses DataFusion's worker context. _(Polars =
-  NEW dependency + adapter; gate behind a feature like `datafusion-integration`.)_
+. **P2 — Polars local-analytics seam (OPTIONAL / benchmark-gated — see §5.1 note).**
+  DEFERRED until profiling shows DataFusion's small/single-partition OLAP overhead is a
+  measured problem. When justified: a `partitions == 1 && join_count == 0` rule routes
+  to a Polars adapter (`ComputeBackend::PolarsLocal`, slot already reserved) that
+  bypasses DataFusion's worker context. _(Polars = NEW dependency + second
+  logical-lowering target; do NOT build speculatively — Volcano+DataFusion are the
+  pillars, Polars is an optimization.)_
 . **P3 — Object-store Parquet/Iceberg write seam (the relational durable target).**
   Stand up the two new crates — `proximadb-object-store` (`object_store` wrapper) and
   `proximadb-iceberg-engine` (Parquet/Iceberg primary store) — and wire
@@ -177,11 +204,11 @@ yet; WIRE = code exists but unwired; LIVE = extend an existing live path).
   DataFusion/Specialized equilibrium for HTAP. _(extends an existing component;
   policy rules remain the safe fallback + the RL action space.)_
 
-**SaaS MVP cut (§9):** P0–P3 + P5 deliver the §9.1 MVP scope — single-node
-pseudo-distributed execution, object-store persistence, Volcano/Polars/DataFusion +
-Specialized vector over pgwire/REST/gRPC, multi-tenant RLS, billing/quota. P4/P6/P7
-harden + extend post-MVP; full distribution (Raft/sharding) is §9.2 Phase 6, funded
-by MVP revenue.
+**SaaS MVP cut (§9):** P0, P1, P3, P5 deliver the §9.1 MVP scope — single-node
+pseudo-distributed execution, object-store persistence, **Volcano + DataFusion** +
+Specialized vector over pgwire/REST/gRPC, multi-tenant RLS, billing/quota. P2 (Polars)
+is optional/benchmark-gated and NOT on the MVP path; P4/P6/P7 harden + extend post-MVP;
+full distribution (Raft/sharding) is §9.2 Phase 6, funded by MVP revenue.
 
 Secondary track (vector-era cleanup, not on the warehouse critical path):
 **TD-104 ROOT deletion** — the `UnifiedHandlers` monolith is vector-DB-era; the
