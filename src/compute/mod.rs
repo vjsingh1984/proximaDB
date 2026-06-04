@@ -163,6 +163,7 @@
 // Semantic module organization
 pub mod distance_computation;
 pub mod gpu;
+pub mod montecarlo;
 pub mod pipeline_executor;
 pub mod proximacodec;
 pub mod quantization;
