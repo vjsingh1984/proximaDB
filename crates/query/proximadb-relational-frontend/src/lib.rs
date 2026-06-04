@@ -288,7 +288,7 @@ fn lower_select(
             .collect::<Result<_, _>>()?;
         // 4b) Project + aggregate extraction.
         let (post_agg_outputs, aggregates) =
-            lower_projection_with_aggregates(&select.projection, &scope, group_by.len())?;
+            lower_projection_with_aggregates(&select.projection, &scope, &group_by)?;
         // 4c) HAVING — for MVP we only support HAVING
         //     expressions that reference group_by columns. Bare
         //     aggregates inside HAVING are Phase 3 (would need a
@@ -707,8 +707,9 @@ fn lower_value(v: &SqlValue) -> Result<ProximaValue, FrontendError> {
 fn lower_projection_with_aggregates(
     items: &[SelectItem],
     scope: &Scope,
-    group_count: usize,
+    group_by: &[NamedExpr],
 ) -> Result<(Vec<NamedExpr>, Vec<NamedAggregate>), FrontendError> {
+    let group_count = group_by.len();
     let mut outputs = Vec::new();
     let mut aggregates = Vec::new();
     for item in items {
@@ -757,7 +758,27 @@ fn lower_projection_with_aggregates(
                 let name = alias
                     .or_else(|| projection_alias_for_expr(&sql_expr))
                     .unwrap_or_else(|| auto_column_name(outputs.len()));
-                outputs.push(NamedExpr { name, expr });
+                // A non-aggregate projected column must be a GROUP BY key. The
+                // Aggregate node places group keys FIRST (ordinals
+                // 0..group_count) ahead of the aggregate slots, so rebind the
+                // reference to its group-key slot instead of leaving the
+                // pre-aggregate ordinal — which would otherwise point into an
+                // aggregate column (wrong type/value) once the grouped column
+                // isn't the table's first column.
+                let ty = expr.result_type();
+                let output_expr = match group_by.iter().position(|g| g.expr == expr) {
+                    Some(slot) => Expr::column(ColumnRef {
+                        name: name.clone(),
+                        ordinal: slot,
+                        ty,
+                        nullable: true,
+                    }),
+                    None => expr,
+                };
+                outputs.push(NamedExpr {
+                    name,
+                    expr: output_expr,
+                });
             }
         }
     }
@@ -1267,6 +1288,32 @@ mod tests {
                 other => panic!("expected Aggregate, got {other:?}"),
             },
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn select_group_key_projection_rebinds_to_post_aggregate_ordinal() {
+        // `name` is column ordinal 1 in `users`. After GROUP BY, the Aggregate
+        // node places group keys FIRST, so the projected `name` must reference
+        // the post-aggregate group slot (ordinal 0) — NOT its pre-aggregate
+        // ordinal 1, which now holds the COUNT result (Int64). Regression for a
+        // type-mismatch that surfaced whenever the grouped column isn't the
+        // table's first column.
+        let plan = lower("SELECT name, COUNT(*) FROM users GROUP BY name");
+        let LogicalNode::Project { outputs, .. } = plan else {
+            panic!("expected Project");
+        };
+        assert_eq!(outputs.len(), 2);
+        match &outputs[0].expr {
+            Expr::Column(c) => {
+                assert_eq!(c.ordinal, 0, "group key rebinds to post-agg slot 0");
+                assert_eq!(c.ty, ProximaType::String);
+            }
+            other => panic!("expected group-key column ref, got {other:?}"),
+        }
+        match &outputs[1].expr {
+            Expr::Column(c) => assert_eq!(c.ordinal, 1, "COUNT slot follows the group keys"),
+            other => panic!("expected aggregate column ref, got {other:?}"),
         }
     }
 
