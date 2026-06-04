@@ -358,8 +358,17 @@ fn expr_has_aggregate(expr: &SqlExpr) -> bool {
             let name = f.name.to_string().to_ascii_lowercase();
             matches!(
                 name.rsplit('.').next().unwrap_or(&name),
-                "count" | "sum" | "avg" | "min" | "max" | "stddev" | "stddev_pop"
-                    | "stddev_samp" | "variance" | "var_pop" | "var_samp"
+                "count"
+                    | "sum"
+                    | "avg"
+                    | "min"
+                    | "max"
+                    | "stddev"
+                    | "stddev_pop"
+                    | "stddev_samp"
+                    | "variance"
+                    | "var_pop"
+                    | "var_samp"
             )
         }
         SqlExpr::Nested(inner) => expr_has_aggregate(inner),
@@ -488,4 +497,67 @@ pub fn text_encode(v: &ProximaValue) -> Option<String> {
         V::Json(j) | V::Jsonb(j) => j.to_string(),
         other => format!("{other:?}"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gate(sql: &str) -> bool {
+        let statements = Parser::parse_sql(&GenericDialect {}, sql).expect("parse");
+        match statements.as_slice() {
+            [Statement::Query(query)] => query_engages_relational_engine(query),
+            _ => panic!("expected a single SELECT statement"),
+        }
+    }
+
+    #[test]
+    fn gate_engages_for_join_groupby_aggregate_and_union() {
+        // Queries the legacy single-table path can't serve → route to PATH B.
+        assert!(gate(
+            "SELECT emp.name FROM emp JOIN dept ON emp.dept_id = dept.id"
+        ));
+        assert!(gate("SELECT status, COUNT(*) FROM inv GROUP BY status"));
+        assert!(gate("SELECT COUNT(*) AS n FROM inv"));
+        assert!(gate(
+            "SELECT status FROM inv GROUP BY status HAVING COUNT(*) > 1"
+        ));
+        assert!(gate("SELECT id FROM a UNION SELECT id FROM b"));
+        assert!(gate("SELECT SUM(qty) AS s FROM inv"));
+    }
+
+    #[test]
+    fn gate_skips_simple_single_table_selects() {
+        // These stay on the (hardened) legacy path — gate must NOT engage.
+        assert!(!gate("SELECT * FROM inv"));
+        assert!(!gate(
+            "SELECT id FROM inv WHERE status = 'active' OR qty >= 30"
+        ));
+        assert!(!gate("SELECT id FROM inv ORDER BY qty LIMIT 5"));
+        assert!(!gate("SELECT id, status FROM inv WHERE id = 'i1'"));
+    }
+
+    #[test]
+    fn collect_table_names_covers_join_and_normalizes() {
+        let statements = Parser::parse_sql(
+            &GenericDialect {},
+            "SELECT * FROM Emp JOIN \"dept\" ON Emp.d = dept.id",
+        )
+        .expect("parse");
+        let [Statement::Query(query)] = statements.as_slice() else {
+            panic!("expected query");
+        };
+        let mut names = Vec::new();
+        collect_table_names(query, &mut names);
+        let keys: Vec<String> = names.iter().map(|n| normalize_table_key(n)).collect();
+        assert!(keys.contains(&"emp".to_string()), "got {keys:?}");
+        assert!(keys.contains(&"dept".to_string()), "got {keys:?}");
+    }
+
+    #[test]
+    fn normalize_table_key_strips_qualifier_and_quotes() {
+        assert_eq!(normalize_table_key("Inv"), "inv");
+        assert_eq!(normalize_table_key("public.Orders"), "orders");
+        assert_eq!(normalize_table_key("\"Mixed\""), "mixed");
+    }
 }
