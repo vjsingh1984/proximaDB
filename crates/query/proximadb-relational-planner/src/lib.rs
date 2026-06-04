@@ -745,6 +745,73 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
                         }
                     }
                 }
+                // Join-predicate pushdown: split the filter's AND-conjuncts by
+                // which join side they reference and push each into the matching
+                // PRESERVED-side child (so it reaches the scan — enabling
+                // predicate pushdown AND PkLookup on the dimension side). Mixed
+                // / non-pushable conjuncts stay as a residual Filter above the
+                // join (the join output schema is still left++right, so their
+                // ordinals are unchanged). The `on` clause is untouched.
+                PhysicalPlan::Join {
+                    left,
+                    right,
+                    kind,
+                    on,
+                    strategy,
+                } => {
+                    let left_width = left.output_schema().columns.len();
+                    let mut left_bucket: Vec<Expr> = Vec::new();
+                    let mut right_bucket: Vec<Expr> = Vec::new();
+                    let mut residual: Vec<Expr> = Vec::new();
+                    for conj in flatten_and(&predicate).into_iter().cloned() {
+                        let mut ords = Vec::new();
+                        collect_column_ordinals(&conj, &mut ords);
+                        if ords.is_empty() {
+                            residual.push(conj);
+                        } else if ords.iter().all(|o| *o < left_width) && can_push_to_left(kind) {
+                            left_bucket.push(conj);
+                        } else if ords.iter().all(|o| *o >= left_width) && can_push_to_right(kind) {
+                            // Rebase right-side ordinals onto the right child.
+                            right_bucket.push(shift_column_ordinals(conj, left_width));
+                        } else {
+                            residual.push(conj);
+                        }
+                    }
+                    let new_left = match combine_all(left_bucket) {
+                        Some(p) => Box::new(push_predicates(
+                            PhysicalPlan::Filter {
+                                input: left,
+                                predicate: p,
+                            },
+                            resolver,
+                        )),
+                        None => left,
+                    };
+                    let new_right = match combine_all(right_bucket) {
+                        Some(p) => Box::new(push_predicates(
+                            PhysicalPlan::Filter {
+                                input: right,
+                                predicate: p,
+                            },
+                            resolver,
+                        )),
+                        None => right,
+                    };
+                    let joined = PhysicalPlan::Join {
+                        left: new_left,
+                        right: new_right,
+                        kind,
+                        on,
+                        strategy,
+                    };
+                    match combine_all(residual) {
+                        Some(p) => PhysicalPlan::Filter {
+                            input: Box::new(joined),
+                            predicate: p,
+                        },
+                        None => joined,
+                    }
+                }
                 other => PhysicalPlan::Filter {
                     input: Box::new(other),
                     predicate,
@@ -932,6 +999,177 @@ fn expression_references_columns(expr: &Expr) -> bool {
         }
         Expr::FuncCall { args, .. } => args.iter().any(expression_references_columns),
     }
+}
+
+/// Collect every `Expr::Column` ordinal referenced by `expr`. Used by
+/// join-predicate pushdown to decide which join side a conjunct touches.
+fn collect_column_ordinals(expr: &Expr, out: &mut Vec<usize>) {
+    match expr {
+        Expr::Column(c) => out.push(c.ordinal),
+        Expr::Literal { .. } => {}
+        Expr::Cast { expr, .. } | Expr::UnaryOp { expr, .. } | Expr::IsNull { expr, .. } => {
+            collect_column_ordinals(expr, out)
+        }
+        Expr::BinaryOp { left, right, .. } | Expr::NullIf { left, right } => {
+            collect_column_ordinals(left, out);
+            collect_column_ordinals(right, out);
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            collect_column_ordinals(expr, out);
+            collect_column_ordinals(low, out);
+            collect_column_ordinals(high, out);
+        }
+        Expr::In { expr, list, .. } => {
+            collect_column_ordinals(expr, out);
+            for e in list {
+                collect_column_ordinals(e, out);
+            }
+        }
+        Expr::Like { expr, pattern, .. } => {
+            collect_column_ordinals(expr, out);
+            collect_column_ordinals(pattern, out);
+        }
+        Expr::Case {
+            branches,
+            otherwise,
+        } => {
+            for (c, t) in branches {
+                collect_column_ordinals(c, out);
+                collect_column_ordinals(t, out);
+            }
+            if let Some(o) = otherwise {
+                collect_column_ordinals(o, out);
+            }
+        }
+        Expr::Coalesce(args) => {
+            for e in args {
+                collect_column_ordinals(e, out);
+            }
+        }
+        Expr::FuncCall { args, .. } => {
+            for e in args {
+                collect_column_ordinals(e, out);
+            }
+        }
+    }
+}
+
+/// Subtract `offset` from every `Expr::Column` ordinal. Used to rebase a
+/// right-side join conjunct (whose ordinals are in the combined `left++right`
+/// space, `left_width..`) onto the right child's own `0..` schema.
+fn shift_column_ordinals(expr: Expr, offset: usize) -> Expr {
+    match expr {
+        Expr::Column(mut c) => {
+            c.ordinal -= offset;
+            Expr::Column(c)
+        }
+        lit @ Expr::Literal { .. } => lit,
+        Expr::Cast { expr, ty } => Expr::Cast {
+            expr: Box::new(shift_column_ordinals(*expr, offset)),
+            ty,
+        },
+        Expr::BinaryOp { op, left, right } => Expr::BinaryOp {
+            op,
+            left: Box::new(shift_column_ordinals(*left, offset)),
+            right: Box::new(shift_column_ordinals(*right, offset)),
+        },
+        Expr::UnaryOp { op, expr } => Expr::UnaryOp {
+            op,
+            expr: Box::new(shift_column_ordinals(*expr, offset)),
+        },
+        Expr::IsNull { expr, not } => Expr::IsNull {
+            expr: Box::new(shift_column_ordinals(*expr, offset)),
+            not,
+        },
+        Expr::Between {
+            expr,
+            low,
+            high,
+            not,
+        } => Expr::Between {
+            expr: Box::new(shift_column_ordinals(*expr, offset)),
+            low: Box::new(shift_column_ordinals(*low, offset)),
+            high: Box::new(shift_column_ordinals(*high, offset)),
+            not,
+        },
+        Expr::In { expr, list, not } => Expr::In {
+            expr: Box::new(shift_column_ordinals(*expr, offset)),
+            list: list
+                .into_iter()
+                .map(|e| shift_column_ordinals(e, offset))
+                .collect(),
+            not,
+        },
+        Expr::Like {
+            expr,
+            pattern,
+            not,
+            case_insensitive,
+        } => Expr::Like {
+            expr: Box::new(shift_column_ordinals(*expr, offset)),
+            pattern: Box::new(shift_column_ordinals(*pattern, offset)),
+            not,
+            case_insensitive,
+        },
+        Expr::Case {
+            branches,
+            otherwise,
+        } => Expr::Case {
+            branches: branches
+                .into_iter()
+                .map(|(c, t)| {
+                    (
+                        shift_column_ordinals(c, offset),
+                        shift_column_ordinals(t, offset),
+                    )
+                })
+                .collect(),
+            otherwise: otherwise.map(|o| Box::new(shift_column_ordinals(*o, offset))),
+        },
+        Expr::Coalesce(args) => Expr::Coalesce(
+            args.into_iter()
+                .map(|e| shift_column_ordinals(e, offset))
+                .collect(),
+        ),
+        Expr::NullIf { left, right } => Expr::NullIf {
+            left: Box::new(shift_column_ordinals(*left, offset)),
+            right: Box::new(shift_column_ordinals(*right, offset)),
+        },
+        Expr::FuncCall {
+            name,
+            args,
+            return_ty,
+        } => Expr::FuncCall {
+            name,
+            args: args
+                .into_iter()
+                .map(|e| shift_column_ordinals(e, offset))
+                .collect(),
+            return_ty,
+        },
+    }
+}
+
+/// A WHERE predicate may only be pushed to a join's PRESERVED side; pushing it
+/// to the null-supplying side would re-admit null-extended rows the post-join
+/// filter removes. Left preserved in Inner/Cross/Left.
+fn can_push_to_left(kind: JoinKind) -> bool {
+    matches!(kind, JoinKind::Inner | JoinKind::Cross | JoinKind::Left)
+}
+
+/// Right preserved in Inner/Cross/Right (see [`can_push_to_left`]). Full/Semi/
+/// Anti push to neither side (conservative).
+fn can_push_to_right(kind: JoinKind) -> bool {
+    matches!(kind, JoinKind::Inner | JoinKind::Cross | JoinKind::Right)
+}
+
+/// Fold a conjunct list back into a single AND-ed predicate (`None` if empty).
+fn combine_all(preds: Vec<Expr>) -> Option<Expr> {
+    preds
+        .into_iter()
+        .fold(None, |acc, p| combine_predicates(acc, Some(p)))
 }
 
 /// Projection pushdown — narrow each Scan to only the columns
@@ -1855,6 +2093,131 @@ mod tests {
             } => {}
             other => panic!("expected FullScan, got {other:?}"),
         }
+    }
+
+    // --- Join predicate pushdown -------------------------------------
+
+    /// A column ref at a specific (combined-schema) ordinal.
+    fn col_at(ordinal: usize, name: &str, ty: ProximaType) -> Expr {
+        Expr::column(ColumnRef {
+            name: name.to_string(),
+            ordinal,
+            ty,
+            nullable: true,
+        })
+    }
+
+    /// users(id@0,name@1,age@2) ++ orders(id@3,user_id@4,total@5).
+    fn filter_over_join(kind: JoinKind, predicate: Expr) -> PhysicalPlan {
+        PhysicalPlan::Filter {
+            input: Box::new(PhysicalPlan::Join {
+                left: Box::new(lower_to_physical(users_scan())),
+                right: Box::new(lower_to_physical(orders_scan())),
+                kind,
+                on: Some(Expr::bin(
+                    BinaryOp::Eq,
+                    col_at(0, "id", ProximaType::Int64),
+                    col_at(4, "user_id", ProximaType::Int64),
+                )),
+                strategy: JoinStrategy::Auto,
+            }),
+            predicate,
+        }
+    }
+
+    #[test]
+    fn join_pushdown_inner_splits_both_sides() {
+        // age(left,2)=30 AND total(right,5)>99 → pushed to each child; no Filter.
+        let pred = Expr::bin(
+            BinaryOp::And,
+            Expr::bin(
+                BinaryOp::Eq,
+                col_at(2, "age", ProximaType::Int32),
+                Expr::literal(ProximaValue::Int32(30)),
+            ),
+            Expr::bin(
+                BinaryOp::Gt,
+                col_at(5, "total", ProximaType::Float64),
+                Expr::literal(ProximaValue::Float64(99.0)),
+            ),
+        );
+        let result = push_predicates(filter_over_join(JoinKind::Inner, pred), &cap_full(Vec::new()));
+        let PhysicalPlan::Join { left, right, .. } = result else {
+            panic!("expected Join with filter fully pushed");
+        };
+        assert!(
+            matches!(*left, PhysicalPlan::Scan { predicate: Some(_), .. }),
+            "left scan gets the age predicate"
+        );
+        // Right scan gets `total`, rebased from combined ordinal 5 → right-local 2.
+        match *right {
+            PhysicalPlan::Scan {
+                predicate: Some(Expr::BinaryOp { left, .. }),
+                ..
+            } => match *left {
+                Expr::Column(c) => assert_eq!(c.ordinal, 2, "right ordinal rebased"),
+                other => panic!("expected column, got {other:?}"),
+            },
+            other => panic!("right scan should carry the rebased total predicate: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn join_pushdown_left_join_preserves_right_filter_above() {
+        // LEFT join: a right-side filter must NOT be pushed (changes semantics);
+        // it stays as a Filter above the join.
+        let pred = Expr::bin(
+            BinaryOp::Eq,
+            col_at(5, "total", ProximaType::Float64),
+            Expr::literal(ProximaValue::Float64(99.0)),
+        );
+        let result = push_predicates(filter_over_join(JoinKind::Left, pred), &cap_full(Vec::new()));
+        match result {
+            PhysicalPlan::Filter { input, .. } => {
+                assert!(matches!(*input, PhysicalPlan::Join { .. }));
+            }
+            other => panic!("right-side filter on LEFT join must stay above: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn join_pushdown_mixed_conjunct_stays_above() {
+        // age(left,2) = total(right,5) references both sides → residual above.
+        let pred = Expr::bin(
+            BinaryOp::Eq,
+            col_at(2, "age", ProximaType::Int32),
+            col_at(5, "total", ProximaType::Float64),
+        );
+        let result = push_predicates(filter_over_join(JoinKind::Inner, pred), &cap_full(Vec::new()));
+        assert!(
+            matches!(result, PhysicalPlan::Filter { .. }),
+            "cross-side conjunct cannot be pushed to one child"
+        );
+    }
+
+    #[test]
+    fn join_pushdown_enables_pk_lookup_on_right() {
+        // orders.id(right,3) = 42 → pushed to the orders scan AND rewritten to
+        // PkLookup (orders.id is the PK at right-local ordinal 0).
+        let pred = Expr::bin(
+            BinaryOp::Eq,
+            col_at(3, "id", ProximaType::Int64),
+            Expr::literal(ProximaValue::Int64(42)),
+        );
+        let result = push_predicates(filter_over_join(JoinKind::Inner, pred), &cap_full(vec![0]));
+        let PhysicalPlan::Join { right, .. } = result else {
+            panic!("expected Join (filter pushed)");
+        };
+        assert!(
+            matches!(
+                *right,
+                PhysicalPlan::Scan {
+                    access: ScanAccess::PkLookup { .. },
+                    ..
+                }
+            ),
+            "right (dimension) scan should become a Pk lookup"
+        );
     }
 
     // --- Projection pushdown -----------------------------------------
