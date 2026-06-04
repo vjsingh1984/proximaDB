@@ -163,30 +163,9 @@ pub async fn try_run_select(
     let [Statement::Query(query)] = statements.as_slice() else {
         return None;
     };
-    let engages = query_engages_relational_engine(query);
-
-    // Course-correction §5 (P0): materialize the compute-route decision at the
-    // planner boundary via the canonical `ComputeScheduler`. P0 ALWAYS resolves
-    // to `Native` (the live Volcano path) — additive, no behavior change — so the
-    // decision is observable and P1 has one contract-bound place to flip the OLAP
-    // arm to DataFusion. (A SELECT EXPLAIN surface can later print
-    // `decision.explain_line()`; today we emit it as a structured trace.)
-    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
-        crate::query::compute_scheduler::QueryShape {
-            engages_relational: engages,
-            parquet_backed: false,
-        },
-    );
-    tracing::debug!(
-        target: "proximadb::compute_route",
-        backend = ?decision.backend,
-        workload = ?decision.workload_profile,
-        reason = %decision.reason,
-        "{}",
-        decision.explain_line()
-    );
-
-    if !engages {
+    // Engaged = a relational shape the legacy single-table path can't serve
+    // (joins / GROUP BY / aggregates / set-ops). Simple SELECTs stay on legacy.
+    if !query_engages_relational_engine(query) {
         return None;
     }
 
@@ -225,19 +204,44 @@ pub async fn try_run_select(
         }
     }
 
-    // P1 OLAP arm: when EVERY referenced table is Parquet-backed, route the (already
-    // OLAP-shaped) query to DataFusion over object storage. Mixed Parquet+native
-    // queries stay on Volcano (cross-engine join is a later phase).
+    // Course-correction §5: compute the per-query Parquet-backed signal — only ever
+    // true under `datafusion-integration`, where the DataFusion destination is
+    // compiled — and feed it into the canonical `ComputeScheduler` so the ROUTE
+    // DECISION and the physical DISPATCH come from ONE place. Mixed Parquet+native
+    // queries report `false` (cross-engine join is a later phase) → Volcano.
     #[cfg(feature = "datafusion-integration")]
-    if !tables.is_empty() && tables.keys().all(|k| parquet_loc_by_key.contains_key(k)) {
+    let parquet_backed =
+        !tables.is_empty() && tables.keys().all(|k| parquet_loc_by_key.contains_key(k));
+    #[cfg(not(feature = "datafusion-integration"))]
+    let parquet_backed = false;
+
+    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+        crate::query::compute_scheduler::QueryShape {
+            engages_relational: true,
+            parquet_backed,
+        },
+    );
+    tracing::debug!(
+        target: "proximadb::compute_route",
+        backend = ?decision.backend,
+        workload = ?decision.workload_profile,
+        reason = %decision.reason,
+        "{}",
+        decision.explain_line()
+    );
+
+    // P1 dispatch driven by the scheduler decision. The DataFusion arm exists only
+    // under the feature (and `parquet_backed` — hence a `DataFusionLocal` decision —
+    // is only reachable there), so a default build never enters it and stays Volcano.
+    #[cfg(feature = "datafusion-integration")]
+    if matches!(
+        decision.backend,
+        crate::query::table_write_plan::ComputeBackend::DataFusionLocal
+    ) {
         let parquet_tables: Vec<(String, String)> = tables
             .iter()
             .map(|(k, t)| (t.table_name.clone(), parquet_loc_by_key[k].clone()))
             .collect();
-        tracing::debug!(
-            target: "proximadb::compute_route",
-            "Compute Route: DataFusionLocal (workload=Olap, reason=\"OLAP over Parquet-backed table(s)\")"
-        );
         return Some(run_datafusion_select(sql, &parquet_tables).await);
     }
 
@@ -484,6 +488,70 @@ mod datafusion_route_tests {
         assert_eq!(result.rows[0][2], ProximaValue::Float64(1.5));
         // Null preserved.
         assert_eq!(result.rows[1][2], ProximaValue::Null);
+    }
+
+    #[test]
+    fn catalog_table_is_parquet_backed_detects_external_parquet() {
+        use proximadb_catalog::{CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema};
+
+        // External Parquet table → returns the location.
+        let layout = CatalogStorageLayout::external_authoritative(
+            "ext",
+            CatalogPhysicalFormat::Parquet,
+            "file:///data/ext.parquet",
+        );
+        let parquet_table = CatalogTableSchema::default().with_storage_layout(layout);
+        assert_eq!(
+            catalog_table_is_parquet_backed(&parquet_table).as_deref(),
+            Some("file:///data/ext.parquet")
+        );
+
+        // A default (InternalCanonical / ProximaBlock) table is not Parquet-backed.
+        assert!(catalog_table_is_parquet_backed(&CatalogTableSchema::default()).is_none());
+    }
+
+    #[tokio::test]
+    async fn run_datafusion_select_executes_olap_over_parquet() {
+        use parquet::arrow::ArrowWriter;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("t.parquet");
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("k", DataType::Utf8, false),
+            Field::new("x", DataType::Float64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["a", "a", "b"])),
+                Arc::new(Float64Array::from(vec![1.0, 3.0, 10.0])),
+            ],
+        )
+        .unwrap();
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut writer = ArrowWriter::try_new(file, schema, None).unwrap();
+            writer.write(&batch).unwrap();
+            writer.close().unwrap();
+        }
+
+        let url = format!("file://{}", path.display());
+        let result = run_datafusion_select(
+            "SELECT k, count(*) AS c, sum(x) AS s FROM t GROUP BY k ORDER BY k",
+            &[("t".to_string(), url)],
+        )
+        .await
+        .expect("datafusion select over parquet");
+
+        // Two groups: a (count 2, sum 4.0), b (count 1, sum 10.0).
+        assert_eq!(result.schema.columns.len(), 3);
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][0], ProximaValue::String("a".to_string()));
+        assert_eq!(result.rows[0][1], ProximaValue::Int64(2));
+        assert_eq!(result.rows[0][2], ProximaValue::Float64(4.0));
+        assert_eq!(result.rows[1][0], ProximaValue::String("b".to_string()));
+        assert_eq!(result.rows[1][1], ProximaValue::Int64(1));
+        assert_eq!(result.rows[1][2], ProximaValue::Float64(10.0));
     }
 }
 
@@ -816,23 +884,81 @@ pub struct SelectRouteExplanation {
 
 /// Build the `EXPLAIN SELECT` payload. `Err` if `sql` is not a routable single
 /// relational query.
-pub fn explain_select_route(sql: &str) -> Result<SelectRouteExplanation, String> {
-    let decision =
-        classify_select_route(sql).ok_or_else(|| "not a routable relational SELECT".to_string())?;
+/// Render a route decision to the serializable EXPLAIN payload (single source so the
+/// catalog-free and catalog-aware EXPLAIN variants stay consistent).
+fn decision_to_explanation(
+    decision: &crate::query::compute_scheduler::SelectRouteDecision,
+) -> SelectRouteExplanation {
     let freshness_sla = match decision.backend {
         crate::query::table_write_plan::ComputeBackend::Native => {
             "strong (Volcano over WAL+RecordStorage)".to_string()
         }
         _ => "base-snapshot (engine read path)".to_string(),
     };
-    Ok(SelectRouteExplanation {
+    SelectRouteExplanation {
         compute_route: decision.compute_route_label(),
         workload_profile: format!("{:?}", decision.workload_profile),
         authority_mode: "control-plane-route (no durable authority moved)".to_string(),
         policy_boundary: "query-plan (one engine per plan)".to_string(),
         freshness_sla,
         reason: decision.reason.clone(),
-    })
+    }
+}
+
+/// Catalog-free `EXPLAIN SELECT` route (shape only). Reports the Volcano/Native route;
+/// use [`explain_select_route_with_catalog`] when a `DmlService` is available so
+/// Parquet-backed tables disclose the DataFusion route they actually take.
+pub fn explain_select_route(sql: &str) -> Result<SelectRouteExplanation, String> {
+    let decision =
+        classify_select_route(sql).ok_or_else(|| "not a routable relational SELECT".to_string())?;
+    Ok(decision_to_explanation(&decision))
+}
+
+/// Catalog-aware `EXPLAIN SELECT`: resolves referenced tables so the disclosed route
+/// matches what [`try_run_select`] executes. Under `datafusion-integration`, an
+/// all-Parquet-backed query discloses `DataFusionLocal`; otherwise (and when the
+/// feature is off) it discloses the Volcano/Native route.
+pub async fn explain_select_route_with_catalog(
+    sql: &str,
+    dml: &Arc<DmlService>,
+) -> Result<SelectRouteExplanation, String> {
+    let statements =
+        Parser::parse_sql(&GenericDialect {}, sql).map_err(|e| format!("parse: {e}"))?;
+    let [Statement::Query(query)] = statements.as_slice() else {
+        return Err("not a routable relational SELECT".to_string());
+    };
+    let engages = query_engages_relational_engine(query);
+
+    #[allow(unused_mut)]
+    let mut parquet_backed = false;
+    #[cfg(feature = "datafusion-integration")]
+    {
+        let mut names = Vec::new();
+        collect_table_names(query, &mut names);
+        if !names.is_empty() {
+            let mut all_parquet = true;
+            for raw in &names {
+                match dml.resolve_relational_schema(raw).await {
+                    Ok(schema) if catalog_table_is_parquet_backed(&schema).is_some() => {}
+                    _ => {
+                        all_parquet = false;
+                        break;
+                    }
+                }
+            }
+            parquet_backed = all_parquet;
+        }
+    }
+    #[cfg(not(feature = "datafusion-integration"))]
+    let _ = dml; // catalog not consulted without the DataFusion route
+
+    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+        crate::query::compute_scheduler::QueryShape {
+            engages_relational: engages,
+            parquet_backed,
+        },
+    );
+    Ok(decision_to_explanation(&decision))
 }
 
 #[cfg(test)]
