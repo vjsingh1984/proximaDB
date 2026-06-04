@@ -2,7 +2,36 @@
 :toc: left
 :toclevels: 2
 Date: 2026-06-03
-Status: PLAN — S1 (safe subset) SHIPPED `f141dcc5d`; S2–S5 pending
+Status: S1 `f141dcc5d` + S2 `7e18a483b` + S3 `20e41ad95`/`<S3a>` SHIPPED — all 4
+protocols off the *concrete* root handler. S4/S5 + ROOT deletion pending.
+
+[NOTE]
+====
+**S3 SHIPPED 2026-06-03** (Arrow Flight off the concrete `UnifiedHandlers`):
+* **S3a** (`feat(runtime): RecordOpsPort + relocate BatchOperationResult`): moved
+  `BatchOperationResult`/`BatchOperationMetrics` down to `proximadb-runtime` (root
+  is a re-export shim; 8 consumers unchanged), added `proximadb-records` dep,
+  defined `RecordOpsPort`, and impl'd it on the root `UnifiedHandlers` (delegates
+  to `handle_record_*_for_tenant`).
+* **S3b** (`20e41ad95`): `ProximaFlightService` now holds `Arc<dyn ApiHandlersPort>`
+  + `Arc<dyn RecordOpsPort>` + the vector-ops/collection services directly, not
+  `Arc<UnifiedHandlers>`. The two type-mapping risks were eliminated upfront
+  (`CollectionPort`/`CollectionService` return the **same** `proximadb_v1::Collection`;
+  the record result is the relocated `BatchOperationResult`), so it was a
+  same-instance swap — compile-clean ⇒ mechanically correct, behavior identical by
+  construction. TDD: the 131 Arrow service/codec tests pass unchanged (the 5
+  failures are pre-existing onnx-off + arrow `StructArray`, verified foreign).
+  `new()` stays the boot adapter (extracts ports/services from the passed
+  `UnifiedHandlers`), so `ArrowFlightServer`/`multi_server` are unchanged.
+
+**What still ties to ROOT** (for the terminal deletion): Arrow's ports are still
+*backed by* the root `UnifiedHandlers` via the `new()` boot adapter (the runtime
+handler doesn't impl `RecordOpsPort` and doesn't expose the concrete vector/
+collection services); the `rest/v1/handlers.rs:1337` `ports=None` fallback
+(legacy/cluster); and the build-time AQL/hybrid/memory field-extraction (S5).
+ROOT deletion = impl `RecordOpsPort` on a runtime-accessible target + inject the
+vector/collection services at boot + S5 + remove the fallback.
+====
 
 [NOTE]
 ====
