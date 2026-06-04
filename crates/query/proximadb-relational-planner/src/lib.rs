@@ -2141,12 +2141,21 @@ mod tests {
                 Expr::literal(ProximaValue::Float64(99.0)),
             ),
         );
-        let result = push_predicates(filter_over_join(JoinKind::Inner, pred), &cap_full(Vec::new()));
+        let result = push_predicates(
+            filter_over_join(JoinKind::Inner, pred),
+            &cap_full(Vec::new()),
+        );
         let PhysicalPlan::Join { left, right, .. } = result else {
             panic!("expected Join with filter fully pushed");
         };
         assert!(
-            matches!(*left, PhysicalPlan::Scan { predicate: Some(_), .. }),
+            matches!(
+                *left,
+                PhysicalPlan::Scan {
+                    predicate: Some(_),
+                    ..
+                }
+            ),
             "left scan gets the age predicate"
         );
         // Right scan gets `total`, rebased from combined ordinal 5 → right-local 2.
@@ -2171,7 +2180,10 @@ mod tests {
             col_at(5, "total", ProximaType::Float64),
             Expr::literal(ProximaValue::Float64(99.0)),
         );
-        let result = push_predicates(filter_over_join(JoinKind::Left, pred), &cap_full(Vec::new()));
+        let result = push_predicates(
+            filter_over_join(JoinKind::Left, pred),
+            &cap_full(Vec::new()),
+        );
         match result {
             PhysicalPlan::Filter { input, .. } => {
                 assert!(matches!(*input, PhysicalPlan::Join { .. }));
@@ -2188,7 +2200,10 @@ mod tests {
             col_at(2, "age", ProximaType::Int32),
             col_at(5, "total", ProximaType::Float64),
         );
-        let result = push_predicates(filter_over_join(JoinKind::Inner, pred), &cap_full(Vec::new()));
+        let result = push_predicates(
+            filter_over_join(JoinKind::Inner, pred),
+            &cap_full(Vec::new()),
+        );
         assert!(
             matches!(result, PhysicalPlan::Filter { .. }),
             "cross-side conjunct cannot be pushed to one child"
