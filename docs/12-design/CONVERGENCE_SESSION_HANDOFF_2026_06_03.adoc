@@ -144,8 +144,19 @@ results"):
   ticket parses fine.) These block Flight vector-search *responses* in general and
   predate TD-104; flag for the Arrow-encoder owner.
 
-Still UNTESTED: REST (S1) in multi-port mode with gRPC disabled
-(`api.unified_mode=false` + gRPC off) — the specific config S1 fixes.
+* **REST (S1) — PASS (2026-06-04).** Verified in the exact target scenario:
+  `unified_mode=false` (multi-port) + `enable_grpc=false`. To get there I first had
+  to fix a dead config toggle (`56740fee8`): `server_builder::build()` never wired
+  `api.enable_grpc` into the gRPC builder, so gRPC always started and the
+  gRPC-disabled mode was unreachable. With the fix, gRPC no longer binds (5679
+  refused) and the REST round-trip — `GET /api/v1/collections`, `POST
+  /api/v2/collections`, `POST /api/v1/vectors/batch` (2 inserted), `POST
+  /api/v1/search` (v1 score 1.0) — all succeed via the runtime port handler,
+  exactly the path that pre-S1 fell back to the root inherent handler.
+
+All three S1/S2/S3 boot-wiring paths are now runtime-verified. (Config knob: gRPC
+is enabled/disabled via `[api] enable_grpc`, NOT `[api.protocols.grpc] enabled`,
+which is unused for the multi-server toggle.)
 
 == 3. What still ties to ROOT (`src/api_handlers/request_handlers.rs` UnifiedHandlers)
 . **S5 build-time field extraction** — `rest/v1/handlers.rs:1207-1521` (AQL source
