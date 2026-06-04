@@ -85,9 +85,22 @@ against the live tree on branch `proximadb-embedding`.
 |===
 
 **Headline:** the relational *wedge is already live* — but on a hand-rolled Volcano
-executor over WAL+`RecordStorage`, while DataFusion and object-storage-write are
-unwired. The roadmap is therefore *gap closure + a deliberate dual-engine seam*, not
-a green-field build.
+executor over WAL+`RecordStorage`, while DataFusion, Polars, and object-storage-write
+are unwired. The roadmap is therefore *gap closure + a deliberate multi-engine seam*,
+not a green-field build.
+
+**Target storage decomposition (per the revised LLD + storage-format docs,
+2026-06-04 — aspirational, not yet coded):** the relational durable format moves from
+PAX block-modes to **Parquet/Iceberg over object storage**, via two NEW crates —
+`proximadb-object-store` (an `object_store`-crate wrapper) and `proximadb-iceberg-engine`
+(the Parquet/Iceberg primary store for relational/document/graph/observability). **PAX
+and the SST/VIPER/NOVA/HELIX/RAPTOR/SWIFT engines are reserved EXCLUSIVELY for the
+vector/ANN modality.** WAL+`RecordStorage` is NOT removed: it becomes the **OLTP
+write-ahead + freshness/delta tier** in front of the Iceberg durable tier — Volcano
+serves strong-freshness reads from the delta, a background flush/compaction promotes it
+to Parquet/Iceberg, and DataFusion/Polars read the base snapshots (optionally unioning
+the delta per the §5 freshness boundary). This doc (not the now-[SUPERSEDED]
+`MULTIMODAL_OVERHAUL_SPEC`) is the storage-model authority.
 
 == 5. Intelligent Multi-Engine Routing (Policy to RL Evolution)
 
@@ -136,11 +149,17 @@ yet; WIRE = code exists but unwired; LIVE = extend an existing live path).
   single-partition / lightweight-aggregation rule (`partitions == 1 && join_count ==
   0`) routes to a Polars adapter that bypasses DataFusion's worker context. _(Polars =
   NEW dependency + adapter; gate behind a feature like `datafusion-integration`.)_
-. **P3 — Object-store Parquet write seam.** Implement `ObjectStoreIcebergRecordStore`
-  as a `TableRecordStore` impl writing Parquet via the canonical
-  FileSystem/`object_store` trait, selectable for OLAP-profile tables in
-  `CatalogRoutingTableRecordStore`. Vector tables keep the WAL+engine path
-  (`ObjectStoreVectorRecordStore` later). _(NEW; object_store is read-only today.)_
+. **P3 — Object-store Parquet/Iceberg write seam (the relational durable target).**
+  Stand up the two new crates — `proximadb-object-store` (`object_store` wrapper) and
+  `proximadb-iceberg-engine` (Parquet/Iceberg primary store) — and wire
+  `proximadb-iceberg-engine` as a `TableRecordStore` impl behind
+  `CatalogRoutingTableRecordStore`, selectable for relational/OLAP-profile tables. This
+  is the durable BASE tier; WAL+`RecordStorage` stays as the OLTP write-ahead +
+  freshness DELTA in front of it, with a background flush/compaction promoting
+  delta→Parquet/Iceberg (the staging/durable tiering from §4). Vector tables keep
+  PAX/SST/VIPER/etc. over `proximadb-object-store` (`ObjectStoreVectorRecordStore`
+  later). _(both crates NEW; object_store is read-only today; phase the cutover —
+  OLAP-profile tables first, OLTP/HTAP once delta-union read is proven.)_
 . **P4 — Shared logical lowering.** Lower `proximadb-relational-algebra::LogicalNode`
   into a DataFusion `LogicalPlan` (and a Polars frame), so every destination consumes
   the SAME frontend/algebra the Volcano path uses — discharging the "shared logical
@@ -180,6 +199,17 @@ NATIVE_COMPUTE_ENGINE_SPECIFICATION.adoc` (which must gain the §5 `ComputeSched
 four-destination routing terminology as it is revised). The multi-engine routing
 contract (§5) must be reflected in the Convergence Audit before P1 lands a second
 physical executor.
+
+As of 2026-06-04 this doc is also the **storage-model authority**: it supersedes
+`roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` (now marked [SUPERSEDED] — its
+unified `ProximaRecord` envelope is retained, its single-physical-execution mandate is
+not), and `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` re-points its durable
+convergence target here. The revised `MODULE_COMPONENT_LLD_2026_05_22.adoc` adds the
+`proximadb-object-store` + `proximadb-iceberg-engine` crates and reserves
+`proximadb-block-format`/PAX + the SST-family engines for the vector modality; the
+revised `RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc` makes
+Parquet/Iceberg-over-object_store the relational internal format. The roadmap §6 (esp.
+P3) is the executable bridge from the live WAL+`RecordStorage` path to that target.
 
 == 8. Stacked Modalities over the Relational Spine (The Multi-Modal Moat)
 
