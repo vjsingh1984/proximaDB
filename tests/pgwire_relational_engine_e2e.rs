@@ -319,11 +319,24 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "dimension PK filter pushed through the join"
     );
 
-    // NOTE: the LEFT-join right-side-filter correctness guard lives at the planner
-    // unit level (`join_pushdown_left_join_preserves_right_filter_above`). An e2e
-    // LEFT JOIN over real data currently falls through to the legacy path
-    // (a pre-existing PATH B lowering gap, unrelated to predicate pushdown), so it
-    // can't be exercised end-to-end here — tracked as a follow-up.
+    // (3c) LEFT-join right-side-filter correctness: the WHERE on the null-supplying
+    // (right) side must NOT be pushed into dept's scan (planner can_push_to_right
+    // is false for LEFT) — it stays above the join, so the post-join filter removes
+    // null-extended rows per standard SQL. Only emp rows whose matched dept has
+    // dname='sales' (cas) survive.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename, dname FROM {emp} LEFT JOIN {dept} ON {emp}.dept_id = {dept}.id WHERE {dept}.dname = 'sales'"
+        ))
+        .await
+        .expect("SELECT left join + right-side filter");
+    assert_eq!(
+        pair_set(&rows, "ename", "dname"),
+        [("cas".to_string(), "sales".to_string())]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        "LEFT-join right-side filter stays above the join (correct semantics)"
+    );
 
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
     // (the gate keeps it on the hardened legacy path, not PATH B).
