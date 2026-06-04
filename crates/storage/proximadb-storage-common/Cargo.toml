@@ -19,6 +19,7 @@ arrow.workspace = true
 bincode.workspace = true
 arrow-array.workspace = true
 arrow-schema.workspace = true
+bytes = "1.5"
 async-trait.workspace = true
 chrono.workspace = true
 futures.workspace = true

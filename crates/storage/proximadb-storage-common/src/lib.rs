@@ -30,6 +30,7 @@ pub mod observability_partitioning;
 pub mod observability_rollups;
 pub mod pax_block;
 pub mod proxima_arrow;
+pub mod proxima_parquet;
 pub mod proxima_schema;
 pub mod query_metrics;
 pub mod smart_io_metrics;
