@@ -63,6 +63,9 @@ pub mod engine_adapters;
 // Custom scalar UDFs (e.g. Monte Carlo option pricing)
 pub mod udf;
 
+// P4: shared logical lowering — relational LogicalNode -> DataFusion LogicalPlan
+pub mod logical_lowering;
+
 // Re-exports for convenience
 pub use table_provider::{
     // Original format-based provider
