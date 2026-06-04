@@ -1118,6 +1118,14 @@ pub struct HashJoinExec {
     probe_left: Option<RelationalRow>,
     probe_matches: Vec<RelationalRow>,
     probe_cursor: usize,
+    /// RIGHT/FULL build-side drain. Hash only runs on pure-equi `on`, so a probe
+    /// key-hit matches the whole build bucket → track matched-ness per GroupKey.
+    /// After the probe (left) input is exhausted, unmatched build (right) rows are
+    /// emitted null-padded on the left.
+    matched_keys: HashSet<GroupKey>,
+    drain_rows: Vec<RelationalRow>,
+    drain_cursor: usize,
+    drain_started: bool,
 }
 
 impl HashJoinExec {
@@ -1146,6 +1154,10 @@ impl HashJoinExec {
             probe_left: None,
             probe_matches: Vec::new(),
             probe_cursor: 0,
+            matched_keys: HashSet::new(),
+            drain_rows: Vec::new(),
+            drain_cursor: 0,
+            drain_started: false,
         })
     }
 
@@ -1183,12 +1195,17 @@ impl ExecNode for HashJoinExec {
         self.probe_left = None;
         self.probe_matches.clear();
         self.probe_cursor = 0;
+        self.matched_keys.clear();
+        self.drain_rows.clear();
+        self.drain_cursor = 0;
+        self.drain_started = false;
         Ok(())
     }
 
     async fn next_row(&mut self) -> Result<Option<RelationalRow>, ExecError> {
         self.ensure_build().await?;
         let right_width = self.right.schema().len();
+        let left_width = self.left.schema().len();
         loop {
             // Drain matches for current probe row, if any.
             if self.probe_left.is_some() && self.probe_cursor < self.probe_matches.len() {
@@ -1219,6 +1236,28 @@ impl ExecNode for HashJoinExec {
             }
             // Need a fresh probe row.
             let Some(l) = self.left.next_row().await? else {
+                // Left (probe) exhausted. For RIGHT/FULL, drain unmatched build
+                // (right) rows null-padded on the left. Hash runs only on pure-equi
+                // `on`, so a matched GroupKey means its whole bucket matched.
+                if matches!(self.kind, JoinKind::Right | JoinKind::Full) {
+                    if !self.drain_started {
+                        self.drain_started = true;
+                        if let Some(table) = &self.build_table {
+                            for (key, rows) in table {
+                                if !self.matched_keys.contains(key) {
+                                    self.drain_rows.extend(rows.iter().cloned());
+                                }
+                            }
+                        }
+                    }
+                    if self.drain_cursor < self.drain_rows.len() {
+                        let r = self.drain_rows[self.drain_cursor].clone();
+                        self.drain_cursor += 1;
+                        let mut out = vec![ProximaValue::Null; left_width];
+                        out.extend(r);
+                        return Ok(Some(out));
+                    }
+                }
                 return Ok(None);
             };
             // Compute probe key from left row.
@@ -1260,16 +1299,32 @@ impl ExecNode for HashJoinExec {
                     self.probe_matches = matches;
                     self.probe_cursor = 0;
                 }
-                JoinKind::Right | JoinKind::Full => {
-                    // RIGHT/FULL outer over hash join is Phase 3;
-                    // for MVP we degrade to INNER for hash, which
-                    // is what the planner's Auto path picks
-                    // for Right too if predicate is equi.
+                JoinKind::Right => {
+                    // Mark the build bucket matched (equi → the whole key bucket
+                    // matched); unmatched buckets are drained null-left after the
+                    // probe input is exhausted. Unmatched LEFT rows are NOT emitted
+                    // (the right side is preserved). Matched pairs emit as for INNER.
                     if !matches.is_empty() {
+                        self.matched_keys.insert(key);
                         self.probe_left = Some(l);
                         self.probe_matches = matches;
                         self.probe_cursor = 0;
                     }
+                }
+                JoinKind::Full => {
+                    // FULL = LEFT (emit unmatched probe rows null-right) + the
+                    // build-side drain (emit unmatched build rows null-left) +
+                    // matched-bucket tracking.
+                    if matches.is_empty() {
+                        let mut out = Vec::with_capacity(l.len() + right_width);
+                        out.extend(l);
+                        out.extend(std::iter::repeat_n(ProximaValue::Null, right_width));
+                        return Ok(Some(out));
+                    }
+                    self.matched_keys.insert(key);
+                    self.probe_left = Some(l);
+                    self.probe_matches = matches;
+                    self.probe_cursor = 0;
                 }
                 JoinKind::Semi => {
                     if !matches.is_empty() {
@@ -2251,11 +2306,13 @@ mod tests {
         assert_eq!(rows.len(), 3);
     }
 
-    /// users(id@0,name@1,age@2) ⋈ orders(oid@3,uid@4) on users.id = orders.uid,
-    /// NestedLoop. `orders_rows` lets each test supply (un)matched rows.
-    fn nested_loop_users_orders(
+    /// users(id@0,name@1,age@2) ⋈ orders(oid@3,uid@4) on users.id = orders.uid.
+    /// `orders_rows` lets each test supply (un)matched rows; `strategy` picks the
+    /// physical operator (NestedLoop / Hash).
+    fn users_orders_join(
         kind: JoinKind,
         orders_rows: Vec<RelationalRow>,
+        strategy: JoinStrategy,
         f: &VecReaderFactory,
     ) -> PhysicalPlan {
         let orders_schema = RelationalSchema::new(vec![
@@ -2291,7 +2348,7 @@ mod tests {
                     nullable: false,
                 }),
             )),
-            strategy: JoinStrategy::NestedLoop,
+            strategy,
         }
     }
 
@@ -2305,14 +2362,9 @@ mod tests {
         ]
     }
 
-    #[tokio::test]
-    async fn nested_loop_right_join_emits_unmatched_right_rows() {
-        let f = VecReaderFactory::new();
-        let plan = nested_loop_users_orders(JoinKind::Right, orders_with_unmatched(), &f);
-        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
-        exec.open().await.unwrap();
-        let rows = collect(&mut *exec).await.unwrap();
-        // 3 matched (100,101,102) + order 103 null-padded on the left.
+    /// Shared assertions for a RIGHT join over `orders_with_unmatched`:
+    /// 3 matched + order 103 null-padded on the left; no unmatched-left rows.
+    fn assert_right_join_rows(rows: &[RelationalRow]) {
         assert_eq!(rows.len(), 4);
         assert_eq!(
             rows.iter().filter(|r| r[0] == ProximaValue::Null).count(),
@@ -2325,14 +2377,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn nested_loop_full_join_emits_both_unmatched_sides() {
-        let f = VecReaderFactory::new();
-        let plan = nested_loop_users_orders(JoinKind::Full, orders_with_unmatched(), &f);
-        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
-        exec.open().await.unwrap();
-        let rows = collect(&mut *exec).await.unwrap();
-        // 3 matched + carol (unmatched left, NULL right) + order 103 (unmatched right, NULL left).
+    /// Shared assertions for a FULL join: 3 matched + carol (NULL right) +
+    /// order 103 (NULL left).
+    fn assert_full_join_rows(rows: &[RelationalRow]) {
         assert_eq!(rows.len(), 5);
         assert_eq!(
             rows.iter().filter(|r| r[0] == ProximaValue::Null).count(),
@@ -2346,7 +2393,67 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn nested_loop_right_join_emits_unmatched_right_rows() {
+        let f = VecReaderFactory::new();
+        let plan = users_orders_join(
+            JoinKind::Right,
+            orders_with_unmatched(),
+            JoinStrategy::NestedLoop,
+            &f,
+        );
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        assert_right_join_rows(&collect(&mut *exec).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn nested_loop_full_join_emits_both_unmatched_sides() {
+        let f = VecReaderFactory::new();
+        let plan = users_orders_join(
+            JoinKind::Full,
+            orders_with_unmatched(),
+            JoinStrategy::NestedLoop,
+            &f,
+        );
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        assert_full_join_rows(&collect(&mut *exec).await.unwrap());
+    }
+
     // ----- Hash join ---------------------------------------------------
+
+    #[tokio::test]
+    async fn hash_right_join_drains_unmatched_build_rows() {
+        let f = VecReaderFactory::new();
+        let plan = users_orders_join(
+            JoinKind::Right,
+            orders_with_unmatched(),
+            JoinStrategy::Hash {
+                build_side: proximadb_relational_algebra::JoinSide::Right,
+            },
+            &f,
+        );
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        assert_right_join_rows(&collect(&mut *exec).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn hash_full_join_drains_unmatched_build_and_emits_unmatched_probe() {
+        let f = VecReaderFactory::new();
+        let plan = users_orders_join(
+            JoinKind::Full,
+            orders_with_unmatched(),
+            JoinStrategy::Hash {
+                build_side: proximadb_relational_algebra::JoinSide::Right,
+            },
+            &f,
+        );
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        assert_full_join_rows(&collect(&mut *exec).await.unwrap());
+    }
 
     #[tokio::test]
     async fn hash_inner_join_combines_rows() {

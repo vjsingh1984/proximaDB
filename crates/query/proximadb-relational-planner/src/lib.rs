@@ -646,10 +646,10 @@ pub fn lower_to_physical(node: LogicalNode) -> PhysicalPlan {
 pub fn pick_join_strategy(kind: JoinKind, on: Option<&Expr>) -> JoinStrategy {
     match kind {
         // CROSS has no ON — nested loop is the only correct strategy.
-        // RIGHT/FULL must also use NestedLoop: HashJoin degrades them to
-        // INNER (no unmatched-build-row drain), so it returns wrong results;
-        // NestedLoop handles both correctly (RIGHT via the right-only phase).
-        JoinKind::Cross | JoinKind::Right | JoinKind::Full => JoinStrategy::NestedLoop,
+        JoinKind::Cross => JoinStrategy::NestedLoop,
+        // RIGHT/FULL are correct on BOTH paths now: HashJoin drains unmatched
+        // build rows, NestedLoop handles the non-equi case — so they follow the
+        // normal equi→Hash / else→NestedLoop choice.
         _ => match on {
             Some(predicate) if is_equi_join_predicate(predicate) => JoinStrategy::Hash {
                 build_side: JoinSide::Right,
@@ -2007,26 +2007,26 @@ mod tests {
     }
 
     #[test]
-    fn right_and_full_joins_force_nested_loop_even_for_equi() {
-        // HashJoin degrades RIGHT/FULL to INNER (wrong results), so an equi
-        // RIGHT/FULL must still route to NestedLoop (which handles them correctly).
+    fn right_and_full_equi_joins_use_hash_else_nested_loop() {
+        // HashJoin now drains unmatched build rows, so equi RIGHT/FULL use Hash;
+        // non-equi RIGHT/FULL fall back to NestedLoop (which handles them too).
         let equi = Expr::bin(
             BinaryOp::Eq,
             col_at(0, "id", ProximaType::Int64),
             col_at(4, "user_id", ProximaType::Int64),
         );
-        for kind in [JoinKind::Right, JoinKind::Full] {
+        let non_equi = Expr::literal(ProximaValue::Boolean(true));
+        for kind in [JoinKind::Right, JoinKind::Full, JoinKind::Inner] {
+            assert!(
+                matches!(pick_join_strategy(kind, Some(&equi)), JoinStrategy::Hash { .. }),
+                "{kind:?} equi join uses Hash"
+            );
             assert_eq!(
-                pick_join_strategy(kind, Some(&equi)),
+                pick_join_strategy(kind, Some(&non_equi)),
                 JoinStrategy::NestedLoop,
-                "{kind:?} equi join must use NestedLoop (Hash is broken for it)"
+                "{kind:?} non-equi join uses NestedLoop"
             );
         }
-        // INNER equi still picks Hash (unchanged).
-        assert!(matches!(
-            pick_join_strategy(JoinKind::Inner, Some(&equi)),
-            JoinStrategy::Hash { .. }
-        ));
     }
 
     #[test]
