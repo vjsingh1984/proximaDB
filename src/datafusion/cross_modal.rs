@@ -21,12 +21,19 @@
 //! `logical_lowering`) into the shared logical plane so the join is reachable from
 //! pgwire SQL. Both reuse [`vector_matches_to_batch`] below.
 
+use std::any::Any;
 use std::sync::Arc;
 
 use arrow_array::{Float32Array, RecordBatch, StringArray};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
+use async_trait::async_trait;
+use datafusion::catalog::Session;
+use datafusion::datasource::{MemTable, TableProvider, TableType};
+use datafusion::error::{DataFusionError, Result as DFResult};
+use datafusion::logical_expr::Expr;
+use datafusion::physical_plan::ExecutionPlan;
 
-use crate::proto::proximadb_v1::SearchVectorRecord;
+use crate::proto::proximadb_v1::{SearchQuery, SearchVectorRecord, VectorSearchRequest};
 
 /// The lean Arrow schema a vector-search source exposes for joins: `(id, score)`.
 /// `id` joins against a relational key; `score` is the similarity the SQL can rank
@@ -51,6 +58,94 @@ pub fn vector_matches_to_batch(results: &[SearchVectorRecord]) -> Result<RecordB
             Arc::new(Float32Array::from(scores)),
         ],
     )
+}
+
+/// A DataFusion [`TableProvider`] whose `scan` runs a **live** vector search through
+/// [`VectorOpsPort`] and exposes the `(id, score)` matches as a table — so a single
+/// SQL plan can join vector similarity against relational data (§8 moat). This is the
+/// production-backed counterpart of [`vector_matches_to_batch`]: register it in a
+/// `SessionContext` and the query planner can scan/join/order it like any table.
+pub struct VectorSearchTableProvider {
+    vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+    collection_id: String,
+    query_vector: Vec<f32>,
+    top_k: u32,
+    tenant_id: Option<String>,
+}
+
+impl VectorSearchTableProvider {
+    /// Build a provider for one parameterized similarity search.
+    pub fn new(
+        vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+        collection_id: impl Into<String>,
+        query_vector: Vec<f32>,
+        top_k: u32,
+        tenant_id: Option<String>,
+    ) -> Self {
+        Self {
+            vector_ops,
+            collection_id: collection_id.into(),
+            query_vector,
+            top_k,
+            tenant_id,
+        }
+    }
+}
+
+// Manual `Debug` (required by `TableProvider`): the `VectorOpsPort` trait object is
+// not `Debug`, so print only the query parameters.
+impl std::fmt::Debug for VectorSearchTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VectorSearchTableProvider")
+            .field("collection_id", &self.collection_id)
+            .field("top_k", &self.top_k)
+            .field("tenant_id", &self.tenant_id)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl TableProvider for VectorSearchTableProvider {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn schema(&self) -> SchemaRef {
+        vector_matches_schema()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
+    async fn scan(
+        &self,
+        state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DFResult<Arc<dyn ExecutionPlan>> {
+        // Run the live similarity search and bridge the matches into the plane.
+        let request = VectorSearchRequest {
+            collection_id: self.collection_id.clone(),
+            queries: vec![SearchQuery {
+                vector: self.query_vector.clone(),
+                ..Default::default()
+            }],
+            top_k: self.top_k,
+            ..Default::default()
+        };
+        let response = self
+            .vector_ops
+            .search(request, self.tenant_id.as_deref())
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("vector search: {e}")))?;
+        let results = response.results.map(|sr| sr.results).unwrap_or_default();
+        let batch = vector_matches_to_batch(&results).map_err(DataFusionError::from)?;
+        // Delegate to a `MemTable` so projection/filter/limit are honored uniformly.
+        let mem = MemTable::try_new(vector_matches_schema(), vec![vec![batch]])?;
+        mem.scan(state, projection, filters, limit).await
+    }
 }
 
 #[cfg(test)]
@@ -123,5 +218,123 @@ mod tests {
         let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         // a(Alpha,0.95) + b(Bravo,0.80); c has no doc, z has no vector match.
         assert_eq!(rows, 2);
+    }
+
+    use crate::proto::proximadb_v1::{SearchResult, VectorBatchRequest, VectorOperationResponse};
+
+    /// A fixed `VectorOpsPort` that returns a canned similarity result — stands in for
+    /// the live vector service so the provider's `scan` path is exercised.
+    struct FixedVectorOps {
+        matches: Vec<(String, f64)>,
+    }
+
+    #[async_trait]
+    impl proximadb_runtime::VectorOpsPort for FixedVectorOps {
+        async fn search(
+            &self,
+            _request: VectorSearchRequest,
+            _tenant_id: Option<&str>,
+        ) -> anyhow::Result<VectorOperationResponse> {
+            let results = self
+                .matches
+                .iter()
+                .map(|(id, score)| SearchVectorRecord {
+                    id: id.clone(),
+                    score: *score,
+                    ..Default::default()
+                })
+                .collect();
+            Ok(VectorOperationResponse {
+                results: Some(SearchResult {
+                    results,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        }
+        async fn batch_upsert(
+            &self,
+            _r: VectorBatchRequest,
+            _t: Option<&str>,
+        ) -> anyhow::Result<VectorOperationResponse> {
+            unimplemented!()
+        }
+        async fn get_vector(
+            &self,
+            _c: &str,
+            _v: &str,
+            _iv: bool,
+            _im: bool,
+            _t: Option<&str>,
+        ) -> anyhow::Result<VectorOperationResponse> {
+            unimplemented!()
+        }
+        async fn flush_all(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn metrics(&self) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    /// The live-backed moat: a `VectorSearchTableProvider` (running a search through a
+    /// `VectorOpsPort`) registered as a table, scanned AND joined with relational data
+    /// in one SQL plan.
+    #[tokio::test]
+    async fn vector_search_provider_scans_and_joins() {
+        let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(FixedVectorOps {
+            matches: vec![("a".into(), 0.95), ("b".into(), 0.80), ("c".into(), 0.70)],
+        });
+        let provider =
+            VectorSearchTableProvider::new(ops, "docs_vec", vec![0.1, 0.2, 0.3], 10, None);
+
+        let ctx = SessionContext::new();
+        ctx.register_table("vsearch", Arc::new(provider)).unwrap();
+
+        // (1) Scan the live-backed provider directly.
+        let scanned: usize = ctx
+            .sql("SELECT id, score FROM vsearch ORDER BY score DESC")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(scanned, 3);
+
+        // (2) Join it with a relational table in ONE plan.
+        let docs_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("title", DataType::Utf8, false),
+        ]));
+        let docs = RecordBatch::try_new(
+            docs_schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["a", "b", "z"])),
+                Arc::new(StringArray::from(vec!["Alpha", "Bravo", "Zulu"])),
+            ],
+        )
+        .unwrap();
+        ctx.register_table(
+            "docs",
+            Arc::new(MemTable::try_new(docs_schema, vec![vec![docs]]).unwrap()),
+        )
+        .unwrap();
+        let joined: usize = ctx
+            .sql(
+                "SELECT d.title, v.score FROM docs d JOIN vsearch v ON d.id = v.id \
+                 ORDER BY v.score DESC",
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(joined, 2); // a + b match docs; c has no doc, z has no match.
     }
 }
