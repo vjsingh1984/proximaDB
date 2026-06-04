@@ -7,11 +7,20 @@ Branch: proximadb-embedding (HOT — interleaved with other agents)
 [NOTE]
 ====
 Resume handoff after a long convergence session. TD-106 (seam S3) and TD-109 are
-CLOSED; TD-104 (seam S1) advanced to "all 4 protocols off the concrete root
-handler" (S1+S2+S3). This doc is the source of truth for what shipped, what needs
-a smoke-test, and the remaining ROOT-deletion work. Companions:
+CLOSED; TD-104 advanced to "all 4 protocols off the concrete root handler"
+(S1+S2+S3) plus S5 (REST router-build off ROOT fields) and item 2 (ports=None
+fallback removed, 2a+2b). The remaining work is item 3 (full ROOT deletion, plan
+in §3bis). This doc is the source of truth for what shipped, what needs a
+smoke-test, and that remaining ROOT-deletion work. Companions:
 `TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc` (full TD-104 design) and
 `TD106_DOCUMENT_CANONICAL_MIGRATION_HANDOFF_2026_06_03.adoc` (TD-106).
+
+**REPRIORITIZED 2026-06-04:** the data-warehouse course correction
+(`DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc`) makes the
+relational/pgwire/DataFusion warehouse the primary wedge. TD-104 ROOT deletion is
+vector-era monolith cleanup and is now **SECONDARY** — off the warehouse critical
+path (pgwire never used the monolith). Execute item 3 when warehouse phases (P0–P5
+in that doc) permit; it blocks nothing there.
 ====
 
 == 0. Resume prompt (paste into the new session)
