@@ -215,6 +215,97 @@ S4 (`execute_sql_frontend`) is MOOT — it's an internal helper of ROOT's
 `execute_sql_v1` (request_handlers.rs:2309), bypassed by the runtime handler's
 port-delegating path; it dies with ROOT.
 
+=== 3bis. Item 3 (ROOT deletion) — full consumer survey + sequenced plan (2026-06-04)
+
+A complete survey of every `Arc<UnifiedHandlers>` (ROOT,
+`src/api_handlers/request_handlers.rs`) consumer. ROOT is deeply wired —
+**18+ type-holders, ~20 inherent methods, 13+ `.collection_metrics` sites**.
+This is multi-session; execute the slices below IN ORDER, each compile- +
+(where it touches a wire path) smoke-verified. DO NOT attempt as one change.
+
+**Consumers by category (file:line):**
+
+. *Construction* — `shared_services.rs:1306` (ROOT `UnifiedHandlers::new` →
+  `Arc` at :1322; setters `.set_hybrid_runtime`:1320, `.set_query_adapter`:1481,
+  `.set_dml_service`:1522, `.set_precision_resolver` in `ProximaDB::new`).
+  `shared_services.rs:1528` builds the RUNTIME handler separately. Test ctors:
+  `crates/platform/proximadb-api/src/lib.rs:24` (`noop_unified_handlers`),
+  `tests/integration/sql_frontend/sql_query_tests.rs:37`.
+. *Type-holders* (hold `Arc<UnifiedHandlers>`): `SharedServices.request_handlers`
+  (:63); `AppState.request_handlers` (`rest/v1/handlers.rs`); `CustomerRouter`
+  (`router.rs:16`); gRPC `GraphService` (`grpc/graph_service.rs:36/72`); gRPC v2
+  `RecordServiceV2` (`grpc/v2/record_service.rs:86/123`); Arrow
+  `ProximaFlightService` (`arrow_ipc/service.rs:165`) + `ArrowFlightServer`
+  (`arrow_ipc/server.rs:45/76`); pgwire `server.rs:52` (`_handlers`, UNUSED
+  placeholder); multiplex `handlers/grpc.rs:35` + `handlers/rest.rs:39`; REST
+  `health.rs:37`; embedded `database.rs:1049/1159`; re-export
+  `api_handlers/mod.rs`.
+. *Inherent methods still called on ROOT* (NOT the 7 ApiHandlersPort + 3
+  RecordOpsPort trait methods):
+.. `.collection_metrics(id)` — **13+ sites** in `metrics/{updater.rs (6×),
+   query_service.rs:165, store.rs (6×)}`. → needs a **MetricsPort** (plan S2).
+.. `.force_flush_collection(id)` — `database.rs:949`, `arrow_ipc/service.rs:1932/
+   2013`, + tests. `.force_flush_all()` in tests. → MetricsPort or a FlushPort.
+.. `.execute_sql_v1` — `router.rs:244`, `rest/v1/handlers.rs:774`,
+   `rest/v1/hybrid.rs:387` (ALREADY an ApiHandlersPort method — switch these to
+   `state.api_handlers`/a port handle; CAUTION: runtime `execute_sql_v1` routes
+   via QueryAdapterPort — confirm it covers the legacy `execute_sql_frontend`
+   path before switching, SQL smoke-test required).
+.. `.execute_hybrid_query` — `router.rs:287`, `grpc/graph_service.rs:1100` (also
+   ApiHandlersPort — same treatment).
+.. Concrete fields `.vector_operations_service`/`.collection_service`/
+   `.graph_execution_service` — Arrow `service.rs:183/184`, `rest/server.rs:312`
+   (already single-point boot extractions). `.storage_config()` — Arrow
+   `service.rs:167`.
+.. Cache helpers `.resolve_collection_id_cached`/`.invalidate_collection_cache`/
+   `.clear_collection_cache` — internal to ROOT only.
+. *RUNTIME handler gap*: `proximadb-runtime` `UnifiedHandlers` impls
+  **ApiHandlersPort only, NOT RecordOpsPort**, and holds ports
+  (Collection/VectorOps/QueryAdapter), not the concrete vector/document services
+  RecordOpsPort needs.
+
+**Sequenced execution plan (each = its own commit, verify before next):**
+
+. **S3-a (safe, same-trait): per-request REST/router SQL+hybrid dispatch off
+  ROOT.** Switch `rest/v1/handlers.rs:774`, `rest/v1/hybrid.rs:387`,
+  `router.rs:244/287`, `grpc/graph_service.rs:1100` from
+  `request_handlers.{execute_sql_v1,execute_hybrid_query}` to a
+  `Arc<dyn ApiHandlersPort>` handle. BLOCKER to verify first: does runtime
+  `execute_sql_v1` reproduce ROOT's DML-routing + `execute_sql_frontend`? If not,
+  fold that into `QueryAdapterPort` first (old plan S4). SQL/hybrid smoke-test.
+. **S3-b: `MetricsPort`** (plan S2) — define in `proximadb-runtime`
+  (`collection_metrics`, `force_flush_collection`, `force_flush_all`,
+  `list_unflushed_vectors`); impl on the concrete service that owns the data
+  (likely `VectorOperationsService`/`MetricsQueryService`); switch the 13+
+  `metrics/*` + `database.rs:949` + Arrow flush sites. Additive, compile-verified.
+. **S3-c: make Arrow `RecordOpsPort` runtime-backed.** Impl `RecordOpsPort` on a
+  runtime-accessible target (the runtime handler, given the vector/document
+  services) and inject `vector_operations_service`+`collection_service` into
+  `ProximaFlightService` at boot from `SharedServices` instead of extracting from
+  the passed ROOT in `new()`. Then `ArrowFlightServer`/`multi_server` pass
+  ports/services, not `Arc<UnifiedHandlers>`. Flight smoke-test (DoPut/DoGet).
+. **S3-d: gRPC graph + v2 record services off ROOT.** `grpc/graph_service.rs`
+  and `grpc/v2/record_service.rs` hold `Arc<UnifiedHandlers>` — re-type to the
+  ports they actually use. gRPC smoke-test.
+. **S3-e: multiplex/router/health/embedded/pgwire holders.** Re-type
+  `multiplex/handlers/{grpc,rest}.rs`, `router.rs`, `rest/health.rs`,
+  `database.rs` (embedded — verify it's a real path, not test-only), drop the
+  pgwire `_handlers` placeholder.
+. **S3-f: collapse construction + DELETE.** Replace `shared_services.rs:1306`
+  ROOT build with the port-based handler everywhere; move the ROOT setters
+  (`set_dml_service` etc.) onto their real owners; switch test ctors
+  (`noop_unified_handlers`, `sql_query_tests`) to the runtime handler; remove
+  `AppState.request_handlers` + the `AppState::new` root-as-port default +
+  `rest/server.rs:312` graph extraction; delete
+  `src/api_handlers/request_handlers.rs` `UnifiedHandlers` + `api_handlers/mod.rs`
+  re-export. Full build (default + cluster + server bin) + all smoke-tests.
+
+NOTE: v2 `create_collection_v2` (`rest/v2/collections.rs:448`) still calls
+`state.request_handlers.handle_collection_operation_for_tenant` (a per-request
+ApiHandlersPort call) — fold into S3-a (switch to `state.api_handlers`), but it
+sits on the write path whose create-visibility gap (see §2 NOTE) currently
+blocks a full round-trip verification.
+
 == 4. Landmarks
 * Root handler (logic): `src/api_handlers/request_handlers.rs` (`UnifiedHandlers`,
   impls `ApiHandlersPort`+`RecordOpsPort`; `handle_record_*` at 1021/1069/1145).
