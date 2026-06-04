@@ -100,7 +100,8 @@ impl FilterEvaluator {
         // tree is rendered to JSON via the shared `proxima_tree_to_json_map` bridge; the
         // result is lifted back to `ProximaValue` via `json_to_proxima` (TD-106 Slice 7a)
         // — no proto `SqlObject`/`SqlValue` is constructed here.
-        let json_value = JsonValue::Object(proxima_tree_to_json_map(document).into_iter().collect());
+        let json_value =
+            JsonValue::Object(proxima_tree_to_json_map(document).into_iter().collect());
 
         // Normalize path: $.field or field -> $.field
         let normalized_path = if path.starts_with("$.") || path.starts_with('$') {

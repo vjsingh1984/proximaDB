@@ -235,7 +235,11 @@ impl AggregationExecutor {
     /// Compute a single aggregation over a group of documents.
     ///
     /// The accumulator kernel produces canonical `ProximaValue` (TD-106 Slice 3).
-    fn compute_aggregation(&self, docs: &[&ProximaTree], agg: &Aggregation) -> Result<ProximaValue> {
+    fn compute_aggregation(
+        &self,
+        docs: &[&ProximaTree],
+        agg: &Aggregation,
+    ) -> Result<ProximaValue> {
         let agg_type =
             AggregationType::try_from(agg.r#type).unwrap_or(AggregationType::Unspecified);
         let path = &agg.input_path;
@@ -1057,10 +1061,7 @@ mod tests {
             .expect("SORT stage should succeed");
 
         // Should be sorted: 10, 20, 30
-        let values: Vec<i64> = sorted
-            .iter()
-            .filter_map(|d| tree_int(d, "value"))
-            .collect();
+        let values: Vec<i64> = sorted.iter().filter_map(|d| tree_int(d, "value")).collect();
 
         assert_eq!(values, vec![10, 20, 30]);
     }

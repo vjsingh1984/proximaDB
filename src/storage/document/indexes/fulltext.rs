@@ -317,8 +317,7 @@ impl FullTextIndex {
             format!("$.{}", path)
         };
 
-        let json_doc =
-            JsonValue::Object(proxima_tree_to_json_map(document).into_iter().collect());
+        let json_doc = JsonValue::Object(proxima_tree_to_json_map(document).into_iter().collect());
         let result = json_doc.path(&path_str).ok()?;
 
         let text = Self::json_value_to_text(&result);

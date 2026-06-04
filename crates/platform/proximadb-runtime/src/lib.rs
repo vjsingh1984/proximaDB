@@ -27,7 +27,6 @@ pub mod unified_query_port;
 // Re-exports
 pub use batch_result::{BatchOperationMetrics, BatchOperationResult, OperationMetrics};
 pub use bm25_port::{BM25Document, BM25IndexPort, BM25IndexResult};
-pub use record_ops_port::RecordOpsPort;
 pub use cluster_port::{ClusterHealthStatus, ClusterPort};
 pub use composition::{DIContainer, ServiceComposer};
 pub use document_port::DocumentPort;
@@ -38,6 +37,7 @@ pub use hardware::{HardwareCapabilities, SimdLevel, best_simd_level, hardware_ca
 pub use hybrid_port::HybridPort;
 pub use observability_port::ObservabilityPort;
 pub use port::ApiHandlersPort;
+pub use record_ops_port::RecordOpsPort;
 pub use resources::{MemoryBudget, ResourceManager};
 pub use security_port::{PortAuthCredential, PortUserContext, SecurityPort};
 pub use service_ports::{CollectionPort, QueryAdapterPort, VectorOpsPort};

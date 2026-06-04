@@ -647,9 +647,7 @@ impl ProximaFlightService {
     }
 
     async fn trigger_collection_compaction(&self, collection_id: &str) -> Result<()> {
-        let storage_engine = self
-            .vector_operations_service
-            .unified_engine();
+        let storage_engine = self.vector_operations_service.unified_engine();
         storage_engine
             .compact_collection(collection_id, None)
             .await
@@ -964,10 +962,7 @@ impl ProximaFlightService {
         );
 
         // Execute search via UnifiedHandlers (reuses existing path)
-        let response = self
-            .api_port
-            .handle_vector_search_v1(request)
-            .await?;
+        let response = self.api_port.handle_vector_search_v1(request).await?;
 
         // Convert results to Arrow RecordBatch
         let search_results = response
@@ -1027,11 +1022,7 @@ impl FlightService for ProximaFlightService {
         // Get collections to list
         let collections = if let Some(cid) = collection_id {
             // Get specific collection
-            match self
-                .collection_service
-                .collection(&cid)
-                .await
-            {
+            match self.collection_service.collection(&cid).await {
                 Ok(Some(c)) => vec![c],
                 Ok(None) => {
                     return Err(TonicStatus::not_found(format!(
@@ -1048,8 +1039,7 @@ impl FlightService for ProximaFlightService {
             }
         } else {
             // List all collections
-            self
-                .collection_service
+            self.collection_service
                 .list_collections()
                 .await
                 .map_err(|e| TonicStatus::internal(format!("Failed to list collections: {}", e)))?
@@ -1546,8 +1536,7 @@ impl FlightService for ProximaFlightService {
                 info!(collection_id = %collection_id, "Arrow Flight: delete_collection");
 
                 // Delete collection via service
-                self
-                    .collection_service
+                self.collection_service
                     .delete_collection(collection_id)
                     .await
                     .map_err(|e| {
@@ -1626,13 +1615,13 @@ impl FlightService for ProximaFlightService {
                 debug!("Arrow Flight: list_collections");
 
                 // List all collections via service
-                let collections = self
-                    .collection_service
-                    .list_collections()
-                    .await
-                    .map_err(|e| {
-                        TonicStatus::internal(format!("Failed to list collections: {}", e))
-                    })?;
+                let collections =
+                    self.collection_service
+                        .list_collections()
+                        .await
+                        .map_err(|e| {
+                            TonicStatus::internal(format!("Failed to list collections: {}", e))
+                        })?;
 
                 let collection_summaries: Vec<serde_json::Value> = collections
                     .iter()
@@ -1939,8 +1928,7 @@ impl FlightService for ProximaFlightService {
                 info!(collection_id = %collection_id, "Arrow Flight: flush_collection");
 
                 // Flush collection via vector operations service
-                self
-                    .vector_operations_service
+                self.vector_operations_service
                     .force_flush_collection(collection_id)
                     .await
                     .map_err(|e| {
@@ -1980,9 +1968,7 @@ impl FlightService for ProximaFlightService {
                 info!(collection_id = %collection_id, "Arrow Flight: compact_collection");
 
                 // Compact collection via storage engine
-                let storage_engine = self
-                    .vector_operations_service
-                    .unified_engine();
+                let storage_engine = self.vector_operations_service.unified_engine();
                 storage_engine
                     .compact_collection(collection_id, None)
                     .await
@@ -2023,17 +2009,14 @@ impl FlightService for ProximaFlightService {
                 info!(collection_id = %collection_id, "Arrow Flight: flush_and_compact");
 
                 // Flush first, then compact
-                self
-                    .vector_operations_service
+                self.vector_operations_service
                     .force_flush_collection(collection_id)
                     .await
                     .map_err(|e| {
                         TonicStatus::internal(format!("Failed to flush collection: {}", e))
                     })?;
 
-                let storage_engine = self
-                    .vector_operations_service
-                    .unified_engine();
+                let storage_engine = self.vector_operations_service.unified_engine();
                 storage_engine
                     .compact_collection(collection_id, None)
                     .await

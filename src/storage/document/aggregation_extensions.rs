@@ -10,7 +10,9 @@
 
 use anyhow::Result;
 
-use crate::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue, sql_value::Value as SqlValueVariant};
+use crate::proto::proximadb_v1::{
+    SqlArray, SqlObject, SqlValue, sql_value::Value as SqlValueVariant,
+};
 
 // =============================================================================
 // LOOKUP STAGE (cross-collection join)
@@ -123,7 +125,9 @@ mod tests {
     fn sql_values_equal(a: &SqlValue, b: &SqlValue) -> bool {
         match (&a.value, &b.value) {
             (Some(SqlValueVariant::NullValue(_)), Some(SqlValueVariant::NullValue(_))) => true,
-            (Some(SqlValueVariant::BoolValue(va)), Some(SqlValueVariant::BoolValue(vb))) => va == vb,
+            (Some(SqlValueVariant::BoolValue(va)), Some(SqlValueVariant::BoolValue(vb))) => {
+                va == vb
+            }
             (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::Int64Value(vb))) => {
                 va == vb
             }
