@@ -40,6 +40,14 @@ struct PgwireTestServer {
 
 impl PgwireTestServer {
     async fn start() -> anyhow::Result<Self> {
+        // Pin the relational SELECT to the LEGACY path (`execute_relational_query`)
+        // that this slice modified. At default config the new pipeline already
+        // falls through for pgwire-created tables, but forcing it off keeps the
+        // test deterministic and immune to a future PATH B that reads real data.
+        unsafe {
+            std::env::set_var("PROXIMADB_NEW_RELATIONAL_PIPELINE", "0");
+        }
+
         let pg_port = free_port();
         let rest_port = free_port();
         let grpc_port = free_port();
@@ -125,6 +133,17 @@ fn set(items: &[&str]) -> BTreeSet<String> {
     items.iter().map(|s| s.to_string()).collect()
 }
 
+/// Collect the `id` column preserving server row order (for ORDER BY asserts).
+fn ids_ordered(messages: &[SimpleQueryMessage]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|msg| match msg {
+            SimpleQueryMessage::Row(row) => row.get("id").map(|s| s.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pgwire_select_or_predicate_returns_union_over_real_data() {
     let server = PgwireTestServer::start().await.expect("server start");
@@ -207,4 +226,20 @@ async fn pgwire_select_or_predicate_returns_union_over_real_data() {
         .await
         .expect("pgwire SELECT nested");
     assert_eq!(ids(&rows), set(&["i3"]), "nested AND-of-OR not flattened");
+
+    // (4) ORDER BY + LIMIT over an OR predicate must sort THEN truncate: the OR
+    // matches {i1, i2, i4}; ordered by id ascending and capped at 2 → [i1, i2].
+    // (If the limit were pushed before the sort, the first 2 scanned rows could
+    // differ.)
+    let rows = client
+        .simple_query(&format!(
+            "SELECT id FROM {table} WHERE status = 'active' OR qty >= 30 ORDER BY id LIMIT 2"
+        ))
+        .await
+        .expect("pgwire SELECT OR + ORDER BY + LIMIT");
+    assert_eq!(
+        ids_ordered(&rows),
+        vec!["i1".to_string(), "i2".to_string()],
+        "ORDER BY id LIMIT 2 over OR → sort-then-truncate"
+    );
 }

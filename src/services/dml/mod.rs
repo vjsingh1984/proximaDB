@@ -4389,13 +4389,14 @@ mod tests {
         }
 
         // Run a full SELECT string through the WhereClause-tree path; return the
-        // chosen access path plus the sorted matching ids.
+        // chosen access path, the route-metadata predicate_count (tree leaf count),
+        // and the sorted matching ids.
         async fn run(
             dml: &DmlService,
             parser: &crate::query::sql_frontend::SqlFrontendParser,
             sql: &str,
             limit: Option<usize>,
-        ) -> (RelationalSelectAccessPath, Vec<String>) {
+        ) -> (RelationalSelectAccessPath, usize, Vec<String>) {
             let where_clause = parser.parse_select_where_clause(sql).expect("parse where");
             let res = dml
                 .select_table_records_with_projection_where(
@@ -4415,11 +4416,16 @@ mod tests {
                 })
                 .collect();
             ids.sort();
-            (res.route_metadata.access_path, ids)
+            (
+                res.route_metadata.access_path,
+                res.route_metadata.predicate_count,
+                ids,
+            )
         }
 
         // (1) OR union: status='active' OR qty >= 30 → i1,i2 (active) + i4 (35).
-        let (path, ids) = run(
+        // predicate_count = 2 leaves.
+        let (path, pc, ids) = run(
             &dml,
             &parser,
             "SELECT id FROM inv WHERE status = 'active' OR qty >= 30",
@@ -4427,11 +4433,12 @@ mod tests {
         )
         .await;
         assert_eq!(path, RelationalSelectAccessPath::TableScan);
+        assert_eq!(pc, 2, "route-metadata predicate_count == tree leaf count");
         assert_eq!(ids, vec!["i1", "i2", "i4"], "OR union");
 
         // (2) PK-under-OR safety: id='i2' OR status='idle'. The PK leaf must NOT
         // shortcut to a point lookup that misses the idle rows.
-        let (path, ids) = run(
+        let (path, _pc, ids) = run(
             &dml,
             &parser,
             "SELECT id FROM inv WHERE id = 'i2' OR status = 'idle'",
@@ -4447,7 +4454,7 @@ mod tests {
 
         // (3) PK fast-path + full-predicate re-check: id IN (i1,i2,i3) AND
         // status='active' → only i1,i2 (i3 is idle and is dropped by the re-check).
-        let (path, ids) = run(
+        let (path, _pc, ids) = run(
             &dml,
             &parser,
             "SELECT id FROM inv WHERE id IN ('i1','i2','i3') AND status = 'active'",
@@ -4459,8 +4466,8 @@ mod tests {
 
         // (4) Nested grouping must NOT flatten: status='idle' AND (qty < 30 OR
         // id='i1') → i3 only. Flattening to `idle AND qty<30 AND id='i1'` would
-        // wrongly return zero rows.
-        let (path, ids) = run(
+        // wrongly return zero rows. predicate_count = 3 leaves.
+        let (path, pc, ids) = run(
             &dml,
             &parser,
             "SELECT id FROM inv WHERE status = 'idle' AND (qty < 30 OR id = 'i1')",
@@ -4468,11 +4475,24 @@ mod tests {
         )
         .await;
         assert_eq!(path, RelationalSelectAccessPath::TableScan);
+        assert_eq!(pc, 3, "AND of [idle, OR(qty<30, id=i1)] has 3 leaves");
         assert_eq!(ids, vec!["i3"]);
+
+        // (4b) OR-under-AND, no PK predicate → full scan, not flattened:
+        // (status='active' OR qty >= 30) AND qty < 20 → {i1,i2,i4} ∩ {i1,i2} = i1,i2.
+        let (path, _pc, ids) = run(
+            &dml,
+            &parser,
+            "SELECT id FROM inv WHERE (status = 'active' OR qty >= 30) AND qty < 20",
+            None,
+        )
+        .await;
+        assert_eq!(path, RelationalSelectAccessPath::TableScan);
+        assert_eq!(ids, vec!["i1", "i2"], "(a OR b) AND c grouping preserved");
 
         // (5) NOT IN mixed with OR over a never-true branch: qty NOT IN (5,15) OR
         // status IS NULL → i3,i4 (no row has a NULL status).
-        let (_, ids) = run(
+        let (_path, _pc, ids) = run(
             &dml,
             &parser,
             "SELECT id FROM inv WHERE qty NOT IN (5, 15) OR status IS NULL",
@@ -4481,8 +4501,18 @@ mod tests {
         .await;
         assert_eq!(ids, vec!["i3", "i4"]);
 
+        // (5b) NOT BETWEEN: qty outside 10..30 → i1 (5) and i4 (35).
+        let (_path, _pc, ids) = run(
+            &dml,
+            &parser,
+            "SELECT id FROM inv WHERE qty NOT BETWEEN 10 AND 30",
+            None,
+        )
+        .await;
+        assert_eq!(ids, vec!["i1", "i4"], "NOT BETWEEN matches the extremes");
+
         // (6) LIMIT honored on the OR scan path.
-        let (_, ids) = run(
+        let (_path, _pc, ids) = run(
             &dml,
             &parser,
             "SELECT id FROM inv WHERE status = 'active' OR status = 'idle'",
@@ -4492,8 +4522,9 @@ mod tests {
         assert_eq!(ids.len(), 2, "limit pushed into the predicate scan");
 
         // (7) No WHERE → scan all rows.
-        let (path, ids) = run(&dml, &parser, "SELECT id FROM inv", None).await;
+        let (path, pc, ids) = run(&dml, &parser, "SELECT id FROM inv", None).await;
         assert_eq!(path, RelationalSelectAccessPath::TableScan);
+        assert_eq!(pc, 0, "no WHERE → zero predicate leaves");
         assert_eq!(ids, vec!["i1", "i2", "i3", "i4"]);
     }
 
