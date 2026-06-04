@@ -47,6 +47,11 @@ pub struct QueryShape {
     /// single-table legacy path cannot serve (joins, `GROUP BY`, aggregates,
     /// `HAVING`, set-ops). Today this is the OLAP-candidate signal.
     pub engages_relational: bool,
+    /// P1: every referenced table is Parquet-backed (object-store / open-format),
+    /// so the OLAP arm can route to DataFusion. Set by the planner boundary
+    /// (`try_run_select`) only when the `datafusion-integration` feature is
+    /// compiled in, so the route is never advertised when the build can't honor it.
+    pub parquet_backed: bool,
 }
 
 /// A materialized read-route decision: the engine, the workload it was
@@ -115,22 +120,27 @@ impl ComputeScheduler {
     /// classification and reason vary, so the contract is locked before any
     /// second physical executor exists.
     pub fn route_select(&self, shape: QueryShape) -> SelectRouteDecision {
-        if shape.engages_relational {
-            // OLAP shape — the eventual DataFusion destination (P1). Until that
-            // read path is live, the OLAP arm stays on Volcano.
-            SelectRouteDecision {
+        match (shape.engages_relational, shape.parquet_backed) {
+            // P1: OLAP shape over Parquet-backed (object-store) table(s) → DataFusion.
+            (true, true) => SelectRouteDecision {
+                backend: ComputeBackend::DataFusionLocal,
+                workload_profile: CatalogWorkloadProfile::Olap,
+                reason: "OLAP shape over Parquet-backed table(s) — DataFusion over object storage"
+                    .to_string(),
+            },
+            // OLAP shape on native storage — Volcano serves it from WAL+RecordStorage
+            // until the relational base tier is Parquet/Iceberg (course-correction §6 P3).
+            (true, false) => SelectRouteDecision {
                 backend: ComputeBackend::Native,
                 workload_profile: CatalogWorkloadProfile::Olap,
-                reason: "OLAP shape (join/group-by/aggregate/set-op); DataFusion \
-                         read path not yet wired (P1) — staying on Volcano"
+                reason: "OLAP shape (join/group-by/aggregate/set-op) on native storage — Volcano"
                     .to_string(),
-            }
-        } else {
-            SelectRouteDecision {
+            },
+            (false, _) => SelectRouteDecision {
                 backend: ComputeBackend::Native,
                 workload_profile: CatalogWorkloadProfile::Oltp,
                 reason: "OLTP shape (point/simple select) — Volcano".to_string(),
-            }
+            },
         }
     }
 }
@@ -140,11 +150,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn olap_shape_classifies_olap_but_p0_stays_on_native() {
+    fn olap_shape_on_native_storage_stays_on_volcano() {
         let decision = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: true,
+            parquet_backed: false,
         });
-        // P0 invariant: always Volcano/Native, regardless of shape.
+        // OLAP over native storage stays on Volcano (no Parquet base tier yet).
         assert_eq!(decision.backend, ComputeBackend::Native);
         assert_eq!(decision.workload_profile, CatalogWorkloadProfile::Olap);
         assert!(decision.reason.to_lowercase().contains("olap"));
@@ -154,20 +165,31 @@ mod tests {
     fn oltp_shape_classifies_oltp_on_native() {
         let decision = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: false,
+            parquet_backed: false,
         });
         assert_eq!(decision.backend, ComputeBackend::Native);
         assert_eq!(decision.workload_profile, CatalogWorkloadProfile::Oltp);
     }
 
     #[test]
-    fn p0_never_routes_off_native() {
-        // The whole point of P0: no behavior change. Both shapes stay Native.
-        for engages in [true, false] {
-            let d = ComputeScheduler::new().route_select(QueryShape {
-                engages_relational: engages,
-            });
-            assert_eq!(d.backend, ComputeBackend::Native);
-        }
+    fn p1_olap_over_parquet_routes_to_datafusion() {
+        let d = ComputeScheduler::new().route_select(QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+        });
+        assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
+        assert_eq!(d.workload_profile, CatalogWorkloadProfile::Olap);
+        assert_eq!(d.compute_route_label(), "DataFusionLocal");
+    }
+
+    #[test]
+    fn oltp_never_routes_off_native_even_if_parquet() {
+        // Point/simple selects stay on Volcano (strong freshness) regardless of format.
+        let d = ComputeScheduler::new().route_select(QueryShape {
+            engages_relational: false,
+            parquet_backed: true,
+        });
+        assert_eq!(d.backend, ComputeBackend::Native);
     }
 
     #[test]
@@ -175,6 +197,7 @@ mod tests {
         let line = ComputeScheduler::new()
             .route_select(QueryShape {
                 engages_relational: true,
+                parquet_backed: false,
             })
             .explain_line();
         assert!(line.starts_with("Compute Route: Native(Volcano) (workload=Olap"));

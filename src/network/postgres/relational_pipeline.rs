@@ -174,6 +174,7 @@ pub async fn try_run_select(
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: engages,
+            parquet_backed: false,
         },
     );
     tracing::debug!(
@@ -196,6 +197,11 @@ pub async fn try_run_select(
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
     let mut tables: HashMap<String, PreparedTable> = HashMap::new();
+    // P1: per-table Parquet location (object-store backed), populated only under the
+    // `datafusion-integration` feature so the OLAP DataFusion route is never taken
+    // (nor advertised) when the build can't honor it.
+    #[cfg(feature = "datafusion-integration")]
+    let mut parquet_loc_by_key: HashMap<String, String> = HashMap::new();
     for raw in &names {
         let key = normalize_table_key(raw);
         if tables.contains_key(&key) {
@@ -203,6 +209,10 @@ pub async fn try_run_select(
         }
         match dml.resolve_relational_schema(raw).await {
             Ok(catalog_schema) => {
+                #[cfg(feature = "datafusion-integration")]
+                if let Some(location) = catalog_table_is_parquet_backed(&catalog_schema) {
+                    parquet_loc_by_key.insert(key.clone(), location);
+                }
                 tables.insert(key, PreparedTable::from_catalog(raw, &catalog_schema));
             }
             Err(e) => {
@@ -213,6 +223,22 @@ pub async fn try_run_select(
                 return None;
             }
         }
+    }
+
+    // P1 OLAP arm: when EVERY referenced table is Parquet-backed, route the (already
+    // OLAP-shaped) query to DataFusion over object storage. Mixed Parquet+native
+    // queries stay on Volcano (cross-engine join is a later phase).
+    #[cfg(feature = "datafusion-integration")]
+    if !tables.is_empty() && tables.keys().all(|k| parquet_loc_by_key.contains_key(k)) {
+        let parquet_tables: Vec<(String, String)> = tables
+            .iter()
+            .map(|(k, t)| (t.table_name.clone(), parquet_loc_by_key[k].clone()))
+            .collect();
+        tracing::debug!(
+            target: "proximadb::compute_route",
+            "Compute Route: DataFusionLocal (workload=Olap, reason=\"OLAP over Parquet-backed table(s)\")"
+        );
+        return Some(run_datafusion_select(sql, &parquet_tables).await);
     }
 
     let snapshot = SnapshotCatalog {
@@ -260,6 +286,205 @@ async fn run_plan<F: ReaderFactory, R: CapabilityResolver>(
         .await
         .map_err(|e| format!("scan: {e}"))?;
     Ok(PipelineResult { schema, rows })
+}
+
+// =========================================================================
+// P1: DataFusion OLAP route over Parquet-backed tables (course-correction §6 P1)
+// Gated on `datafusion-integration`; when the feature is off none of this is
+// compiled and `try_run_select` behaves exactly as before (Volcano only).
+// =========================================================================
+
+/// If `schema` is backed by an external Parquet file (object store / open format),
+/// return its location URI. Detects the `CatalogStorageLayout` the route branches on:
+/// `physical_format == Parquet` + a read-federation/external authority + a location.
+#[cfg(feature = "datafusion-integration")]
+fn catalog_table_is_parquet_backed(
+    schema: &proximadb_catalog::CatalogTableSchema,
+) -> Option<String> {
+    use proximadb_catalog::{CatalogAuthorityMode, CatalogPhysicalFormat};
+    schema.storage_layouts.iter().find_map(|layout| {
+        let format_ok = matches!(layout.physical_format, CatalogPhysicalFormat::Parquet);
+        let authority_ok = matches!(
+            layout.authority,
+            CatalogAuthorityMode::FederatedRead
+                | CatalogAuthorityMode::ExternalAuthoritative
+                | CatalogAuthorityMode::ImportedSnapshot
+        );
+        if format_ok && authority_ok {
+            layout.location.clone()
+        } else {
+            None
+        }
+    })
+}
+
+/// Map an Arrow column type to the relational `ProximaType` for the result schema.
+#[cfg(feature = "datafusion-integration")]
+fn arrow_type_to_proxima(dt: &arrow_schema::DataType) -> ProximaType {
+    use arrow_schema::DataType as D;
+    match dt {
+        D::Boolean => ProximaType::Boolean,
+        D::Int8 => ProximaType::Int8,
+        D::Int16 => ProximaType::Int16,
+        D::Int32 => ProximaType::Int32,
+        D::Int64 => ProximaType::Int64,
+        D::UInt8 => ProximaType::UInt8,
+        D::UInt16 => ProximaType::UInt16,
+        D::UInt32 => ProximaType::UInt32,
+        D::UInt64 => ProximaType::UInt64,
+        D::Float16 | D::Float32 => ProximaType::Float32,
+        D::Float64 => ProximaType::Float64,
+        D::Utf8 | D::LargeUtf8 => ProximaType::String,
+        D::Binary | D::LargeBinary => ProximaType::Binary,
+        D::Date32 | D::Date64 => ProximaType::Date,
+        // Other Arrow types are rendered to text in the cell converter.
+        _ => ProximaType::String,
+    }
+}
+
+/// Convert one Arrow cell to a `ProximaValue`. Common scalar types map directly;
+/// anything else falls back to its Arrow text rendering (so it still reaches the
+/// pgwire client via `text_encode`).
+#[cfg(feature = "datafusion-integration")]
+fn arrow_cell_to_proxima(array: &dyn arrow_array::Array, row: usize) -> ProximaValue {
+    use arrow_array::*;
+    use arrow_schema::DataType as D;
+    if array.is_null(row) {
+        return ProximaValue::Null;
+    }
+    macro_rules! v {
+        ($t:ty) => {
+            array.as_any().downcast_ref::<$t>().unwrap().value(row)
+        };
+    }
+    match array.data_type() {
+        D::Boolean => ProximaValue::Boolean(v!(BooleanArray)),
+        D::Int8 => ProximaValue::Int8(v!(Int8Array)),
+        D::Int16 => ProximaValue::Int16(v!(Int16Array)),
+        D::Int32 => ProximaValue::Int32(v!(Int32Array)),
+        D::Int64 => ProximaValue::Int64(v!(Int64Array)),
+        D::UInt8 => ProximaValue::UInt8(v!(UInt8Array)),
+        D::UInt16 => ProximaValue::UInt16(v!(UInt16Array)),
+        D::UInt32 => ProximaValue::UInt32(v!(UInt32Array)),
+        D::UInt64 => ProximaValue::UInt64(v!(UInt64Array)),
+        D::Float32 => ProximaValue::Float32(v!(Float32Array)),
+        D::Float64 => ProximaValue::Float64(v!(Float64Array)),
+        D::Utf8 => ProximaValue::String(v!(StringArray).to_string()),
+        D::LargeUtf8 => ProximaValue::String(v!(LargeStringArray).to_string()),
+        D::Binary => ProximaValue::Binary(v!(BinaryArray).to_vec()),
+        D::Date32 => ProximaValue::Date(v!(Date32Array)),
+        _ => match arrow::util::display::ArrayFormatter::try_new(
+            array,
+            &arrow::util::display::FormatOptions::default(),
+        ) {
+            Ok(f) => ProximaValue::String(f.value(row).to_string()),
+            Err(_) => ProximaValue::Null,
+        },
+    }
+}
+
+/// Convert DataFusion result batches into a `PipelineResult` so the existing pgwire
+/// emitter (`text_encode`) renders them unchanged.
+#[cfg(feature = "datafusion-integration")]
+fn record_batches_to_pipeline_result(
+    arrow_schema: &arrow_schema::Schema,
+    batches: &[arrow_array::RecordBatch],
+) -> PipelineResult {
+    let columns: Vec<ColumnInfo> = arrow_schema
+        .fields()
+        .iter()
+        .map(|f| {
+            ColumnInfo::new(
+                f.name().clone(),
+                arrow_type_to_proxima(f.data_type()),
+                f.is_nullable(),
+            )
+        })
+        .collect();
+    let schema = RelationalSchema::new(columns);
+    let mut rows: Vec<RelationalRow> = Vec::new();
+    for batch in batches {
+        let ncols = batch.num_columns();
+        for r in 0..batch.num_rows() {
+            let mut row: RelationalRow = Vec::with_capacity(ncols);
+            for c in 0..ncols {
+                row.push(arrow_cell_to_proxima(batch.column(c).as_ref(), r));
+            }
+            rows.push(row);
+        }
+    }
+    PipelineResult { schema, rows }
+}
+
+/// Execute an OLAP `SELECT` through DataFusion over Parquet-backed table(s), each
+/// read via the canonical `FileSystem` trait (course-correction §6 P1). DataFusion
+/// parses + plans the SQL itself (no `LogicalNode`→`LogicalPlan` lowering yet — that
+/// is P4); results convert back to a `PipelineResult`.
+#[cfg(feature = "datafusion-integration")]
+async fn run_datafusion_select(
+    sql: &str,
+    parquet_tables: &[(String, String)],
+) -> Result<PipelineResult, String> {
+    use crate::storage::persistence::filesystem::FilesystemFactory;
+    let factory = FilesystemFactory::create_default()
+        .await
+        .map_err(|e| format!("filesystem factory: {e}"))?;
+    let ctx = crate::datafusion::create_session_context().map_err(|e| format!("session: {e}"))?;
+    for (name, location) in parquet_tables {
+        let fs = factory
+            .get_filesystem(location)
+            .map_err(|e| format!("get_filesystem({location}): {e}"))?;
+        crate::datafusion::register_parquet_path(&ctx, fs, name, location)
+            .await
+            .map_err(|e| format!("register parquet table {name}: {e}"))?;
+    }
+    let df = ctx
+        .sql(sql)
+        .await
+        .map_err(|e| format!("datafusion sql: {e}"))?;
+    let arrow_schema = df.schema().as_arrow().clone();
+    let batches = df
+        .collect()
+        .await
+        .map_err(|e| format!("datafusion collect: {e}"))?;
+    Ok(record_batches_to_pipeline_result(&arrow_schema, &batches))
+}
+
+#[cfg(all(test, feature = "datafusion-integration"))]
+mod datafusion_route_tests {
+    use super::*;
+    use arrow_array::{Float64Array, Int64Array, RecordBatch, StringArray};
+    use arrow_schema::{DataType, Field, Schema};
+    use std::sync::Arc;
+
+    #[test]
+    fn record_batches_convert_to_pipeline_result() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("service", DataType::Utf8, false),
+            Field::new("n", DataType::Int64, false),
+            Field::new("avg_x", DataType::Float64, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["api", "db"])),
+                Arc::new(Int64Array::from(vec![3_i64, 5])),
+                Arc::new(Float64Array::from(vec![Some(1.5), None])),
+            ],
+        )
+        .unwrap();
+
+        let result = record_batches_to_pipeline_result(&schema, &[batch]);
+        assert_eq!(result.schema.columns.len(), 3);
+        assert_eq!(result.schema.columns[0].name, "service");
+        assert_eq!(result.schema.columns[1].ty, ProximaType::Int64);
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][0], ProximaValue::String("api".to_string()));
+        assert_eq!(result.rows[0][1], ProximaValue::Int64(3));
+        assert_eq!(result.rows[0][2], ProximaValue::Float64(1.5));
+        // Null preserved.
+        assert_eq!(result.rows[1][2], ProximaValue::Null);
+    }
 }
 
 struct EngineCatalog(Arc<InMemoryRelationalEngine>);
@@ -563,6 +788,7 @@ pub fn classify_select_route(
         crate::query::compute_scheduler::ComputeScheduler::new().route_select(
             crate::query::compute_scheduler::QueryShape {
                 engages_relational: engages,
+                parquet_backed: false,
             },
         ),
     )
@@ -615,10 +841,8 @@ mod route_explain_tests {
 
     #[test]
     fn olap_select_explains_as_olap() {
-        let expl = explain_select_route(
-            "SELECT service, count(*) FROM events GROUP BY service",
-        )
-        .expect("routable");
+        let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
+            .expect("routable");
         assert_eq!(expl.workload_profile, "Olap");
         // P0 invariant: OLAP shape still executes on Volcano.
         assert_eq!(expl.compute_route, "Native(Volcano)");
