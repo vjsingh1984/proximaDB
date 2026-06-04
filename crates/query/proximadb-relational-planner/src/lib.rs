@@ -1233,12 +1233,12 @@ fn can_push_to_right(kind: JoinKind) -> bool {
 
 /// Side-pushability for an ON conjunct — the OPPOSITE direction from WHERE
 /// ([`can_push_to_left`]/[`can_push_to_right`]): an ON filter applies during the
-/// join, so a single-side conjunct on the NULL-SUPPLYING side may be pushed.
-/// Scoped to INNER (ON ≡ WHERE; either side) + LEFT (right is null-supplying);
-/// RIGHT/FULL/Semi/Anti are skipped (their join execution is incomplete /
-/// out of scope).
+/// join, so a single-side conjunct on the NULL-SUPPLYING side may be pushed
+/// (matched rows unchanged; unmatched PRESERVED rows still null-extend).
+/// Left is null-supplying in INNER (ON ≡ WHERE) + RIGHT, so a left-only conjunct
+/// pushes for those. FULL (both sides preserved) and Semi/Anti are skipped.
 fn on_can_push_to_left(kind: JoinKind) -> bool {
-    matches!(kind, JoinKind::Inner)
+    matches!(kind, JoinKind::Inner | JoinKind::Right)
 }
 
 fn on_can_push_to_right(kind: JoinKind) -> bool {
@@ -2458,27 +2458,75 @@ mod tests {
     }
 
     #[test]
-    fn on_pushdown_skips_right_and_full_joins() {
-        // RIGHT/FULL join execution is incomplete → ON-pushdown is a no-op: a
-        // right-side single conjunct is NOT pushed; both scans stay bare.
-        for kind in [JoinKind::Right, JoinKind::Full] {
+    fn on_pushdown_right_pushes_left_null_supplying_not_right_preserved() {
+        // RIGHT is the mirror of LEFT: the LEFT input is null-supplying, so a
+        // left-side ON conjunct IS pushed; the RIGHT input is preserved, so a
+        // right-side ON conjunct is NOT.
+        let on = Expr::bin(
+            BinaryOp::And,
+            equi_on(),
+            Expr::bin(
+                BinaryOp::Eq,
+                col_at(2, "age", ProximaType::Int32),
+                Expr::literal(ProximaValue::Int32(1)),
+            ),
+        );
+        let result = push_predicates(join_with_on(JoinKind::Right, on), &cap_full(Vec::new()));
+        let PhysicalPlan::Join { left, right, .. } = result else {
+            panic!("expected Join");
+        };
+        assert!(
+            matches!(*left, PhysicalPlan::Scan { predicate: Some(_), .. }),
+            "null-supplying (left) scan pre-filtered"
+        );
+        assert!(
+            matches!(*right, PhysicalPlan::Scan { predicate: None, .. }),
+            "preserved (right) scan untouched"
+        );
+
+        // RIGHT: a right-side (preserved) ON conjunct must NOT be pushed.
+        let on2 = Expr::bin(
+            BinaryOp::And,
+            equi_on(),
+            Expr::bin(
+                BinaryOp::Eq,
+                col_at(5, "total", ProximaType::Float64),
+                Expr::literal(ProximaValue::Float64(9.0)),
+            ),
+        );
+        let result2 = push_predicates(join_with_on(JoinKind::Right, on2), &cap_full(Vec::new()));
+        let PhysicalPlan::Join { right, on, .. } = result2 else {
+            panic!("expected Join");
+        };
+        assert!(
+            matches!(*right, PhysicalPlan::Scan { predicate: None, .. }),
+            "preserved-side ON conjunct left in place, not pushed"
+        );
+        assert!(on.is_some(), "preserved-side conjunct stays in residual ON");
+    }
+
+    #[test]
+    fn on_pushdown_skips_full_joins() {
+        // FULL preserves BOTH sides → pre-filtering either side would drop rows
+        // that must null-extend; ON-pushdown is a no-op on either side.
+        for col in [
+            (2, "age", ProximaType::Int32, ProximaValue::Int32(1)),
+            (5, "total", ProximaType::Float64, ProximaValue::Float64(9.0)),
+        ] {
+            let (ord, name, ty, lit) = col;
             let on = Expr::bin(
                 BinaryOp::And,
                 equi_on(),
-                Expr::bin(
-                    BinaryOp::Eq,
-                    col_at(5, "total", ProximaType::Float64),
-                    Expr::literal(ProximaValue::Float64(9.0)),
-                ),
+                Expr::bin(BinaryOp::Eq, col_at(ord, name, ty), Expr::literal(lit)),
             );
-            let result = push_predicates(join_with_on(kind, on), &cap_full(Vec::new()));
+            let result = push_predicates(join_with_on(JoinKind::Full, on), &cap_full(Vec::new()));
             let PhysicalPlan::Join { left, right, .. } = result else {
-                panic!("expected Join for {kind:?}");
+                panic!("expected Join for FULL with {name}");
             };
             assert!(
                 matches!(*left, PhysicalPlan::Scan { predicate: None, .. })
                     && matches!(*right, PhysicalPlan::Scan { predicate: None, .. }),
-                "no ON pushdown for {kind:?}"
+                "no ON pushdown for FULL with {name}"
             );
         }
     }

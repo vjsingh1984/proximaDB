@@ -205,7 +205,12 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
             .expect("INSERT dept");
     }
     // emp 13 (dan) has dept_id 99 (no such dept) → unmatched left for FULL joins.
-    for (id, dept_id, ename) in [(10, 1, "ann"), (11, 1, "bob"), (12, 2, "cas"), (13, 99, "dan")] {
+    for (id, dept_id, ename) in [
+        (10, 1, "ann"),
+        (11, 1, "bob"),
+        (12, 2, "cas"),
+        (13, 99, "dan"),
+    ] {
         client
             .simple_query(&format!(
                 "INSERT INTO {emp} (id, dept_id, ename) VALUES ({id}, {dept_id}, '{ename}')"
@@ -392,6 +397,31 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
     assert!(
         col_set(&rows, "dname").contains("hr"),
         "FULL join emits unmatched right (hr)"
+    );
+
+    // (3g) RIGHT JOIN ON-predicate pushdown to the null-supplying (left) side:
+    // the left-only ON conjunct `emp.ename = 'ann'` is pushed into emp's scan
+    // (emp is null-supplying under RIGHT), residual ON = the equi (→ Hash). All
+    // dept rows stay preserved (dname set unchanged), but only ann matches the
+    // ON filter, so the only non-NULL ename is 'ann' — bob (also eng) and cas
+    // (sales) are excluded by the pushed-down filter (without pushdown the ename
+    // set would be {ann, bob, cas}).
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename, dname FROM {emp} RIGHT JOIN {dept} \
+             ON {emp}.dept_id = {dept}.id AND {emp}.ename = 'ann'"
+        ))
+        .await
+        .expect("SELECT right join with left-side ON predicate");
+    assert_eq!(
+        col_set(&rows, "dname"),
+        set(&["eng", "sales", "hr"]),
+        "RIGHT join still preserves all dept rows under ON pushdown"
+    );
+    assert_eq!(
+        col_set(&rows, "ename"),
+        set(&["ann"]),
+        "left-side ON conjunct pushed: only ann matches, bob/cas excluded"
     );
 
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
