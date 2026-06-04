@@ -84,6 +84,26 @@ pub fn parquet_bytes_to_record_batches(bytes: Bytes) -> Result<Vec<RecordBatch>,
     Ok(out)
 }
 
+/// Like [`parquet_bytes_to_record_batches`] but caps each yielded batch at `batch_size` rows.
+///
+/// This is the read path `ObjectStoreBridge::read_parquet_batches` uses, where the caller
+/// chooses the batch size that flows into the downstream (DataFusion) operator pipeline.
+pub fn parquet_bytes_to_record_batches_with_batch_size(
+    bytes: Bytes,
+    batch_size: usize,
+) -> Result<Vec<RecordBatch>, StorageError> {
+    let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+        .map_err(|e| ser_err("ParquetRecordBatchReaderBuilder::try_new", e))?
+        .with_batch_size(batch_size)
+        .build()
+        .map_err(|e| ser_err("reader build", e))?;
+    let mut out = Vec::new();
+    for batch in reader {
+        out.push(batch.map_err(|e| ser_err("read batch", e))?);
+    }
+    Ok(out)
+}
+
 /// Encode canonical [`ProximaRecord`]s straight to Parquet bytes via the canonical
 /// `ProximaSchema`-driven Arrow mapping (F1.5) + a Parquet writer. This is the function the
 /// F2 `ObjectStoreBridge::write_records_to_parquet` impl calls before the object-store `put`.

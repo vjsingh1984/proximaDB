@@ -46,11 +46,13 @@ use arrow_array::builder::{
     Float64Builder, Int8Builder, Int16Builder, Int32Builder, Int64Builder, StringBuilder,
     UInt8Builder, UInt16Builder, UInt32Builder, UInt64Builder,
 };
+use std::collections::HashMap;
+
 use arrow_array::{ArrayRef, RecordBatch};
 use proximadb_kernel::error::StorageError;
-use proximadb_records::{ProximaRecord, ProximaValue, tree_get};
+use proximadb_records::{ProximaRecord, ProximaTreeNode, ProximaValue, tree_get};
 
-use crate::proxima_schema::{ProximaColumn, ProximaDataType, ProximaSchema};
+use crate::proxima_schema::{ProximaColumn, ProximaDataType, ProximaSchema, VectorElementType};
 
 /// Convert a slice of canonical [`ProximaRecord`]s into an Arrow [`RecordBatch`] whose schema
 /// is `schema.to_arrow_schema()` and whose columns are materialized per the mapping contract
@@ -257,6 +259,115 @@ fn pv_as_date32(v: &ProximaValue) -> Option<i32> {
         ProximaValue::Int32(d) => Some(*d),
         _ => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Schema inference (for schema-less write paths, e.g. ObjectStoreBridge)
+// ---------------------------------------------------------------------------
+
+/// Column name synthesized for the dense-vector column when inferring a schema.
+///
+/// [`proxima_records_to_record_batch`] reads the vector from `record.embeddings.first()`
+/// regardless of the column's *name*, so the exact name is arbitrary — this constant just
+/// keeps it stable across a write→read round-trip.
+pub const INFERRED_VECTOR_COLUMN: &str = "vector";
+
+/// Map a concrete [`ProximaValue`] to the [`ProximaDataType`] the canonical converter can
+/// materialize. Returns `None` for `Null` and for variants without a scalar Arrow column in
+/// [`build_column`] (Decimal — needs precision/scale; Time/Timestamp; Array/Map/Struct;
+/// sparse/quantized vectors) so inference never produces a column the converter would reject.
+fn proxima_value_to_data_type(v: &ProximaValue) -> Option<ProximaDataType> {
+    Some(match v {
+        ProximaValue::Boolean(_) => ProximaDataType::Boolean,
+        ProximaValue::Int8(_) => ProximaDataType::Int8,
+        ProximaValue::Int16(_) => ProximaDataType::Int16,
+        ProximaValue::Int32(_) => ProximaDataType::Int32,
+        ProximaValue::Int64(_) => ProximaDataType::Int64,
+        ProximaValue::UInt8(_) => ProximaDataType::UInt8,
+        ProximaValue::UInt16(_) => ProximaDataType::UInt16,
+        ProximaValue::UInt32(_) => ProximaDataType::UInt32,
+        ProximaValue::UInt64(_) => ProximaDataType::UInt64,
+        ProximaValue::Float16(_) | ProximaValue::Float32(_) => ProximaDataType::Float32,
+        ProximaValue::Float64(_) => ProximaDataType::Float64,
+        ProximaValue::String(_) | ProximaValue::Symbol(_) => ProximaDataType::String,
+        ProximaValue::Binary(_) => ProximaDataType::Binary,
+        ProximaValue::Date(_) => ProximaDataType::Date,
+        ProximaValue::Uuid(_) | ProximaValue::ULID(_) => ProximaDataType::Uuid,
+        ProximaValue::Json(_) | ProximaValue::Jsonb(_) => ProximaDataType::Json,
+        _ => return None,
+    })
+}
+
+/// Best-effort [`ProximaSchema`] inference from a batch of records — for schema-less write
+/// paths such as `ObjectStoreBridge::write_records_to_parquet`, which take only `&[ProximaRecord]`
+/// (the records are self-describing).
+///
+/// Rules (conservative — emits only column types [`proxima_records_to_record_batch`] can
+/// materialize, so inference + conversion never disagree):
+/// - Scalar columns are the union of top-level `props` **leaf** keys, in first-seen order; a
+///   column's type is taken from the first non-`Null`, materializable [`ProximaValue`] observed
+///   for that key. Keys that are only ever `Null`/complex/unsupported are skipped (documented
+///   loss). Nested `Object` props are not flattened in v1.
+/// - Every column is nullable (a key absent from some record is a null there).
+/// - If any record carries an embedding, one dense-vector column named [`INFERRED_VECTOR_COLUMN`]
+///   is appended, its dimension = the first embedding's length, element type `Float32`.
+pub fn infer_proxima_schema(records: &[ProximaRecord]) -> ProximaSchema {
+    let mut order: Vec<String> = Vec::new();
+    let mut types: HashMap<String, ProximaDataType> = HashMap::new();
+
+    for r in records {
+        for (key, node) in &r.props {
+            if types.contains_key(key) {
+                continue;
+            }
+            if let ProximaTreeNode::Value(v) = node {
+                if let Some(dt) = proxima_value_to_data_type(v) {
+                    order.push(key.clone());
+                    types.insert(key.clone(), dt);
+                }
+                // Null / unsupported leaf: leave unlocked so a later record's concrete value
+                // for the same key can still define the column.
+            }
+        }
+    }
+
+    let mut columns: Vec<ProximaColumn> = Vec::with_capacity(order.len() + 1);
+    let mut next_id = 1;
+    let mut push = |name: String, data_type: ProximaDataType, id: &mut i32| {
+        columns.push(ProximaColumn {
+            id: *id,
+            name,
+            data_type,
+            nullable: true,
+            default_value: None,
+            comment: None,
+            metadata: HashMap::new(),
+            is_deleted: false,
+            original_id: None,
+        });
+        *id += 1;
+    };
+
+    for name in order {
+        let dt = types.remove(&name).expect("type recorded for ordered key");
+        push(name, dt, &mut next_id);
+    }
+
+    if let Some(dim) = records
+        .iter()
+        .find_map(|r| r.embeddings.first().map(|c| c.values.len()))
+    {
+        push(
+            INFERRED_VECTOR_COLUMN.to_string(),
+            ProximaDataType::Vector {
+                dimension: dim as u32,
+                element_type: VectorElementType::Float32,
+            },
+            &mut next_id,
+        );
+    }
+
+    ProximaSchema::new("inferred".to_string(), columns, Vec::new())
 }
 
 /// Render a 16-byte UUID/ULID as the canonical hyphenated hex form.
@@ -481,5 +592,82 @@ mod tests {
             .downcast_ref::<Int64Array>()
             .unwrap();
         assert_eq!(ns.value(0), 7);
+    }
+
+    #[test]
+    fn infer_schema_unions_props_and_appends_vector() {
+        // r0 defines name(String)+age(Int64) and an embedding; r1 adds score(Float64) and a
+        // value `tags` that is only ever Null in r0 -> tags must NOT become a column from r0,
+        // but r1 gives it a concrete String -> it should appear, after the first-seen columns.
+        let mut r0 = record_with_props(
+            "r0",
+            vec![
+                ("name", ProximaValue::String("a".into())),
+                ("age", ProximaValue::Int64(1)),
+                ("tags", ProximaValue::Null),
+            ],
+        );
+        r0.embeddings.push(EmbeddingCell {
+            values: EmbeddingValues::Fp32(vec![0.0, 1.0]),
+            ..Default::default()
+        });
+        let r1 = record_with_props(
+            "r1",
+            vec![
+                ("name", ProximaValue::String("b".into())),
+                ("score", ProximaValue::Float64(2.0)),
+                ("tags", ProximaValue::String("x".into())),
+            ],
+        );
+
+        let schema = infer_proxima_schema(&[r0, r1]);
+        let by_name: HashMap<&str, &ProximaColumn> = schema
+            .columns
+            .iter()
+            .map(|c| (c.name.as_str(), c))
+            .collect();
+
+        assert_eq!(by_name["name"].data_type, ProximaDataType::String);
+        assert_eq!(by_name["age"].data_type, ProximaDataType::Int64);
+        assert_eq!(by_name["score"].data_type, ProximaDataType::Float64);
+        assert_eq!(by_name["tags"].data_type, ProximaDataType::String);
+        assert!(by_name.values().all(|c| c.nullable));
+
+        let vec_col = by_name[INFERRED_VECTOR_COLUMN];
+        assert_eq!(
+            vec_col.data_type,
+            ProximaDataType::Vector {
+                dimension: 2,
+                element_type: VectorElementType::Float32
+            }
+        );
+
+        // The inferred schema must round-trip the records through the canonical converter.
+        let r0b = {
+            let mut r = record_with_props("r0", vec![("name", ProximaValue::String("a".into()))]);
+            r.embeddings.push(EmbeddingCell {
+                values: EmbeddingValues::Fp32(vec![0.0, 1.0]),
+                ..Default::default()
+            });
+            r
+        };
+        let batch = proxima_records_to_record_batch(&[r0b], &schema).unwrap();
+        assert_eq!(batch.num_columns(), schema.columns.len());
+    }
+
+    #[test]
+    fn infer_schema_skips_only_null_or_complex_columns() {
+        // `blob` is an Array (unsupported) and `nothing` is always Null -> neither becomes a column.
+        let r = record_with_props(
+            "r0",
+            vec![
+                ("ok", ProximaValue::Int64(1)),
+                ("blob", ProximaValue::Array(vec![ProximaValue::Int64(1)])),
+                ("nothing", ProximaValue::Null),
+            ],
+        );
+        let schema = infer_proxima_schema(&[r]);
+        let names: Vec<&str> = schema.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["ok"]);
     }
 }
