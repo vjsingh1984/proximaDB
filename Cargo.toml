@@ -57,6 +57,7 @@ members = [
     "crates/storage/proximadb-storage-common",
     "crates/storage/proximadb-block-format",
     "crates/storage/proximadb-object-store",
+    "crates/storage/proximadb-iceberg-engine",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
     "crates/query/proximadb-graph-query",
