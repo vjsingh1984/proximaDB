@@ -12,9 +12,10 @@
 //! `Scan / Filter / Project / Aggregate / Sort / Limit / Distinct / Union` and
 //! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`), with `Expr`
 //! translation for `Column / Literal / BinaryOp / UnaryOp / IsNull / Cast / Between /
-//! In / Like / Case / Coalesce / NullIf`. Anything else (Semi/Anti join, Values, CTEs;
-//! `FuncCall`; `StringAgg/Custom` aggregates) returns
-//! [`DataFusionError::NotImplemented`] so the caller keeps the existing
+//! In / Like / Case / Coalesce / NullIf` and the common scalar functions
+//! `UPPER/LOWER/LENGTH/ABS/CEIL/FLOOR/SQRT/CONCAT`. Anything else (Semi/Anti join,
+//! Values, CTEs; uncommon/variadic `FuncCall`s; `StringAgg/Custom` aggregates)
+//! returns [`DataFusionError::NotImplemented`] so the caller keeps the existing
 //! `ctx.sql(...)` path for those — additive, never wrong.
 
 use datafusion::error::{DataFusionError, Result as DFResult};
@@ -290,7 +291,35 @@ fn lower_expr(e: &RExpr) -> DFResult<Expr> {
         RExpr::NullIf { left, right } => {
             datafusion::functions::core::expr_fn::nullif(lower_expr(left)?, lower_expr(right)?)
         }
-        RExpr::FuncCall { name, .. } => return Err(unsupported(format!("function {name}"))),
+        RExpr::FuncCall { name, args, .. } => {
+            let lowered = args.iter().map(lower_expr).collect::<DFResult<Vec<_>>>()?;
+            lower_scalar_function(name, lowered)?
+        }
+    })
+}
+
+/// Map a builtin scalar-function call (case-insensitive name) to a DataFusion
+/// scalar `Expr`. Covers the high-frequency analytical builtins with predictable
+/// arities; unknown names or unsupported arities return `NotImplemented` so the
+/// caller keeps the `ctx.sql` fallback (which has DataFusion's full function set).
+fn lower_scalar_function(name: &str, args: Vec<Expr>) -> DFResult<Expr> {
+    use datafusion::functions::expr_fn as f;
+    fn one(name: &str, mut args: Vec<Expr>) -> DFResult<Expr> {
+        match args.len() {
+            1 => Ok(args.pop().unwrap()),
+            n => Err(unsupported(format!("{name} expects 1 arg, got {n}"))),
+        }
+    }
+    Ok(match name.to_ascii_lowercase().as_str() {
+        "upper" | "ucase" => f::upper(one(name, args)?),
+        "lower" | "lcase" => f::lower(one(name, args)?),
+        "length" | "char_length" | "character_length" => f::char_length(one(name, args)?),
+        "abs" => f::abs(one(name, args)?),
+        "ceil" | "ceiling" => f::ceil(one(name, args)?),
+        "floor" => f::floor(one(name, args)?),
+        "sqrt" => f::sqrt(one(name, args)?),
+        "concat" => f::concat(args), // variadic
+        other => return Err(unsupported(format!("function {other}"))),
     })
 }
 
@@ -620,6 +649,49 @@ mod tests {
             input: Box::new(project_k()),
         };
         assert_eq!(row_count(&ctx, &node).await, 2);
+    }
+
+    #[tokio::test]
+    async fn lowers_scalar_functions() {
+        // SELECT UPPER(k), LENGTH(k), ABS(x), CONCAT(k,'!') FROM t — executes over 3 rows.
+        let ctx = ctx_with_t().await;
+        let func = |name: &str, args: Vec<RExpr>| RExpr::FuncCall {
+            name: name.to_string(),
+            args,
+            return_ty: ProximaType::String,
+        };
+        let k = || RExpr::Column(colref("k", 0, ProximaType::String));
+        let node = LogicalNode::Project {
+            input: Box::new(scan_t()),
+            outputs: vec![
+                NamedExpr {
+                    name: "u".to_string(),
+                    expr: func("upper", vec![k()]),
+                },
+                NamedExpr {
+                    name: "len".to_string(),
+                    expr: func("length", vec![k()]),
+                },
+                NamedExpr {
+                    name: "a".to_string(),
+                    expr: func("abs", vec![RExpr::Column(colref("x", 1, ProximaType::Float64))]),
+                },
+                NamedExpr {
+                    name: "c".to_string(),
+                    expr: func(
+                        "concat",
+                        vec![
+                            k(),
+                            RExpr::Literal {
+                                value: ProximaValue::String("!".to_string()),
+                                ty: ProximaType::String,
+                            },
+                        ],
+                    ),
+                },
+            ],
+        };
+        assert_eq!(row_count(&ctx, &node).await, 3);
     }
 
     #[tokio::test]
