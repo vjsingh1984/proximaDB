@@ -997,9 +997,10 @@ impl ExecNode for NestedLoopJoinExec {
             // Ensure we have a current left row.
             if self.current_left.is_none() {
                 let Some(l) = self.left.next_row().await? else {
-                    // Left exhausted. Possibly enter right-only
-                    // phase for FULL outer.
-                    if matches!(self.kind, JoinKind::Full) {
+                    // Left exhausted. Enter the right-only phase to emit
+                    // unmatched right rows null-padded on the left — for FULL
+                    // AND RIGHT outer (RIGHT preserves the right side).
+                    if matches!(self.kind, JoinKind::Full | JoinKind::Right) {
                         self.right_only_phase = true;
                         self.right_only_cursor = 0;
                         return self.next_row().await;
@@ -1058,11 +1059,9 @@ impl ExecNode for NestedLoopJoinExec {
                     return Ok(Some(out));
                 }
                 JoinKind::Right => {
-                    // Right join is normally rewritten to LEFT
-                    // with swapped inputs upstream; the planner
-                    // emits it as-is, so we treat it like INNER
-                    // here. Full right-outer semantics will be
-                    // handled by the swap rewrite in Phase 3.
+                    // RIGHT does NOT null-extend unmatched LEFT rows (the right
+                    // side is preserved). Unmatched RIGHT rows are emitted in the
+                    // right-only phase after the left input is exhausted.
                 }
                 JoinKind::Anti if !was_matched => {
                     return Ok(Some(left));
@@ -2250,6 +2249,101 @@ mod tests {
         let rows = collect(&mut *exec).await.unwrap();
         // alice has orders 100 & 102; bob has 101; carol none.
         assert_eq!(rows.len(), 3);
+    }
+
+    /// users(id@0,name@1,age@2) ⋈ orders(oid@3,uid@4) on users.id = orders.uid,
+    /// NestedLoop. `orders_rows` lets each test supply (un)matched rows.
+    fn nested_loop_users_orders(
+        kind: JoinKind,
+        orders_rows: Vec<RelationalRow>,
+        f: &VecReaderFactory,
+    ) -> PhysicalPlan {
+        let orders_schema = RelationalSchema::new(vec![
+            ColumnInfo::new("oid", ProximaType::Int64, false),
+            ColumnInfo::new("uid", ProximaType::Int64, false),
+        ]);
+        f.register("users", users_schema(), users_rows(), vec![0]);
+        f.register("orders", orders_schema.clone(), orders_rows, vec![0]);
+        let combined = users_schema().len();
+        PhysicalPlan::Join {
+            left: Box::new(scan_users()),
+            right: Box::new(PhysicalPlan::Scan {
+                table: TableId::new("orders"),
+                output_schema: orders_schema,
+                projection: None,
+                predicate: None,
+                limit: None,
+                access: ScanAccess::FullScan,
+            }),
+            kind,
+            on: Some(Expr::bin(
+                BinaryOp::Eq,
+                Expr::column(ColumnRef {
+                    name: "id".into(),
+                    ordinal: 0,
+                    ty: ProximaType::Int64,
+                    nullable: false,
+                }),
+                Expr::column(ColumnRef {
+                    name: "uid".into(),
+                    ordinal: combined + 1,
+                    ty: ProximaType::Int64,
+                    nullable: false,
+                }),
+            )),
+            strategy: JoinStrategy::NestedLoop,
+        }
+    }
+
+    // orders: 100→u1, 101→u2, 102→u1, 103→u99 (no such user, unmatched right).
+    fn orders_with_unmatched() -> Vec<RelationalRow> {
+        vec![
+            vec![ProximaValue::Int64(100), ProximaValue::Int64(1)],
+            vec![ProximaValue::Int64(101), ProximaValue::Int64(2)],
+            vec![ProximaValue::Int64(102), ProximaValue::Int64(1)],
+            vec![ProximaValue::Int64(103), ProximaValue::Int64(99)],
+        ]
+    }
+
+    #[tokio::test]
+    async fn nested_loop_right_join_emits_unmatched_right_rows() {
+        let f = VecReaderFactory::new();
+        let plan = nested_loop_users_orders(JoinKind::Right, orders_with_unmatched(), &f);
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        // 3 matched (100,101,102) + order 103 null-padded on the left.
+        assert_eq!(rows.len(), 4);
+        assert_eq!(
+            rows.iter().filter(|r| r[0] == ProximaValue::Null).count(),
+            1,
+            "unmatched right (order 103) emitted with NULL user columns"
+        );
+        assert!(
+            rows.iter().all(|r| r[3] != ProximaValue::Null),
+            "RIGHT must NOT emit unmatched left rows (carol)"
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_loop_full_join_emits_both_unmatched_sides() {
+        let f = VecReaderFactory::new();
+        let plan = nested_loop_users_orders(JoinKind::Full, orders_with_unmatched(), &f);
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        // 3 matched + carol (unmatched left, NULL right) + order 103 (unmatched right, NULL left).
+        assert_eq!(rows.len(), 5);
+        assert_eq!(
+            rows.iter().filter(|r| r[0] == ProximaValue::Null).count(),
+            1,
+            "unmatched right (order 103) → NULL left"
+        );
+        assert_eq!(
+            rows.iter().filter(|r| r[3] == ProximaValue::Null).count(),
+            1,
+            "unmatched left (carol) → NULL right"
+        );
     }
 
     // ----- Hash join ---------------------------------------------------

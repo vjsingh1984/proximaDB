@@ -645,10 +645,11 @@ pub fn lower_to_physical(node: LogicalNode) -> PhysicalPlan {
 /// (build-side choice via cardinality estimate) is Phase 3.
 pub fn pick_join_strategy(kind: JoinKind, on: Option<&Expr>) -> JoinStrategy {
     match kind {
-        // CROSS has no ON — nested loop is the only correct
-        // strategy (and the optimiser shouldn't see CROSS very
-        // often in well-formed plans).
-        JoinKind::Cross => JoinStrategy::NestedLoop,
+        // CROSS has no ON — nested loop is the only correct strategy.
+        // RIGHT/FULL must also use NestedLoop: HashJoin degrades them to
+        // INNER (no unmatched-build-row drain), so it returns wrong results;
+        // NestedLoop handles both correctly (RIGHT via the right-only phase).
+        JoinKind::Cross | JoinKind::Right | JoinKind::Full => JoinStrategy::NestedLoop,
         _ => match on {
             Some(predicate) if is_equi_join_predicate(predicate) => JoinStrategy::Hash {
                 build_side: JoinSide::Right,
@@ -2003,6 +2004,29 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn right_and_full_joins_force_nested_loop_even_for_equi() {
+        // HashJoin degrades RIGHT/FULL to INNER (wrong results), so an equi
+        // RIGHT/FULL must still route to NestedLoop (which handles them correctly).
+        let equi = Expr::bin(
+            BinaryOp::Eq,
+            col_at(0, "id", ProximaType::Int64),
+            col_at(4, "user_id", ProximaType::Int64),
+        );
+        for kind in [JoinKind::Right, JoinKind::Full] {
+            assert_eq!(
+                pick_join_strategy(kind, Some(&equi)),
+                JoinStrategy::NestedLoop,
+                "{kind:?} equi join must use NestedLoop (Hash is broken for it)"
+            );
+        }
+        // INNER equi still picks Hash (unchanged).
+        assert!(matches!(
+            pick_join_strategy(JoinKind::Inner, Some(&equi)),
+            JoinStrategy::Hash { .. }
+        ));
     }
 
     #[test]
