@@ -170,9 +170,19 @@ is enabled/disabled via `[api] enable_grpc`, NOT `[api.protocols.grpc] enabled`,
 which is unused for the multi-server toggle.)
 
 == 3. What still ties to ROOT (`src/api_handlers/request_handlers.rs` UnifiedHandlers)
-. **S5 build-time field extraction** — `rest/v1/handlers.rs:1207-1521` (AQL source
-  registration, hybrid backend, memory store) + `rest/server.rs:312` read ROOT's
-  concrete service fields. Inject the services (in `SharedServices`) at build.
+. **S5 build-time field extraction — DONE `dc751efca`.** The ~13 router-build sites
+  + 2 request-time handlers (`graph.rs` RAG retriever, `v2/collections.rs` recluster)
+  that read `state.request_handlers.{vector_operations_service,document_service,
+  observability_service,event_log}` now read `state.<service>`. Added the 4 as
+  `AppState` fields (mirroring `graph_execution_service`), extracted ONCE in
+  `AppState::new` (the boot adapter) — same Arcs, no behavior change. The REST
+  router-build no longer reaches ROOT's concrete fields. RESIDUAL: `AppState::new`
+  itself still extracts from the `request_handlers` param (the single boot-adapter
+  point — dies when ROOT is deleted / `AppState::new` takes the services from
+  `SharedServices` instead); `rest/server.rs:312` still extracts
+  `request_handlers.graph_execution_service` to thread as a dedicated param, but
+  that is already the "extract once at the constructor boundary" shape (not a
+  scattered router-build read) — leave until ROOT deletion.
 . **`ports=None` fallback** — `rest/v1/handlers.rs:1337` (legacy/cluster
   constructors `with_security_and_config`).
 . **Arrow ports backed by ROOT** — `ProximaFlightService::new` extracts/casts from
