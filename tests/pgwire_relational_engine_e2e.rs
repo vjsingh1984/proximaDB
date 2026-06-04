@@ -263,6 +263,24 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "predicate pushed into the scan yields correct filtered groups"
     );
 
+    // (2c) PK-equality WHERE under an aggregate → the planner pushes id='i2'
+    // into the inv scan and rewrites it to ScanAccess::PkLookup (point lookup),
+    // exercising the relational reader's lookup_pk over real data. i2 is active,
+    // so the single matched row groups as {(active, 1)}.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT status, COUNT(*) AS n FROM {inv} WHERE id = 'i2' GROUP BY status"
+        ))
+        .await
+        .expect("SELECT PK-lookup aggregate");
+    assert_eq!(
+        pair_set(&rows, "status", "n"),
+        [("active".to_string(), "1".to_string())]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        "PK point lookup feeds the aggregate with the correct single row"
+    );
+
     // (3) INNER JOIN over real rows from two tables → 3 joined rows.
     let rows = client
         .simple_query(&format!(

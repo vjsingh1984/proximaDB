@@ -439,7 +439,12 @@ impl DmlService {
             Arc::new(DirectWalTableRecordStore::new(record_storage, wal_appender));
         let legacy_store = Arc::new(VectorOpsTableRecordStore::new(vector_ops));
         let routed_store: Arc<dyn TableRecordStore> = Arc::new(
-            CatalogRoutingTableRecordStore::new(canonical_store, legacy_store),
+            // Temporary wiring during migration: canonical acts as iceberg, legacy acts as vector.
+            CatalogRoutingTableRecordStore::new(
+                canonical_store.clone(),
+                legacy_store.clone(),
+                legacy_store,
+            ),
         );
         let source_reader = Arc::new(TableRecordStoreSourceReader::new(routed_store.clone()));
         let table_write_executor = Arc::new(NativeTableWriteExecutor::new(
@@ -731,8 +736,11 @@ impl DmlService {
         key: &str,
     ) -> Result<Option<Vec<ProximaValue>>> {
         let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
-        let all_columns: Vec<String> =
-            table_schema.columns.iter().map(|c| c.name.clone()).collect();
+        let all_columns: Vec<String> = table_schema
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
         let full_selected = Self::resolve_select_projection(&table_schema, &all_columns)?;
         let record = self
             .record_store
@@ -4772,6 +4780,80 @@ mod tests {
             .await
             .expect("scan limit");
         assert_eq!(rows.len(), 2, "limit caps the scan");
+    }
+
+    /// `point_lookup_relational` (PATH B PkLookup backend) returns the full row by
+    /// primary key in `schema.columns` order, and `None` for a missing key.
+    #[tokio::test]
+    async fn point_lookup_relational_returns_full_row_by_pk() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-pklookup.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        for (id, status, qty) in [("i1", "active", 5), ("i2", "active", 15)] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO inv (id, status, qty) VALUES ('{id}', '{status}', {qty});"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // Existing key → full row [id, status, qty] in schema order.
+        let row = dml
+            .point_lookup_relational("inv", "i2")
+            .await
+            .expect("lookup")
+            .expect("row present");
+        assert_eq!(row.len(), 3);
+        assert_eq!(row[0], ProximaValue::String("i2".to_string()));
+        assert_eq!(row[1], ProximaValue::String("active".to_string()));
+        assert_eq!(row[2], ProximaValue::Int32(15));
+
+        // Missing key → None.
+        let missing = dml
+            .point_lookup_relational("inv", "nope")
+            .await
+            .expect("lookup");
+        assert!(missing.is_none(), "absent key returns None");
     }
 
     /// UPDATE/DELETE WHERE must honor NON-primary-key predicates (and the full
