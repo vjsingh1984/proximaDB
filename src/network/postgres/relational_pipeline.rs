@@ -421,15 +421,18 @@ fn record_batches_to_pipeline_result(
 }
 
 /// Execute an OLAP `SELECT` through DataFusion over Parquet-backed table(s), each
-/// read via the canonical `FileSystem` trait (course-correction §6 P1). DataFusion
-/// parses + plans the SQL itself (no `LogicalNode`→`LogicalPlan` lowering yet — that
-/// is P4); results convert back to a `PipelineResult`.
+/// read via the canonical `FileSystem` trait (course-correction §6 P1). The query is
+/// lowered through the SAME relational frontend the Volcano path uses and then (P4)
+/// into a DataFusion `LogicalPlan` — so both physical engines share one logical plane
+/// (§5). Shapes the shared lowering doesn't cover yet (e.g. JOIN) fall back to
+/// DataFusion's own SQL frontend. Results convert back to a `PipelineResult`.
 #[cfg(feature = "datafusion-integration")]
 async fn run_datafusion_select(
     sql: &str,
     parquet_tables: &[(String, String)],
 ) -> Result<PipelineResult, String> {
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use datafusion::datasource::TableProvider as _; // for `provider.schema()`
     let factory = FilesystemFactory::create_default()
         .await
         .map_err(|e| format!("filesystem factory: {e}"))?;
@@ -442,16 +445,81 @@ async fn run_datafusion_select(
             .await
             .map_err(|e| format!("register parquet table {name}: {e}"))?;
     }
-    let df = ctx
-        .sql(sql)
-        .await
-        .map_err(|e| format!("datafusion sql: {e}"))?;
+    // §5 shared logical plane (P4): lower the SQL through the SAME relational
+    // frontend the Volcano path uses, then lower that `LogicalNode` to a DataFusion
+    // `LogicalPlan`. The frontend catalog is built from the registered Parquet
+    // schemas (`arrow_type_to_proxima`). Shapes the lowering doesn't cover yet
+    // (JOIN / UNION / DISTINCT) fall back to DataFusion's own SQL frontend, so the
+    // route never regresses.
+    let mut schemas: HashMap<String, RelationalSchema> = HashMap::new();
+    for (name, _location) in parquet_tables {
+        let provider = ctx
+            .table_provider(name.as_str())
+            .await
+            .map_err(|e| format!("table_provider({name}): {e}"))?;
+        let cols: Vec<ColumnInfo> = provider
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| {
+                ColumnInfo::new(f.name(), arrow_type_to_proxima(f.data_type()), f.is_nullable())
+            })
+            .collect();
+        schemas.insert(normalize_table_key(name), RelationalSchema::new(cols));
+    }
+    let catalog = ParquetSchemaCatalog { schemas };
+
+    // `lower_sql` (sync) → relational `LogicalNode`; `lower_logical_node` (async,
+    // P4) → DataFusion `LogicalPlan`. Either declining (parse miss / unsupported
+    // node) yields `None` and we fall back to `ctx.sql`.
+    let lowered_plan = match lower_sql(sql, &catalog) {
+        Ok(node) => crate::datafusion::logical_lowering::lower_logical_node(&ctx, &node)
+            .await
+            .ok(),
+        Err(_) => None,
+    };
+
+    let df = match lowered_plan {
+        Some(plan) => {
+            tracing::debug!(
+                target: "proximadb::compute_route",
+                "DataFusion route via shared relational frontend (P4 lowering)"
+            );
+            ctx.execute_logical_plan(plan)
+                .await
+                .map_err(|e| format!("datafusion execute_logical_plan: {e}"))?
+        }
+        None => {
+            tracing::debug!(
+                target: "proximadb::compute_route",
+                "DataFusion route via ctx.sql fallback (shape not yet in shared lowering)"
+            );
+            ctx.sql(sql)
+                .await
+                .map_err(|e| format!("datafusion sql: {e}"))?
+        }
+    };
     let arrow_schema = df.schema().as_arrow().clone();
     let batches = df
         .collect()
         .await
         .map_err(|e| format!("datafusion collect: {e}"))?;
     Ok(record_batches_to_pipeline_result(&arrow_schema, &batches))
+}
+
+/// Sync `CatalogLookup` over the schemas of the Parquet tables registered for a
+/// DataFusion route, so `lower_sql` can resolve them. Built from the Arrow schema of
+/// each registered provider (`arrow_type_to_proxima`); keyed by `normalize_table_key`.
+#[cfg(feature = "datafusion-integration")]
+struct ParquetSchemaCatalog {
+    schemas: HashMap<String, RelationalSchema>,
+}
+
+#[cfg(feature = "datafusion-integration")]
+impl CatalogLookup for ParquetSchemaCatalog {
+    fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
+        self.schemas.get(&normalize_table_key(name)).cloned()
+    }
 }
 
 #[cfg(all(test, feature = "datafusion-integration"))]
@@ -552,6 +620,66 @@ mod datafusion_route_tests {
         assert_eq!(result.rows[1][0], ProximaValue::String("b".to_string()));
         assert_eq!(result.rows[1][1], ProximaValue::Int64(1));
         assert_eq!(result.rows[1][2], ProximaValue::Float64(10.0));
+    }
+
+    /// Guards against a silent regression to the `ctx.sql` fallback: the canonical
+    /// OLAP aggregate query MUST lower through the SHARED relational frontend
+    /// (`lower_sql` → `LogicalNode`) and P4 (`lower_logical_node` → DataFusion
+    /// `LogicalPlan`), then execute — proving `run_datafusion_select` takes the
+    /// shared-logical-plane path, not the fallback (§5).
+    #[tokio::test]
+    async fn datafusion_route_uses_shared_frontend_not_fallback() {
+        use datafusion::datasource::MemTable;
+        use datafusion::datasource::TableProvider as _;
+
+        let ctx = crate::datafusion::create_session_context().expect("session ctx");
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("k", DataType::Utf8, false),
+            Field::new("x", DataType::Float64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["a", "b"])),
+                Arc::new(Float64Array::from(vec![1.0, 2.0])),
+            ],
+        )
+        .unwrap();
+        let mem = MemTable::try_new(schema, vec![vec![batch]]).unwrap();
+        ctx.register_table("t", Arc::new(mem)).unwrap();
+
+        // Build the catalog exactly as `run_datafusion_select` does.
+        let provider = ctx.table_provider("t").await.unwrap();
+        let cols: Vec<ColumnInfo> = provider
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| {
+                ColumnInfo::new(f.name(), arrow_type_to_proxima(f.data_type()), f.is_nullable())
+            })
+            .collect();
+        let mut schemas = HashMap::new();
+        schemas.insert(normalize_table_key("t"), RelationalSchema::new(cols));
+        let catalog = ParquetSchemaCatalog { schemas };
+
+        // MUST lower via the shared frontend — `.expect` here fails loudly if the
+        // route silently degraded to the `ctx.sql` fallback.
+        let node = lower_sql(
+            "SELECT k, count(*) AS c, sum(x) AS s FROM t GROUP BY k ORDER BY k",
+            &catalog,
+        )
+        .expect("shared relational frontend must lower the aggregate query");
+        let plan = crate::datafusion::logical_lowering::lower_logical_node(&ctx, &node)
+            .await
+            .expect("P4 must lower the aggregate LogicalNode to a DataFusion plan");
+        let batches = ctx
+            .execute_logical_plan(plan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 2);
     }
 }
 
