@@ -136,7 +136,7 @@ impl ArrowProtoCodec {
             Field::new(
                 "metadata",
                 DataType::Struct(Fields::from(vec![
-                    Field::new("key", DataType::Utf8, false),
+                    Field::new("key", DataType::Utf8, true),
                     Field::new("value", DataType::Utf8, true),
                 ])),
                 true,
@@ -819,7 +819,7 @@ impl ArrowProtoCodec {
 
         Ok(StructArray::from(vec![
             (
-                Arc::new(Field::new("key", DataType::Utf8, false)),
+                Arc::new(Field::new("key", DataType::Utf8, true)),
                 Arc::new(key_array) as ArrayRef,
             ),
             (
@@ -876,7 +876,7 @@ impl ArrowProtoCodec {
             StringArray::from(meta_vals.iter().map(|v| v.as_deref()).collect::<Vec<_>>());
         let metadata_array = StructArray::from(vec![
             (
-                Arc::new(Field::new("key", DataType::Utf8, false)),
+                Arc::new(Field::new("key", DataType::Utf8, true)),
                 Arc::new(meta_key_array) as ArrayRef,
             ),
             (
