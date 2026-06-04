@@ -26,41 +26,52 @@ docs/12-design/TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc, plus memory
 project_td106_sqlvalue_migration_2026_06_03.md and
 project_td104_handler_convergence_plan_2026_06_03.md.
 
-DONE: TD-106 (document compute fully ProximaValue-native, document:SqlObject
-deleted), TD-109 (json->proxima converters converged), TD-104 S1/S2/S3 (REST,
-gRPC, pgwire, Arrow Flight all off the CONCRETE root UnifiedHandlers) — and gRPC +
-Arrow-Flight smoke-tests PASSED on a running unified-mode server (local FS).
-Smoke-test caught/fixed: a real build break (3c944044c, ProximaTree must import
-unconditionally) and the arrow StructArray 'key' panic (69029d4ee, greened 2
-arrow_ipc tests). The original session task list is COMPLETE; what follows is the
-larger ROOT-deletion arc that emerged from TD-104.
+DONE & VERIFIED: TD-106 (document compute fully ProximaValue-native,
+document:SqlObject deleted), TD-109 (json->proxima converters converged), TD-104
+S1/S2/S3 (REST, gRPC, pgwire, Arrow Flight all off the CONCRETE root
+UnifiedHandlers). ALL THREE boot-wiring paths runtime-verified on a real server
+(local FS): REST (multi-port + gRPC-disabled round-trip), gRPC (create/list/insert/
+search), Arrow Flight (DoPut/ListFlights/DoGet-search-executes). 3 real bugs fixed
+that cargo test --lib could NOT catch: ProximaTree feature-gate build break
+(3c944044c), arrow StructArray 'key' panic (69029d4ee), dead api.enable_grpc
+toggle (56740fee8). The original task list is COMPLETE; below is the larger
+ROOT-deletion arc that emerged from TD-104.
+
+CONFIG/SMOKE-TEST CRIB: server bin `cargo build -p proximadb-server` ->
+target/debug/proximadb-server --config <toml>; unified mode (api.unified_mode=true)
+multiplexes REST/gRPC/Flight on 5678; multi-port = REST 5678 / gRPC 5679 / Arrow
+5680. gRPC on/off = `[api] enable_grpc` (NOT [api.protocols.grpc].enabled). Clients:
+grpcurl -plaintext (reflection on), pyarrow.flight (DoGet ticket = proto
+VectorSearchRequest JSON {collection_id,queries:[{vector:[..]}],top_k}; DoPut
+descriptor = for_command(json{collection_id,operation,write_mode,trigger_compaction})).
 
 NEXT, in priority order:
-1. REST S1 smoke-test in multi-port + gRPC-disabled mode (api.unified_mode=false +
-   grpc disabled) — the one config S1 fixes, still untested. Server bin:
-   `cargo build -p proximadb-server`; grpcurl+reflection / pyarrow.flight clients work.
-   (Optional foreign fix: codec::search_results_to_batch builds FixedSizeList(dim)
-   even when search results carry no vectors -> Flight DoGet response try_new fails;
-   pre-existing, breaks Flight vector-search responses; out of TD-104 routing scope.)
-2. TD-104 S5 — build-time field-extraction injection: ~9 REST router-build sites
+1. TD-104 S5 — build-time field-extraction injection: ~9 REST router-build sites
    read state.request_handlers.{vector_operations_service,document_service,
    event_log,observability_service} (rest/v1/handlers.rs:1207-1521) +
    request_handlers.graph_execution_service (rest/server.rs:312). Inject these
    services (all in SharedServices) into AppState at build so the REST router-build
    no longer reads ROOT's concrete fields. Boot wiring; same-instance swaps.
-3. Remove the rest/v1/handlers.rs:1337 ports=None ROOT fallback once the
+2. Remove the rest/v1/handlers.rs:1337 ports=None ROOT fallback once the
    legacy/cluster constructors (with_security_and_config) also wire api_handlers.
-4. ROOT deletion (large): re-home UnifiedHandlers' ~30 methods' logic onto the
+3. ROOT deletion (large): re-home UnifiedHandlers' ~30 methods' logic onto the
    concrete services as port impls; make Arrow's ports runtime-backed (impl
    RecordOpsPort on a runtime-accessible target + inject vector/collection
    services at boot instead of extracting from the passed UnifiedHandlers in
    ProximaFlightService::new); then delete src/api_handlers/request_handlers.rs
    UnifiedHandlers.
+4. (Foreign, optional) Fix codec::search_results_to_batch: it builds the vector
+   column as FixedSizeList(dim) even when search results carry no vectors ->
+   RecordBatch::try_new fails, breaking Flight DoGet search RESPONSES. Build the
+   vector column null/safe when absent. Also greens 2 of the 3 remaining arrow_ipc
+   test failures (other is onnx-gated). Out of TD-104 routing scope.
 
 Reuse-first; cite the canonical surface or an ADR for any new struct/port. Verify
-each slice: cargo check --lib then targeted cargo test --lib. The crate DENIES
-unused imports (an unused import => "could not compile"). cargo check --lib SKIPS
-#[cfg(test)] — run test-compile before declaring done.
+each slice: cargo check --lib + targeted cargo test --lib + BUILD THE BINARY
+(cargo build -p proximadb-server) — cargo check --lib uses default features and
+skips #[cfg(test)], so it hides feature-gated + test-only breaks. The crate DENIES
+unused imports (an unused import => "could not compile"). For boot-wiring slices,
+smoke-test on a running server (the crib above).
 ----
 
 == 1. Shipped this session (all committed, compile-verified)
