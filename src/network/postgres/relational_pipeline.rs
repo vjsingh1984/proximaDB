@@ -35,12 +35,15 @@ use proximadb_relational_executor::{
 };
 use proximadb_relational_frontend::{CatalogLookup, lower_sql};
 use proximadb_relational_planner::{Planner, StaticCapabilities};
-use proximadb_relational_reader::{ReaderCapabilities, RelationalReader, VecReader};
-use proximadb_relational_types::{ColumnInfo, RelationalRow, RelationalSchema};
+use proximadb_relational_reader::{
+    ReaderCapabilities, ReaderError, RelationalReader, ScanContext,
+};
+use proximadb_relational_types::{ColumnInfo, Expr, NoFunctions, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
     Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr, Statement, TableFactor,
     TableWithJoins,
 };
+use async_trait::async_trait;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 use std::collections::HashMap;
@@ -162,8 +165,10 @@ pub async fn try_run_select(
         return None;
     }
 
-    // Pre-resolve every referenced table's schema + rows from real storage
-    // (the sync `CatalogLookup`/`ReaderFactory` traits can't await xCatalog).
+    // Pre-resolve every referenced table's SCHEMA from xCatalog (the sync
+    // `CatalogLookup`/`ReaderFactory` traits can't await). Rows are fetched
+    // lazily per scan in `DmlTableReader::open`, with the executor's
+    // projection/predicate/limit pushed into storage.
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
     let mut tables: HashMap<String, PreparedTable> = HashMap::new();
@@ -172,21 +177,24 @@ pub async fn try_run_select(
         if tables.contains_key(&key) {
             continue;
         }
-        match dml.snapshot_table_for_relational(raw).await {
-            Ok((catalog_schema, rows)) => {
-                tables.insert(key, PreparedTable::from_catalog(&catalog_schema, rows));
+        match dml.resolve_relational_schema(raw).await {
+            Ok(catalog_schema) => {
+                tables.insert(key, PreparedTable::from_catalog(raw, &catalog_schema));
             }
             Err(e) => {
                 tracing::debug!(
                     target: "proximadb::pgwire::new_pipeline",
-                    "relational snapshot for `{raw}` failed: {e}; falling through to legacy"
+                    "relational schema resolve for `{raw}` failed: {e}; falling through to legacy"
                 );
                 return None;
             }
         }
     }
 
-    let snapshot = SnapshotCatalog { tables };
+    let snapshot = SnapshotCatalog {
+        dml: dml.clone(),
+        tables,
+    };
     // Lowering failure → fall through to legacy (over-inclusive, never wrong).
     let logical = match lower_sql(sql, &snapshot) {
         Ok(p) => p,
@@ -235,43 +243,35 @@ impl CatalogLookup for EngineCatalog {
 // backs BOTH the frontend's CatalogLookup and the executor's ReaderFactory.
 // =========================================================================
 
-/// One table's pre-fetched schema + rows, ready to hand to a [`VecReader`].
+/// One table's pre-resolved schema (rows are fetched lazily per scan).
 struct PreparedTable {
+    table_name: String,
     schema: RelationalSchema,
-    rows: Vec<RelationalRow>,
-    pk_columns: Vec<usize>,
 }
 
 impl PreparedTable {
     fn from_catalog(
+        table_name: &str,
         catalog_schema: &proximadb_catalog::CatalogTableSchema,
-        rows: Vec<RelationalRow>,
     ) -> Self {
         let columns: Vec<ColumnInfo> = catalog_schema
             .columns
             .iter()
             .map(|c| ColumnInfo::new(c.name.clone(), c.data_type.to_proxima_type(), c.nullable))
             .collect();
-        // PK ordinals within the column list (matches `rows` column order,
-        // which is also `catalog_schema.columns` order — see
-        // `DmlService::snapshot_table_for_relational`).
-        let pk_columns: Vec<usize> = catalog_schema
-            .primary_key
-            .iter()
-            .filter_map(|pk| catalog_schema.columns.iter().position(|c| &c.name == pk))
-            .collect();
         Self {
+            table_name: table_name.to_string(),
             schema: RelationalSchema::new(columns),
-            rows,
-            pk_columns,
         }
     }
 }
 
 /// Pre-resolved real-data catalog. Implements both [`CatalogLookup`] (for
-/// lowering) and [`ReaderFactory`] (for execution) over the same snapshot, so
+/// lowering) and [`ReaderFactory`] (for execution) over the same schema set, so
 /// the schema the frontend lowers against is exactly the one the reader emits.
+/// Holds the [`DmlService`] so readers can fetch rows lazily with pushdown.
 struct SnapshotCatalog {
+    dml: Arc<DmlService>,
     tables: HashMap<String, PreparedTable>,
 }
 
@@ -290,11 +290,131 @@ impl ReaderFactory for SnapshotCatalog {
             .tables
             .get(&key)
             .ok_or_else(|| ExecError::Internal(format!("table not snapshotted: {}", table.name)))?;
-        Ok(Box::new(VecReader::new(
-            prepared.schema.clone(),
-            prepared.rows.clone(),
-            prepared.pk_columns.clone(),
-        )))
+        Ok(Box::new(DmlTableReader {
+            dml: self.dml.clone(),
+            table_name: prepared.table_name.clone(),
+            full_schema: prepared.schema.clone(),
+            open_state: None,
+        }))
+    }
+}
+
+// =========================================================================
+// DmlTableReader — lazy reader that pushes projection/predicate/limit into
+// the DmlService scan (only matching, projected rows are materialized).
+// =========================================================================
+
+/// Per-scan state captured at `open`: the projected output schema + the rows
+/// already fetched (predicate-filtered + projected + limited at the store).
+struct ReaderOpenState {
+    output_schema: RelationalSchema,
+    rows: Vec<RelationalRow>,
+    cursor: usize,
+}
+
+struct DmlTableReader {
+    dml: Arc<DmlService>,
+    table_name: String,
+    full_schema: RelationalSchema,
+    open_state: Option<ReaderOpenState>,
+}
+
+impl DmlTableReader {
+    /// Resolve the projected output schema from `ScanContext::projection`
+    /// (`None` = full schema), mirroring the `VecReader` contract.
+    fn resolve_output_schema(
+        &self,
+        projection: &Option<Vec<String>>,
+    ) -> Result<RelationalSchema, ReaderError> {
+        let Some(names) = projection else {
+            return Ok(self.full_schema.clone());
+        };
+        let mut cols = Vec::with_capacity(names.len());
+        for n in names {
+            let (_idx, info) = self
+                .full_schema
+                .column_by_name(n)
+                .ok_or_else(|| ReaderError::InvalidProjection(n.clone()))?;
+            cols.push(info.clone());
+        }
+        Ok(RelationalSchema::new(cols))
+    }
+}
+
+#[async_trait]
+impl RelationalReader for DmlTableReader {
+    fn name(&self) -> &'static str {
+        "dml_relational"
+    }
+
+    fn capabilities(&self) -> ReaderCapabilities {
+        // Honors projection + predicate + limit; PK-lookup access path is not
+        // implemented (planner falls back to a full scan).
+        ReaderCapabilities::full().with_pk_lookup(false)
+    }
+
+    fn schema(&self) -> &RelationalSchema {
+        match &self.open_state {
+            Some(state) => &state.output_schema,
+            None => &self.full_schema,
+        }
+    }
+
+    async fn open(&mut self, ctx: &ScanContext) -> Result<(), ReaderError> {
+        let output_schema = self.resolve_output_schema(&ctx.projection)?;
+        // Predicate ordinals bind to the FULL table schema; evaluate before
+        // projection (same contract as VecReader). Type-check up-front.
+        if let Some(pred) = &ctx.predicate {
+            pred.type_check(&self.full_schema)
+                .map_err(ReaderError::PredicateEval)?;
+        }
+        let predicate: Option<Expr> = ctx.predicate.clone();
+        let row_pred = move |full_row: &[ProximaValue]| -> bool {
+            match &predicate {
+                Some(expr) => matches!(
+                    expr.eval(&full_row.to_vec(), &NoFunctions),
+                    Ok(ProximaValue::Boolean(true))
+                ),
+                None => true,
+            }
+        };
+        let row_pred_ref: Option<&(dyn Fn(&[ProximaValue]) -> bool + Send + Sync)> =
+            if ctx.predicate.is_some() {
+                Some(&row_pred)
+            } else {
+                None
+            };
+        let limit = ctx.limit.map(|l| l as usize);
+        let (_schema, rows) = self
+            .dml
+            .scan_table_relational(&self.table_name, ctx.projection.as_deref(), row_pred_ref, limit)
+            .await
+            .map_err(|e| ReaderError::Storage(e.to_string()))?;
+        self.open_state = Some(ReaderOpenState {
+            output_schema,
+            rows,
+            cursor: 0,
+        });
+        Ok(())
+    }
+
+    async fn next_row(&mut self) -> Result<Option<RelationalRow>, ReaderError> {
+        let state = self.open_state.as_mut().ok_or(ReaderError::NotOpen)?;
+        if state.cursor >= state.rows.len() {
+            return Ok(None);
+        }
+        let row = state.rows[state.cursor].clone();
+        state.cursor += 1;
+        Ok(Some(row))
+    }
+
+    async fn lookup_pk(&self, _key: &[ProximaValue]) -> Result<Option<RelationalRow>, ReaderError> {
+        Err(ReaderError::PkLookupUnsupported)
+    }
+
+    async fn close(&mut self) -> Result<(), ReaderError> {
+        self.open_state = None;
+        Ok(())
     }
 }
 

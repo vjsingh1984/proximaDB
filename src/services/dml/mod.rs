@@ -647,28 +647,72 @@ impl DmlService {
         })
     }
 
-    /// Snapshot a whole catalog table for the relational pipeline (PATH B):
-    /// returns the catalog schema plus every current row projected into
-    /// `schema.columns` order as `Vec<ProximaValue>` (the relational engine's
-    /// `RelationalRow`). Used to feed real `RecordStorage` data into the
-    /// algebra executor for joins / aggregates that the legacy single-table
-    /// path can't serve. Reuses the same resolution + projection primitives as
-    /// the SELECT path so the row column order matches the resolved schema.
-    pub async fn snapshot_table_for_relational(
+    /// Resolve a catalog table's schema for the relational pipeline (PATH B).
+    /// Used by the pipeline's schema-only prefetch (the sync `CatalogLookup`
+    /// can't await xCatalog), so the actual rows can be fetched lazily per scan.
+    pub async fn resolve_relational_schema(
         &self,
         table_name: &str,
+    ) -> Result<CatalogTableSchema> {
+        let (table_schema, _table_id_name) = self.resolve_select_table(table_name).await?;
+        Ok(table_schema)
+    }
+
+    /// Scan a catalog table for the relational pipeline (PATH B), pushing the
+    /// caller's row predicate + limit into the record-store scan and projecting
+    /// matching records into `output_columns` order (or all columns when `None`).
+    ///
+    /// The predicate is `Expr`-agnostic: callers pass a closure over a FULL row
+    /// (all columns in `schema.columns` order — matching how the relational
+    /// `Expr` binds its column ordinals), so the relational reader can supply
+    /// `|row| expr.eval(row) == true` without coupling DmlService to the algebra
+    /// crate. `MemtableRecordStorage::scan_records_filtered` iterate-filters and
+    /// early-stops at `limit`, so only matching rows are cloned/materialized.
+    pub async fn scan_table_relational(
+        &self,
+        table_name: &str,
+        output_columns: Option<&[String]>,
+        full_row_predicate: Option<&(dyn Fn(&[ProximaValue]) -> bool + Send + Sync)>,
+        limit: Option<usize>,
     ) -> Result<(CatalogTableSchema, Vec<Vec<ProximaValue>>)> {
         let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
-        let all_columns: Vec<String> = table_schema
-            .columns
-            .iter()
-            .map(|c| c.name.clone())
-            .collect();
-        let selected_columns = Self::resolve_select_projection(&table_schema, &all_columns)?;
-        let (_access_path, records) = self
-            .select_table_records_with_resolved_predicates(&table_schema, &table_id_name, None, &[])
+        // Full column set — predicates are evaluated against a complete row.
+        let all_columns: Vec<String> =
+            table_schema.columns.iter().map(|c| c.name.clone()).collect();
+        let full_selected = Self::resolve_select_projection(&table_schema, &all_columns)?;
+        // Output column set the caller wants emitted (defaults to all columns).
+        let output_selected = match output_columns {
+            Some(cols) => Self::resolve_select_projection(&table_schema, cols)?,
+            None => full_selected.clone(),
+        };
+
+        // Push the predicate INTO the store scan: project each record to a full
+        // row and apply the caller's full-row predicate. A projection error
+        // (should not happen for a valid record) excludes the row.
+        let record_pred = |record: &ProximaRecord| -> bool {
+            match Self::project_one_record(record, &table_schema, &full_selected) {
+                Ok(full_row) => full_row_predicate.map_or(true, |p| p(&full_row)),
+                Err(_) => false,
+            }
+        };
+        let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&record_pred);
+
+        let records = self
+            .record_store
+            .scan_records_filtered(
+                &table_schema,
+                TableRecordScanRequest {
+                    table_id: table_id_name.clone(),
+                    limit,
+                    include_vector: true,
+                    include_props: true,
+                },
+                predicate,
+                None,
+            )
             .await?;
-        let rows = Self::project_select_rows(&records, &table_schema, &selected_columns)?;
+
+        let rows = Self::project_select_rows(&records, &table_schema, &output_selected)?;
         Ok((table_schema, rows))
     }
 
@@ -1277,21 +1321,25 @@ impl DmlService {
         table_schema: &CatalogTableSchema,
         selected_columns: &[CatalogColumn],
     ) -> Result<Vec<Vec<ProximaValue>>> {
-        let primary_key = table_schema.primary_key.first().map(String::as_str);
         records
             .iter()
-            .map(|record| {
-                selected_columns
-                    .iter()
-                    .map(|column| {
-                        Self::record_column_value_for_select(
-                            record,
-                            column,
-                            primary_key,
-                            table_schema,
-                        )
-                    })
-                    .collect()
+            .map(|record| Self::project_one_record(record, table_schema, selected_columns))
+            .collect()
+    }
+
+    /// Project a single record into `selected_columns` order. Extracted so the
+    /// relational-pipeline scan can project per-record inside a scan-filter
+    /// closure (predicate evaluation against a full row) without batching.
+    fn project_one_record(
+        record: &ProximaRecord,
+        table_schema: &CatalogTableSchema,
+        selected_columns: &[CatalogColumn],
+    ) -> Result<Vec<ProximaValue>> {
+        let primary_key = table_schema.primary_key.first().map(String::as_str);
+        selected_columns
+            .iter()
+            .map(|column| {
+                Self::record_column_value_for_select(record, column, primary_key, table_schema)
             })
             .collect()
     }
