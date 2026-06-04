@@ -26,15 +26,27 @@
 
 use once_cell::sync::Lazy;
 use proximadb_data_model::{ProximaType, ProximaValue};
+use proximadb_relational_algebra::TableId;
 use proximadb_relational_engine::{
     EngineReaderFactory, InMemoryRelationalEngine, RelationalWriter,
 };
-use proximadb_relational_executor::{ExecutionContext, build_executor, collect};
+use proximadb_relational_executor::{
+    ExecError, ExecutionContext, ReaderFactory, build_executor, collect,
+};
 use proximadb_relational_frontend::{CatalogLookup, lower_sql};
 use proximadb_relational_planner::{Planner, StaticCapabilities};
-use proximadb_relational_reader::ReaderCapabilities;
+use proximadb_relational_reader::{ReaderCapabilities, RelationalReader, VecReader};
 use proximadb_relational_types::{ColumnInfo, RelationalRow, RelationalSchema};
+use sqlparser::ast::{
+    Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr, Statement, TableFactor,
+    TableWithJoins,
+};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
+use std::collections::HashMap;
 use std::sync::Arc;
+
+use crate::services::dml::DmlService;
 
 use super::types::PgType;
 
@@ -111,7 +123,10 @@ pub struct PipelineResult {
 /// that can be lowered by the relational frontend. This provides proper
 /// multi-column ORDER BY support and other relational features.
 /// Set PROXIMADB_NEW_RELATIONAL_PIPELINE=0 to disable and force legacy path.
-pub async fn try_run_select(sql: &str) -> Option<Result<PipelineResult, String>> {
+pub async fn try_run_select(
+    sql: &str,
+    dml: Option<&Arc<DmlService>>,
+) -> Option<Result<PipelineResult, String>> {
     // ADR-018 Phase 2: Allow opting out with explicit "0" value
     if std::env::var("PROXIMADB_NEW_RELATIONAL_PIPELINE")
         .ok()
@@ -125,25 +140,71 @@ pub async fn try_run_select(sql: &str) -> Option<Result<PipelineResult, String>>
         return None;
     }
 
+    // 1) Existing in-memory-engine path (preserves the demo table and any
+    //    engine-resident tables). Only engages when the SQL lowers against the
+    //    engine's own catalog; a catalog miss falls through to the real-data
+    //    path below.
     let engine = GLOBAL_ENGINE.clone();
-    let catalog = EngineCatalog(engine.clone());
-    // Lowering failure → fall through to legacy.
-    let logical = match lower_sql(sql, &catalog) {
+    if let Ok(logical) = lower_sql(sql, &EngineCatalog(engine.clone())) {
+        let factory = EngineReaderFactory::new(engine);
+        return Some(run_plan(&factory, logical).await);
+    }
+
+    // 2) Real-data path (gated, additive). Engage ONLY for queries the legacy
+    //    single-table path can't serve — joins / GROUP BY / aggregates / HAVING
+    //    / set-ops — leaving simple SELECTs on the (hardened) legacy path.
+    let dml = dml?;
+    let statements = Parser::parse_sql(&GenericDialect {}, sql).ok()?;
+    let [Statement::Query(query)] = statements.as_slice() else {
+        return None;
+    };
+    if !query_engages_relational_engine(query) {
+        return None;
+    }
+
+    // Pre-resolve every referenced table's schema + rows from real storage
+    // (the sync `CatalogLookup`/`ReaderFactory` traits can't await xCatalog).
+    let mut names = Vec::new();
+    collect_table_names(query, &mut names);
+    let mut tables: HashMap<String, PreparedTable> = HashMap::new();
+    for raw in &names {
+        let key = normalize_table_key(raw);
+        if tables.contains_key(&key) {
+            continue;
+        }
+        match dml.snapshot_table_for_relational(raw).await {
+            Ok((catalog_schema, rows)) => {
+                tables.insert(key, PreparedTable::from_catalog(&catalog_schema, rows));
+            }
+            Err(e) => {
+                tracing::debug!(
+                    target: "proximadb::pgwire::new_pipeline",
+                    "relational snapshot for `{raw}` failed: {e}; falling through to legacy"
+                );
+                return None;
+            }
+        }
+    }
+
+    let snapshot = SnapshotCatalog { tables };
+    // Lowering failure → fall through to legacy (over-inclusive, never wrong).
+    let logical = match lower_sql(sql, &snapshot) {
         Ok(p) => p,
         Err(e) => {
             tracing::debug!(
                 target: "proximadb::pgwire::new_pipeline",
-                "lower_sql declined `{sql}`: {e}; falling through to legacy"
+                "lower_sql declined `{sql}` over real data: {e}; falling through to legacy"
             );
             return None;
         }
     };
     // From here, errors are real and surface to the client.
-    Some(execute_logical(engine, logical).await)
+    Some(run_plan(&snapshot, logical).await)
 }
 
-async fn execute_logical(
-    engine: Arc<InMemoryRelationalEngine>,
+/// Plan + build + drain an executor for `logical` against `factory`.
+async fn run_plan<F: ReaderFactory>(
+    factory: &F,
     logical: proximadb_relational_algebra::LogicalNode,
 ) -> Result<PipelineResult, String> {
     let planner = Planner::new(StaticCapabilities {
@@ -151,8 +212,7 @@ async fn execute_logical(
         pk_columns: Vec::new(),
     });
     let physical = planner.plan(logical).map_err(|e| format!("plan: {e}"))?;
-    let factory = EngineReaderFactory::new(engine);
-    let mut exec = build_executor(physical, &factory, &ExecutionContext::default())
+    let mut exec = build_executor(physical, factory, &ExecutionContext::default())
         .map_err(|e| format!("build_executor: {e}"))?;
     exec.open().await.map_err(|e| format!("open: {e}"))?;
     let schema = exec.schema().clone();
@@ -167,6 +227,183 @@ struct EngineCatalog(Arc<InMemoryRelationalEngine>);
 impl CatalogLookup for EngineCatalog {
     fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
         self.0.schema_of(name)
+    }
+}
+
+// =========================================================================
+// Real-data snapshot: a pre-fetched, sync view of catalog tables that
+// backs BOTH the frontend's CatalogLookup and the executor's ReaderFactory.
+// =========================================================================
+
+/// One table's pre-fetched schema + rows, ready to hand to a [`VecReader`].
+struct PreparedTable {
+    schema: RelationalSchema,
+    rows: Vec<RelationalRow>,
+    pk_columns: Vec<usize>,
+}
+
+impl PreparedTable {
+    fn from_catalog(
+        catalog_schema: &proximadb_catalog::CatalogTableSchema,
+        rows: Vec<RelationalRow>,
+    ) -> Self {
+        let columns: Vec<ColumnInfo> = catalog_schema
+            .columns
+            .iter()
+            .map(|c| ColumnInfo::new(c.name.clone(), c.data_type.to_proxima_type(), c.nullable))
+            .collect();
+        // PK ordinals within the column list (matches `rows` column order,
+        // which is also `catalog_schema.columns` order — see
+        // `DmlService::snapshot_table_for_relational`).
+        let pk_columns: Vec<usize> = catalog_schema
+            .primary_key
+            .iter()
+            .filter_map(|pk| catalog_schema.columns.iter().position(|c| &c.name == pk))
+            .collect();
+        Self {
+            schema: RelationalSchema::new(columns),
+            rows,
+            pk_columns,
+        }
+    }
+}
+
+/// Pre-resolved real-data catalog. Implements both [`CatalogLookup`] (for
+/// lowering) and [`ReaderFactory`] (for execution) over the same snapshot, so
+/// the schema the frontend lowers against is exactly the one the reader emits.
+struct SnapshotCatalog {
+    tables: HashMap<String, PreparedTable>,
+}
+
+impl CatalogLookup for SnapshotCatalog {
+    fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
+        self.tables
+            .get(&normalize_table_key(name))
+            .map(|t| t.schema.clone())
+    }
+}
+
+impl ReaderFactory for SnapshotCatalog {
+    fn open_reader(&self, table: &TableId) -> Result<Box<dyn RelationalReader>, ExecError> {
+        let key = normalize_table_key(&table.name);
+        let prepared = self
+            .tables
+            .get(&key)
+            .ok_or_else(|| ExecError::Internal(format!("table not snapshotted: {}", table.name)))?;
+        Ok(Box::new(VecReader::new(
+            prepared.schema.clone(),
+            prepared.rows.clone(),
+            prepared.pk_columns.clone(),
+        )))
+    }
+}
+
+/// Normalize a SQL table reference to a lookup key: last dotted segment,
+/// unquoted, lowercased. Applied identically when pre-fetching, on
+/// `CatalogLookup`, and on `ReaderFactory` so all three agree regardless of
+/// how the frontend renders the name.
+fn normalize_table_key(name: &str) -> String {
+    name.rsplit('.')
+        .next()
+        .unwrap_or(name)
+        .trim_matches('"')
+        .to_ascii_lowercase()
+}
+
+// =========================================================================
+// Engagement gate + table-name collection (over the parsed AST)
+// =========================================================================
+
+/// True iff the query uses a feature the legacy single-table path can't serve
+/// (join / GROUP BY / HAVING / aggregate projection / set-op), so it should be
+/// routed to the algebra engine over real data. Simple single-table SELECTs
+/// return false and stay on the legacy path.
+fn query_engages_relational_engine(query: &SqlQuery) -> bool {
+    set_expr_engages(&query.body)
+}
+
+fn set_expr_engages(body: &SetExpr) -> bool {
+    match body {
+        SetExpr::SetOperation { .. } => true,
+        SetExpr::Query(q) => set_expr_engages(&q.body),
+        SetExpr::Select(select) => {
+            let has_join =
+                select.from.len() > 1 || select.from.iter().any(|twj| !twj.joins.is_empty());
+            let has_group_by = match &select.group_by {
+                GroupByExpr::All(_) => true,
+                GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
+            };
+            let has_aggregate = select
+                .projection
+                .iter()
+                .any(|item| select_item_has_aggregate(item));
+            has_join || has_group_by || select.having.is_some() || has_aggregate
+        }
+        _ => false,
+    }
+}
+
+fn select_item_has_aggregate(item: &SelectItem) -> bool {
+    match item {
+        SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => {
+            expr_has_aggregate(expr)
+        }
+        _ => false,
+    }
+}
+
+fn expr_has_aggregate(expr: &SqlExpr) -> bool {
+    match expr {
+        SqlExpr::Function(f) => {
+            let name = f.name.to_string().to_ascii_lowercase();
+            matches!(
+                name.rsplit('.').next().unwrap_or(&name),
+                "count" | "sum" | "avg" | "min" | "max" | "stddev" | "stddev_pop"
+                    | "stddev_samp" | "variance" | "var_pop" | "var_samp"
+            )
+        }
+        SqlExpr::Nested(inner) => expr_has_aggregate(inner),
+        SqlExpr::UnaryOp { expr, .. } => expr_has_aggregate(expr),
+        SqlExpr::BinaryOp { left, right, .. } => {
+            expr_has_aggregate(left) || expr_has_aggregate(right)
+        }
+        SqlExpr::Cast { expr, .. } => expr_has_aggregate(expr),
+        _ => false,
+    }
+}
+
+fn collect_table_names(query: &SqlQuery, out: &mut Vec<String>) {
+    collect_from_set_expr(&query.body, out);
+}
+
+fn collect_from_set_expr(body: &SetExpr, out: &mut Vec<String>) {
+    match body {
+        SetExpr::Select(select) => {
+            for twj in &select.from {
+                collect_from_table_with_joins(twj, out);
+            }
+        }
+        SetExpr::Query(q) => collect_table_names(q, out),
+        SetExpr::SetOperation { left, right, .. } => {
+            collect_from_set_expr(left, out);
+            collect_from_set_expr(right, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_from_table_with_joins(twj: &TableWithJoins, out: &mut Vec<String>) {
+    collect_from_table_factor(&twj.relation, out);
+    for join in &twj.joins {
+        collect_from_table_factor(&join.relation, out);
+    }
+}
+
+fn collect_from_table_factor(factor: &TableFactor, out: &mut Vec<String>) {
+    match factor {
+        TableFactor::Table { name, .. } => out.push(name.to_string()),
+        TableFactor::Derived { subquery, .. } => collect_table_names(subquery, out),
+        _ => {}
     }
 }
 

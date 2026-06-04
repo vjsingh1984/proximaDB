@@ -1044,7 +1044,9 @@ impl PostgresProtocol {
             // vector-collection path. Lowering failures fall
             // through (e.g. `SELECT current_schema()` and other
             // pg-specific queries the new frontend doesn't accept).
-            if let Some(result) = super::relational_pipeline::try_run_select(query).await {
+            if let Some(result) =
+                super::relational_pipeline::try_run_select(query, self.dml_service.as_ref()).await
+            {
                 return match result {
                     Ok(pr) => self.emit_pipeline_result(pr).await,
                     Err(msg) => self.send_error("ERROR", "XX000", &msg).await,

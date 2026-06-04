@@ -100,9 +100,7 @@ impl RelationalPredicateTree {
     fn leaf_count(&self) -> usize {
         match self {
             Self::Leaf(_) => 1,
-            Self::And(children) | Self::Or(children) => {
-                children.iter().map(Self::leaf_count).sum()
-            }
+            Self::And(children) | Self::Or(children) => children.iter().map(Self::leaf_count).sum(),
             Self::Not(child) => child.leaf_count(),
         }
     }
@@ -649,6 +647,33 @@ impl DmlService {
         })
     }
 
+    /// Snapshot a whole catalog table for the relational pipeline (PATH B):
+    /// returns the catalog schema plus every current row projected into
+    /// `schema.columns` order as `Vec<ProximaValue>` (the relational engine's
+    /// `RelationalRow`). Used to feed real `RecordStorage` data into the
+    /// algebra executor for joins / aggregates that the legacy single-table
+    /// path can't serve. Reuses the same resolution + projection primitives as
+    /// the SELECT path so the row column order matches the resolved schema.
+    pub async fn snapshot_table_for_relational(
+        &self,
+        table_name: &str,
+    ) -> Result<(CatalogTableSchema, Vec<Vec<ProximaValue>>)> {
+        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let all_columns: Vec<String> =
+            table_schema.columns.iter().map(|c| c.name.clone()).collect();
+        let selected_columns = Self::resolve_select_projection(&table_schema, &all_columns)?;
+        let (_access_path, records) = self
+            .select_table_records_with_resolved_predicates(
+                &table_schema,
+                &table_id_name,
+                None,
+                &[],
+            )
+            .await?;
+        let rows = Self::project_select_rows(&records, &table_schema, &selected_columns)?;
+        Ok((table_schema, rows))
+    }
+
     /// Records-returning, limit-honoring twin of [`Self::resolve_matching_ids`] for
     /// the SELECT path: PK fast-path (OR-safe via [`Self::extract_pk_candidate_ids`],
     /// re-checked against the full tree) else a predicate scan with the limit pushed in.
@@ -795,7 +820,11 @@ impl DmlService {
             Self::record_matches_select_predicates(record, predicates, primary_key)
         };
         let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> =
-            if predicates.is_empty() { None } else { Some(&pred) };
+            if predicates.is_empty() {
+                None
+            } else {
+                Some(&pred)
+            };
         let records = self
             .record_store
             .scan_records_filtered(
@@ -1316,8 +1345,7 @@ impl DmlService {
         predicate: &RelationalSelectPredicate,
         primary_key: Option<&str>,
     ) -> bool {
-        let value =
-            Self::record_column_value_for_predicate(record, &predicate.column, primary_key);
+        let value = Self::record_column_value_for_predicate(record, &predicate.column, primary_key);
         match &predicate.condition {
             RelationalSelectPredicateCondition::Comparison { operator, literal } => {
                 Self::compare_catalog_value(&value, literal, *operator, predicate.column.data_type)
@@ -2746,7 +2774,11 @@ impl DmlService {
         where_clause: &WhereClause,
         table_schema: &CatalogTableSchema,
     ) -> Result<RelationalPredicateTree> {
-        self.combine_conditions(&where_clause.conditions, where_clause.operator, table_schema)
+        self.combine_conditions(
+            &where_clause.conditions,
+            where_clause.operator,
+            table_schema,
+        )
     }
 
     /// Combine a list of conditions with the given logical operator.
@@ -2792,7 +2824,10 @@ impl DmlService {
                 }],
             )?;
             Ok(RelationalPredicateTree::Leaf(
-                resolved.into_iter().next().expect("one input → one predicate"),
+                resolved
+                    .into_iter()
+                    .next()
+                    .expect("one input → one predicate"),
             ))
         };
         match condition {
@@ -2874,9 +2909,7 @@ impl DmlService {
         }
     }
 
-    fn map_comparison_operator(
-        operator: ComparisonOperator,
-    ) -> RelationalSelectPredicateOperator {
+    fn map_comparison_operator(operator: ComparisonOperator) -> RelationalSelectPredicateOperator {
         match operator {
             ComparisonOperator::Equal => RelationalSelectPredicateOperator::Equal,
             ComparisonOperator::NotEqual => RelationalSelectPredicateOperator::NotEqual,
@@ -4284,7 +4317,11 @@ mod tests {
         assert_eq!(r.rows_affected, 3, "OR union");
         assert_eq!(status_of(&dml, "i1").await.as_deref(), Some("archived"));
         assert_eq!(status_of(&dml, "i2").await.as_deref(), Some("archived"));
-        assert_eq!(status_of(&dml, "i3").await.as_deref(), Some("idle"), "untouched");
+        assert_eq!(
+            status_of(&dml, "i3").await.as_deref(),
+            Some("idle"),
+            "untouched"
+        );
         assert_eq!(status_of(&dml, "i4").await.as_deref(), Some("archived"));
 
         // (2) BETWEEN on an INT column (catalog-aware): qty 20..30 → i3 only.
@@ -4317,11 +4354,30 @@ mod tests {
             "DELETE FROM inv WHERE id = 'i2' OR (status = 'extreme' AND qty < 10);",
         )
         .await;
-        assert_eq!(r.rows_affected, 2, "i2 (pk) + i1 (nested) — PK fast-path stayed OR-safe");
-        assert_eq!(status_of(&dml, "i1").await, None, "i1 deleted via nested branch");
-        assert_eq!(status_of(&dml, "i2").await, None, "i2 deleted via PK branch");
-        assert_eq!(status_of(&dml, "i3").await.as_deref(), Some("mid"), "i3 survives");
-        assert_eq!(status_of(&dml, "i4").await.as_deref(), Some("extreme"), "i4 survives");
+        assert_eq!(
+            r.rows_affected, 2,
+            "i2 (pk) + i1 (nested) — PK fast-path stayed OR-safe"
+        );
+        assert_eq!(
+            status_of(&dml, "i1").await,
+            None,
+            "i1 deleted via nested branch"
+        );
+        assert_eq!(
+            status_of(&dml, "i2").await,
+            None,
+            "i2 deleted via PK branch"
+        );
+        assert_eq!(
+            status_of(&dml, "i3").await.as_deref(),
+            Some("mid"),
+            "i3 survives"
+        );
+        assert_eq!(
+            status_of(&dml, "i4").await.as_deref(),
+            Some("extreme"),
+            "i4 survives"
+        );
     }
 
     /// SELECT WHERE supports OR / mixed-AND-OR / nested groups / NOT IN through
@@ -4575,7 +4631,11 @@ mod tests {
             Arc::new(PlannedOnlyTableWriteExecutor::new()),
         );
 
-        async fn exec(dml: &DmlService, parser: &crate::query::sql_frontend::SqlFrontendParser, sql: &str) -> DmlResult {
+        async fn exec(
+            dml: &DmlService,
+            parser: &crate::query::sql_frontend::SqlFrontendParser,
+            sql: &str,
+        ) -> DmlResult {
             let stmt = parser.parse_dml(sql).expect("parse").expect("dml stmt");
             dml.execute(stmt).await.expect("execute")
         }
@@ -4636,7 +4696,10 @@ mod tests {
         )
         .await;
         assert!(r.success);
-        assert_eq!(r.rows_affected, 0, "id matches but the non-PK condition fails");
+        assert_eq!(
+            r.rows_affected, 0,
+            "id matches but the non-PK condition fails"
+        );
         assert_eq!(
             status_of(&dml, "o3").await.as_deref(),
             Some("inactive"),
