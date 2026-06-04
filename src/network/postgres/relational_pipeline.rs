@@ -542,6 +542,104 @@ fn normalize_table_key(name: &str) -> String {
 }
 
 // =========================================================================
+// Read-route EXPLAIN surface (course-correction §5 / ADR-004)
+// =========================================================================
+
+/// Compute the read-route decision for a `SELECT` without executing it.
+///
+/// Returns `None` when `sql` is not a single relational query (so the caller has
+/// no route to report). Catalog-free in P0 — routes on query shape only via the
+/// canonical [`crate::query::compute_scheduler::ComputeScheduler`]; P1 adds the
+/// Parquet-backed signal that flips the OLAP arm to DataFusion.
+pub fn classify_select_route(
+    sql: &str,
+) -> Option<crate::query::compute_scheduler::SelectRouteDecision> {
+    let statements = Parser::parse_sql(&GenericDialect {}, sql).ok()?;
+    let [Statement::Query(query)] = statements.as_slice() else {
+        return None;
+    };
+    let engages = query_engages_relational_engine(query);
+    Some(
+        crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+            crate::query::compute_scheduler::QueryShape {
+                engages_relational: engages,
+            },
+        ),
+    )
+}
+
+/// Serializable read-route explanation for `EXPLAIN SELECT` (JSON over Jsonb).
+///
+/// Field vocabulary mirrors `table_write_plan::RouteDecisionMetadata` so read and
+/// write EXPLAIN share one contract (ADR-004 unified EXPLAIN).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SelectRouteExplanation {
+    /// Selected physical engine label (e.g. `Native(Volcano)`, `DataFusionLocal`).
+    pub compute_route: String,
+    /// Workload classification (`Oltp`/`Olap`).
+    pub workload_profile: String,
+    /// Control-plane routing decision — no durable authority is moved.
+    pub authority_mode: String,
+    /// Routing granularity — one engine per query plan, never per row.
+    pub policy_boundary: String,
+    /// Freshness guarantee of the selected route.
+    pub freshness_sla: String,
+    /// Human-readable reason for the choice.
+    pub reason: String,
+}
+
+/// Build the `EXPLAIN SELECT` payload. `Err` if `sql` is not a routable single
+/// relational query.
+pub fn explain_select_route(sql: &str) -> Result<SelectRouteExplanation, String> {
+    let decision =
+        classify_select_route(sql).ok_or_else(|| "not a routable relational SELECT".to_string())?;
+    let freshness_sla = match decision.backend {
+        crate::query::table_write_plan::ComputeBackend::Native => {
+            "strong (Volcano over WAL+RecordStorage)".to_string()
+        }
+        _ => "base-snapshot (engine read path)".to_string(),
+    };
+    Ok(SelectRouteExplanation {
+        compute_route: decision.compute_route_label(),
+        workload_profile: format!("{:?}", decision.workload_profile),
+        authority_mode: "control-plane-route (no durable authority moved)".to_string(),
+        policy_boundary: "query-plan (one engine per plan)".to_string(),
+        freshness_sla,
+        reason: decision.reason.clone(),
+    })
+}
+
+#[cfg(test)]
+mod route_explain_tests {
+    use super::*;
+
+    #[test]
+    fn olap_select_explains_as_olap() {
+        let expl = explain_select_route(
+            "SELECT service, count(*) FROM events GROUP BY service",
+        )
+        .expect("routable");
+        assert_eq!(expl.workload_profile, "Olap");
+        // P0 invariant: OLAP shape still executes on Volcano.
+        assert_eq!(expl.compute_route, "Native(Volcano)");
+        assert!(expl.freshness_sla.to_lowercase().contains("strong"));
+    }
+
+    #[test]
+    fn simple_select_explains_as_oltp() {
+        let expl =
+            explain_select_route("SELECT id, name FROM users WHERE id = 1").expect("routable");
+        assert_eq!(expl.workload_profile, "Oltp");
+        assert_eq!(expl.compute_route, "Native(Volcano)");
+    }
+
+    #[test]
+    fn non_select_is_not_routable() {
+        assert!(explain_select_route("INSERT INTO t VALUES (1)").is_err());
+    }
+}
+
+// =========================================================================
 // Engagement gate + table-name collection (over the parsed AST)
 // =========================================================================
 

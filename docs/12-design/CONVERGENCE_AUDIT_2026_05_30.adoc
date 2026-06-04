@@ -100,6 +100,9 @@ invariant: edge-divergence is a cleanup; core-divergence is a defect.
 
 | Quantization layering (types → contracts → vector impls → compute orchestration + turboquant)
 | Clean layered specialization, not duplication. TurboQuant (ADR-021) is additive under `experimental-turboquant`.
+
+| Multi-engine read routing (Volcano / Polars / DataFusion / Specialized)
+| Course-correction §5: one shared logical plane (`proximadb-relational-frontend` → `-algebra::LogicalNode`), split physical plane. The READ router is `src/query/compute_scheduler.rs::ComputeScheduler::route_select` (canonical) — the read analog of the WRITE router `table_write_plan::RoutedExecutionPlan`/`RouteDecisionMetadata`; both REUSE the one `ComputeBackend` enum and `CatalogWorkloadProfile` (no parallel vocabulary). P0 always selects `Native(Volcano)` (additive, observable via `EXPLAIN SELECT`); P1+ flip the OLAP arm to `DataFusionLocal` for Parquet-backed tables; §5.2 Phase 2 feeds the decision to the existing `RLPlanner`. Distinct physical engines are an intentional boundary, not duplication; the single decision point prevents fragmentation.
 |===
 
 == Governance — the Convergence Gate

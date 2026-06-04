@@ -73,6 +73,12 @@ impl SelectRouteDecision {
             self.reason
         )
     }
+
+    /// Stable short backend label (e.g. `Native(Volcano)`, `DataFusionLocal`) for the
+    /// structured `EXPLAIN` JSON surface. Single source for the engine name.
+    pub fn compute_route_label(&self) -> String {
+        backend_label(&self.backend)
+    }
 }
 
 /// Short, stable label for a backend in EXPLAIN/telemetry output.

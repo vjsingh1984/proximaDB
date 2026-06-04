@@ -1394,16 +1394,44 @@ impl PostgresProtocol {
             }
         };
 
-        if !inner_query
-            .trim_start()
-            .to_ascii_uppercase()
-            .starts_with("INSERT")
-        {
+        let inner_upper = inner_query.trim_start().to_ascii_uppercase();
+
+        // SELECT route EXPLAIN (course-correction §5 / ADR-004): surface the
+        // ComputeScheduler read-route decision as JSON. Additive — does not execute the
+        // query. Catalog-free in P0 (routes on query shape).
+        if inner_upper.starts_with("SELECT") || inner_upper.starts_with("WITH") {
+            return match crate::network::postgres::relational_pipeline::explain_select_route(
+                inner_query,
+            ) {
+                Ok(explanation) => {
+                    let json = serde_json::to_string_pretty(&explanation)?;
+                    let fields = vec![FieldDescription::new("QUERY PLAN", PgType::Jsonb)];
+                    self.send_row_description(&fields).await?;
+                    self.send_data_row(&[&json]).await?;
+                    let tag = if is_analyze {
+                        "EXPLAIN ANALYZE"
+                    } else {
+                        "EXPLAIN"
+                    };
+                    self.send_command_complete(tag).await
+                }
+                Err(error) => {
+                    self.send_error(
+                        "ERROR",
+                        "0A000",
+                        &format!("EXPLAIN SELECT routing failed: {}", error),
+                    )
+                    .await
+                }
+            };
+        }
+
+        if !inner_upper.starts_with("INSERT") {
             return self
                 .send_error(
                     "ERROR",
                     "0A000",
-                    "EXPLAIN currently supports table-write INSERT ... SELECT routing only",
+                    "EXPLAIN currently supports SELECT route disclosure and table-write INSERT ... SELECT routing",
                 )
                 .await;
         }
