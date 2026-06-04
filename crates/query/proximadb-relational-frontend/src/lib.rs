@@ -399,10 +399,13 @@ fn lower_table_with_joins(
     for j in &twj.joins {
         let (right, right_scope) = lower_table_factor(&j.relation, catalog)?;
         let kind = match &j.join_operator {
-            // Bare `JOIN` (sqlparser `Join`) is semantically `INNER JOIN`.
+            // The `OUTER` keyword is optional SQL noise: sqlparser parses bare
+            // `JOIN`/`LEFT JOIN`/`RIGHT JOIN` as `Join`/`Left`/`Right`, distinct
+            // from the `INNER`/`LEFT OUTER`/`RIGHT OUTER` spellings — both map to
+            // the same `JoinKind`. (`FULL JOIN` is folded into `FullOuter`.)
             JoinOperator::Inner(_) | JoinOperator::Join(_) => JoinKind::Inner,
-            JoinOperator::LeftOuter(_) => JoinKind::Left,
-            JoinOperator::RightOuter(_) => JoinKind::Right,
+            JoinOperator::LeftOuter(_) | JoinOperator::Left(_) => JoinKind::Left,
+            JoinOperator::RightOuter(_) | JoinOperator::Right(_) => JoinKind::Right,
             JoinOperator::FullOuter(_) => JoinKind::Full,
             JoinOperator::CrossJoin(_) => JoinKind::Cross,
             other => {
@@ -419,7 +422,9 @@ fn lower_table_with_joins(
             JoinOperator::Inner(c)
             | JoinOperator::Join(c)
             | JoinOperator::LeftOuter(c)
+            | JoinOperator::Left(c)
             | JoinOperator::RightOuter(c)
+            | JoinOperator::Right(c)
             | JoinOperator::FullOuter(c) => match c {
                 JoinConstraint::On(expr) => Some(lower_expr(expr, &combined)?),
                 JoinConstraint::Using(_) => {
@@ -1356,6 +1361,33 @@ mod tests {
             ords,
             vec![("name".to_string(), 1), ("total".to_string(), 5)]
         );
+    }
+
+    #[test]
+    fn bare_left_and_right_join_lower_to_outer_join_kinds() {
+        // Bare `LEFT JOIN` / `RIGHT JOIN` (no `OUTER`) parse to sqlparser's
+        // `Left`/`Right` variants (distinct from `LeftOuter`/`RightOuter`) and
+        // must lower to the same JoinKind. Regression: the bare forms were
+        // previously rejected as unsupported → PATH B fell through to legacy.
+        for (sql, expected) in [
+            (
+                "SELECT name, total FROM users LEFT JOIN orders ON users.id = orders.uid",
+                JoinKind::Left,
+            ),
+            (
+                "SELECT name, total FROM users RIGHT JOIN orders ON users.id = orders.uid",
+                JoinKind::Right,
+            ),
+        ] {
+            let plan = lower(sql);
+            let LogicalNode::Project { input, .. } = plan else {
+                panic!("expected Project for `{sql}`");
+            };
+            match *input {
+                LogicalNode::Join { kind, .. } => assert_eq!(kind, expected, "for `{sql}`"),
+                other => panic!("expected Join for `{sql}`, got {other:?}"),
+            }
+        }
     }
 
     #[test]
