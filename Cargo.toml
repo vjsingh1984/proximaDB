@@ -56,6 +56,7 @@ members = [
     "crates/modalities/proximadb-rank-onnx",
     "crates/storage/proximadb-storage-common",
     "crates/storage/proximadb-block-format",
+    "crates/storage/proximadb-object-store",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
     "crates/query/proximadb-graph-query",
@@ -103,6 +104,7 @@ bincode = "1.3"
 arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
 arrow-schema = { version = "57.1", default-features = false }
 parquet = { version = "57.1", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
+object_store = "0.11"
 async-trait = "0.1"
 axum = { version = "0.6", features = ["json", "ws"] }
 chrono = { version = "0.4.31", features = ["serde"] }
