@@ -28,45 +28,42 @@ use anyhow::anyhow;
 /// function is an aggregate (which uses a different DataFusion API path).
 #[cfg(feature = "datafusion-integration")]
 fn map_window_function(func: &WindowFunction) -> Result<DataFusionWindowFunctionKind> {
-    use datafusion::logical_expr::BuiltInWindowFunction;
-
-    match func {
-        WindowFunction::RowNumber => Ok(DataFusionWindowFunctionKind::BuiltIn(
-            BuiltInWindowFunction::RowNumber,
-        )),
-        WindowFunction::Rank => Ok(DataFusionWindowFunctionKind::BuiltIn(
-            BuiltInWindowFunction::Rank,
-        )),
-        WindowFunction::DenseRank => Ok(DataFusionWindowFunctionKind::BuiltIn(
-            BuiltInWindowFunction::DenseRank,
-        )),
-        WindowFunction::Lag => Ok(DataFusionWindowFunctionKind::BuiltIn(
-            BuiltInWindowFunction::Lag,
-        )),
-        WindowFunction::Lead => Ok(DataFusionWindowFunctionKind::BuiltIn(
-            BuiltInWindowFunction::Lead,
-        )),
-        WindowFunction::FirstValue => Ok(DataFusionWindowFunctionKind::BuiltIn(
-            BuiltInWindowFunction::FirstValue,
-        )),
-        WindowFunction::LastValue => Ok(DataFusionWindowFunctionKind::BuiltIn(
-            BuiltInWindowFunction::LastValue,
-        )),
+    // DataFusion 51 replaced the `BuiltInWindowFunction` enum with window UDFs
+    // (`datafusion::functions_window`). This bridge only needs a stable identifier for
+    // routing/validation (the value is discarded before falling back to native), so we
+    // carry the canonical SQL name rather than re-deriving the per-function UDF here.
+    let kind = match func {
+        WindowFunction::RowNumber => {
+            DataFusionWindowFunctionKind::BuiltIn("ROW_NUMBER".to_string())
+        }
+        WindowFunction::Rank => DataFusionWindowFunctionKind::BuiltIn("RANK".to_string()),
+        WindowFunction::DenseRank => {
+            DataFusionWindowFunctionKind::BuiltIn("DENSE_RANK".to_string())
+        }
+        WindowFunction::Lag => DataFusionWindowFunctionKind::BuiltIn("LAG".to_string()),
+        WindowFunction::Lead => DataFusionWindowFunctionKind::BuiltIn("LEAD".to_string()),
+        WindowFunction::FirstValue => {
+            DataFusionWindowFunctionKind::BuiltIn("FIRST_VALUE".to_string())
+        }
+        WindowFunction::LastValue => {
+            DataFusionWindowFunctionKind::BuiltIn("LAST_VALUE".to_string())
+        }
         // Aggregate functions go through DataFusion's aggregate path
-        WindowFunction::Sum => Ok(DataFusionWindowFunctionKind::Aggregate("SUM".to_string())),
-        WindowFunction::Avg => Ok(DataFusionWindowFunctionKind::Aggregate("AVG".to_string())),
-        WindowFunction::Count => Ok(DataFusionWindowFunctionKind::Aggregate("COUNT".to_string())),
-        WindowFunction::Min => Ok(DataFusionWindowFunctionKind::Aggregate("MIN".to_string())),
-        WindowFunction::Max => Ok(DataFusionWindowFunctionKind::Aggregate("MAX".to_string())),
-    }
+        WindowFunction::Sum => DataFusionWindowFunctionKind::Aggregate("SUM".to_string()),
+        WindowFunction::Avg => DataFusionWindowFunctionKind::Aggregate("AVG".to_string()),
+        WindowFunction::Count => DataFusionWindowFunctionKind::Aggregate("COUNT".to_string()),
+        WindowFunction::Min => DataFusionWindowFunctionKind::Aggregate("MIN".to_string()),
+        WindowFunction::Max => DataFusionWindowFunctionKind::Aggregate("MAX".to_string()),
+    };
+    Ok(kind)
 }
 
 /// Discriminator for DataFusion window function routing.
 #[cfg(feature = "datafusion-integration")]
 #[derive(Debug)]
 enum DataFusionWindowFunctionKind {
-    /// A built-in window function (ROW_NUMBER, RANK, LAG, etc.)
-    BuiltIn(datafusion::logical_expr::BuiltInWindowFunction),
+    /// A built-in window function by canonical SQL name (ROW_NUMBER, RANK, LAG, etc.)
+    BuiltIn(String),
     /// An aggregate used in a window context (SUM, AVG, COUNT, etc.)
     Aggregate(String),
 }

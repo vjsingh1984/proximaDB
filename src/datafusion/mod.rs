@@ -60,6 +60,9 @@ pub mod proxima_table_provider;
 // Engine-specific TableProvider adapters
 pub mod engine_adapters;
 
+// Custom scalar UDFs (e.g. Monte Carlo option pricing)
+pub mod udf;
+
 // Re-exports for convenience
 pub use table_provider::{
     // Original format-based provider
@@ -107,6 +110,9 @@ pub use crate::storage::formats::FileSplit;
 
 // Re-export engine-specific adapters
 pub use engine_adapters::{
+    // Parquet-over-FileSystem adapter (local file:// and s3:// via the canonical trait)
+    FilesystemParquetSplitReader,
+    FilesystemParquetTable,
     HelixSplitReader,
     // HELIX engine adapter
     HelixTableProvider,
@@ -116,7 +122,11 @@ pub use engine_adapters::{
     ViperSplitReader,
     // VIPER engine adapter
     ViperTableProvider,
+    register_parquet_path,
 };
+
+// Re-export custom scalar UDFs
+pub use udf::mc_price_udf;
 
 use datafusion::prelude::*;
 
@@ -137,8 +147,10 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
     // Deferred: Implement ProximaDBCatalogProvider
     // ctx.register_catalog("proximadb", Arc::new(ProximaDBCatalogProvider::new(...)));
 
-    // Register vector functions
-    // Deferred: Register cosine_distance, euclidean_distance, etc.
+    // Register custom scalar UDFs.
+    // - mc_price: Monte Carlo European option pricing (financial compute benchmark).
+    // Deferred: cosine_distance, euclidean_distance, etc.
+    ctx.register_udf(udf::mc_price_udf());
 
     Ok(ctx)
 }

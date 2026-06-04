@@ -58,9 +58,10 @@ use datafusion::common::Statistics;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
-use futures::Stream;
-use tracing::{debug, trace, warn};
+use futures::{Stream, StreamExt, TryStreamExt};
+use tracing::debug;
 
 use super::proxima_table_provider::EngineType;
 use crate::storage::formats::FileSplit;
@@ -275,7 +276,7 @@ impl ExecutionPlan for ProximaScanExec {
     fn execute(
         &self,
         partition: usize,
-        context: Arc<TaskContext>,
+        _context: Arc<TaskContext>,
     ) -> DFResult<SendableRecordBatchStream> {
         debug!(
             "Executing ProximaScanExec partition {} of {} for collection '{}' ({} splits)",
@@ -298,18 +299,51 @@ impl ExecutionPlan for ProximaScanExec {
             })?
             .clone();
 
-        // Create the stream
-        let stream = ProximaScanStream::new(
-            self.schema.clone(),
-            splits,
-            self.projection.clone(),
-            self.limit,
-            self.reader.clone(),
-            self.batch_size,
-            self.collection_name.clone(),
-        );
+        let reader = self.reader.clone();
+        let projection = self.projection.clone();
+        let batch_size = self.batch_size;
+        let limit = self.limit;
+        let schema = self.schema.clone();
 
-        Ok(Box::pin(stream))
+        // Drive each split's async `read_split` lazily and flatten the per-split batch
+        // streams into one. Each split's future owns its `FileSplit` + an `Arc` clone of
+        // the reader, so the resulting stream is `'static` and `Send`.
+        let batches = futures::stream::iter(splits.into_iter())
+            .then(move |split| {
+                let reader = reader.clone();
+                let projection = projection.clone();
+                async move {
+                    reader
+                        .read_split(&split, projection.as_deref(), batch_size)
+                        .await
+                }
+            })
+            .try_flatten();
+
+        // Honor the row limit without over-reading: stop once `limit` rows are emitted.
+        let limited = batches.scan(0usize, move |emitted, item| {
+            let out = match (item, limit) {
+                (Ok(batch), Some(lim)) => {
+                    if *emitted >= lim {
+                        None
+                    } else {
+                        let remaining = lim - *emitted;
+                        let batch = if batch.num_rows() > remaining {
+                            batch.slice(0, remaining)
+                        } else {
+                            batch
+                        };
+                        *emitted += batch.num_rows();
+                        Some(Ok(batch))
+                    }
+                }
+                (Ok(batch), None) => Some(Ok(batch)),
+                (Err(e), _) => Some(Err(e)),
+            };
+            futures::future::ready(out)
+        });
+
+        Ok(Box::pin(RecordBatchStreamAdapter::new(schema, limited)))
     }
 
     fn statistics(&self) -> DFResult<Statistics> {
@@ -491,163 +525,6 @@ fn partition_splits(splits: Vec<FileSplit>, target_partitions: usize) -> Vec<Vec
     }
 
     partitions
-}
-
-// ============================================================================
-// Scan Stream
-// ============================================================================
-
-/// RecordBatchStream implementation for ProximaScanExec.
-pub struct ProximaScanStream {
-    /// Output schema
-    schema: SchemaRef,
-    /// Splits to read
-    splits: Vec<FileSplit>,
-    /// Column projection
-    projection: Option<Vec<usize>>,
-    /// Row limit
-    limit: Option<usize>,
-    /// Split reader
-    reader: Arc<dyn SplitReader>,
-    /// Batch size
-    batch_size: usize,
-    /// Collection name
-    collection_name: String,
-    /// Current split index
-    current_split: usize,
-    /// Rows returned so far
-    rows_returned: usize,
-    /// Whether stream is finished
-    finished: bool,
-    /// Current split stream (if any)
-    current_stream: Option<SendableRecordBatchStream>,
-}
-
-impl ProximaScanStream {
-    fn new(
-        schema: SchemaRef,
-        splits: Vec<FileSplit>,
-        projection: Option<Vec<usize>>,
-        limit: Option<usize>,
-        reader: Arc<dyn SplitReader>,
-        batch_size: usize,
-        collection_name: String,
-    ) -> Self {
-        Self {
-            schema,
-            splits,
-            projection,
-            limit,
-            reader,
-            batch_size,
-            collection_name,
-            current_split: 0,
-            rows_returned: 0,
-            finished: false,
-            current_stream: None,
-        }
-    }
-
-    /// Check if we've hit the limit.
-    fn check_limit(&self) -> bool {
-        if let Some(limit) = self.limit {
-            self.rows_returned >= limit
-        } else {
-            false
-        }
-    }
-
-    /// Apply limit to a batch.
-    fn apply_limit(&self, batch: RecordBatch) -> Option<RecordBatch> {
-        if let Some(limit) = self.limit {
-            let remaining = limit.saturating_sub(self.rows_returned);
-            if remaining == 0 {
-                return None;
-            }
-            if batch.num_rows() > remaining {
-                Some(batch.slice(0, remaining))
-            } else {
-                Some(batch)
-            }
-        } else {
-            Some(batch)
-        }
-    }
-}
-
-impl Stream for ProximaScanStream {
-    type Item = DFResult<RecordBatch>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Check if finished
-        if self.finished || self.check_limit() {
-            return Poll::Ready(None);
-        }
-
-        loop {
-            // Try to get batch from current stream
-            if let Some(ref mut stream) = self.current_stream {
-                match Pin::new(stream).poll_next(cx) {
-                    Poll::Ready(Some(Ok(batch))) => {
-                        if let Some(limited_batch) = self.apply_limit(batch) {
-                            self.rows_returned += limited_batch.num_rows();
-                            return Poll::Ready(Some(Ok(limited_batch)));
-                        } else {
-                            self.finished = true;
-                            return Poll::Ready(None);
-                        }
-                    }
-                    Poll::Ready(Some(Err(e))) => {
-                        warn!(
-                            "Error reading split {} of collection '{}': {}",
-                            self.current_split, self.collection_name, e
-                        );
-                        return Poll::Ready(Some(Err(e)));
-                    }
-                    Poll::Ready(None) => {
-                        // Current stream exhausted, move to next split
-                        self.current_stream = None;
-                        self.current_split += 1;
-                    }
-                    Poll::Pending => return Poll::Pending,
-                }
-            }
-
-            // Check if we have more splits
-            if self.current_split >= self.splits.len() {
-                self.finished = true;
-                return Poll::Ready(None);
-            }
-
-            // Start reading next split
-            let split = &self.splits[self.current_split];
-            trace!(
-                "Starting split {} of {} for collection '{}'",
-                self.current_split,
-                self.splits.len(),
-                self.collection_name
-            );
-
-            // Note: In a real implementation, we would need to handle the async
-            // nature of read_split. For now, we return Pending to indicate
-            // that the stream needs to be polled again after the split reader
-            // has been initialized.
-            //
-            // A production implementation would use a state machine or
-            // futures::future::BoxFuture to handle the async initialization.
-
-            // For now, mark as finished if no current stream
-            // Real implementation would initialize the stream here
-            self.finished = true;
-            return Poll::Ready(None);
-        }
-    }
-}
-
-impl RecordBatchStream for ProximaScanStream {
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
 }
 
 // ============================================================================

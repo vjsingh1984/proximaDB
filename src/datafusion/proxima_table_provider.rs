@@ -83,6 +83,11 @@ impl From<StorageFormatStrategy> for EngineType {
             StorageFormatStrategy::Viper => EngineType::Viper,
             StorageFormatStrategy::Raptor => EngineType::Raptor,
             StorageFormatStrategy::Hybrid => EngineType::Viper, // Default to VIPER for hybrid
+            // Specialized engines have no dedicated DataFusion reader yet; route them to
+            // the columnar/time-series readers that best match their on-disk layout.
+            StorageFormatStrategy::TimeSeries => EngineType::Helix, // HELIX is time-series
+            StorageFormatStrategy::Chrono => EngineType::Helix,     // temporal -> time-series
+            StorageFormatStrategy::Cedar => EngineType::Viper,      // multimodal -> columnar
         }
     }
 }
@@ -144,6 +149,10 @@ pub struct DataFusionCollectionInfo {
     /// Last modified timestamp (millis since epoch)
     pub updated_at_ms: i64,
 }
+
+/// Backwards-compat alias: adapters and `mod.rs` refer to this type as
+/// `CollectionInfo`. The canonical name is [`DataFusionCollectionInfo`].
+pub type CollectionInfo = DataFusionCollectionInfo;
 
 impl DataFusionCollectionInfo {
     /// Create a new DataFusionCollectionInfo with required fields.

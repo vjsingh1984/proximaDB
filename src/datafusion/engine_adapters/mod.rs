@@ -46,11 +46,15 @@
 //! ctx.register_table("vectors", Arc::new(sst_provider))?;
 //! ```
 
+pub mod filesystem_parquet_reader;
 pub mod helix_adapter;
 pub mod sst_adapter;
 pub mod viper_adapter;
 
 // Re-export main types for convenience
+pub use filesystem_parquet_reader::{
+    FilesystemParquetSplitReader, FilesystemParquetTable, register_parquet_path,
+};
 pub use helix_adapter::{HelixSplitReader, HelixTableProvider};
 pub use sst_adapter::{SstSplitReader, SstTableProvider};
 pub use viper_adapter::{ViperSplitReader, ViperTableProvider};

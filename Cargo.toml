@@ -319,7 +319,7 @@ arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
 arrow-cast = { version = "57.1", default-features = false }
 
 # DataFusion for SQL and compute engine compatibility (Arrow 57 compatible)
-datafusion = { version = "51.0", default-features = false, features = ["regex_expressions", "unicode_expressions"], optional = true }
+datafusion = { version = "51.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions"], optional = true }
 datafusion-common = { version = "51.0", optional = true }
 
 # Advanced compression for recovery-optimized WAL
@@ -740,7 +740,11 @@ strip = true
 # IMPORTANT: dev and test profiles should match for artifact reuse
 [profile.dev]
 opt-level = 0
-debug = true
+# `line-tables-only` keeps file:line in backtraces (panics still readable) but
+# drops the heavy DWARF variable/type info. ~5-10x smaller .rlib/.dSYM, large
+# link-time reduction on the ~80-crate workspace. Switch back to `true` only
+# when stepping through variables in lldb.
+debug = "line-tables-only"
 overflow-checks = true
 incremental = true
 split-debuginfo = "unpacked"  # Faster linking, reusable debug info
@@ -749,7 +753,7 @@ split-debuginfo = "unpacked"  # Faster linking, reusable debug info
 # Cargo ONLY reuses artifacts if profiles are identical
 [profile.test]
 opt-level = 0  # MUST match dev for artifact reuse (0, not 1!)
-debug = true
+debug = "line-tables-only"  # MUST match dev (was `true`)
 overflow-checks = true
 incremental = true
 split-debuginfo = "unpacked"
