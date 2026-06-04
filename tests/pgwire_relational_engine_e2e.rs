@@ -338,6 +338,27 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "LEFT-join right-side filter stays above the join (correct semantics)"
     );
 
+    // (3d) ON-predicate pushdown: an INNER join with a right-side ON filter
+    // (dept.dname='eng') pushes the filter into dept's scan (residual ON = the
+    // equi, which upgrades to Hash). Correctness-equivalence: only emp rows
+    // matched to the eng dept survive → {ann-eng, bob-eng}.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename, dname FROM {emp} JOIN {dept} ON {emp}.dept_id = {dept}.id AND {dept}.dname = 'eng'"
+        ))
+        .await
+        .expect("SELECT join + ON-side filter");
+    assert_eq!(
+        pair_set(&rows, "ename", "dname"),
+        [
+            ("ann".to_string(), "eng".to_string()),
+            ("bob".to_string(), "eng".to_string()),
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>(),
+        "ON-side filter pushed into the dimension scan, result unchanged"
+    );
+
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
     // (the gate keeps it on the hardened legacy path, not PATH B).
     let rows = client
