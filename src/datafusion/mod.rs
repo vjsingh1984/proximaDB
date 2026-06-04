@@ -66,6 +66,10 @@ pub mod udf;
 // P4: shared logical lowering — relational LogicalNode -> DataFusion LogicalPlan
 pub mod logical_lowering;
 
+// Track B (§8 moat): cross-modal source bridge — vector-search results as a
+// DataFusion-joinable table so one SQL plan joins vector similarity with relational data.
+pub mod cross_modal;
+
 // Re-exports for convenience
 pub use table_provider::{
     // Original format-based provider
