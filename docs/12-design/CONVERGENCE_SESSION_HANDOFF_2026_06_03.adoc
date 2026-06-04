@@ -118,11 +118,24 @@ unconditional (`3c944044c`). `cargo check --lib` (default features) had hidden i
   failures (verified foreign earlier via stash-on-HEAD). It crashes the Flight
   search-response encoding (metadata struct), NOT the S3-changed routing/search.
 
-=== Discovered (foreign, out of TD-104 scope) — worth a follow-up
-The arrow-array `StructArray` "key" non-nullable-with-nulls panic breaks **Flight
-DoGet search responses** in a real server, not just tests. Likely the metadata
-key/value `StructArray` is built non-nullable but rows carry nulls. Owner of the
-Arrow metadata encoder should fix (build the struct field nullable or mask nulls).
+=== Arrow Flight search-response encoding (foreign, out of TD-104 routing scope)
+A chain of pre-existing bugs in the Flight DoGet *response* encoder (not the
+S3-changed routing — the search executes; the log shows "WAL search completed: 2
+results"):
+* **FIXED `69029d4ee`** — metadata `StructArray` `key` field was non-nullable but
+  encoders push `None` keys → arrow-array 57.3.1 panic ("unmasked nulls for
+  non-nullable StructArray field 'key'"). Made `key` nullable at all 3 sites
+  (schema + 2 builders); greened `arrow_ipc` codec tests (5 failures → 3) and
+  stopped the Flight DoGet crash.
+* **STILL OPEN (separate, pre-existing)** — `codec::search_results_to_batch`
+  builds the `vector` column as a `FixedSizeList(dim)` unconditionally, but search
+  results carry no vectors unless `include_fields.vector=true`, so it gets 0 floats
+  vs `dim×N` expected → `RecordBatch::try_new` fails ("Failed to create RecordBatch
+  from search results"). Fix: build the vector column null/safe when vectors are
+  absent. (And the proto `VectorSearchRequest` ticket is parsed by strict
+  prost-serde — `include_fields` JSON shape is finicky; the no-`include_fields`
+  ticket parses fine.) These block Flight vector-search *responses* in general and
+  predate TD-104; flag for the Arrow-encoder owner.
 
 Still UNTESTED: REST (S1) in multi-port mode with gRPC disabled
 (`api.unified_mode=false` + gRPC off) — the specific config S1 fixes.
