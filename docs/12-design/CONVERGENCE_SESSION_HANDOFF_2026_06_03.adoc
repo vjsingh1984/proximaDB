@@ -189,8 +189,17 @@ which is unused for the multi-server toggle.)
   `request_handlers.graph_execution_service` to thread as a dedicated param, but
   that is already the "extract once at the constructor boundary" shape (not a
   scattered router-build read) — leave until ROOT deletion.
-. **`ports=None` fallback** — `rest/v1/handlers.rs:1337` (legacy/cluster
-  constructors `with_security_and_config`).
+. **`ports=None` fallback** — `rest/v1/handlers.rs:1337`. Kept by exactly TWO
+  `with_security_and_config` (ports=None) callers. **2(a) DONE `e144ab24e`** —
+  the CLUSTER boot (`multi_server.rs` `start_with_cluster`,
+  `#[cfg(feature="cluster")]`) now calls `with_security_and_config_and_ports`
+  with `api_handlers = services.api_handlers` (doc/graph/obs ports stay `None`);
+  same-trait swap, COMPILE-CLEAN ONLY (`cargo check --lib --features cluster`,
+  exit 0) — NOT cluster-boot smoke-tested (needs multi-node Raft). **2(b) TODO**
+  — the legacy-dev caller `rest/server.rs:313` (`with_security` →
+  `new_development`) still passes `ports=None`; audit its callers + wire
+  `api_handlers` there, THEN delete the `:1337` fallback (deleting it before 2(b)
+  would break/panic REST dispatch in that mode).
 . **Arrow ports backed by ROOT** — `ProximaFlightService::new` extracts/casts from
   the passed `UnifiedHandlers` (the runtime handler doesn't impl `RecordOpsPort`
   and lacks the concrete vector/collection service fields).
