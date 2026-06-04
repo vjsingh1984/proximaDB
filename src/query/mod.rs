@@ -120,6 +120,7 @@ pub mod cache; // C2: Query result caching for agentic AI workloads with repetit
 pub mod capability; // Capability registry for query validation and API parity
 pub mod columnar; // M2: Dual Columnar Execution - ColumnarReadProvider abstraction
 pub mod compute_bridge; // Bridge to Hadoop-style storage-compute separation
+pub mod compute_scheduler; // Course-correction §5 P0: read-side multi-engine route selection
 pub mod ddl_dml; // DDL/DML execution (CREATE TABLE, INSERT, UPDATE, DELETE)
 pub mod distributed; // Distributed query coordination across cluster nodes
 pub mod execution; // New unified execution engine

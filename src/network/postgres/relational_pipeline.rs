@@ -791,4 +791,21 @@ mod tests {
         assert_eq!(normalize_table_key("public.Orders"), "orders");
         assert_eq!(normalize_table_key("\"Mixed\""), "mixed");
     }
+
+    #[test]
+    fn snapshot_capabilities_advertises_single_col_pk_only() {
+        let mut pk_by_table = HashMap::new();
+        pk_by_table.insert("users".to_string(), vec![0]); // single-col PK at ordinal 0
+        pk_by_table.insert("edges".to_string(), Vec::new()); // composite/no-PK → none
+        let resolver = SnapshotCapabilities { pk_by_table };
+
+        // Single-col PK table → planner can pick PkLookup (name normalized).
+        assert_eq!(resolver.primary_key(&TableId::new("users")), vec![0]);
+        assert_eq!(resolver.primary_key(&TableId::new("USERS")), vec![0]);
+        // Composite/no-PK and unknown tables → empty → planner keeps full scan.
+        assert!(resolver.primary_key(&TableId::new("edges")).is_empty());
+        assert!(resolver.primary_key(&TableId::new("unknown")).is_empty());
+        // Pushdown capabilities unchanged (pk_lookup gated per-table by primary_key).
+        assert!(resolver.capabilities(&TableId::new("users")).pk_lookup);
+    }
 }
