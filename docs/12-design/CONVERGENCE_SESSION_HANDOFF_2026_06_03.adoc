@@ -28,13 +28,20 @@ project_td104_handler_convergence_plan_2026_06_03.md.
 
 DONE: TD-106 (document compute fully ProximaValue-native, document:SqlObject
 deleted), TD-109 (json->proxima converters converged), TD-104 S1/S2/S3 (REST,
-gRPC, pgwire, Arrow Flight all off the CONCRETE root UnifiedHandlers).
+gRPC, pgwire, Arrow Flight all off the CONCRETE root UnifiedHandlers) — and gRPC +
+Arrow-Flight smoke-tests PASSED on a running unified-mode server (local FS).
+Smoke-test caught/fixed: a real build break (3c944044c, ProximaTree must import
+unconditionally) and the arrow StructArray 'key' panic (69029d4ee, greened 2
+arrow_ipc tests). The original session task list is COMPLETE; what follows is the
+larger ROOT-deletion arc that emerged from TD-104.
 
 NEXT, in priority order:
-1. SMOKE-TEST the shipped boot wiring (not covered by cargo test --lib): gRPC
-   (collection/vector/sql/hybrid RPCs), Arrow Flight (DoPut insert/upsert/delete +
-   DoGet search + ListFlights), REST in multi-port + gRPC-disabled mode. Local FS
-   storage is fine (no S3/MinIO needed). If any fails, fix before proceeding.
+1. REST S1 smoke-test in multi-port + gRPC-disabled mode (api.unified_mode=false +
+   grpc disabled) — the one config S1 fixes, still untested. Server bin:
+   `cargo build -p proximadb-server`; grpcurl+reflection / pyarrow.flight clients work.
+   (Optional foreign fix: codec::search_results_to_batch builds FixedSizeList(dim)
+   even when search results carry no vectors -> Flight DoGet response try_new fails;
+   pre-existing, breaks Flight vector-search responses; out of TD-104 routing scope.)
 2. TD-104 S5 — build-time field-extraction injection: ~9 REST router-build sites
    read state.request_handlers.{vector_operations_service,document_service,
    event_log,observability_service} (rest/v1/handlers.rs:1207-1521) +
