@@ -168,6 +168,90 @@ pub fn create_session_context_with_config(
     Ok(ctx)
 }
 
+/// Timing breakdown for the Monte Carlo option-pricing benchmark.
+#[derive(Debug, Clone)]
+pub struct McBenchTiming {
+    /// Number of priced rows returned.
+    pub rows: usize,
+    /// Physical-plan partition count actually executed (proves intra-node parallelism).
+    pub partitions: usize,
+    /// Table registration time — reads the Parquet footer/metadata through the
+    /// `FileSystem` trait (the I/O-bound phase).
+    pub register: std::time::Duration,
+    /// Query execution time — the compute-bound phase (the `mc_price` UDF), with all
+    /// partitions driven concurrently.
+    pub compute: std::time::Duration,
+}
+
+/// Benchmark helper: register a Parquet options table (read through `fs`) and run the
+/// `mc_price` UDF over every row at the given parallelism, returning row count plus an
+/// I/O-vs-compute timing split.
+///
+/// Keeps DataFusion types out of downstream benchmark binaries — callers pass a filesystem
+/// handle + URL and receive timings. The SQL the DataFrame API lowers to is identical.
+pub async fn benchmark_mc_price_over_parquet(
+    fs: std::sync::Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
+    url: &str,
+    n_paths: usize,
+    target_partitions: usize,
+) -> datafusion::error::Result<McBenchTiming> {
+    use std::time::Instant;
+
+    let session_config = SessionConfig::new()
+        .with_batch_size(8192)
+        .with_target_partitions(target_partitions.max(1));
+    let ctx = SessionContext::new_with_config(session_config);
+    ctx.register_udf(udf::mc_price_udf());
+
+    let t_io = Instant::now();
+    let _table = engine_adapters::register_parquet_path(&ctx, fs, "options", url).await?;
+    let register = t_io.elapsed();
+
+    let sql = format!(
+        "SELECT id, mc_price(spot, strike, vol, rate, t, is_call, {n_paths}) AS price FROM options"
+    );
+    // Build the physical plan and drive every partition concurrently via
+    // `collect_partitioned` (each partition runs as its own task), so intra-node
+    // parallelism is real and measured — `collect()` would coalesce to one stream first.
+    let plan = ctx.sql(&sql).await?.create_physical_plan().await?;
+    let partitions = plan.properties().output_partitioning().partition_count();
+
+    // Drive each partition on its OWN spawned task so the CPU-heavy `mc_price` projection
+    // runs on a separate worker thread per partition — true intra-node parallelism. This is
+    // the coordinator-drives-workers pattern; `collect_partitioned` would instead poll every
+    // partition on one task, serializing synchronous CPU work.
+    use datafusion::error::DataFusionError;
+    use futures::StreamExt;
+
+    let task_ctx = ctx.task_ctx();
+    let t_compute = Instant::now();
+    let mut handles = Vec::with_capacity(partitions);
+    for p in 0..partitions {
+        let mut stream = plan.execute(p, task_ctx.clone())?;
+        handles.push(tokio::spawn(async move {
+            let mut rows = 0usize;
+            while let Some(batch) = stream.next().await {
+                rows += batch?.num_rows();
+            }
+            Ok::<usize, DataFusionError>(rows)
+        }));
+    }
+    let mut rows = 0usize;
+    for h in handles {
+        rows += h
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("partition task join: {e}")))??;
+    }
+    let compute = t_compute.elapsed();
+
+    Ok(McBenchTiming {
+        rows,
+        partitions,
+        register,
+        compute,
+    })
+}
+
 /// Configuration for DataFusion integration.
 #[derive(Debug, Clone)]
 pub struct DataFusionConfig {

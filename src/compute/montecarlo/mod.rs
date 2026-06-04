@@ -176,8 +176,54 @@ pub fn mc_price_european(
     (-rate * t).exp() * (sum / n_paths as f64)
 }
 
-/// Price a batch of European options in parallel (rayon), one independent RNG stream per
-/// row derived from `base_seed`. This is the hot path the DataFusion `mc_price` UDF wraps.
+/// Price one row `i`, deriving an independent RNG stream from `base_seed` so adjacent rows
+/// draw decorrelated path sets. Shared by the batch entry points below.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn price_row(
+    i: usize,
+    spot: &[f64],
+    strike: &[f64],
+    vol: &[f64],
+    rate: &[f64],
+    t: &[f64],
+    is_call: &[bool],
+    n_paths: usize,
+    base_seed: u64,
+) -> f64 {
+    let mut s = base_seed.wrapping_add(i as u64).wrapping_add(1);
+    let row_seed = splitmix64(&mut s);
+    mc_price_european(
+        spot[i], strike[i], vol[i], rate[i], t[i], is_call[i], n_paths, row_seed,
+    )
+}
+
+#[inline]
+fn assert_equal_lengths(
+    spot: &[f64],
+    strike: &[f64],
+    vol: &[f64],
+    rate: &[f64],
+    t: &[f64],
+    is_call: &[bool],
+) {
+    let n = spot.len();
+    debug_assert!(
+        strike.len() == n
+            && vol.len() == n
+            && rate.len() == n
+            && t.len() == n
+            && is_call.len() == n,
+        "mc_price batch: all input columns must have equal length"
+    );
+}
+
+/// Price a batch of European options **in parallel** (rayon), one independent RNG stream
+/// per row. Use this when the caller owns the whole dataset in a single call (e.g. a
+/// standalone bulk job or the kernel benchmark baseline).
+///
+/// Do NOT call this inside a per-partition engine operator that is itself parallelized
+/// (e.g. a DataFusion UDF) — that oversubscribes cores. Use [`mc_price_batch_seq`] there.
 ///
 /// All slices must have the same length; returns one price per row in input order.
 #[allow(clippy::too_many_arguments)]
@@ -191,26 +237,33 @@ pub fn mc_price_batch(
     n_paths: usize,
     base_seed: u64,
 ) -> Vec<f64> {
-    let n = spot.len();
-    debug_assert!(
-        strike.len() == n
-            && vol.len() == n
-            && rate.len() == n
-            && t.len() == n
-            && is_call.len() == n,
-        "mc_price_batch: all input columns must have equal length"
-    );
-
-    (0..n)
+    assert_equal_lengths(spot, strike, vol, rate, t, is_call);
+    (0..spot.len())
         .into_par_iter()
-        .map(|i| {
-            // Decorrelate per-row seeds so adjacent rows draw independent path sets.
-            let mut s = base_seed.wrapping_add(i as u64).wrapping_add(1);
-            let row_seed = splitmix64(&mut s);
-            mc_price_european(
-                spot[i], strike[i], vol[i], rate[i], t[i], is_call[i], n_paths, row_seed,
-            )
-        })
+        .map(|i| price_row(i, spot, strike, vol, rate, t, is_call, n_paths, base_seed))
+        .collect()
+}
+
+/// Sequential variant of [`mc_price_batch`] — prices rows on the calling thread, returning
+/// identical results (same per-row seeds).
+///
+/// This is what per-partition engine operators (the DataFusion `mc_price` UDF) call: the
+/// engine already parallelizes across partitions, so nesting rayon here would oversubscribe
+/// (partition-threads × rayon-threads). Parallelism comes from the engine's partitioning.
+#[allow(clippy::too_many_arguments)]
+pub fn mc_price_batch_seq(
+    spot: &[f64],
+    strike: &[f64],
+    vol: &[f64],
+    rate: &[f64],
+    t: &[f64],
+    is_call: &[bool],
+    n_paths: usize,
+    base_seed: u64,
+) -> Vec<f64> {
+    assert_equal_lengths(spot, strike, vol, rate, t, is_call);
+    (0..spot.len())
+        .map(|i| price_row(i, spot, strike, vol, rate, t, is_call, n_paths, base_seed))
         .collect()
 }
 
@@ -312,6 +365,26 @@ mod tests {
                 spot[i], strike[i], vol[i], rate[i], t[i], is_call[i], n, row_seed,
             );
             assert_eq!(price.to_bits(), direct.to_bits());
+        }
+    }
+
+    #[test]
+    fn seq_and_parallel_batches_are_identical() {
+        let spot = vec![100.0, 95.0, 110.0, 100.0, 105.0];
+        let strike = vec![100.0, 100.0, 105.0, 90.0, 110.0];
+        let vol = vec![0.2, 0.3, 0.15, 0.25, 0.2];
+        let rate = vec![0.03; 5];
+        let t = vec![1.0, 0.5, 2.0, 1.0, 0.25];
+        let is_call = vec![true, false, true, false, true];
+        let par = mc_price_batch(&spot, &strike, &vol, &rate, &t, &is_call, 10_000, 7);
+        let seq = mc_price_batch_seq(&spot, &strike, &vol, &rate, &t, &is_call, 10_000, 7);
+        assert_eq!(par.len(), seq.len());
+        for (p, s) in par.iter().zip(seq.iter()) {
+            assert_eq!(
+                p.to_bits(),
+                s.to_bits(),
+                "seq and parallel must match bit-for-bit"
+            );
         }
     }
 

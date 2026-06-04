@@ -19,7 +19,7 @@ use arrow_schema::DataType;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::{ColumnarValue, ScalarUDF, Volatility, create_udf};
 
-use crate::compute::montecarlo::mc_price_batch;
+use crate::compute::montecarlo::mc_price_batch_seq;
 
 /// Fixed base seed so the UDF is deterministic (same inputs → same prices), which keeps
 /// query results reproducible and benchmark comparisons fair.
@@ -120,7 +120,9 @@ fn mc_price_impl(args: &[ColumnarValue]) -> DFResult<ColumnarValue> {
     let rate_s: &[f64] = rate.values();
     let t_s: &[f64] = t.values();
 
-    let prices = mc_price_batch(
+    // Sequential per batch on purpose: DataFusion parallelizes across partitions, so the UDF
+    // must not nest rayon here (that would oversubscribe cores).
+    let prices = mc_price_batch_seq(
         spot_s,
         strike_s,
         vol_s,
