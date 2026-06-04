@@ -11,20 +11,21 @@
 //! Covers the OLAP shapes the P1 route targets:
 //! `Scan / Filter / Project / Aggregate / Sort / Limit` and
 //! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`), with `Expr`
-//! translation for `Column / Literal / BinaryOp / UnaryOp / IsNull`. Anything else
-//! (Semi/Anti join, Distinct, Union, Values, CTEs;
-//! `Cast/Between/In/Like/Case/Coalesce/NullIf/FuncCall`; `StringAgg/Custom` aggregates)
-//! returns [`DataFusionError::NotImplemented`] so the caller keeps the existing
+//! translation for `Column / Literal / BinaryOp / UnaryOp / IsNull / Cast / Between /
+//! In / Like`. Anything else (Semi/Anti join, Distinct, Union, Values, CTEs;
+//! `Case/Coalesce/NullIf/FuncCall`; `StringAgg/Custom` aggregates) returns
+//! [`DataFusionError::NotImplemented`] so the caller keeps the existing
 //! `ctx.sql(...)` path for those — additive, never wrong.
 
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::{
-    Expr, JoinType, LogicalPlan, LogicalPlanBuilder, Operator, binary_expr, col, lit,
+    Between, Cast, Expr, JoinType, Like, LogicalPlan, LogicalPlanBuilder, Operator, binary_expr,
+    col, lit,
 };
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 
-use proximadb_data_model::ProximaValue;
+use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_relational_algebra::{AggregateExpr, JoinKind, LogicalNode, NamedAggregate};
 use proximadb_relational_types::{BinaryOp as RBinOp, Expr as RExpr, UnaryOp as RUnOp};
 
@@ -210,14 +211,69 @@ fn lower_expr(e: &RExpr) -> DFResult<Expr> {
                 inner.is_null()
             }
         }
-        RExpr::Cast { .. } => return Err(unsupported("Cast")),
-        RExpr::Between { .. } => return Err(unsupported("Between")),
-        RExpr::In { .. } => return Err(unsupported("In")),
-        RExpr::Like { .. } => return Err(unsupported("Like")),
+        RExpr::Cast { expr, ty } => {
+            Expr::Cast(Cast::new(Box::new(lower_expr(expr)?), proxima_to_arrow(ty)?))
+        }
+        RExpr::Between {
+            expr,
+            low,
+            high,
+            not,
+        } => Expr::Between(Between::new(
+            Box::new(lower_expr(expr)?),
+            *not,
+            Box::new(lower_expr(low)?),
+            Box::new(lower_expr(high)?),
+        )),
+        RExpr::In { expr, list, not } => {
+            let items = list.iter().map(lower_expr).collect::<DFResult<Vec<_>>>()?;
+            Expr::InList(datafusion::logical_expr::expr::InList::new(
+                Box::new(lower_expr(expr)?),
+                items,
+                *not,
+            ))
+        }
+        RExpr::Like {
+            expr,
+            pattern,
+            not,
+            case_insensitive,
+        } => Expr::Like(Like::new(
+            *not,
+            Box::new(lower_expr(expr)?),
+            Box::new(lower_expr(pattern)?),
+            None, // no custom ESCAPE
+            *case_insensitive,
+        )),
         RExpr::Case { .. } => return Err(unsupported("Case")),
         RExpr::Coalesce(_) => return Err(unsupported("Coalesce")),
         RExpr::NullIf { .. } => return Err(unsupported("NullIf")),
         RExpr::FuncCall { name, .. } => return Err(unsupported(format!("function {name}"))),
+    })
+}
+
+/// `ProximaType` → Arrow `DataType` for `CAST` targets (inverse of the pgwire
+/// route's `arrow_type_to_proxima`). Types without a direct Arrow scalar mapping
+/// return `NotImplemented`, so a cast to them keeps the `ctx.sql` fallback.
+fn proxima_to_arrow(ty: &ProximaType) -> DFResult<arrow_schema::DataType> {
+    use ProximaType as P;
+    use arrow_schema::DataType as D;
+    Ok(match ty {
+        P::Boolean => D::Boolean,
+        P::Int8 => D::Int8,
+        P::Int16 => D::Int16,
+        P::Int32 => D::Int32,
+        P::Int64 => D::Int64,
+        P::UInt8 => D::UInt8,
+        P::UInt16 => D::UInt16,
+        P::UInt32 => D::UInt32,
+        P::UInt64 => D::UInt64,
+        P::Float32 => D::Float32,
+        P::Float64 => D::Float64,
+        P::String => D::Utf8,
+        P::Binary => D::Binary,
+        P::Date => D::Date32,
+        other => return Err(unsupported(format!("cast to {other:?}"))),
     })
 }
 
@@ -416,6 +472,80 @@ mod tests {
         let total: usize = batches.iter().map(|b| b.num_rows()).sum();
         // a⋈a (t has 2 a-rows × u has 1 a-row = 2) + b⋈b (1 × 2 = 2) = 4.
         assert_eq!(total, 4);
+    }
+
+    #[tokio::test]
+    async fn lowers_cast_between_in_like() {
+        // SELECT k FROM t
+        //  WHERE x BETWEEN 1.0 AND 3.0  AND k IN ('a')  AND k LIKE 'a%'
+        //    AND CAST(x AS BIGINT) = 1
+        // t = (a,1),(a,3),(b,10). Between→(a,1),(a,3); IN('a')→both; LIKE 'a%'→both;
+        // CAST(x AS Int64)=1 → only (a,1). Expect 1 row.
+        let ctx = ctx_with_t().await;
+        let str_lit = |s: &str| RExpr::Literal {
+            value: ProximaValue::String(s.to_string()),
+            ty: ProximaType::String,
+        };
+        let f64_lit = |v: f64| RExpr::Literal {
+            value: ProximaValue::Float64(v),
+            ty: ProximaType::Float64,
+        };
+        let and = |l: RExpr, r: RExpr| RExpr::BinaryOp {
+            op: RBinOp::And,
+            left: Box::new(l),
+            right: Box::new(r),
+        };
+        let kcol = || RExpr::Column(colref("k", 0, ProximaType::String));
+        let xcol = || RExpr::Column(colref("x", 1, ProximaType::Float64));
+
+        let predicate = and(
+            and(
+                and(
+                    RExpr::Between {
+                        expr: Box::new(xcol()),
+                        low: Box::new(f64_lit(1.0)),
+                        high: Box::new(f64_lit(3.0)),
+                        not: false,
+                    },
+                    RExpr::In {
+                        expr: Box::new(kcol()),
+                        list: vec![str_lit("a")],
+                        not: false,
+                    },
+                ),
+                RExpr::Like {
+                    expr: Box::new(kcol()),
+                    pattern: Box::new(str_lit("a%")),
+                    not: false,
+                    case_insensitive: false,
+                },
+            ),
+            RExpr::BinaryOp {
+                op: RBinOp::Eq,
+                left: Box::new(RExpr::Cast {
+                    expr: Box::new(xcol()),
+                    ty: ProximaType::Int64,
+                }),
+                right: Box::new(RExpr::Literal {
+                    value: ProximaValue::Int64(1),
+                    ty: ProximaType::Int64,
+                }),
+            },
+        );
+        let node = LogicalNode::Filter {
+            input: Box::new(scan_t()),
+            predicate,
+        };
+        let plan = lower_logical_node(&ctx, &node).await.unwrap();
+        let batches = ctx
+            .execute_logical_plan(plan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total, 1); // only (a, 1)
     }
 
     #[tokio::test]
