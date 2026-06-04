@@ -716,6 +716,47 @@ impl DmlService {
         Ok((table_schema, rows))
     }
 
+    /// Point-lookup a single relational row by primary key, projected into the
+    /// FULL `schema.columns` order (the executor re-applies any projection).
+    ///
+    /// Extends the canonical [`DmlService`]; the OLTP point-read fast path for the
+    /// relational pipeline (PATH B) — the storage-side backing for
+    /// `ScanAccess::PkLookup`. Single-column PK only (`get_by_key` keys on
+    /// `record.oid`, matching the SELECT PK fast-path's `primary_key.first()`).
+    /// ADR-018 Phase 2 (pgwire SQL parity); TD-076. Reuses the exact primitives the
+    /// SELECT PK fast-path uses (`get_by_key` + `rich_result_to_record`).
+    pub async fn point_lookup_relational(
+        &self,
+        table_name: &str,
+        key: &str,
+    ) -> Result<Option<Vec<ProximaValue>>> {
+        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let all_columns: Vec<String> =
+            table_schema.columns.iter().map(|c| c.name.clone()).collect();
+        let full_selected = Self::resolve_select_projection(&table_schema, &all_columns)?;
+        let record = self
+            .record_store
+            .get_by_key(
+                &table_schema,
+                TableRecordGetRequest {
+                    table_id: table_id_name,
+                    key: key.to_string(),
+                    include_vector: true,
+                    include_props: true,
+                },
+                None,
+            )
+            .await?;
+        match record {
+            Some(rich) => {
+                let record = Self::rich_result_to_record(rich);
+                let row = Self::project_one_record(&record, &table_schema, &full_selected)?;
+                Ok(Some(row))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Records-returning, limit-honoring twin of [`Self::resolve_matching_ids`] for
     /// the SELECT path: PK fast-path (OR-safe via [`Self::extract_pk_candidate_ids`],
     /// re-checked against the full tree) else a predicate scan with the limit pushed in.

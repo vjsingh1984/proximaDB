@@ -35,7 +35,7 @@ use proximadb_relational_executor::{
     ExecError, ExecutionContext, ReaderFactory, build_executor, collect,
 };
 use proximadb_relational_frontend::{CatalogLookup, lower_sql};
-use proximadb_relational_planner::{Planner, StaticCapabilities};
+use proximadb_relational_planner::{CapabilityResolver, Planner, StaticCapabilities};
 use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{ColumnInfo, Expr, NoFunctions, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
@@ -148,7 +148,11 @@ pub async fn try_run_select(
     let engine = GLOBAL_ENGINE.clone();
     if let Ok(logical) = lower_sql(sql, &EngineCatalog(engine.clone())) {
         let factory = EngineReaderFactory::new(engine);
-        return Some(run_plan(&factory, logical).await);
+        let resolver = StaticCapabilities {
+            caps: ReaderCapabilities::full(),
+            pk_columns: Vec::new(),
+        };
+        return Some(run_plan(&factory, resolver, logical).await);
     }
 
     // 2) Real-data path (gated, additive). Engage ONLY for queries the legacy
@@ -159,7 +163,29 @@ pub async fn try_run_select(
     let [Statement::Query(query)] = statements.as_slice() else {
         return None;
     };
-    if !query_engages_relational_engine(query) {
+    let engages = query_engages_relational_engine(query);
+
+    // Course-correction §5 (P0): materialize the compute-route decision at the
+    // planner boundary via the canonical `ComputeScheduler`. P0 ALWAYS resolves
+    // to `Native` (the live Volcano path) — additive, no behavior change — so the
+    // decision is observable and P1 has one contract-bound place to flip the OLAP
+    // arm to DataFusion. (A SELECT EXPLAIN surface can later print
+    // `decision.explain_line()`; today we emit it as a structured trace.)
+    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+        crate::query::compute_scheduler::QueryShape {
+            engages_relational: engages,
+        },
+    );
+    tracing::debug!(
+        target: "proximadb::compute_route",
+        backend = ?decision.backend,
+        workload = ?decision.workload_profile,
+        reason = %decision.reason,
+        "{}",
+        decision.explain_line()
+    );
+
+    if !engages {
         return None;
     }
 
@@ -204,19 +230,27 @@ pub async fn try_run_select(
             return None;
         }
     };
+    // Per-table PK ordinals so the planner can rewrite PK-equality scans to
+    // ScanAccess::PkLookup (single-column PK only — see PreparedTable).
+    let pk_by_table: HashMap<String, Vec<usize>> = snapshot
+        .tables
+        .iter()
+        .map(|(key, prepared)| (key.clone(), prepared.pk_columns.clone()))
+        .collect();
+    let resolver = SnapshotCapabilities { pk_by_table };
     // From here, errors are real and surface to the client.
-    Some(run_plan(&snapshot, logical).await)
+    Some(run_plan(&snapshot, resolver, logical).await)
 }
 
-/// Plan + build + drain an executor for `logical` against `factory`.
-async fn run_plan<F: ReaderFactory>(
+/// Plan + build + drain an executor for `logical` against `factory`, using
+/// `resolver` for capability/PK-lookup planning (engine path → `StaticCapabilities`,
+/// real-data path → `SnapshotCapabilities`).
+async fn run_plan<F: ReaderFactory, R: CapabilityResolver>(
     factory: &F,
+    resolver: R,
     logical: proximadb_relational_algebra::LogicalNode,
 ) -> Result<PipelineResult, String> {
-    let planner = Planner::new(StaticCapabilities {
-        caps: ReaderCapabilities::full(),
-        pk_columns: Vec::new(),
-    });
+    let planner = Planner::new(resolver);
     let physical = planner.plan(logical).map_err(|e| format!("plan: {e}"))?;
     let mut exec = build_executor(physical, factory, &ExecutionContext::default())
         .map_err(|e| format!("build_executor: {e}"))?;
@@ -245,6 +279,10 @@ impl CatalogLookup for EngineCatalog {
 struct PreparedTable {
     table_name: String,
     schema: RelationalSchema,
+    /// Primary-key column ordinal(s) for the PK-lookup access path. Populated
+    /// ONLY for single-column PK (the storage point lookup keys on `record.oid`);
+    /// composite/no-PK → empty, so the planner keeps a full scan.
+    pk_columns: Vec<usize>,
 }
 
 impl PreparedTable {
@@ -257,9 +295,22 @@ impl PreparedTable {
             .iter()
             .map(|c| ColumnInfo::new(c.name.clone(), c.data_type.to_proxima_type(), c.nullable))
             .collect();
+        // Single-column PK only: advertise its ordinal so the planner can pick
+        // ScanAccess::PkLookup; composite/no-PK advertise nothing → full scan.
+        let pk_columns: Vec<usize> = if catalog_schema.primary_key.len() == 1 {
+            catalog_schema
+                .columns
+                .iter()
+                .position(|c| c.name == catalog_schema.primary_key[0])
+                .into_iter()
+                .collect()
+        } else {
+            Vec::new()
+        };
         Self {
             table_name: table_name.to_string(),
             schema: RelationalSchema::new(columns),
+            pk_columns,
         }
     }
 }
@@ -292,8 +343,36 @@ impl ReaderFactory for SnapshotCatalog {
             dml: self.dml.clone(),
             table_name: prepared.table_name.clone(),
             full_schema: prepared.schema.clone(),
+            pk_columns: prepared.pk_columns.clone(),
             open_state: None,
         }))
+    }
+}
+
+/// `CapabilityResolver` for the real-data pipeline; mirrors the canonical
+/// [`StaticCapabilities`]. Supplies per-table single-column PK ordinals so the
+/// planner can rewrite a PK-equality scan to `ScanAccess::PkLookup`.
+///
+/// Route metadata for the PK-lookup it enables: `workload_profile=Oltp`,
+/// `authority_mode=ProximaAuthoritative`, `policy_boundary=engine-enforced`,
+/// `freshness=latest-committed` (NativeRecord — not an external open-format
+/// route). ADR-018 Phase 2 (pgwire SQL parity); TD-076.
+struct SnapshotCapabilities {
+    pk_by_table: HashMap<String, Vec<usize>>,
+}
+
+impl CapabilityResolver for SnapshotCapabilities {
+    fn capabilities(&self, _table: &TableId) -> ReaderCapabilities {
+        // Unchanged pushdown behavior (projection/predicate); PK-lookup is gated
+        // per-table by `primary_key` below.
+        ReaderCapabilities::full()
+    }
+
+    fn primary_key(&self, table: &TableId) -> Vec<usize> {
+        self.pk_by_table
+            .get(&normalize_table_key(&table.name))
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -314,6 +393,9 @@ struct DmlTableReader {
     dml: Arc<DmlService>,
     table_name: String,
     full_schema: RelationalSchema,
+    /// Single-column PK ordinal(s) for the PK-lookup arity check (empty when the
+    /// planner won't pick PkLookup for this table).
+    pk_columns: Vec<usize>,
     open_state: Option<ReaderOpenState>,
 }
 
@@ -346,9 +428,10 @@ impl RelationalReader for DmlTableReader {
     }
 
     fn capabilities(&self) -> ReaderCapabilities {
-        // Honors projection + predicate + limit; PK-lookup access path is not
-        // implemented (planner falls back to a full scan).
-        ReaderCapabilities::full().with_pk_lookup(false)
+        // Honors projection + predicate + limit + single-column PK lookup
+        // (see `lookup_pk`). The planner gates PkLookup per-table via the
+        // resolver's `primary_key`, so this flag is informational here.
+        ReaderCapabilities::full().with_pk_lookup(true)
     }
 
     fn schema(&self) -> &RelationalSchema {
@@ -411,8 +494,33 @@ impl RelationalReader for DmlTableReader {
         Ok(Some(row))
     }
 
-    async fn lookup_pk(&self, _key: &[ProximaValue]) -> Result<Option<RelationalRow>, ReaderError> {
-        Err(ReaderError::PkLookupUnsupported)
+    /// OLTP point-read fast path: resolve a single row by primary key via
+    /// `DmlService::point_lookup_relational`. Returns the FULL row (the executor
+    /// re-applies projection from `schema()`, which is the full schema on the
+    /// PkLookup path — `open` is not called). Single-column PK only.
+    /// ADR-018 Phase 2 (pgwire SQL parity); TD-076.
+    async fn lookup_pk(&self, key: &[ProximaValue]) -> Result<Option<RelationalRow>, ReaderError> {
+        if key.len() != 1 {
+            return Err(ReaderError::PkArityMismatch {
+                expected: self.pk_columns.len().max(1),
+                actual: key.len(),
+            });
+        }
+        // Convert the PK value to the stored `record.oid` string (the same
+        // canonical text form used for int/string/uuid keys). SQL NULL → no row.
+        let Some(key_str) = text_encode(&key[0]) else {
+            return Ok(None);
+        };
+        tracing::debug!(
+            target: "proximadb::pgwire::new_pipeline",
+            access_path = "PkLookup",
+            table = %self.table_name,
+            "relational PK point lookup"
+        );
+        self.dml
+            .point_lookup_relational(&self.table_name, &key_str)
+            .await
+            .map_err(|e| ReaderError::Storage(e.to_string()))
     }
 
     async fn close(&mut self) -> Result<(), ReaderError> {
