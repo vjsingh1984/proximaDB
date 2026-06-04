@@ -95,11 +95,37 @@ Array/Map/Null — was a stringify bug). Deferred (optional): relocate
   passed `UnifiedHandlers`), so `ArrowFlightServer`/`multi_server` are unchanged.
   Verified: 131 Arrow tests pass unchanged (5 failures pre-existing onnx/StructArray).
 
-== 2. Smoke-tests OUTSTANDING (boot wiring; not in `cargo test --lib`)
-* gRPC (S2): collection / vector / sql / hybrid RPCs.
-* Arrow Flight (S3): DoPut insert/upsert/delete, DoGet search, ListFlights.
-* REST (S1): multi-port mode with gRPC disabled (`api.unified_mode=false` + gRPC off).
-Local FS storage (`/tmp/proximadb`) suffices — Arrow does NOT need S3/MinIO.
+== 2. Smoke-tests — gRPC + Arrow Flight PASSED (2026-06-04, unified mode, local FS)
+
+Ran the built `proximadb-server` (unified mode, port 5678 multiplexing REST/gRPC/Flight)
+against `/tmp/proximadb` (no S3/MinIO). Also caught + fixed a real build break first:
+S7 used `ProximaTree` unconditionally but its import was `canonical-document-store`-gated
+— the server's feature set (that flag off) failed to compile until the import was made
+unconditional (`3c944044c`). `cargo check --lib` (default features) had hidden it.
+
+* **gRPC (S2) — PASS.** `grpcurl` + reflection: `CollectionService.ListCollections`
+  (`{}`), `CreateCollection` (id returned), `VectorService.VectorBatch` insert (2
+  records, success), `VectorService.VectorSearch` (2 results, v1 score 1.0 exact / v2
+  0.92). Routed gRPC → runtime `api_handlers` → `CollectionPort`/`VectorOpsPort`.
+* **Arrow Flight (S3) — PASS.** Raw `pyarrow.flight` to `grpc://localhost:5678`:
+  **DoPut** insert OK (2 records → `record_port.insert_record_batch`); **ListFlights**
+  OK (count=0, correct — no flushed `.arrow` files; reached `collection_service`);
+  **DoGet** search executed and `✅ WAL search completed: 2 results` in the server log
+  (routed via `api_port.handle_vector_search_v1`). NOTE: the DoGet *response* then hit
+  a **pre-existing, foreign** panic in the Arrow result encoder
+  (`arrow-array-57.3.1 struct_array.rs:91: "Found unmasked nulls for non-nullable
+  StructArray field 'key'"`) — the SAME bug as the 5 pre-existing `arrow_ipc` test
+  failures (verified foreign earlier via stash-on-HEAD). It crashes the Flight
+  search-response encoding (metadata struct), NOT the S3-changed routing/search.
+
+=== Discovered (foreign, out of TD-104 scope) — worth a follow-up
+The arrow-array `StructArray` "key" non-nullable-with-nulls panic breaks **Flight
+DoGet search responses** in a real server, not just tests. Likely the metadata
+key/value `StructArray` is built non-nullable but rows carry nulls. Owner of the
+Arrow metadata encoder should fix (build the struct field nullable or mask nulls).
+
+Still UNTESTED: REST (S1) in multi-port mode with gRPC disabled
+(`api.unified_mode=false` + gRPC off) — the specific config S1 fixes.
 
 == 3. What still ties to ROOT (`src/api_handlers/request_handlers.rs` UnifiedHandlers)
 . **S5 build-time field extraction** — `rest/v1/handlers.rs:1207-1521` (AQL source
