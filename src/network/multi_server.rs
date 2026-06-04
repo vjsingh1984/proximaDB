@@ -1511,9 +1511,20 @@ impl MultiServer {
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
             let api_config = self.config.api_config.clone();
+            // TD-104 item 2(a): wire the runtime port-based handler into the
+            // cluster REST boot so collection/vector dispatch reaches
+            // `api_handlers` instead of falling back to the concrete root handler
+            // at rest/v1/handlers.rs:1337. `services.api_handlers` is the same
+            // runtime handler the unified-port path uses (shared_services.rs).
+            // Only `api_handlers` is wired here (doc/graph/obs route ports stay
+            // `None`, preserving the current cluster route surface) — a
+            // same-trait swap, behavior-preserving for every other route.
+            let api_handlers_port = services.api_handlers.clone();
 
             let rest_handle = tokio::spawn(async move {
-                use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
+                use crate::network::rest::server::{
+                    RestServer, RestServerPorts, RestServerSecurityConfig,
+                };
 
                 let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
                 let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
@@ -1524,7 +1535,14 @@ impl MultiServer {
                 };
                 rest_security.auth.enabled = auth_enabled;
 
-                match RestServer::with_security_and_config(
+                let rest_ports = RestServerPorts {
+                    doc_port: None,
+                    graph_port: None,
+                    obs_port: None,
+                    api_handlers: api_handlers_port,
+                };
+
+                match RestServer::with_security_and_config_and_ports(
                     rest_bind_addr,
                     request_handlers,
                     graph_execution_service,
@@ -1535,7 +1553,13 @@ impl MultiServer {
                     rest_security,
                     data_dir,
                     query_adapter,
-                    None,
+                    None, // llm_engine
+                    Some(rest_ports),
+                    None, // catalog_manager (unchanged from prior cluster boot)
+                    None, // queue_client
+                    None, // fulltext_indexes
+                    None, // discovery_service
+                    None, // external_collection_service
                 )
                 .start()
                 .await
