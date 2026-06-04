@@ -1,0 +1,168 @@
+= Data Warehouse & Enterprise Data Engineering Course Correction
+:toc: left
+:toclevels: 3
+:icons: font
+:sectnums:
+:revdate: 2026-06-04
+
+[.lead]
+This document defines a strategic course correction for ProximaDB's architecture, shifting focus towards direct competition with enterprise data warehouses (Snowflake, Databricks, BigQuery, Trino) and modern distributed data engineering engines (Spark, Ray). While the vector and multi-modal capabilities remain important, the foundational MVP and initial product wedge will now explicitly prioritize relational semantics, object-storage-first decoupled architecture, and Rust-native distributed execution.
+
+== 1. Strategic Shifts
+
+=== 1.1. Postgres Wire Compatibility as the Primary Wedge
+To directly compete for SQL data warehouse workloads against Trino, Snowflake, and Databricks, ProximaDB must present a frictionless adoption path. The primary ingestion, DDL, DML, and query surface will be **100% PostgreSQL wire protocol compatible**. 
+* **Why:** BI tools (Tableau, Looker, Metabase), dbt, and existing enterprise SQL workloads expect a Postgres or MySQL dialect. By prioritizing full Postgres compatibility, ProximaDB can be a drop-in replacement for existing analytical query engines.
+
+=== 1.2. Relational Foundation First
+While ProximaDB supports documents, graphs, and vectors, the core execution and storage models must optimize for the relational algebra first. 
+* **Why:** The enterprise data engineering landscape runs on tables, columns, joins, and aggregates. The multi-modal features (vector search, graph traversal) will be implemented as extensions to the relational algebra, not completely separate paths.
+
+=== 1.3. Object Storage First (Decoupled Storage & Compute)
+The storage layer must be fully decoupled from the execution layer from day one, utilizing local filesystem API-driven object storage abstractions (e.g., `object_store` crate) that can seamlessly scale to S3/GCS/Azure Blob.
+* **Why:** Snowflake and Databricks won by scaling compute independently from storage. ProximaDB's storage layout will prioritize open table formats (Parquet/Arrow/Iceberg) layered over object storage, utilizing advanced optimizations like header/filter-driven caches and late materialization to minimize I/O overhead.
+
+=== 1.4. Rust-Native Distributed Execution (Spark-like)
+Instead of purely delegating large-scale transformations to external Spark clusters, ProximaDB will build a **Rust-native distributed execution engine** close to the data, capable of PySpark-style API execution.
+* **MVP:** The initial implementation will leverage **DataFusion** running in a single-node or pseudo-distributed seam (e.g., multi-process or multi-threaded worker model).
+* **Future-proofing:** The execution architecture will remain flexible via a pluggable engine trait, allowing us to swap or enhance DataFusion with custom Rust-based distributed workers for CPU-intensive (Monte Carlo style) jobs and async I/O heavy workloads.
+* **Why:** A unified Rust engine removes the JVM overhead of Spark, drastically lowers memory pressure, and simplifies the deployment topology while providing the same distributed data engineering capabilities.
+
+== 2. Blueprint for the MVP
+
+=== 2.1. Pseudo-Distributed DataFusion Seam
+The MVP will construct a single-node platform that simulates distributed execution. 
+1. **Coordinator/Worker Abstraction:** A master coordinator process (or thread pool) handles Postgres wire connections, parses SQL/DataFrame logic, and creates logical plans.
+2. **Pluggable Execution:** The logical plan is lowered into a physical plan executed by DataFusion workers. The design must isolate DataFusion behind an `ExecutionEngine` trait so it can be swapped.
+3. **Async I/O Efficiency:** Workers will use Tokio async patterns to fetch Parquet/Arrow blocks from the object storage layer concurrently.
+
+=== 2.2. Object Storage & Caching Layer
+* **Storage Interface:** All data reads/writes go through an `ObjectStore` trait implementation. For MVP, this points to a local directory structure mimicking an S3 bucket layout.
+* **Header/Filter Caching:** To achieve high performance, the system will implement aggressive caching of Parquet footers/headers and Iceberg manifests. 
+* **Predicate Pushdown:** Query planning will utilize these caches to perform partition pruning and row-group skipping before any network/disk read occurs.
+
+=== 2.3. Data Engineering Experience
+* Provide a Python DataFrame API (via PyO3) that mimics PySpark's lazy execution model, compiling down into the same DataFusion/Rust logical plan that the SQL engine uses.
+* Allow users to write UDFs in Rust or Python, executed safely within the worker processes.
+
+== 3. Impact on Existing Architecture
+
+* **Update to `DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR`:** The anchor must reflect that local Rust execution is not just for HTAP, but the foundation for a distributed MPP warehouse.
+* **Update to `COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY`:** Shift from "Delegate MPP to Spark/Trino" to "Build Rust-native MPP using DataFusion/Ballista concepts, outcompeting Spark/Trino on efficiency."
+* **Storage Layer:** Deprioritize highly specialized proprietary file formats in favor of optimized Parquet/Iceberg execution over object storage to match Lakehouse architectures.
+
+== 4. Grounded Reality vs Vision (code audit 2026-06-04)
+
+The course correction above is the target. This section records what is *actually
+built today* so the roadmap (§6) closes a real gap, not an imagined one. Audited
+against the live tree on branch `proximadb-embedding`.
+
+[cols="3,1,1,4",options="header"]
+|===
+| Component | Exists | Wired live | Notes (file)
+| pgwire relational algebra — joins / GROUP BY / aggregates / multi-col ORDER BY /
+  WHERE+OR pushdown | YES | **LIVE** | Hand-rolled **Volcano** push-executor, NOT
+  DataFusion. `network/postgres/relational_pipeline.rs` (`try_run_select`); engages
+  only for joins/agg, simple SELECTs stay on legacy. ADR-018 Phase 2 / Slice 8.
+| `proximadb-relational-{frontend,algebra,planner,executor,reader,engine}` | YES |
+  **LIVE** | L1 SQL→LogicalNode (sqlparser) · L2 algebra · L3 physical planner · L4
+  Volcano executor · L5 storage-reader trait. Reads real data via
+  `DmlTableReader`→`DmlService::scan_table_relational`→`RecordStorage`.
+| DML writes (INSERT/UPDATE/DELETE) | YES | **LIVE** | `services/dml/mod.rs`
+  →`TableRecordStore`→`DirectWalTableRecordStore` (WAL + `RecordStorage` DashMap) →
+  engine layouts. **No Parquet/Iceberg write.**
+| DataFusion (`mc_price` UDF + `FilesystemParquetSplitReader`) | YES | **UNWIRED** |
+  `src/datafusion/**` behind optional `datafusion-integration` feature; test-only
+  (financial workload). Zero pgwire/REST/gRPC coupling. (`19a2688fa`)
+| `object_store` crate | YES | **read-only** | ADR-023 cold-tier IVF byte-RANGE
+  reads (`filesystem/aws_s3.rs`,`azure_blob.rs`). Not a write authority.
+| `ObjectStoreIcebergRecordStore` / `ObjectStoreVectorRecordStore` | NO | — | Design
+  targets in the pgwire blueprint; **no code**.
+| `ComputeProvider` / `LocalComputeProvider::execute` | PARTIAL | **DEAD STUB** |
+  `compute/provider/local.rs` — `execute()` `bail!`s; every node returns
+  `empty_stream()`. The pluggable `ExecutionEngine` seam is a shell.
+| Python DataFrame API (PySpark-like → logical plan) | NO | — | Not built.
+|===
+
+**Headline:** the relational *wedge is already live* — but on a hand-rolled Volcano
+executor over WAL+`RecordStorage`, while DataFusion and object-storage-write are
+unwired. The roadmap is therefore *gap closure + a deliberate dual-engine seam*, not
+a green-field build.
+
+== 5. The Dual-Engine Relational Coexistence Contract (OLTP Volcano / OLAP DataFusion)
+
+DECISION (2026-06-04): the live Volcano executor and DataFusion **coexist** —
+Volcano for OLTP, DataFusion for OLAP/MPP — rather than one absorbing the other. To
+keep this from becoming the "duplicate abstraction = regression" the Convergence
+Gate forbids, coexistence is governed by ONE contract:
+
+* **Shared logical plane, split physical plane.** Both engines consume the SAME
+  SQL→logical layer (`proximadb-relational-frontend` → `proximadb-relational-algebra`
+  `LogicalNode`). They diverge ONLY at the physical planner/executor. There is no
+  second parser and no second algebra — one logical plan, two physical backends.
+  This is what makes it a by-design HTAP split, not a fork.
+* **Route once, cataloged, explainable.** A single router picks the physical engine
+  per plan (never per row), emitting the existing typed route fields
+  (`workload_profile`, `compute_route`, `authority_mode`, `freshness_sla`,
+  `isolation_profile`) and a unified `EXPLAIN` line (ADR-004). The choice is a
+  control-plane decision recorded in xCatalog, consistent with the
+  OLTP/OLAP/HTAP/MPP route map in `COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY`.
+* **Routing predicate (initial heuristic, advisor-tunable later):**
+** **OLTP → Volcano** — point lookups / PK or indexed equality, small-cardinality
+   predicates, single-table reads, all mutations (INSERT/UPDATE/DELETE), strong
+   freshness (must see unflushed `RecordStorage`/WAL), low-latency SLAs.
+** **OLAP → DataFusion** — multi-table joins, GROUP BY / aggregates / window, large
+   or full scans, projection over Parquet/object-store segments, MPP/throughput
+   SLAs, snapshot/relaxed freshness.
+** **Default/unknown → Volcano** (strong-freshness-safe) until the advisor has stats.
+* **Freshness boundary.** DataFusion reads object-store Parquet/Iceberg snapshots;
+  it must declare `freshness_sla` and, for HTAP queries needing unflushed rows,
+  either union the WAL/`RecordStorage` delta or reject + downgrade to Volcano with an
+  `EXPLAIN` reason. No silent stale reads.
+* **Convergence-Gate registration.** This dual-engine seam is a deliberate
+  by-design separation; record it in `CONVERGENCE_AUDIT_2026_05_30.adoc` with the
+  routing contract above, so it is not later flagged as accidental proliferation.
+
+== 6. Sequenced Roadmap (reality → vision)
+
+Each phase is independently shippable + verifiable. Earlier phases make the seam
+explicit before any engine rewrite, so nothing destabilizes the live Volcano path.
+
+. **P0 — Route contract + EXPLAIN (no behavior change).** Introduce a
+  `RelationalComputeRoute { Oltp(Volcano) | Olap(DataFusion) }` decision in the
+  pgwire planner boundary; for now ALWAYS pick Volcano, but emit the
+  `compute_route`/`workload_profile` fields + an `EXPLAIN` line. Register the seam in
+  CONVERGENCE_AUDIT. Pure additive; locks the contract first.
+. **P1 — First LIVE DataFusion OLAP read path.** Behind the router, route a narrow
+  OLAP shape (e.g. analytical aggregate/scan over a Parquet-backed table) to a
+  DataFusion `SessionContext` using the existing `FilesystemParquetSplitReader`. This
+  turns the unwired `src/datafusion/**` into a real query path for the first time.
+  Smoke-test via pgwire. Default routing stays Volcano; opt-in by table/feature.
+. **P2 — Object-store Parquet write seam.** Implement `ObjectStoreIcebergRecordStore`
+  as a `TableRecordStore` impl writing Parquet via the canonical FileSystem/`object_store`
+  trait, selectable for OLAP-profile tables in `CatalogRoutingTableRecordStore`.
+  Vector tables keep the WAL+engine path (`ObjectStoreVectorRecordStore` later).
+. **P3 — Shared logical lowering.** Add a lowering from
+  `proximadb-relational-algebra::LogicalNode` to a DataFusion `LogicalPlan`, so OLAP
+  queries reuse the same frontend/algebra the Volcano path uses (closes the
+  "shared logical plane" half of §5; retires any divergence risk).
+. **P4 — Pseudo-distributed worker seam.** Replace the `LocalComputeProvider::execute`
+  stub with a real DataFusion-backed `ExecutionEngine` impl + a multi-process/
+  multi-thread worker model (the notebook blueprint's coordinator/worker seam). Async
+  Tokio object-store fetch + footer/manifest caches + predicate pushdown.
+. **P5 — Python DataFrame API (PySpark-like).** PyO3 DataFrame that lowers to the SAME
+  logical plan as SQL, executed by the OLAP engine.
+
+Secondary track (vector-era cleanup, not on the warehouse critical path):
+**TD-104 ROOT deletion** — the `UnifiedHandlers` monolith is vector-DB-era; the
+relational/pgwire wedge already bypasses it (pgwire never used the monolith). Continue
+per the S3-a..f plan in `CONVERGENCE_SESSION_HANDOFF_2026_06_03.adoc` §3bis when
+warehouse phases permit; it does not block P0–P5.
+
+== 7. Anchoring
+
+This document is a feeder to the apex `SYSTEM_MAP_2026_05_30.adoc` and refines, not
+replaces, `COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc` (route map) and
+`RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc` (active DML/compute
+tracker). The dual-engine routing contract (§5) must be reflected in the Convergence
+Audit before P1 lands a second physical executor.
