@@ -24,6 +24,7 @@
 //!   table is seeded with 3 rows so operators can demonstrate
 //!   the new path end-to-end via psql.
 
+use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_relational_algebra::TableId;
@@ -35,15 +36,12 @@ use proximadb_relational_executor::{
 };
 use proximadb_relational_frontend::{CatalogLookup, lower_sql};
 use proximadb_relational_planner::{Planner, StaticCapabilities};
-use proximadb_relational_reader::{
-    ReaderCapabilities, ReaderError, RelationalReader, ScanContext,
-};
+use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{ColumnInfo, Expr, NoFunctions, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
     Expr as SqlExpr, GroupByExpr, Query as SqlQuery, SelectItem, SetExpr, Statement, TableFactor,
     TableWithJoins,
 };
-use async_trait::async_trait;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 use std::collections::HashMap;
@@ -387,7 +385,12 @@ impl RelationalReader for DmlTableReader {
         let limit = ctx.limit.map(|l| l as usize);
         let (_schema, rows) = self
             .dml
-            .scan_table_relational(&self.table_name, ctx.projection.as_deref(), row_pred_ref, limit)
+            .scan_table_relational(
+                &self.table_name,
+                ctx.projection.as_deref(),
+                row_pred_ref,
+                limit,
+            )
             .await
             .map_err(|e| ReaderError::Storage(e.to_string()))?;
         self.open_state = Some(ReaderOpenState {
