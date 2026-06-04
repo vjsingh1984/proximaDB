@@ -2632,7 +2632,7 @@ pub async fn rag_query(
 
     // 2. Setup RGL pipeline components
     let retriever = VectorNodeRetriever::new(
-        app_state.request_handlers.vector_operations_service.clone(),
+        app_state.vector_operations_service.clone(),
         seed_collection,
         request.budget.max_seeds,
     );

@@ -40,6 +40,21 @@ pub struct AppState {
     pub request_handlers: Arc<UnifiedHandlers>,
     /// Extracted graph execution capability for query planning/execution helpers
     pub graph_execution_service: Arc<dyn GraphExecutionService>,
+    /// Vector operations service, extracted at boot so the REST router-build
+    /// (AQL/analytics/hybrid/memory wiring) no longer reaches into
+    /// `request_handlers`'s concrete fields (TD-104 S5 — ROOT decoupling).
+    /// Same `Arc` the root handler holds; mirrors `graph_execution_service`.
+    pub vector_operations_service: Arc<crate::services::VectorOperationsService>,
+    /// Document service, extracted at boot (TD-104 S5). Feeds the document AQL
+    /// source; same `Arc` as the root handler.
+    pub document_service: Arc<crate::storage::document::DocumentService>,
+    /// Observability service, extracted at boot (TD-104 S5). Feeds the
+    /// observability AQL source; same `Arc` as the root handler.
+    pub observability_service: Arc<crate::observability::ObservabilityService>,
+    /// Event-log engine for persistent audit trails (TD-050), extracted at
+    /// boot (TD-104 S5). Feeds AQL audit + agent-memory consolidation sink;
+    /// same `Option<Arc>` as the root handler.
+    pub event_log: Option<Arc<crate::storage::engines::eventlog::EventLogEngine>>,
     /// Optional security coordinator for authentication/authorization
     pub security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
     /// Data directory from config (e.g., server.data_dir from TOML)
@@ -153,9 +168,21 @@ impl AppState {
         query_adapter: Option<Arc<QueryFacadeAdapter>>,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
+        // TD-104 S5: extract the concrete services once, at construction (the
+        // boot adapter), so the router-build reads `state.<service>` rather
+        // than scattering `state.request_handlers.<service>` across ~13 sites.
+        // Mirrors how `graph_execution_service` is already threaded.
+        let vector_operations_service = request_handlers.vector_operations_service.clone();
+        let document_service = request_handlers.document_service.clone();
+        let observability_service = request_handlers.observability_service.clone();
+        let event_log = request_handlers.event_log.clone();
         Self {
             request_handlers,
             graph_execution_service,
+            vector_operations_service,
+            document_service,
+            observability_service,
+            event_log,
             security_coordinator,
             data_dir,
             query_adapter,
@@ -1204,7 +1231,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             engine,
             Arc::new(CsrRelationsStore::new()),
             Arc::new(InMemoryProvenanceRegistry::new()),
-            state.request_handlers.vector_operations_service.clone(),
+            state.vector_operations_service.clone(),
         );
 
         // Register legacy store globally for compatibility (entity API currently uses legacy store).
@@ -1396,7 +1423,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             .clone()
             .unwrap_or_else(|| Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())));
         let vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort> =
-            state.request_handlers.vector_operations_service.clone();
+            state.vector_operations_service.clone();
         let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
             Arc::new(RestHybridPortImpl::new(vector_ops, indexes.clone()));
         let bm25_port: Arc<dyn proximadb_runtime::BM25IndexPort> =
@@ -1458,9 +1485,7 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     // Read-only collection analytics (Entanglement Index, etc.) — TD-043 sub-2
     let analytics_router = {
-        let analytics_state = AnalyticsApiState::new(Some(
-            state.request_handlers.vector_operations_service.clone(),
-        ));
+        let analytics_state = AnalyticsApiState::new(Some(state.vector_operations_service.clone()));
         analytics::create_router().with_state(analytics_state)
     };
     router = router.nest("/api/v1/analytics", analytics_router);
@@ -1471,7 +1496,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         let mut executor = AqlExecutor::new();
 
         // Attach event log for persistent audit trails (TD-050 Phase 5)
-        if let Some(log) = &state.request_handlers.event_log {
+        if let Some(log) = &state.event_log {
             executor = executor.with_event_log(log.clone());
         }
 
@@ -1479,7 +1504,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         executor.register_source(
             "vector".to_string(),
             Arc::new(VectorAqlSource::new(
-                state.request_handlers.vector_operations_service.clone(),
+                state.vector_operations_service.clone(),
             )),
         );
         executor.register_source(
@@ -1488,14 +1513,12 @@ pub fn create_router(state: AppState) -> axum::Router {
         );
         executor.register_source(
             "document".to_string(),
-            Arc::new(DocumentAqlSource::new(
-                state.request_handlers.document_service.clone(),
-            )),
+            Arc::new(DocumentAqlSource::new(state.document_service.clone())),
         );
         executor.register_source(
             "observability".to_string(),
             Arc::new(ObservabilityAqlSource::new(
-                state.request_handlers.observability_service.clone(),
+                state.observability_service.clone(),
             )),
         );
 
@@ -1508,7 +1531,7 @@ pub fn create_router(state: AppState) -> axum::Router {
                 Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()))
             });
             let mem_vector_port: Arc<dyn proximadb_runtime::VectorOpsPort> =
-                state.request_handlers.vector_operations_service.clone();
+                state.vector_operations_service.clone();
             let lexical = Arc::new(
                 crate::network::rest::v1::rank_backend::ProductionHybridBackend::new(
                     mem_vector_port,
@@ -1518,7 +1541,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             executor.register_source(
                 "memory".to_string(),
                 Arc::new(
-                    MemoryAqlSource::new(state.request_handlers.vector_operations_service.clone())
+                    MemoryAqlSource::new(state.vector_operations_service.clone())
                         .with_lexical_backend(lexical),
                 ),
             );
@@ -1544,14 +1567,14 @@ pub fn create_router(state: AppState) -> axum::Router {
             let extractor = Arc::new(LlmExtractionAgent::new(llm.clone()));
             let consolidator = Arc::new(LlmConsolidationAgent::new(llm.clone()));
             let store = Arc::new(VectorMemoryStore::new(
-                state.request_handlers.vector_operations_service.clone(),
+                state.vector_operations_service.clone(),
                 Arc::new(EmbeddingServiceEmbedder),
             ));
             let mut engine = MemoryWriteEngine::new(extractor, consolidator, store);
             // Persist every consolidation decision to the shared audit log when
             // available (ADR-022 auditable memory). Same Arc<EventLogEngine> the
             // AQL audit trail uses; mirrors the AQL wiring above.
-            if let Some(event_log) = &state.request_handlers.event_log {
+            if let Some(event_log) = &state.event_log {
                 engine = engine.with_audit_sink(Arc::new(
                     EventLogConsolidationAuditSink::from_event_log(event_log.clone()),
                 ));
@@ -1563,8 +1586,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         // log, independent of the LLM backend — pass the same shared Arc the
         // write sink persists to, so a deployment with no LLM can still serve
         // any audit trail it already recorded.
-        let memory_state =
-            MemoryApiState::new(memory_engine, state.request_handlers.event_log.clone());
+        let memory_state = MemoryApiState::new(memory_engine, state.event_log.clone());
         router = router.nest(
             "/api/v1/memory",
             memory::create_router().with_state(memory_state),
