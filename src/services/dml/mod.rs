@@ -650,10 +650,7 @@ impl DmlService {
     /// Resolve a catalog table's schema for the relational pipeline (PATH B).
     /// Used by the pipeline's schema-only prefetch (the sync `CatalogLookup`
     /// can't await xCatalog), so the actual rows can be fetched lazily per scan.
-    pub async fn resolve_relational_schema(
-        &self,
-        table_name: &str,
-    ) -> Result<CatalogTableSchema> {
+    pub async fn resolve_relational_schema(&self, table_name: &str) -> Result<CatalogTableSchema> {
         let (table_schema, _table_id_name) = self.resolve_select_table(table_name).await?;
         Ok(table_schema)
     }
@@ -677,8 +674,11 @@ impl DmlService {
     ) -> Result<(CatalogTableSchema, Vec<Vec<ProximaValue>>)> {
         let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
         // Full column set — predicates are evaluated against a complete row.
-        let all_columns: Vec<String> =
-            table_schema.columns.iter().map(|c| c.name.clone()).collect();
+        let all_columns: Vec<String> = table_schema
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
         let full_selected = Self::resolve_select_projection(&table_schema, &all_columns)?;
         // Output column set the caller wants emitted (defaults to all columns).
         let output_selected = match output_columns {
@@ -4628,6 +4628,109 @@ mod tests {
         assert_eq!(path, RelationalSelectAccessPath::TableScan);
         assert_eq!(pc, 0, "no WHERE → zero predicate leaves");
         assert_eq!(ids, vec!["i1", "i2", "i3", "i4"]);
+    }
+
+    /// `scan_table_relational` (PATH B reader backend) pushes the output
+    /// projection + a full-row predicate + limit into the record-store scan.
+    #[tokio::test]
+    async fn scan_table_relational_pushes_projection_predicate_limit() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-scan-rel.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        for (id, status, qty) in [
+            ("i1", "active", 5),
+            ("i2", "active", 15),
+            ("i3", "idle", 25),
+            ("i4", "idle", 35),
+        ] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO inv (id, status, qty) VALUES ('{id}', '{status}', {qty});"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // (a) No predicate / no projection → all rows, full column order [id,status,qty].
+        let (schema, rows) = dml
+            .scan_table_relational("inv", None, None, None)
+            .await
+            .expect("scan all");
+        assert_eq!(schema.columns.len(), 3);
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().all(|r| r.len() == 3));
+
+        // (b) Predicate over the FULL row: status (ordinal 1) == 'active' → i1,i2.
+        let pred =
+            |row: &[ProximaValue]| matches!(&row[1], ProximaValue::String(s) if s == "active");
+        let (_s, rows) = dml
+            .scan_table_relational("inv", None, Some(&pred), None)
+            .await
+            .expect("scan predicate");
+        let mut ids: Vec<String> = rows
+            .iter()
+            .map(|r| match &r[0] {
+                ProximaValue::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["i1", "i2"], "predicate filters to active rows");
+
+        // (c) Output projection narrows + orders columns → just [status].
+        let cols = vec!["status".to_string()];
+        let (_s, rows) = dml
+            .scan_table_relational("inv", Some(&cols), None, None)
+            .await
+            .expect("scan projection");
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().all(|r| r.len() == 1));
+
+        // (d) Limit caps the result.
+        let (_s, rows) = dml
+            .scan_table_relational("inv", None, None, Some(2))
+            .await
+            .expect("scan limit");
+        assert_eq!(rows.len(), 2, "limit caps the scan");
     }
 
     /// UPDATE/DELETE WHERE must honor NON-primary-key predicates (and the full

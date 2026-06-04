@@ -243,6 +243,26 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "GROUP BY status counts"
     );
 
+    // (2b) Filtered GROUP BY — the WHERE is pushed into the inv scan (the
+    // reader is the sole predicate applier), so only qty >= 15 rows are
+    // materialized: active:1 (i2), idle:2 (i3,i4).
+    let rows = client
+        .simple_query(&format!(
+            "SELECT status, COUNT(*) AS n FROM {inv} WHERE qty >= 15 GROUP BY status"
+        ))
+        .await
+        .expect("SELECT filtered GROUP BY");
+    assert_eq!(
+        pair_set(&rows, "status", "n"),
+        [
+            ("active".to_string(), "1".to_string()),
+            ("idle".to_string(), "2".to_string())
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>(),
+        "predicate pushed into the scan yields correct filtered groups"
+    );
+
     // (3) INNER JOIN over real rows from two tables → 3 joined rows.
     let rows = client
         .simple_query(&format!(
