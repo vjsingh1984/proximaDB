@@ -9,11 +9,11 @@
 //!
 //! ## Scope
 //! Covers the OLAP shapes the P1 route targets:
-//! `Scan / Filter / Project / Aggregate / Sort / Limit` and
+//! `Scan / Filter / Project / Aggregate / Sort / Limit / Distinct / Union` and
 //! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`), with `Expr`
 //! translation for `Column / Literal / BinaryOp / UnaryOp / IsNull / Cast / Between /
-//! In / Like`. Anything else (Semi/Anti join, Distinct, Union, Values, CTEs;
-//! `Case/Coalesce/NullIf/FuncCall`; `StringAgg/Custom` aggregates) returns
+//! In / Like / Case / Coalesce / NullIf`. Anything else (Semi/Anti join, Values, CTEs;
+//! `FuncCall`; `StringAgg/Custom` aggregates) returns
 //! [`DataFusionError::NotImplemented`] so the caller keeps the existing
 //! `ctx.sql(...)` path for those — additive, never wrong.
 
@@ -144,8 +144,29 @@ fn lower<'a>(
                         .build(),
                 }
             }
-            LogicalNode::Distinct { .. } => Err(unsupported("Distinct")),
-            LogicalNode::Union { .. } => Err(unsupported("Union")),
+            LogicalNode::Distinct { input } => {
+                let input = lower(ctx, input).await?;
+                LogicalPlanBuilder::from(input).distinct()?.build()
+            }
+            LogicalNode::Union { inputs, all } => {
+                let mut it = inputs.iter();
+                let first = match it.next() {
+                    Some(n) => lower(ctx, n).await?,
+                    None => return Err(unsupported("empty Union")),
+                };
+                let mut builder = LogicalPlanBuilder::from(first);
+                for node in it {
+                    let plan = lower(ctx, node).await?;
+                    // `all` selects UNION ALL vs UNION (distinct). All inputs share
+                    // a schema (algebra invariant), so DataFusion's union accepts them.
+                    builder = if *all {
+                        builder.union(plan)?
+                    } else {
+                        builder.union_distinct(plan)?
+                    };
+                }
+                builder.build()
+            }
             LogicalNode::Values { .. } => Err(unsupported("Values")),
             LogicalNode::CteBind { .. } => Err(unsupported("CteBind")),
             LogicalNode::CteRef { .. } => Err(unsupported("CteRef")),
@@ -211,9 +232,10 @@ fn lower_expr(e: &RExpr) -> DFResult<Expr> {
                 inner.is_null()
             }
         }
-        RExpr::Cast { expr, ty } => {
-            Expr::Cast(Cast::new(Box::new(lower_expr(expr)?), proxima_to_arrow(ty)?))
-        }
+        RExpr::Cast { expr, ty } => Expr::Cast(Cast::new(
+            Box::new(lower_expr(expr)?),
+            proxima_to_arrow(ty)?,
+        )),
         RExpr::Between {
             expr,
             low,
@@ -245,9 +267,29 @@ fn lower_expr(e: &RExpr) -> DFResult<Expr> {
             None, // no custom ESCAPE
             *case_insensitive,
         )),
-        RExpr::Case { .. } => return Err(unsupported("Case")),
-        RExpr::Coalesce(_) => return Err(unsupported("Coalesce")),
-        RExpr::NullIf { .. } => return Err(unsupported("NullIf")),
+        RExpr::Case {
+            branches,
+            otherwise,
+        } => {
+            use datafusion::logical_expr::Case;
+            // Searched CASE (`CASE WHEN cond THEN result ...`) — operand is None.
+            let when_then = branches
+                .iter()
+                .map(|(c, r)| Ok((Box::new(lower_expr(c)?), Box::new(lower_expr(r)?))))
+                .collect::<DFResult<Vec<_>>>()?;
+            let else_expr = otherwise
+                .as_ref()
+                .map(|e| lower_expr(e).map(Box::new))
+                .transpose()?;
+            Expr::Case(Case::new(None, when_then, else_expr))
+        }
+        RExpr::Coalesce(args) => {
+            let lowered = args.iter().map(lower_expr).collect::<DFResult<Vec<_>>>()?;
+            datafusion::functions::core::expr_fn::coalesce(lowered)
+        }
+        RExpr::NullIf { left, right } => {
+            datafusion::functions::core::expr_fn::nullif(lower_expr(left)?, lower_expr(right)?)
+        }
         RExpr::FuncCall { name, .. } => return Err(unsupported(format!("function {name}"))),
     })
 }
@@ -548,6 +590,111 @@ mod tests {
         assert_eq!(total, 1); // only (a, 1)
     }
 
+    fn project_k() -> LogicalNode {
+        LogicalNode::Project {
+            input: Box::new(scan_t()),
+            outputs: vec![NamedExpr {
+                name: "k".to_string(),
+                expr: RExpr::Column(colref("k", 0, ProximaType::String)),
+            }],
+        }
+    }
+
+    async fn row_count(ctx: &SessionContext, node: &LogicalNode) -> usize {
+        let plan = lower_logical_node(ctx, node).await.unwrap();
+        let batches = ctx
+            .execute_logical_plan(plan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        batches.iter().map(|b| b.num_rows()).sum()
+    }
+
+    #[tokio::test]
+    async fn lowers_distinct() {
+        // SELECT DISTINCT k FROM t  →  t.k = {a,a,b}  →  {a,b} = 2 rows.
+        let ctx = ctx_with_t().await;
+        let node = LogicalNode::Distinct {
+            input: Box::new(project_k()),
+        };
+        assert_eq!(row_count(&ctx, &node).await, 2);
+    }
+
+    #[tokio::test]
+    async fn lowers_union_all_and_distinct() {
+        let ctx = ctx_with_t().await;
+        // (SELECT k FROM t) UNION ALL (SELECT k FROM t) → 3 + 3 = 6.
+        let union_all = LogicalNode::Union {
+            inputs: vec![project_k(), project_k()],
+            all: true,
+        };
+        assert_eq!(row_count(&ctx, &union_all).await, 6);
+        // …UNION (distinct) → {a,b} = 2.
+        let union_distinct = LogicalNode::Union {
+            inputs: vec![project_k(), project_k()],
+            all: false,
+        };
+        assert_eq!(row_count(&ctx, &union_distinct).await, 2);
+    }
+
+    #[tokio::test]
+    async fn lowers_case_coalesce_nullif() {
+        // SELECT
+        //   CASE WHEN x > 5 THEN 'big' ELSE 'small' END AS bucket,
+        //   COALESCE(NULLIF(k, 'a'), 'was_a')          AS c
+        // FROM t  — executes over all 3 rows; success proves the exprs lower.
+        let ctx = ctx_with_t().await;
+        let bucket = RExpr::Case {
+            branches: vec![(
+                RExpr::BinaryOp {
+                    op: RBinOp::Gt,
+                    left: Box::new(RExpr::Column(colref("x", 1, ProximaType::Float64))),
+                    right: Box::new(RExpr::Literal {
+                        value: ProximaValue::Float64(5.0),
+                        ty: ProximaType::Float64,
+                    }),
+                },
+                RExpr::Literal {
+                    value: ProximaValue::String("big".to_string()),
+                    ty: ProximaType::String,
+                },
+            )],
+            otherwise: Some(Box::new(RExpr::Literal {
+                value: ProximaValue::String("small".to_string()),
+                ty: ProximaType::String,
+            })),
+        };
+        let c = RExpr::Coalesce(vec![
+            RExpr::NullIf {
+                left: Box::new(RExpr::Column(colref("k", 0, ProximaType::String))),
+                right: Box::new(RExpr::Literal {
+                    value: ProximaValue::String("a".to_string()),
+                    ty: ProximaType::String,
+                }),
+            },
+            RExpr::Literal {
+                value: ProximaValue::String("was_a".to_string()),
+                ty: ProximaType::String,
+            },
+        ]);
+        let node = LogicalNode::Project {
+            input: Box::new(scan_t()),
+            outputs: vec![
+                NamedExpr {
+                    name: "bucket".to_string(),
+                    expr: bucket,
+                },
+                NamedExpr {
+                    name: "c".to_string(),
+                    expr: c,
+                },
+            ],
+        };
+        assert_eq!(row_count(&ctx, &node).await, 3);
+    }
+
     #[tokio::test]
     async fn lowers_aggregate_sort() {
         let ctx = ctx_with_t().await;
@@ -588,11 +735,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn distinct_is_unsupported_for_now() {
-        // (Inner/Left/Right/Full/Cross joins now lower; Distinct still falls back.)
+    async fn unsupported_shape_errors_so_caller_falls_back() {
+        // A still-unsupported expr (FuncCall) must make lowering error so the P1
+        // route keeps the `ctx.sql` fallback. (Joins/Distinct/Union/Case now lower.)
         let ctx = ctx_with_t().await;
-        let node = LogicalNode::Distinct {
+        let node = LogicalNode::Project {
             input: Box::new(scan_t()),
+            outputs: vec![NamedExpr {
+                name: "f".to_string(),
+                expr: RExpr::FuncCall {
+                    name: "some_udf".to_string(),
+                    args: vec![RExpr::Column(colref("k", 0, ProximaType::String))],
+                    return_ty: ProximaType::String,
+                },
+            }],
         };
         assert!(lower_logical_node(&ctx, &node).await.is_err());
     }
