@@ -29,6 +29,8 @@ cargo build                      # Debug (opt-level=0, fast compilation)
 cargo build --release            # Release (opt-level=3, full LTO)
 cargo build --profile release-server  # Optimized server build
 cargo check --all-targets        # Fast syntax check (no codegen)
+cargo check-fast                 # alias: --all-targets --jobs 3 (memory-safe)
+cargo check-lib                  # alias: --lib --jobs 3 (tightest type-check loop)
 
 # Run server
 cargo run --bin proximadb-server                  # Debug mode
@@ -41,6 +43,14 @@ cargo test --test integration    # tests/rust/mod.rs
 cargo test --test graph_integration_test  # Graph tests
 cargo test test_name             # Specific test by name
 cargo test -- --test-threads=1   # Sequential (for port-binding tests)
+
+# Fast iteration loop (recommended for inner edit-test cycle)
+make check-fast                  # type-check only, no codegen, no link
+make test-fast                   # nextest unit suite (parallel) — falls back to cargo
+make install-fast-tools          # one-shot: cargo-nextest + cargo-watch
+cargo nxlib                      # unit tests via nextest (profile=unit, 6 threads)
+cargo nxint                      # integration tests via nextest (sequential, 1 retry)
+cargo nx                         # all tests via nextest (balanced profile)
 
 # Quality
 cargo fmt                        # Format code
@@ -72,7 +82,9 @@ cargo run --bin proximadb-migrate  # Schema migration tool
 cargo run --bin ann-benchmarks     # ANN benchmark suite
 ```
 
-**Profile Strategy**: dev = test (opt-level=0) for 100% artifact reuse; dependencies (arrow/parquet) at opt-level=2 in dev; `release-server` profile for optimized server builds. Library crate produces both `rlib` and `cdylib` (cdylib for PyO3 embedded bindings). `build.rs` watches `proto/` and triggers proto regeneration via prost-build on changes.
+**Profile Strategy**: dev = test (opt-level=0, `debug = "line-tables-only"`) for 100% artifact reuse; dependencies (arrow/parquet) at opt-level=2 in dev with debug stripped; `release-server` profile for optimized server builds. `debug = "line-tables-only"` keeps file:line in panic backtraces but drops heavy DWARF — much faster incremental link, ~5-10× smaller artifacts. Switch back to `debug = true` in `[profile.dev]` only when stepping variables in lldb. Library crate defaults to `rlib` only; `cdylib` is gated behind the `pylib` feature (per ADR-006) so day-to-day `cargo check`/`cargo test` skip the PyO3 link step. `build.rs` watches `proto/` and triggers proto regeneration via prost-build on changes.
+
+**Build-speed config**: `.cargo/config.toml` caps `jobs = 3` (memory-safe on 10-core boxes — peak rustc per crate is ~2-6GB on this workspace) and forces `RUST_TEST_THREADS = "1"` so integration tests don't race ports. The fast-loop targets (`make test-fast`, `cargo nxlib`) bypass the latter — nextest has its own runner and ignores `RUST_TEST_THREADS`. Nextest profiles live in `.config/nextest.toml`: `default` (3 threads, balanced), `unit` (6 threads, `--lib` only), `integration` (1 thread + 1 retry, port-safe). Network/e2e tests are grouped into `serial-network` so the default profile still parallelizes unit tests.
 
 ### Test Organization
 
@@ -89,7 +101,8 @@ cargo run --bin ann-benchmarks     # ANN benchmark suite
 | `benches/` | **Benchmarks** | Performance benchmarks | `cargo bench` |
 
 **Test practices:**
-- Use `--test-threads=1` for tests that bind ports (network tests) to avoid race conditions
+- Use `--test-threads=1` for tests that bind ports (network tests) to avoid race conditions; the inner `--test-threads=` flag overrides the `RUST_TEST_THREADS=1` set in `.cargo/config.toml`
+- For the unit-test inner loop, prefer `make test-fast` / `cargo nxlib` (parallel via nextest, profile=unit) over `cargo test --lib` — the former bypasses the global sequential env
 - `RUST_LOG=debug` for debugging: `RUST_LOG=debug cargo test test_name -- --nocapture`
 - Clean test data between runs: `rm -rf /tmp/proximadb*`
 - CI feature flags: `test-quick` (unit only), `test-standard` (unit + integration), `test-full` (all categories)
@@ -294,6 +307,26 @@ Coverage threshold: 60% (cargo-tarpaulin). `dorny/paths-filter` runs targeted te
 **Common warnings** (not errors): "Collections found but no WAL entries" (normal pre-insert), "Storage engine registration warning" (expected at startup), "Port already in use" (use `lsof -i :5678` to find process).
 
 Test timeouts usually mean resource contention — use `--test-threads=1`.
+
+### Hot-branch / multi-session etiquette (IMPORTANT)
+
+This branch is worked on by multiple concurrent sessions/agents. The working tree
+often contains **another session's uncommitted, in-progress edits** — sometimes
+mid-refactor and not yet compiling (e.g. a changed function signature whose call
+sites aren't updated yet).
+
+- **Do NOT `git stash`, `git checkout`, or revert files you did not modify** to get
+  a clean build. Those are another session's changes; stashing/reverting them
+  disrupts that session's work. This applies even when their incomplete edit is the
+  only thing breaking `cargo check`/`cargo build`.
+- If your own change compiles in isolation but the **lib/build is red because of a
+  foreign file you didn't touch** (check the error's file path against your edits),
+  that is NOT your failure. **Wait for the owning session to fix it** — re-run the
+  build later — rather than working around it by mutating their files.
+- Commit only your own files with `git commit -o <your files>` (lands on HEAD
+  regardless of others' uncommitted work). Verify with `git show --stat HEAD`.
+- Leave existing `git stash` entries alone unless you created them this session — a
+  stash from a different base commit belongs to another session.
 
 ## Anchoring Artifacts (Source of Truth)
 
