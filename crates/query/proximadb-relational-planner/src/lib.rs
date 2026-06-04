@@ -863,13 +863,78 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
             kind,
             on,
             strategy,
-        } => PhysicalPlan::Join {
-            left: Box::new(push_predicates(*left, resolver)),
-            right: Box::new(push_predicates(*right, resolver)),
-            kind,
-            on,
-            strategy,
-        },
+        } => {
+            let left = push_predicates(*left, resolver);
+            let right = push_predicates(*right, resolver);
+            // ON-predicate pushdown: split the join condition's AND-conjuncts and
+            // push each single-side conjunct into the matching child scan. Unlike
+            // WHERE (which pushes to the PRESERVED side), an ON filter applies
+            // DURING the join, so a single-side conjunct on the NULL-SUPPLYING side
+            // can be pre-applied (matched rows unchanged; unmatched preserved rows
+            // still null-extend). Scoped to INNER (either side) + LEFT (right side)
+            // — RIGHT/FULL join execution is incomplete. Cross-side / unpushable
+            // conjuncts stay as the residual `on`; the strategy is recomputed from
+            // it (a non-equi residual can't ride on a Hash join, and dropping a
+            // non-equi single-side conjunct can upgrade NestedLoop → Hash).
+            let Some(on_pred) = on else {
+                return PhysicalPlan::Join {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    kind,
+                    on: None,
+                    strategy,
+                };
+            };
+            let left_width = left.output_schema().columns.len();
+            let mut left_bucket: Vec<Expr> = Vec::new();
+            let mut right_bucket: Vec<Expr> = Vec::new();
+            let mut residual: Vec<Expr> = Vec::new();
+            for conj in flatten_and(&on_pred).into_iter().cloned() {
+                let mut ords = Vec::new();
+                collect_column_ordinals(&conj, &mut ords);
+                if ords.is_empty() {
+                    residual.push(conj);
+                } else if ords.iter().all(|o| *o < left_width) && on_can_push_to_left(kind) {
+                    left_bucket.push(conj);
+                } else if ords.iter().all(|o| *o >= left_width) && on_can_push_to_right(kind) {
+                    right_bucket.push(shift_column_ordinals(conj, left_width));
+                } else {
+                    residual.push(conj);
+                }
+            }
+            let new_left = match combine_all(left_bucket) {
+                Some(p) => push_predicates(
+                    PhysicalPlan::Filter {
+                        input: Box::new(left),
+                        predicate: p,
+                    },
+                    resolver,
+                ),
+                None => left,
+            };
+            let new_right = match combine_all(right_bucket) {
+                Some(p) => push_predicates(
+                    PhysicalPlan::Filter {
+                        input: Box::new(right),
+                        predicate: p,
+                    },
+                    resolver,
+                ),
+                None => right,
+            };
+            let residual_on = combine_all(residual);
+            // HashJoin ignores `on` at runtime (equi-key match only); recompute the
+            // strategy from the residual so a non-equi residual routes to NestedLoop
+            // (and a now-pure-equi residual can upgrade to Hash).
+            let strategy = pick_join_strategy(kind, residual_on.as_ref());
+            PhysicalPlan::Join {
+                left: Box::new(new_left),
+                right: Box::new(new_right),
+                kind,
+                on: residual_on,
+                strategy,
+            }
+        }
         PhysicalPlan::Union { inputs, all } => PhysicalPlan::Union {
             inputs: inputs
                 .into_iter()
@@ -1163,6 +1228,20 @@ fn can_push_to_left(kind: JoinKind) -> bool {
 /// Anti push to neither side (conservative).
 fn can_push_to_right(kind: JoinKind) -> bool {
     matches!(kind, JoinKind::Inner | JoinKind::Cross | JoinKind::Right)
+}
+
+/// Side-pushability for an ON conjunct — the OPPOSITE direction from WHERE
+/// ([`can_push_to_left`]/[`can_push_to_right`]): an ON filter applies during the
+/// join, so a single-side conjunct on the NULL-SUPPLYING side may be pushed.
+/// Scoped to INNER (ON ≡ WHERE; either side) + LEFT (right is null-supplying);
+/// RIGHT/FULL/Semi/Anti are skipped (their join execution is incomplete /
+/// out of scope).
+fn on_can_push_to_left(kind: JoinKind) -> bool {
+    matches!(kind, JoinKind::Inner)
+}
+
+fn on_can_push_to_right(kind: JoinKind) -> bool {
+    matches!(kind, JoinKind::Inner | JoinKind::Left)
 }
 
 /// Fold a conjunct list back into a single AND-ed predicate (`None` if empty).
@@ -2233,6 +2312,151 @@ mod tests {
             ),
             "right (dimension) scan should become a Pk lookup"
         );
+    }
+
+    // --- Join ON-predicate pushdown ----------------------------------
+
+    /// A join with an ON predicate and no Filter above it.
+    fn join_with_on(kind: JoinKind, on: Expr) -> PhysicalPlan {
+        PhysicalPlan::Join {
+            left: Box::new(lower_to_physical(users_scan())),
+            right: Box::new(lower_to_physical(orders_scan())),
+            kind,
+            on: Some(on),
+            strategy: JoinStrategy::Auto,
+        }
+    }
+
+    /// The cross-side equi conjunct users.id(0) = orders.user_id(4).
+    fn equi_on() -> Expr {
+        Expr::bin(
+            BinaryOp::Eq,
+            col_at(0, "id", ProximaType::Int64),
+            col_at(4, "user_id", ProximaType::Int64),
+        )
+    }
+
+    #[test]
+    fn on_pushdown_inner_splits_both_sides_and_upgrades_to_hash() {
+        // ON id=user_id AND age(left,2)=1 AND total(right,5)=9 → age→left scan,
+        // total→right scan (rebased to 2); residual ON = id=user_id (pure equi),
+        // so the strategy upgrades NestedLoop → Hash.
+        let on = Expr::bin(
+            BinaryOp::And,
+            Expr::bin(
+                BinaryOp::And,
+                equi_on(),
+                Expr::bin(
+                    BinaryOp::Eq,
+                    col_at(2, "age", ProximaType::Int32),
+                    Expr::literal(ProximaValue::Int32(1)),
+                ),
+            ),
+            Expr::bin(
+                BinaryOp::Eq,
+                col_at(5, "total", ProximaType::Float64),
+                Expr::literal(ProximaValue::Float64(9.0)),
+            ),
+        );
+        let result = push_predicates(join_with_on(JoinKind::Inner, on), &cap_full(Vec::new()));
+        let PhysicalPlan::Join {
+            left,
+            right,
+            on,
+            strategy,
+            ..
+        } = result
+        else {
+            panic!("expected Join");
+        };
+        assert!(matches!(*left, PhysicalPlan::Scan { predicate: Some(_), .. }));
+        match *right {
+            PhysicalPlan::Scan {
+                predicate: Some(Expr::BinaryOp { left, .. }),
+                ..
+            } => match *left {
+                Expr::Column(c) => assert_eq!(c.ordinal, 2, "total rebased to right-local"),
+                other => panic!("expected column, got {other:?}"),
+            },
+            other => panic!("right scan should carry total: {other:?}"),
+        }
+        assert!(on.is_some(), "residual equi ON retained");
+        assert!(
+            matches!(strategy, JoinStrategy::Hash { .. }),
+            "pure-equi residual upgrades to Hash"
+        );
+    }
+
+    #[test]
+    fn on_pushdown_left_pushes_right_null_supplying_not_left_preserved() {
+        // LEFT: a right-side ON conjunct (null-supplying) IS pushed.
+        let on = Expr::bin(
+            BinaryOp::And,
+            equi_on(),
+            Expr::bin(
+                BinaryOp::Eq,
+                col_at(5, "total", ProximaType::Float64),
+                Expr::literal(ProximaValue::Float64(9.0)),
+            ),
+        );
+        let result = push_predicates(join_with_on(JoinKind::Left, on), &cap_full(Vec::new()));
+        let PhysicalPlan::Join { left, right, .. } = result else {
+            panic!("expected Join");
+        };
+        assert!(
+            matches!(*left, PhysicalPlan::Scan { predicate: None, .. }),
+            "preserved (left) scan untouched"
+        );
+        assert!(
+            matches!(*right, PhysicalPlan::Scan { predicate: Some(_), .. }),
+            "null-supplying (right) scan pre-filtered"
+        );
+
+        // LEFT: a left-side (preserved) ON conjunct must NOT be pushed.
+        let on2 = Expr::bin(
+            BinaryOp::And,
+            equi_on(),
+            Expr::bin(
+                BinaryOp::Eq,
+                col_at(2, "age", ProximaType::Int32),
+                Expr::literal(ProximaValue::Int32(1)),
+            ),
+        );
+        let result2 = push_predicates(join_with_on(JoinKind::Left, on2), &cap_full(Vec::new()));
+        let PhysicalPlan::Join { left, on, .. } = result2 else {
+            panic!("expected Join");
+        };
+        assert!(
+            matches!(*left, PhysicalPlan::Scan { predicate: None, .. }),
+            "preserved-side ON conjunct left in place, not pushed"
+        );
+        assert!(on.is_some(), "preserved-side conjunct stays in residual ON");
+    }
+
+    #[test]
+    fn on_pushdown_skips_right_and_full_joins() {
+        // RIGHT/FULL join execution is incomplete → ON-pushdown is a no-op: a
+        // right-side single conjunct is NOT pushed; both scans stay bare.
+        for kind in [JoinKind::Right, JoinKind::Full] {
+            let on = Expr::bin(
+                BinaryOp::And,
+                equi_on(),
+                Expr::bin(
+                    BinaryOp::Eq,
+                    col_at(5, "total", ProximaType::Float64),
+                    Expr::literal(ProximaValue::Float64(9.0)),
+                ),
+            );
+            let result = push_predicates(join_with_on(kind, on), &cap_full(Vec::new()));
+            let PhysicalPlan::Join { left, right, .. } = result else {
+                panic!("expected Join for {kind:?}");
+            };
+            assert!(
+                matches!(*left, PhysicalPlan::Scan { predicate: None, .. })
+                    && matches!(*right, PhysicalPlan::Scan { predicate: None, .. }),
+                "no ON pushdown for {kind:?}"
+            );
+        }
     }
 
     // --- Projection pushdown -----------------------------------------
