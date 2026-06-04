@@ -123,7 +123,7 @@ impl ProximaObjectStore {
     }
 
     /// Read a byte range of the object at `path` (the warehouse footer/row-group read path).
-    pub async fn get_range(&self, path: &Path, range: Range<usize>) -> Result<Bytes, StorageError> {
+    pub async fn get_range(&self, path: &Path, range: Range<u64>) -> Result<Bytes, StorageError> {
         self.store
             .get_range(&self.full(path), range)
             .await

@@ -25,6 +25,7 @@ pub mod id_index;
 pub mod metadata_collector;
 pub mod mmap_file;
 pub mod native_metadata;
+pub mod object_store_bridge;
 pub mod observability_cardinality;
 pub mod observability_partitioning;
 pub mod observability_rollups;

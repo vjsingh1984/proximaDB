@@ -26,6 +26,7 @@ futures.workspace = true
 memmap2 = "0.9"
 parking_lot.workspace = true
 parquet.workspace = true
+object_store.workspace = true
 tokio = { version = "1.37", features = ["sync", "rt", "time"] }
 proximadb-kernel.workspace = true
 proximadb-compression-types.workspace = true
