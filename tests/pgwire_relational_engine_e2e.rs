@@ -195,7 +195,8 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         ))
         .await
         .expect("CREATE emp");
-    for (id, dname) in [(1, "eng"), (2, "sales")] {
+    // dept 3 (hr) has no employee → unmatched right for RIGHT/FULL joins.
+    for (id, dname) in [(1, "eng"), (2, "sales"), (3, "hr")] {
         client
             .simple_query(&format!(
                 "INSERT INTO {dept} (id, dname) VALUES ({id}, '{dname}')"
@@ -203,7 +204,8 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
             .await
             .expect("INSERT dept");
     }
-    for (id, dept_id, ename) in [(10, 1, "ann"), (11, 1, "bob"), (12, 2, "cas")] {
+    // emp 13 (dan) has dept_id 99 (no such dept) → unmatched left for FULL joins.
+    for (id, dept_id, ename) in [(10, 1, "ann"), (11, 1, "bob"), (12, 2, "cas"), (13, 99, "dan")] {
         client
             .simple_query(&format!(
                 "INSERT INTO {emp} (id, dept_id, ename) VALUES ({id}, {dept_id}, '{ename}')"
@@ -357,6 +359,39 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         .into_iter()
         .collect::<BTreeSet<_>>(),
         "ON-side filter pushed into the dimension scan, result unchanged"
+    );
+
+    // (3e) RIGHT JOIN preserves the right (dept) side: dept 'hr' has no employee,
+    // so it's emitted with a NULL ename. Distinct dnames include hr (pre-fix RIGHT
+    // behaved like INNER and dropped it).
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename, dname FROM {emp} RIGHT JOIN {dept} ON {emp}.dept_id = {dept}.id"
+        ))
+        .await
+        .expect("SELECT right join");
+    assert_eq!(
+        col_set(&rows, "dname"),
+        set(&["eng", "sales", "hr"]),
+        "RIGHT join preserves unmatched dept rows (hr)"
+    );
+
+    // (3f) FULL JOIN preserves both sides: emp 'dan' (dept_id 99) has no dept and
+    // dept 'hr' has no employee. dan appears in the ename set (NULL dname) and hr
+    // appears in the dname set (NULL ename).
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename, dname FROM {emp} FULL JOIN {dept} ON {emp}.dept_id = {dept}.id"
+        ))
+        .await
+        .expect("SELECT full join");
+    assert!(
+        col_set(&rows, "ename").contains("dan"),
+        "FULL join emits unmatched left (dan)"
+    );
+    assert!(
+        col_set(&rows, "dname").contains("hr"),
+        "FULL join emits unmatched right (hr)"
     );
 
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
