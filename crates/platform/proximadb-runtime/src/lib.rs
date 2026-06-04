@@ -3,6 +3,7 @@
 //! This crate owns host/runtime policy that composes lower contract crates without
 //! pushing system inspection, tracing, or bootstrap behavior into foundation crates.
 
+pub mod batch_result;
 pub mod bm25_port;
 pub mod bootstrap_config;
 pub mod cluster_port;
@@ -16,6 +17,7 @@ pub mod hybrid_port;
 pub mod observability_port;
 pub mod port;
 pub mod proto_defaults;
+pub mod record_ops_port;
 pub mod resources;
 pub mod security_port;
 pub mod service_ports;
@@ -23,7 +25,9 @@ pub mod streaming_port;
 pub mod unified_query_port;
 
 // Re-exports
+pub use batch_result::{BatchOperationMetrics, BatchOperationResult, OperationMetrics};
 pub use bm25_port::{BM25Document, BM25IndexPort, BM25IndexResult};
+pub use record_ops_port::RecordOpsPort;
 pub use cluster_port::{ClusterHealthStatus, ClusterPort};
 pub use composition::{DIContainer, ServiceComposer};
 pub use document_port::DocumentPort;

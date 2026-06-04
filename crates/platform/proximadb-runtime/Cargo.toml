@@ -21,8 +21,10 @@ proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
 proximadb-hardware = { path = "../../foundation/proximadb-hardware" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
+proximadb-records = { path = "../../foundation/proximadb-records" }
 proximadb-config = { path = "../../foundation/proximadb-config" }
 proximadb-proto.workspace = true
+serde = { workspace = true, features = ["derive"] }
 num_cpus = "1.16"
 sysinfo = "0.30"
 thiserror.workspace = true

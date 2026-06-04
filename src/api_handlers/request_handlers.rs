@@ -3878,6 +3878,61 @@ pub struct SqlQueryResult {
 // `proximadb-api` hold an `Arc<dyn ApiHandlersPort>` and call through this seam,
 // so they never import root-crate concrete types directly.
 
+// TD-104 S3: bulk record operations port for the Arrow Flight ingest path.
+// Delegates to the existing `handle_record_*_for_tenant` business logic so the
+// Flight service can hold an `Arc<dyn RecordOpsPort>` instead of the concrete
+// `UnifiedHandlers`.
+#[async_trait::async_trait]
+impl proximadb_runtime::RecordOpsPort for UnifiedHandlers {
+    async fn insert_record_batch(
+        &self,
+        collection_id: &str,
+        records: Vec<proximadb_records::ProximaRecord>,
+        tenant_id: Option<&str>,
+    ) -> Result<proximadb_runtime::BatchOperationResult> {
+        self.handle_record_insert_batch_for_tenant(
+            RichRecordBatchRequest {
+                collection_id: collection_id.to_string(),
+                records,
+            },
+            tenant_id,
+        )
+        .await
+    }
+
+    async fn upsert_record_batch(
+        &self,
+        collection_id: &str,
+        records: Vec<proximadb_records::ProximaRecord>,
+        tenant_id: Option<&str>,
+    ) -> Result<proximadb_runtime::BatchOperationResult> {
+        self.handle_record_batch_for_tenant(
+            RichRecordBatchRequest {
+                collection_id: collection_id.to_string(),
+                records,
+            },
+            tenant_id,
+        )
+        .await
+    }
+
+    async fn delete_record_batch(
+        &self,
+        collection_id: &str,
+        record_ids: Vec<String>,
+        tenant_id: Option<&str>,
+    ) -> Result<proximadb_runtime::BatchOperationResult> {
+        self.handle_record_delete_batch_for_tenant(
+            RichRecordDeleteBatchRequest {
+                collection_id: collection_id.to_string(),
+                record_ids,
+            },
+            tenant_id,
+        )
+        .await
+    }
+}
+
 #[async_trait::async_trait]
 impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
     async fn handle_collection_operation_for_tenant(

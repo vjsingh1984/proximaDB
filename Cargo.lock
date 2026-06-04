@@ -7299,6 +7299,8 @@ dependencies = [
  "proximadb-hardware",
  "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-records",
+ "serde",
  "serde_json",
  "sysinfo",
  "thiserror 1.0.69",
