@@ -399,7 +399,8 @@ fn lower_table_with_joins(
     for j in &twj.joins {
         let (right, right_scope) = lower_table_factor(&j.relation, catalog)?;
         let kind = match &j.join_operator {
-            JoinOperator::Inner(_) => JoinKind::Inner,
+            // Bare `JOIN` (sqlparser `Join`) is semantically `INNER JOIN`.
+            JoinOperator::Inner(_) | JoinOperator::Join(_) => JoinKind::Inner,
             JoinOperator::LeftOuter(_) => JoinKind::Left,
             JoinOperator::RightOuter(_) => JoinKind::Right,
             JoinOperator::FullOuter(_) => JoinKind::Full,
@@ -416,6 +417,7 @@ fn lower_table_with_joins(
         let combined = scope.concat(&right_scope);
         let on = match &j.join_operator {
             JoinOperator::Inner(c)
+            | JoinOperator::Join(c)
             | JoinOperator::LeftOuter(c)
             | JoinOperator::RightOuter(c)
             | JoinOperator::FullOuter(c) => match c {
@@ -1329,6 +1331,28 @@ mod tests {
             },
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn select_unqualified_columns_across_bare_join() {
+        // Bare `JOIN` (no INNER keyword) must lower as INNER JOIN, and
+        // unqualified column refs resolve against the merged scope: `name` is
+        // unique to users (ordinal 1), `total` unique to orders (combined
+        // ordinal 3+2=5). Regression: bare `JOIN` was previously rejected as an
+        // unsupported join operator, forcing a fall-through to the legacy path.
+        let plan = lower("SELECT name, total FROM users JOIN orders ON users.id = orders.uid");
+        let LogicalNode::Project { outputs, .. } = plan else {
+            panic!("expected Project");
+        };
+        let ords: Vec<(String, usize)> = outputs
+            .iter()
+            .map(|o| match &o.expr {
+                Expr::Column(c) => (o.name.clone(), c.ordinal),
+                other => panic!("expected column, got {other:?}"),
+            })
+            .collect();
+        // users = [id@0, name@1, age@2]; orders = [oid@3, uid@4, total@5].
+        assert_eq!(ords, vec![("name".to_string(), 1), ("total".to_string(), 5)]);
     }
 
     #[test]
