@@ -1352,7 +1352,10 @@ mod tests {
             })
             .collect();
         // users = [id@0, name@1, age@2]; orders = [oid@3, uid@4, total@5].
-        assert_eq!(ords, vec![("name".to_string(), 1), ("total".to_string(), 5)]);
+        assert_eq!(
+            ords,
+            vec![("name".to_string(), 1), ("total".to_string(), 5)]
+        );
     }
 
     #[test]

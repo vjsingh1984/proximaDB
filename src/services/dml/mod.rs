@@ -659,16 +659,14 @@ impl DmlService {
         table_name: &str,
     ) -> Result<(CatalogTableSchema, Vec<Vec<ProximaValue>>)> {
         let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
-        let all_columns: Vec<String> =
-            table_schema.columns.iter().map(|c| c.name.clone()).collect();
+        let all_columns: Vec<String> = table_schema
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
         let selected_columns = Self::resolve_select_projection(&table_schema, &all_columns)?;
         let (_access_path, records) = self
-            .select_table_records_with_resolved_predicates(
-                &table_schema,
-                &table_id_name,
-                None,
-                &[],
-            )
+            .select_table_records_with_resolved_predicates(&table_schema, &table_id_name, None, &[])
             .await?;
         let rows = Self::project_select_rows(&records, &table_schema, &selected_columns)?;
         Ok((table_schema, rows))
