@@ -29,7 +29,7 @@ use crate::storage::traits::UnifiedStorageFormat;
 use proximadb_document::{DOCUMENT_COLLECTION_PROP, DOCUMENT_RECORD_LABEL, DocumentRecordKey};
 #[cfg(feature = "canonical-document-store")]
 use proximadb_records::{
-    ProximaTree, RecordKey, RecordRecoveryOperation, RecordScanOptions, RecordStorage,
+    RecordKey, RecordRecoveryOperation, RecordScanOptions, RecordStorage,
     replay_record_recovery_operations,
 };
 
@@ -39,15 +39,15 @@ use super::aggregation_extensions::LookupFetcher;
 use super::canonical_adapter::legacy_document_to_proxima_record;
 use super::canonical_adapter::proxima_record_to_legacy_document;
 use super::canonical_adapter::{proxima_tree_to_sql_object, sql_value_to_tree_node};
-use proximadb_data_model::ProximaValue;
-use proximadb_records::conversions::sql_value_to_proxima;
-use proximadb_records::{ProximaTreeNode, tree_get};
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::{
     DocumentCollection, DocumentIngestResult, DocumentQueryParams, DocumentQueryResult,
     DocumentRecord, FlushToStorageResult,
 };
+use proximadb_data_model::ProximaValue;
+use proximadb_records::conversions::sql_value_to_proxima;
+use proximadb_records::{ProximaTree, ProximaTreeNode, tree_get};
 
 /// Document service for CRUD operations
 pub struct DocumentService {
@@ -1216,7 +1216,12 @@ impl DocumentService {
     }
 
     /// Set a node at a dotted path, creating intermediate objects as needed.
-    fn set_path_value(&self, doc: &mut ProximaTree, path: &str, node: ProximaTreeNode) -> Result<()> {
+    fn set_path_value(
+        &self,
+        doc: &mut ProximaTree,
+        path: &str,
+        node: ProximaTreeNode,
+    ) -> Result<()> {
         let parts = Self::path_segments(path)?;
         let (last, parents) = parts.split_last().expect("non-empty path");
 
@@ -1305,7 +1310,12 @@ impl DocumentService {
     }
 
     /// Pull (remove) matching values from an array leaf at a dotted path.
-    fn pull_from_array(&self, doc: &mut ProximaTree, path: &str, value: &ProximaValue) -> Result<()> {
+    fn pull_from_array(
+        &self,
+        doc: &mut ProximaTree,
+        path: &str,
+        value: &ProximaValue,
+    ) -> Result<()> {
         let parts = Self::path_segments(path)?;
         let (last, parents) = parts.split_last().expect("non-empty path");
 
@@ -1773,8 +1783,7 @@ impl DocumentService {
 
         // Output edge: lower the canonical working set back to the proto row shape
         // for the public `AggregateResult` contract.
-        let results: Vec<SqlObject> =
-            working_set.iter().map(proxima_tree_to_sql_object).collect();
+        let results: Vec<SqlObject> = working_set.iter().map(proxima_tree_to_sql_object).collect();
 
         Ok(crate::storage::document::AggregateResult {
             results,
@@ -2584,7 +2593,10 @@ mod tests {
         match fetched.props.get("email") {
             Some(proximadb_records::ProximaTreeNode::Value(
                 proximadb_data_model::ProximaValue::String(s),
-            )) => assert_eq!(s, "alice@newdomain.com", "props must carry the updated value"),
+            )) => assert_eq!(
+                s, "alice@newdomain.com",
+                "props must carry the updated value"
+            ),
             other => panic!("expected updated email in props, got {other:?}"),
         }
     }
