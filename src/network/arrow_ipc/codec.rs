@@ -844,18 +844,54 @@ impl ArrowProtoCodec {
             ));
         }
 
-        let schema = Self::create_vector_schema(dimension);
+        // Search responses omit the vector payload unless the request set
+        // `include_fields.vector = true`, so `result.vector` is commonly empty.
+        // The shared write schema marks `vector` non-nullable, but a result row
+        // with no vector must serialize as a NULL list — otherwise the
+        // `FixedSizeList` child buffer (which must hold exactly `len*dimension`
+        // floats) underflows and `RecordBatch::try_new` fails, crashing the
+        // Flight DoGet search *response*. Derive a search-specific schema with a
+        // nullable `vector` field and emit per-row validity.
+        let schema = {
+            let base = Self::create_vector_schema(dimension);
+            let fields: Vec<Field> = base
+                .fields()
+                .iter()
+                .map(|f| {
+                    if f.name() == "vector" {
+                        f.as_ref().clone().with_nullable(true)
+                    } else {
+                        f.as_ref().clone()
+                    }
+                })
+                .collect();
+            Arc::new(Schema::new(fields))
+        };
 
         let id_array = StringArray::from_iter_values(results.iter().map(|r| r.id.as_str()));
 
         let mut vector_values = Vec::with_capacity(results.len() * dimension);
+        let mut vector_present = Vec::with_capacity(results.len());
         for result in results {
-            vector_values.extend_from_slice(&result.vector);
+            if result.vector.len() == dimension {
+                vector_values.extend_from_slice(&result.vector);
+                vector_present.push(true);
+            } else {
+                // No (or mismatched) vector for this row: emit a NULL list but
+                // still reserve `dimension` backing slots to keep the child
+                // buffer length at `len*dimension`.
+                vector_values.extend(std::iter::repeat_n(0.0f32, dimension));
+                vector_present.push(false);
+            }
         }
         let flat_array = Arc::new(Float32Array::from(vector_values)) as ArrayRef;
         let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
+        let vector_nulls = vector_present
+            .iter()
+            .any(|present| !present)
+            .then(|| arrow_buffer::NullBuffer::from(vector_present));
         let vector_array =
-            FixedSizeListArray::new(vector_field, dimension as i32, flat_array, None);
+            FixedSizeListArray::new(vector_field, dimension as i32, flat_array, vector_nulls);
 
         let mut meta_keys: Vec<Option<&str>> = Vec::new();
         let mut meta_vals: Vec<Option<String>> = Vec::new();
@@ -1181,6 +1217,64 @@ mod tests {
         assert_eq!(schema.fields().len(), 5);
         assert_eq!(schema.field(0).name(), "id");
         assert_eq!(schema.field(1).name(), "vector");
+    }
+
+    /// Regression: a search response with NO vector payload (the common case
+    /// when `include_fields.vector` is unset) must still encode — the vector
+    /// column becomes an all-null FixedSizeList rather than underflowing the
+    /// child buffer and failing `RecordBatch::try_new` (which crashed Flight
+    /// DoGet search responses).
+    #[test]
+    fn test_search_results_to_batch_without_vectors_builds_null_column() {
+        use crate::proto::proximadb_v1::SearchVectorRecord;
+        let results = vec![
+            SearchVectorRecord {
+                id: "a".to_string(),
+                score: 1.0,
+                ..Default::default()
+            },
+            SearchVectorRecord {
+                id: "b".to_string(),
+                score: 0.5,
+                ..Default::default()
+            },
+        ];
+        let batch = ArrowProtoCodec::search_results_to_batch(&results, 384)
+            .expect("must encode search results that carry no vectors");
+        assert_eq!(batch.num_rows(), 2);
+        let vector_col = batch.column_by_name("vector").expect("vector column");
+        assert_eq!(vector_col.null_count(), 2, "both rows have a null vector");
+    }
+
+    /// A search response carrying vectors on some rows but not others must
+    /// preserve the present vectors and null only the absent rows.
+    #[test]
+    fn test_search_results_to_batch_mixed_vectors() {
+        use crate::proto::proximadb_v1::SearchVectorRecord;
+        let results = vec![
+            SearchVectorRecord {
+                id: "a".to_string(),
+                score: 1.0,
+                vector: vec![1.0, 2.0, 3.0],
+                ..Default::default()
+            },
+            SearchVectorRecord {
+                id: "b".to_string(),
+                score: 0.5,
+                ..Default::default()
+            },
+        ];
+        let batch = ArrowProtoCodec::search_results_to_batch(&results, 3)
+            .expect("must encode mixed-vector search results");
+        assert_eq!(batch.num_rows(), 2);
+        let vector_col = batch.column_by_name("vector").expect("vector column");
+        assert_eq!(vector_col.null_count(), 1, "only the second row is null");
+        let lists = vector_col
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .expect("FixedSizeList");
+        assert!(lists.is_valid(0));
+        assert!(!lists.is_valid(1));
     }
 
     #[test]
