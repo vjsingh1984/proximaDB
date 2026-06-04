@@ -7,23 +7,25 @@
 //! to ONE algebra, and the router picks the physical engine — Volcano runs the `LogicalNode`
 //! directly, DataFusion runs the lowered `LogicalPlan`.
 //!
-//! ## Scope (first slice)
-//! Covers the OLAP shapes the P1 route targets over a single table chain:
-//! `Scan / Filter / Project / Aggregate / Sort / Limit`, with `Expr` translation for
-//! `Column / Literal / BinaryOp / UnaryOp / IsNull`. Anything else (Join, Distinct, Union,
-//! Values, CTEs; `Cast/Between/In/Like/Case/Coalesce/NullIf/FuncCall`; `StringAgg/Custom`
-//! aggregates) returns [`DataFusionError::NotImplemented`] so the caller keeps the existing
+//! ## Scope
+//! Covers the OLAP shapes the P1 route targets:
+//! `Scan / Filter / Project / Aggregate / Sort / Limit` and
+//! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`), with `Expr`
+//! translation for `Column / Literal / BinaryOp / UnaryOp / IsNull`. Anything else
+//! (Semi/Anti join, Distinct, Union, Values, CTEs;
+//! `Cast/Between/In/Like/Case/Coalesce/NullIf/FuncCall`; `StringAgg/Custom` aggregates)
+//! returns [`DataFusionError::NotImplemented`] so the caller keeps the existing
 //! `ctx.sql(...)` path for those — additive, never wrong.
 
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::{
-    Expr, LogicalPlan, LogicalPlanBuilder, Operator, binary_expr, col, lit,
+    Expr, JoinType, LogicalPlan, LogicalPlanBuilder, Operator, binary_expr, col, lit,
 };
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 
 use proximadb_data_model::ProximaValue;
-use proximadb_relational_algebra::{AggregateExpr, LogicalNode, NamedAggregate};
+use proximadb_relational_algebra::{AggregateExpr, JoinKind, LogicalNode, NamedAggregate};
 use proximadb_relational_types::{BinaryOp as RBinOp, Expr as RExpr, UnaryOp as RUnOp};
 
 fn unsupported(what: impl Into<String>) -> DataFusionError {
@@ -103,7 +105,44 @@ fn lower<'a>(
                     .limit(*offset as usize, fetch)?
                     .build()
             }
-            LogicalNode::Join { .. } => Err(unsupported("Join (use ctx.sql path)")),
+            LogicalNode::Join {
+                left,
+                right,
+                kind,
+                on,
+                strategy: _, // physical hint; DataFusion picks its own join algorithm
+            } => {
+                let left_plan = lower(ctx, left).await?;
+                let right_plan = lower(ctx, right).await?;
+                let join_type = match kind {
+                    JoinKind::Inner => JoinType::Inner,
+                    JoinKind::Left => JoinType::Left,
+                    JoinKind::Right => JoinType::Right,
+                    JoinKind::Full => JoinType::Full,
+                    // CROSS JOIN carries no ON predicate.
+                    JoinKind::Cross => {
+                        return LogicalPlanBuilder::from(left_plan)
+                            .cross_join(right_plan)?
+                            .build();
+                    }
+                    // Semi/Anti come from IN / NOT IN / EXISTS subqueries — leave to
+                    // the `ctx.sql` fallback until subquery lowering exists.
+                    JoinKind::Semi | JoinKind::Anti => {
+                        return Err(unsupported("Semi/Anti join (use ctx.sql path)"));
+                    }
+                };
+                match on {
+                    // A join condition the lowering can't translate errors out → the
+                    // caller falls back to `ctx.sql` (additive, never wrong).
+                    Some(predicate) => LogicalPlanBuilder::from(left_plan)
+                        .join_on(right_plan, join_type, [lower_expr(predicate)?])?
+                        .build(),
+                    // No ON predicate on an inner-family join == a cross join.
+                    None => LogicalPlanBuilder::from(left_plan)
+                        .cross_join(right_plan)?
+                        .build(),
+                }
+            }
             LogicalNode::Distinct { .. } => Err(unsupported("Distinct")),
             LogicalNode::Union { .. } => Err(unsupported("Union")),
             LogicalNode::Values { .. } => Err(unsupported("Values")),
@@ -228,7 +267,9 @@ mod tests {
     use arrow_schema::{DataType, Field, Schema};
     use datafusion::datasource::MemTable;
     use proximadb_data_model::ProximaType;
-    use proximadb_relational_algebra::{LogicalNode, NamedExpr, SortKey, TableId};
+    use proximadb_relational_algebra::{
+        JoinKind, JoinStrategy, LogicalNode, NamedExpr, SortKey, TableId,
+    };
     use proximadb_relational_types::{ColumnInfo, ColumnRef, RelationalSchema};
     use std::sync::Arc;
 
@@ -306,6 +347,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lowers_inner_join_on() {
+        // t(k,x) ⋈ u(j,y) ON k = j  (distinct join-key names avoid ambiguity).
+        let ctx = SessionContext::new();
+        let t_schema = Arc::new(Schema::new(vec![
+            Field::new("k", DataType::Utf8, false),
+            Field::new("x", DataType::Float64, false),
+        ]));
+        let t_batch = RecordBatch::try_new(
+            t_schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["a", "a", "b"])),
+                Arc::new(Float64Array::from(vec![1.0, 3.0, 10.0])),
+            ],
+        )
+        .unwrap();
+        ctx.register_table(
+            "t",
+            Arc::new(MemTable::try_new(t_schema, vec![vec![t_batch]]).unwrap()),
+        )
+        .unwrap();
+        let u_schema = Arc::new(Schema::new(vec![
+            Field::new("j", DataType::Utf8, false),
+            Field::new("y", DataType::Float64, false),
+        ]));
+        let u_batch = RecordBatch::try_new(
+            u_schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["a", "b", "b"])),
+                Arc::new(Float64Array::from(vec![100.0, 200.0, 300.0])),
+            ],
+        )
+        .unwrap();
+        ctx.register_table(
+            "u",
+            Arc::new(MemTable::try_new(u_schema, vec![vec![u_batch]]).unwrap()),
+        )
+        .unwrap();
+
+        let scan_u = LogicalNode::Scan {
+            table: TableId::new("u"),
+            table_schema: RelationalSchema::new(vec![
+                ColumnInfo::new("j", ProximaType::String, false),
+                ColumnInfo::new("y", ProximaType::Float64, false),
+            ]),
+            projected_columns: None,
+            predicate: None,
+        };
+        let node = LogicalNode::Join {
+            left: Box::new(scan_t()),
+            right: Box::new(scan_u),
+            kind: JoinKind::Inner,
+            on: Some(RExpr::BinaryOp {
+                op: RBinOp::Eq,
+                left: Box::new(RExpr::Column(colref("k", 0, ProximaType::String))),
+                right: Box::new(RExpr::Column(colref("j", 0, ProximaType::String))),
+            }),
+            strategy: JoinStrategy::Auto,
+        };
+        let plan = lower_logical_node(&ctx, &node).await.unwrap();
+        let batches = ctx
+            .execute_logical_plan(plan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+        // a⋈a (t has 2 a-rows × u has 1 a-row = 2) + b⋈b (1 × 2 = 2) = 4.
+        assert_eq!(total, 4);
+    }
+
+    #[tokio::test]
     async fn lowers_aggregate_sort() {
         let ctx = ctx_with_t().await;
         // SELECT k, sum(x) AS s FROM t GROUP BY k ORDER BY k
@@ -345,7 +458,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn join_is_unsupported_for_now() {
+    async fn distinct_is_unsupported_for_now() {
+        // (Inner/Left/Right/Full/Cross joins now lower; Distinct still falls back.)
         let ctx = ctx_with_t().await;
         let node = LogicalNode::Distinct {
             input: Box::new(scan_t()),
