@@ -300,6 +300,31 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "INNER JOIN emp×dept"
     );
 
+    // (3b) Join-predicate pushdown: WHERE on the dimension (dept) is pushed into
+    // dept's scan (PK → point lookup), then joined → only eng employees.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename, dname FROM {emp} JOIN {dept} ON {emp}.dept_id = {dept}.id WHERE {dept}.id = 1"
+        ))
+        .await
+        .expect("SELECT join + dimension PK filter");
+    assert_eq!(
+        pair_set(&rows, "ename", "dname"),
+        [
+            ("ann".to_string(), "eng".to_string()),
+            ("bob".to_string(), "eng".to_string()),
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>(),
+        "dimension PK filter pushed through the join"
+    );
+
+    // NOTE: the LEFT-join right-side-filter correctness guard lives at the planner
+    // unit level (`join_pushdown_left_join_preserves_right_filter_above`). An e2e
+    // LEFT JOIN over real data currently falls through to the legacy path
+    // (a pre-existing PATH B lowering gap, unrelated to predicate pushdown), so it
+    // can't be exercised end-to-end here — tracked as a follow-up.
+
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
     // (the gate keeps it on the hardened legacy path, not PATH B).
     let rows = client
