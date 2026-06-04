@@ -7,19 +7,39 @@
 //! implementation delegates to `VectorOps` as a compatibility adapter until the
 //! WAL/storage spine exposes a direct table-record writer.
 
-use std::sync::Arc;
+use std::{
+    fs,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Result, anyhow};
+use arrow_array::{
+    Array, ArrayRef, BooleanArray, Date32Array, FixedSizeBinaryArray, Float32Array, Float64Array,
+    Int8Array, Int16Array, Int32Array, Int64Array, LargeStringArray, RecordBatch, StringArray,
+    UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+};
+use arrow_schema::Schema as ArrowSchema;
 use async_trait::async_trait;
+use futures::StreamExt;
+use proximadb_block_format::col_id;
+use proximadb_block_format::{BlockCompression, BlockMode};
 use proximadb_catalog::{
-    CatalogPhysicalFormat, CatalogStorageSpecialization, CatalogTableSchema, CatalogWorkloadProfile,
+    CatalogPhysicalFormat, CatalogStorageLayout, CatalogStorageSpecialization, CatalogTableSchema,
+    CatalogWorkloadProfile,
 };
 use proximadb_records::{
-    ProximaRecord, ProximaTreeNode, RecordKey, RecordScanOptions, RecordScanPredicate,
-    RecordStorage,
+    EmbeddingCell, EmbeddingValues, ProximaRecord, ProximaTreeNode, ProximaValue, RecordKey,
+    RecordScanOptions, RecordScanPredicate, RecordStorage,
+};
+use proximadb_storage_common::object_store_bridge::{
+    BridgeObjectPath as ObjectPath, BridgeObjectStore, ObjectStoreBridge,
 };
 use proximadb_storage_common::{
     CanonicalOpenTableFormat, CanonicalOperation, CanonicalWalEntry, ProjectionDirective,
+    pax_block::{
+        PAX_SEGMENT_EXT, PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate,
+    },
 };
 
 use crate::services::operations::VectorOps;
@@ -116,9 +136,10 @@ pub trait TableWalAppender: Send + Sync {
 /// Physical writer route selected from xCatalog table metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableRecordStoreRoute {
-    /// Modern canonical record/table writer. This is the target for relational,
-    /// PAX, OLTP, OLAP, HTAP, document, graph, and observability records.
-    CanonicalRecordStore,
+    /// Modern analytics target: Parquet files managed by Iceberg over Object Storage.
+    ParquetIcebergStorage,
+    /// Specialized target: PAX block format for high-performance Vector Search / ANN.
+    PaxVectorStorage,
     /// Temporary compatibility route through the old vector operations facade.
     LegacyVectorCompatibility,
 }
@@ -127,12 +148,19 @@ impl TableRecordStoreRoute {
     /// Select a writer route from cataloged workload and storage metadata.
     pub fn for_schema(schema: &CatalogTableSchema) -> Self {
         match (schema.workload_profile, schema.storage_specialization) {
-            (_, CatalogStorageSpecialization::VectorAnn)
-            | (CatalogWorkloadProfile::Vector, _)
-            | (_, CatalogStorageSpecialization::LsmWriteOptimized) => {
+            (_, CatalogStorageSpecialization::VectorAnn) => {
+                // Vector-specialized storage implies we want the high-performance PAX layout
+                Self::PaxVectorStorage
+            }
+            (CatalogWorkloadProfile::Vector, _) => {
+                // Legacy fallback for vector workloads that haven't migrated to the new specialized flag
                 Self::LegacyVectorCompatibility
             }
-            _ => Self::CanonicalRecordStore,
+            (_, CatalogStorageSpecialization::LsmWriteOptimized) => Self::LegacyVectorCompatibility,
+            _ => {
+                // Default for relational, HTAP, and OLAP workloads
+                Self::ParquetIcebergStorage
+            }
         }
     }
 }
@@ -184,6 +212,307 @@ impl TableRecordWriteResult {
             error_code: result.error_code,
         }
     }
+}
+
+fn record_id(record: &ProximaRecord) -> String {
+    if record.oid.is_empty() {
+        record.local_id.clone().unwrap_or_default()
+    } else {
+        record.oid.clone()
+    }
+}
+
+fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> {
+    schema
+        .storage_layouts
+        .iter()
+        .rev()
+        .find(|layout| layout.name == "primary")
+        .or_else(|| schema.storage_layouts.first())
+}
+
+fn normalize_object_path_prefix(location: &str) -> String {
+    let without_scheme = location
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(location);
+    without_scheme.trim_matches('/').to_string()
+}
+
+fn sanitize_object_path_segment(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+    if sanitized.is_empty() {
+        "table".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn object_store_write_base_path(schema: &CatalogTableSchema) -> String {
+    primary_layout(schema)
+        .and_then(|layout| match layout.physical_format {
+            CatalogPhysicalFormat::Iceberg | CatalogPhysicalFormat::Parquet => {
+                layout.location.as_deref()
+            }
+            _ => None,
+        })
+        .or(schema.location.as_deref())
+        .map(normalize_object_path_prefix)
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| format!("tables/{}", sanitize_object_path_segment(&schema.name)))
+}
+
+fn mutation_kind_label(kind: TableRecordMutationKind) -> &'static str {
+    match kind {
+        TableRecordMutationKind::Insert => "insert",
+        TableRecordMutationKind::Upsert => "upsert",
+        TableRecordMutationKind::Update => "update",
+        TableRecordMutationKind::Delete => "delete",
+        TableRecordMutationKind::OverwriteSnapshot => "overwrite",
+        TableRecordMutationKind::ReplacePartitions => "replace-partitions",
+        TableRecordMutationKind::Merge => "merge",
+    }
+}
+
+fn object_store_parquet_mutation_path(
+    schema: &CatalogTableSchema,
+    kind: TableRecordMutationKind,
+) -> ObjectPath {
+    let base = object_store_write_base_path(schema);
+    let table = sanitize_object_path_segment(&schema.name);
+    let sequence = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    ObjectPath::from(format!(
+        "{base}/data/{table}-{}-{sequence}.parquet",
+        mutation_kind_label(kind)
+    ))
+}
+
+fn object_store_pax_segment_path(
+    schema: &CatalogTableSchema,
+    kind: TableRecordMutationKind,
+) -> ObjectPath {
+    let base = object_store_write_base_path(schema);
+    let table = sanitize_object_path_segment(&schema.name);
+    let sequence = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    ObjectPath::from(format!(
+        "{base}/segments/{table}-{}-{sequence}{PAX_SEGMENT_EXT}",
+        mutation_kind_label(kind)
+    ))
+}
+
+fn temp_pax_segment_path(
+    schema: &CatalogTableSchema,
+    kind: TableRecordMutationKind,
+) -> std::path::PathBuf {
+    let table = sanitize_object_path_segment(&schema.name);
+    let sequence = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir()
+        .join("proximadb-object-store-vector")
+        .join(format!(
+            "{table}-{}-{sequence}{PAX_SEGMENT_EXT}",
+            mutation_kind_label(kind)
+        ))
+}
+
+fn embedding_count_for_records(records: &[ProximaRecord]) -> usize {
+    records
+        .iter()
+        .map(|record| record.embeddings.len())
+        .max()
+        .unwrap_or(0)
+}
+
+/// Per-`RecordBatch` row cap for object-store read-back. The bridge materializes
+/// whole objects in memory, so this only bounds the Arrow batch chunking.
+const OBJECT_STORE_READ_BATCH_SIZE: usize = 4096;
+
+/// Effective primary-key column names, preferring the relational-capabilities
+/// declaration and falling back to the legacy `primary_key` list.
+fn effective_primary_key(schema: &CatalogTableSchema) -> Vec<&str> {
+    if !schema.relational_capabilities.primary_key.is_empty() {
+        schema
+            .relational_capabilities
+            .primary_key
+            .iter()
+            .map(String::as_str)
+            .collect()
+    } else {
+        schema.primary_key.iter().map(String::as_str).collect()
+    }
+}
+
+/// Stringify a scalar [`ProximaValue`] for primary-key reconstruction. Complex
+/// values (which cannot be a PK column) yield `None`.
+fn proxima_value_to_key_string(value: &ProximaValue) -> Option<String> {
+    Some(match value {
+        ProximaValue::String(s) | ProximaValue::Symbol(s) | ProximaValue::Decimal(s) => s.clone(),
+        ProximaValue::Boolean(b) => b.to_string(),
+        ProximaValue::Int8(x) => x.to_string(),
+        ProximaValue::Int16(x) => x.to_string(),
+        ProximaValue::Int32(x) => x.to_string(),
+        ProximaValue::Int64(x) => x.to_string(),
+        ProximaValue::UInt8(x) => x.to_string(),
+        ProximaValue::UInt16(x) => x.to_string(),
+        ProximaValue::UInt32(x) => x.to_string(),
+        ProximaValue::UInt64(x) => x.to_string(),
+        ProximaValue::Float32(x) => x.to_string(),
+        ProximaValue::Float64(x) => x.to_string(),
+        _ => return None,
+    })
+}
+
+/// Recover the logical record key (`oid`) from a read-back record's `props`.
+///
+/// The schema-less `write_records_to_parquet` path does not persist `oid`
+/// separately — it is the cataloged primary-key column value(s) in `props`
+/// (matching `CatalogRow::primary_key_string`). Composite keys join with `::`.
+/// Returns an empty string when the PK is absent/non-scalar (no fabricated key).
+fn reconstruct_oid(record: &ProximaRecord, schema: &CatalogTableSchema) -> String {
+    let pk = effective_primary_key(schema);
+    if pk.is_empty() {
+        return String::new();
+    }
+    let mut parts = Vec::with_capacity(pk.len());
+    for col in &pk {
+        match proximadb_records::tree_get(&record.props, col).and_then(proxima_value_to_key_string)
+        {
+            Some(part) => parts.push(part),
+            None => return String::new(),
+        }
+    }
+    parts.join("::")
+}
+
+/// Map a single Arrow cell to a [`ProximaValue`]; `null`/unsupported → `None`
+/// (the key is simply omitted from `props`, matching the write-side mapping).
+fn arrow_cell_to_proxima_value(array: &ArrayRef, row: usize) -> Option<ProximaValue> {
+    if array.is_null(row) {
+        return None;
+    }
+    let any = array.as_any();
+    if let Some(a) = any.downcast_ref::<StringArray>() {
+        Some(ProximaValue::String(a.value(row).to_string()))
+    } else if let Some(a) = any.downcast_ref::<LargeStringArray>() {
+        Some(ProximaValue::String(a.value(row).to_string()))
+    } else if let Some(a) = any.downcast_ref::<BooleanArray>() {
+        Some(ProximaValue::Boolean(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Int64Array>() {
+        Some(ProximaValue::Int64(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Int32Array>() {
+        Some(ProximaValue::Int32(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Int16Array>() {
+        Some(ProximaValue::Int16(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Int8Array>() {
+        Some(ProximaValue::Int8(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<UInt64Array>() {
+        Some(ProximaValue::UInt64(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<UInt32Array>() {
+        Some(ProximaValue::UInt32(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<UInt16Array>() {
+        Some(ProximaValue::UInt16(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<UInt8Array>() {
+        Some(ProximaValue::UInt8(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Float64Array>() {
+        Some(ProximaValue::Float64(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Float32Array>() {
+        Some(ProximaValue::Float32(a.value(row)))
+    } else {
+        any.downcast_ref::<Date32Array>()
+            .map(|a| ProximaValue::Date(a.value(row)))
+    }
+}
+
+/// Reverse of `proxima_records_to_record_batch`: turn one Arrow [`RecordBatch`]
+/// back into canonical [`ProximaRecord`]s. Scalar columns become `props`; a
+/// `FixedSizeBinary` column is decoded as the little-endian fp32 dense vector
+/// (the layout `proxima_arrow` writes for [`ProximaDataType::Vector`]).
+fn record_batch_to_records(batch: &RecordBatch, schema: &CatalogTableSchema) -> Vec<ProximaRecord> {
+    let n = batch.num_rows();
+    let mut out: Vec<ProximaRecord> = (0..n).map(|_| ProximaRecord::default()).collect();
+    let arrow_schema = batch.schema();
+
+    for (col_idx, field) in arrow_schema.fields().iter().enumerate() {
+        let array = batch.column(col_idx);
+        if let Some(fsb) = array.as_any().downcast_ref::<FixedSizeBinaryArray>() {
+            for (row, record) in out.iter_mut().enumerate() {
+                if fsb.is_null(row) {
+                    continue;
+                }
+                let bytes = fsb.value(row);
+                let values: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                let dim = values.len() as u32;
+                record.embeddings.push(EmbeddingCell {
+                    values: EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+            }
+            continue;
+        }
+        let name = field.name();
+        for (row, record) in out.iter_mut().enumerate() {
+            if let Some(value) = arrow_cell_to_proxima_value(array, row) {
+                record
+                    .props
+                    .insert(name.clone(), ProximaTreeNode::Value(value));
+            }
+        }
+    }
+
+    for record in &mut out {
+        record.oid = reconstruct_oid(record, schema);
+        record.variation_id = Some(schema.name.clone());
+    }
+    out
+}
+
+/// List object keys under `prefix` via the bridge's underlying store, keeping
+/// only those that end with `suffix` (e.g. `.parquet` / `.pax`).
+///
+/// NOTE: listing goes through the raw `inner_store()` (the bridge trait exposes
+/// no base-aware list), so the returned keys are correct for stores whose base
+/// prefix is empty — the `memory://` / `InMemory` and bucket-root deployments.
+/// A base-aware bridge list method is the follow-up for prefixed deployments.
+async fn list_objects_with_suffix(
+    bridge: &Arc<dyn ObjectStoreBridge>,
+    prefix: &ObjectPath,
+    suffix: &str,
+) -> Result<Vec<ObjectPath>> {
+    let store: Arc<dyn BridgeObjectStore> = bridge.inner_store();
+    let mut listing = store.list(Some(prefix));
+    let mut paths = Vec::new();
+    while let Some(meta) = listing.next().await {
+        let meta =
+            meta.map_err(|err| anyhow!("object-store list under '{prefix}' failed: {err}"))?;
+        if meta.location.as_ref().ends_with(suffix) {
+            paths.push(meta.location);
+        }
+    }
+    paths.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    Ok(paths)
 }
 
 /// Canonical table-record store API.
@@ -264,32 +593,36 @@ pub trait TableRecordStore: Send + Sync {
 /// routes can delegate to the compatibility adapter, but callers no longer
 /// depend on vector-specific APIs or naming.
 pub struct CatalogRoutingTableRecordStore {
-    canonical_store: Arc<dyn TableRecordStore>,
+    iceberg_store: Arc<dyn TableRecordStore>,
+    vector_store: Arc<dyn TableRecordStore>,
     legacy_vector_store: Arc<dyn TableRecordStore>,
 }
 
 impl CatalogRoutingTableRecordStore {
-    /// Build a router with explicit canonical and legacy implementations.
+    /// Build a router with explicit object store and legacy implementations.
     pub fn new(
-        canonical_store: Arc<dyn TableRecordStore>,
+        iceberg_store: Arc<dyn TableRecordStore>,
+        vector_store: Arc<dyn TableRecordStore>,
         legacy_vector_store: Arc<dyn TableRecordStore>,
     ) -> Self {
         Self {
-            canonical_store,
+            iceberg_store,
+            vector_store,
             legacy_vector_store,
         }
     }
 
-    /// Build the current migration router. The old vector adapter backs both
-    /// routes until the direct WAL/table-record writer is added.
+    /// Build the current migration router. The old vector adapter backs all
+    /// routes until the direct object store writers are fully wired.
     pub fn with_vector_compatibility(vector_ops: Arc<VectorOps>) -> Self {
         let compatibility = Arc::new(VectorOpsTableRecordStore::new(vector_ops));
-        Self::new(compatibility.clone(), compatibility)
+        Self::new(compatibility.clone(), compatibility.clone(), compatibility)
     }
 
     fn store_for_schema(&self, schema: &CatalogTableSchema) -> &Arc<dyn TableRecordStore> {
         match TableRecordStoreRoute::for_schema(schema) {
-            TableRecordStoreRoute::CanonicalRecordStore => &self.canonical_store,
+            TableRecordStoreRoute::ParquetIcebergStorage => &self.iceberg_store,
+            TableRecordStoreRoute::PaxVectorStorage => &self.vector_store,
             TableRecordStoreRoute::LegacyVectorCompatibility => &self.legacy_vector_store,
         }
     }
@@ -589,11 +922,11 @@ impl TableRecordStore for RecordStorageTableRecordStore {
 
 /// Direct Proxima-authoritative table writer.
 ///
-/// This is the target route for relational/PAX/OLTP/OLAP/HTAP tables: append
-/// canonical WAL operations first, then apply the visible record state to the
-/// canonical `RecordStorage` spine. Layer-2 projections such as PAX stripes,
-/// columnar blocks, HNSW, JSON, graph topology, and open-format manifests are
-/// driven from WAL `ProjectionDirective`s and remain rebuildable.
+/// This is the native OLTP/HTAP commit route for mutable Proxima-owned tables:
+/// append canonical WAL operations first, then apply the visible record state
+/// to the canonical `RecordStorage` row/delta spine. Layer-2 projections such
+/// as PAX stripes, columnar blocks, HNSW, JSON, graph topology, and open-format
+/// manifests are driven from WAL `ProjectionDirective`s and remain rebuildable.
 pub struct DirectWalTableRecordStore {
     storage: Arc<dyn RecordStorage>,
     wal_appender: Arc<dyn TableWalAppender>,
@@ -884,46 +1217,68 @@ fn proxima_record_to_get_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_catalog::{CatalogColumn, CatalogDataType};
+    use arrow_array::RecordBatch;
+    use arrow_schema::Schema as ArrowSchema;
+    use futures::stream::BoxStream;
+    use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogStorageLayout};
     use proximadb_data_model::ProximaValue;
+    use proximadb_kernel::error::StorageError;
     use proximadb_records::{RecordScan, RecordStore};
+    use proximadb_storage_common::object_store_bridge::{
+        BridgeInMemoryObjectStore as InMemory, BridgeObjectStore,
+    };
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Mutex, RwLock};
 
     #[test]
     fn table_record_route_uses_catalog_storage_specialization() {
-        // Gate 5: LsmWriteOptimized and VectorAnn route to legacy; all PAX variants route canonical.
-        let cases_canonical = [
-            ("pax_row_family", CatalogStorageSpecialization::PaxRowFamily),
-            ("pax_oltp", CatalogStorageSpecialization::PaxOltp),
-            ("pax_olap", CatalogStorageSpecialization::PaxOlap),
+        let cases_parquet = [
             ("generic", CatalogStorageSpecialization::GenericRelational),
             ("columnar", CatalogStorageSpecialization::ColumnarAnalytics),
             ("document", CatalogStorageSpecialization::DocumentJson),
             ("graph", CatalogStorageSpecialization::GraphTopology),
         ];
-        for (label, spec) in cases_canonical {
-            let schema = CatalogTableSchema::new(label).with_storage_specialization(spec);
+        for (label, spec) in cases_parquet {
+            let schema = CatalogTableSchema::new(label)
+                .with_workload_profile(CatalogWorkloadProfile::Olap)
+                .with_storage_specialization(spec);
             assert_eq!(
                 TableRecordStoreRoute::for_schema(&schema),
-                TableRecordStoreRoute::CanonicalRecordStore,
-                "{label} must route to CanonicalRecordStore"
+                TableRecordStoreRoute::ParquetIcebergStorage,
+                "{label} must route to ParquetIcebergStorage"
             );
         }
 
-        let cases_legacy = [
-            ("lsm", CatalogStorageSpecialization::LsmWriteOptimized),
+        let cases_pax_vector = [
+            ("pax_row_family", CatalogStorageSpecialization::PaxRowFamily),
+            ("pax_oltp", CatalogStorageSpecialization::PaxOltp),
+            ("pax_olap", CatalogStorageSpecialization::PaxOlap),
             ("vector_ann", CatalogStorageSpecialization::VectorAnn),
         ];
-        for (label, spec) in cases_legacy {
-            let schema = CatalogTableSchema::new(label).with_storage_specialization(spec);
+        for (label, spec) in cases_pax_vector {
+            let schema = CatalogTableSchema::new(label)
+                .with_workload_profile(CatalogWorkloadProfile::Vector)
+                .with_storage_specialization(spec);
+            let expected = if spec == CatalogStorageSpecialization::VectorAnn {
+                TableRecordStoreRoute::PaxVectorStorage
+            } else {
+                TableRecordStoreRoute::LegacyVectorCompatibility
+            };
             assert_eq!(
                 TableRecordStoreRoute::for_schema(&schema),
-                TableRecordStoreRoute::LegacyVectorCompatibility,
-                "{label} must route to LegacyVectorCompatibility"
+                expected,
+                "{label} must route to {expected:?}"
             );
         }
+
+        let legacy_schema = CatalogTableSchema::new("legacy_lsm")
+            .with_workload_profile(CatalogWorkloadProfile::Htap)
+            .with_storage_specialization(CatalogStorageSpecialization::LsmWriteOptimized);
+        assert_eq!(
+            TableRecordStoreRoute::for_schema(&legacy_schema),
+            TableRecordStoreRoute::LegacyVectorCompatibility
+        );
     }
 
     #[derive(Default)]
@@ -964,6 +1319,72 @@ mod tests {
     struct RecordingWalAppender {
         next_sequence: AtomicU64,
         entries: Mutex<Vec<CanonicalWalEntry>>,
+    }
+
+    struct CapturingObjectStoreBridge {
+        store: Arc<dyn BridgeObjectStore>,
+        writes: Mutex<Vec<(ObjectPath, Vec<String>)>>,
+        segments: Mutex<Vec<(ObjectPath, Vec<u8>)>>,
+    }
+
+    impl CapturingObjectStoreBridge {
+        fn new() -> Self {
+            Self {
+                store: Arc::new(InMemory::new()),
+                writes: Mutex::new(Vec::new()),
+                segments: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ObjectStoreBridge for CapturingObjectStoreBridge {
+        fn inner_store(&self) -> Arc<dyn BridgeObjectStore> {
+            self.store.clone()
+        }
+
+        async fn read_parquet_batches(
+            &self,
+            _path: &ObjectPath,
+            _schema: Arc<ArrowSchema>,
+            _batch_size: usize,
+        ) -> std::result::Result<
+            BoxStream<'static, std::result::Result<RecordBatch, StorageError>>,
+            StorageError,
+        > {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+
+        async fn write_records_to_parquet(
+            &self,
+            path: &ObjectPath,
+            records: &[ProximaRecord],
+        ) -> std::result::Result<(), StorageError> {
+            self.writes.lock().unwrap().push((
+                path.clone(),
+                records.iter().map(|record| record.oid.clone()).collect(),
+            ));
+            Ok(())
+        }
+
+        async fn fetch_vector_segment(
+            &self,
+            _path: &ObjectPath,
+        ) -> std::result::Result<Vec<u8>, StorageError> {
+            Ok(Vec::new())
+        }
+
+        async fn persist_vector_segment(
+            &self,
+            path: &ObjectPath,
+            data: &[u8],
+        ) -> std::result::Result<(), StorageError> {
+            self.segments
+                .lock()
+                .unwrap()
+                .push((path.clone(), data.to_vec()));
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -1011,8 +1432,8 @@ mod tests {
         for (oid, variation, version) in [
             ("keep-1", "orders", 1u64),
             ("keep-2", "orders", 2),
-            ("skip-pred", "orders", 3),  // belongs to table but fails predicate
-            ("skip-table", "other", 1),  // matches predicate but is another table
+            ("skip-pred", "orders", 3), // belongs to table but fails predicate
+            ("skip-table", "other", 1), // matches predicate but is another table
         ] {
             storage
                 .upsert_record(ProximaRecord {
@@ -1633,5 +2054,621 @@ mod tests {
             }
             other => panic!("expected delete WAL entry, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn object_store_iceberg_record_store_writes_parquet_via_bridge() {
+        let bridge = Arc::new(CapturingObjectStoreBridge::new());
+        let store = ObjectStoreIcebergRecordStore::new(bridge.clone());
+        let schema = CatalogTableSchema::new("orders").with_storage_layout(
+            CatalogStorageLayout::projection_publication(
+                "primary",
+                CatalogPhysicalFormat::Iceberg,
+                "warehouse/orders",
+            ),
+        );
+        let records = vec![
+            ProximaRecord {
+                oid: "o1".to_string(),
+                variation_id: Some("orders".to_string()),
+                ..Default::default()
+            },
+            ProximaRecord {
+                oid: "o2".to_string(),
+                variation_id: Some("orders".to_string()),
+                ..Default::default()
+            },
+        ];
+
+        let result = store
+            .write_mutations(
+                &schema,
+                records
+                    .into_iter()
+                    .map(|record| TableRecordMutation::new(TableRecordMutationKind::Insert, record))
+                    .collect(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.record_ids, vec!["o1".to_string(), "o2".to_string()]);
+        let writes = bridge.writes.lock().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].1, vec!["o1".to_string(), "o2".to_string()]);
+        assert!(
+            writes[0]
+                .0
+                .as_ref()
+                .starts_with("warehouse/orders/data/orders-insert-")
+        );
+        assert!(writes[0].0.as_ref().ends_with(".parquet"));
+    }
+
+    #[tokio::test]
+    async fn object_store_vector_record_store_persists_pax_segment_via_bridge() {
+        let bridge = Arc::new(CapturingObjectStoreBridge::new());
+        let store = ObjectStoreVectorRecordStore::new(bridge.clone());
+        let schema = CatalogTableSchema::new("vectors")
+            .with_workload_profile(CatalogWorkloadProfile::Vector)
+            .with_storage_specialization(CatalogStorageSpecialization::VectorAnn);
+        let records = vec![ProximaRecord {
+            oid: "v1".to_string(),
+            variation_id: Some("vectors".to_string()),
+            ..Default::default()
+        }];
+
+        let result = store
+            .write_mutations(
+                &schema,
+                records
+                    .into_iter()
+                    .map(|record| TableRecordMutation::new(TableRecordMutationKind::Upsert, record))
+                    .collect(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.record_ids, vec!["v1".to_string()]);
+        assert!(bridge.writes.lock().unwrap().is_empty());
+        let segments = bridge.segments.lock().unwrap();
+        assert_eq!(segments.len(), 1);
+        assert!(
+            segments[0]
+                .0
+                .as_ref()
+                .starts_with("tables/vectors/segments/vectors-upsert-")
+        );
+        assert!(segments[0].0.as_ref().ends_with(PAX_SEGMENT_EXT));
+        assert!(
+            segments[0].1.ends_with(SEGMENT_MAGIC),
+            "persisted bytes must be a PAX segment"
+        );
+    }
+
+    fn props_record(oid: &str, table: &str, props: Vec<(&str, ProximaValue)>) -> ProximaRecord {
+        let mut tree = HashMap::new();
+        for (key, value) in props {
+            tree.insert(key.to_string(), ProximaTreeNode::Value(value));
+        }
+        ProximaRecord {
+            oid: oid.to_string(),
+            variation_id: Some(table.to_string()),
+            props: tree,
+            ..Default::default()
+        }
+    }
+
+    /// F3 relational round trip: write records through `ObjectStoreIcebergRecordStore`
+    /// over a real `IcebergObjectStoreBridge` (in-memory object store) and read
+    /// them back via the Parquet read path — props + dense vector must survive,
+    /// and the primary key must be recovered as the record `oid`.
+    #[tokio::test]
+    async fn iceberg_record_store_round_trips_through_object_store() {
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let bridge: Arc<dyn ObjectStoreBridge> =
+            Arc::new(IcebergObjectStoreBridge::from_url("memory://").unwrap());
+        let store = ObjectStoreIcebergRecordStore::new(bridge);
+        let mut schema = CatalogTableSchema::new("orders")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "amount", CatalogDataType::Int64));
+        schema.primary_key = vec!["id".to_string()];
+
+        let mut r0 = props_record(
+            "o1",
+            "orders",
+            vec![
+                ("id", ProximaValue::String("o1".into())),
+                ("amount", ProximaValue::Int64(30)),
+            ],
+        );
+        r0.embeddings.push(EmbeddingCell {
+            values: EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
+            dim: 3,
+            ..Default::default()
+        });
+        let r1 = props_record(
+            "o2",
+            "orders",
+            vec![
+                ("id", ProximaValue::String("o2".into())),
+                ("amount", ProximaValue::Int64(41)),
+            ],
+        );
+
+        let written = store
+            .write_mutations(
+                &schema,
+                vec![
+                    TableRecordMutation::new(TableRecordMutationKind::Insert, r0),
+                    TableRecordMutation::new(TableRecordMutationKind::Insert, r1),
+                ],
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(written.success);
+
+        let mut scanned = store
+            .scan_records(
+                &schema,
+                TableRecordScanRequest {
+                    table_id: "orders".to_string(),
+                    limit: None,
+                    include_vector: true,
+                    include_props: true,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        scanned.sort_by(|a, b| a.oid.cmp(&b.oid));
+        assert_eq!(scanned.len(), 2, "both written records must read back");
+        assert_eq!(scanned[0].oid, "o1", "primary key recovered as oid");
+        assert_eq!(scanned[1].oid, "o2");
+        assert_eq!(
+            proximadb_records::tree_get(&scanned[0].props, "amount"),
+            Some(&ProximaValue::Int64(30))
+        );
+        assert_eq!(
+            scanned[0]
+                .embeddings
+                .first()
+                .map(|e| e.values.to_fp32_owned()),
+            Some(vec![1.0, 2.0, 3.0]),
+            "dense vector must round-trip through Parquet"
+        );
+
+        let fetched = store
+            .get_by_key(
+                &schema,
+                TableRecordGetRequest {
+                    table_id: "orders".to_string(),
+                    key: "o2".to_string(),
+                    include_vector: true,
+                    include_props: true,
+                },
+                None,
+            )
+            .await
+            .unwrap()
+            .expect("get_by_key must find the persisted record");
+        assert_eq!(fetched.id, "o2");
+        assert_eq!(fetched.props.get("amount"), Some(&ProximaValue::Int64(41)));
+    }
+
+    /// F3 vector round trip: write a vector-bearing record through
+    /// `ObjectStoreVectorRecordStore` over a real `IcebergObjectStoreBridge` and
+    /// read it back via the PAX segment fetch path — `oid` and the dense
+    /// embedding (the vector store's canonical payload) must survive.
+    #[tokio::test]
+    async fn vector_record_store_round_trips_pax_segment_through_object_store() {
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let bridge: Arc<dyn ObjectStoreBridge> =
+            Arc::new(IcebergObjectStoreBridge::from_url("memory://").unwrap());
+        let store = ObjectStoreVectorRecordStore::new(bridge);
+        let schema = CatalogTableSchema::new("vectors")
+            .with_workload_profile(CatalogWorkloadProfile::Vector)
+            .with_storage_specialization(CatalogStorageSpecialization::VectorAnn);
+
+        let record = ProximaRecord {
+            oid: "v1".to_string(),
+            variation_id: Some("vectors".to_string()),
+            embeddings: vec![EmbeddingCell {
+                modality: "dense".into(),
+                dim: 4,
+                values: EmbeddingValues::Fp32(vec![0.1, 0.2, 0.3, 0.4]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let written = store
+            .write_mutations(
+                &schema,
+                vec![TableRecordMutation::new(
+                    TableRecordMutationKind::Upsert,
+                    record,
+                )],
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(written.success);
+
+        let scanned = store
+            .scan_records(
+                &schema,
+                TableRecordScanRequest {
+                    table_id: "vectors".to_string(),
+                    limit: None,
+                    include_vector: true,
+                    include_props: true,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(scanned.len(), 1, "the persisted record must read back");
+        assert_eq!(scanned[0].oid, "v1", "oid must round-trip through PAX");
+        assert_eq!(
+            scanned[0]
+                .embeddings
+                .first()
+                .map(|e| e.values.to_fp32_owned()),
+            Some(vec![0.1, 0.2, 0.3, 0.4]),
+            "dense embedding must round-trip through the PAX segment"
+        );
+
+        let fetched = store
+            .get_by_key(
+                &schema,
+                TableRecordGetRequest {
+                    table_id: "vectors".to_string(),
+                    key: "v1".to_string(),
+                    include_vector: true,
+                    include_props: false,
+                },
+                None,
+            )
+            .await
+            .unwrap()
+            .expect("get_by_key must find the persisted vector record");
+        assert_eq!(fetched.vector, vec![0.1, 0.2, 0.3, 0.4]);
+    }
+}
+
+/// OLAP publication target: Parquet files and Iceberg metadata over object storage.
+///
+/// This path is for analytical/open-format publications and external-authority
+/// tables. It is not the direct write authority for PostgreSQL-style mutable
+/// OLTP tables; those commit through the WAL/row-delta path first.
+pub struct ObjectStoreIcebergRecordStore {
+    bridge: Arc<dyn ObjectStoreBridge>,
+}
+
+impl ObjectStoreIcebergRecordStore {
+    pub fn new(bridge: Arc<dyn ObjectStoreBridge>) -> Self {
+        Self { bridge }
+    }
+
+    /// Read every current record for `schema` by listing the Parquet data
+    /// objects the write path produced under the table's `data/` prefix and
+    /// decoding each via the bridge's `read_parquet_batches`.
+    async fn read_all_records(&self, schema: &CatalogTableSchema) -> Result<Vec<ProximaRecord>> {
+        let base = object_store_write_base_path(schema);
+        let prefix = ObjectPath::from(format!("{base}/data"));
+        let parquet_paths = list_objects_with_suffix(&self.bridge, &prefix, ".parquet").await?;
+
+        let mut records = Vec::new();
+        for path in parquet_paths {
+            let mut stream = self
+                .bridge
+                .read_parquet_batches(
+                    &path,
+                    Arc::new(ArrowSchema::empty()),
+                    OBJECT_STORE_READ_BATCH_SIZE,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow!("ObjectStoreIcebergRecordStore failed to read '{path}': {err}")
+                })?;
+            while let Some(batch) = stream.next().await {
+                let batch = batch.map_err(|err| {
+                    anyhow!(
+                        "ObjectStoreIcebergRecordStore failed to decode batch from '{path}': {err}"
+                    )
+                })?;
+                records.extend(record_batch_to_records(&batch, schema));
+            }
+        }
+        Ok(records)
+    }
+}
+
+#[async_trait]
+impl TableRecordStore for ObjectStoreIcebergRecordStore {
+    async fn write_mutations(
+        &self,
+        schema: &CatalogTableSchema,
+        mutations: Vec<TableRecordMutation>,
+        _tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordWriteResult> {
+        let records = mutations
+            .iter()
+            .map(|mutation| mutation.record.clone())
+            .collect::<Vec<_>>();
+        let record_ids = records.iter().map(record_id).collect::<Vec<_>>();
+
+        if records.is_empty() {
+            return Ok(TableRecordWriteResult::success(record_ids));
+        }
+
+        let kind = mutations
+            .first()
+            .map(|mutation| mutation.kind)
+            .unwrap_or(TableRecordMutationKind::Insert);
+        let path = object_store_parquet_mutation_path(schema, kind);
+        self.bridge
+            .write_records_to_parquet(&path, &records)
+            .await
+            .map_err(|err| {
+                anyhow!(
+                    "ObjectStoreIcebergRecordStore failed to write '{}' to '{}': {err}",
+                    schema.name,
+                    path
+                )
+            })?;
+
+        Ok(TableRecordWriteResult {
+            success: true,
+            record_ids,
+            metrics: OperationMetrics::default(),
+            errors: vec![],
+            error_code: None,
+        })
+    }
+
+    async fn get_by_key(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordGetRequest,
+        _tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordGetResponse> {
+        let records = self.read_all_records(table_schema).await?;
+        let found = records.into_iter().find(|record| record.oid == request.key);
+        Ok(found.map(|record| {
+            proxima_record_to_get_response(
+                record,
+                table_schema,
+                request.include_vector,
+                request.include_props,
+            )
+        }))
+    }
+
+    async fn scan_records(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordScanRequest,
+        _tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        let mut records = self.read_all_records(table_schema).await?;
+        if let Some(limit) = request.limit {
+            records.truncate(limit);
+        }
+        if !request.include_vector {
+            for record in &mut records {
+                record.embeddings.clear();
+            }
+        }
+        if !request.include_props {
+            for record in &mut records {
+                record.props.clear();
+            }
+        }
+        Ok(records)
+    }
+}
+
+/// Specialized Vector/ANN Target: PAX block formats.
+pub struct ObjectStoreVectorRecordStore {
+    bridge: Arc<dyn ObjectStoreBridge>,
+}
+
+impl ObjectStoreVectorRecordStore {
+    pub fn new(bridge: Arc<dyn ObjectStoreBridge>) -> Self {
+        Self { bridge }
+    }
+
+    /// Read every current record for `schema` by listing the PAX segment objects
+    /// the write path produced under the table's `segments/` prefix and decoding
+    /// each via the bridge's `fetch_vector_segment`.
+    async fn read_all_records(&self, schema: &CatalogTableSchema) -> Result<Vec<ProximaRecord>> {
+        let base = object_store_write_base_path(schema);
+        let prefix = ObjectPath::from(format!("{base}/segments"));
+        let segment_paths =
+            list_objects_with_suffix(&self.bridge, &prefix, PAX_SEGMENT_EXT).await?;
+
+        let mut records = Vec::new();
+        for path in segment_paths {
+            let bytes = self
+                .bridge
+                .fetch_vector_segment(&path)
+                .await
+                .map_err(|err| {
+                    anyhow!("ObjectStoreVectorRecordStore failed to fetch '{path}': {err}")
+                })?;
+            records.extend(pax_segment_to_records(bytes, schema)?);
+        }
+        Ok(records)
+    }
+}
+
+/// Reconstruct identity + dense embedding for each row of a PAX segment.
+///
+/// The vector store's canonical payload is the (`oid`, embedding) pair, which we
+/// recover from the `OID` string stripe and the first embedding's f32-vector
+/// stripe. Props/labels/edges live in the msgpack `PROPS` stripe and require a
+/// stripe→`FlatRow` decoder to rebuild — a follow-up (this path is the cold
+/// OLAP/ANN segment store, not the document/relational read authority).
+fn pax_segment_to_records(
+    bytes: Vec<u8>,
+    schema: &CatalogTableSchema,
+) -> Result<Vec<ProximaRecord>> {
+    let mut scanner = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default())
+        .map_err(|err| anyhow!("ObjectStoreVectorRecordStore failed to open PAX segment: {err}"))?;
+
+    let mut out = Vec::new();
+    while let Some(block) = scanner.next_block() {
+        let oids = block.decode_str_stripe(col_id::OID).unwrap_or_default();
+        let embeddings = block.decode_f32_vec_stripe(col_id::EMBED_BASE);
+        for (row, oid) in oids.into_iter().enumerate() {
+            let mut record = ProximaRecord {
+                oid: oid.unwrap_or_default(),
+                variation_id: Some(schema.name.clone()),
+                ..Default::default()
+            };
+            if let Some(embeds) = &embeddings
+                && let Some(Some(values)) = embeds.get(row)
+            {
+                let dim = values.len() as u32;
+                record.embeddings.push(EmbeddingCell {
+                    values: EmbeddingValues::Fp32(values.clone()),
+                    dim,
+                    ..Default::default()
+                });
+            }
+            out.push(record);
+        }
+    }
+    Ok(out)
+}
+
+#[async_trait]
+impl TableRecordStore for ObjectStoreVectorRecordStore {
+    async fn write_mutations(
+        &self,
+        schema: &CatalogTableSchema,
+        mutations: Vec<TableRecordMutation>,
+        _tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordWriteResult> {
+        let records = mutations
+            .iter()
+            .map(|mutation| mutation.record.clone())
+            .collect::<Vec<_>>();
+        let record_ids = records.iter().map(record_id).collect::<Vec<_>>();
+
+        if records.is_empty() {
+            return Ok(TableRecordWriteResult::success(record_ids));
+        }
+
+        let kind = mutations
+            .first()
+            .map(|mutation| mutation.kind)
+            .unwrap_or(TableRecordMutationKind::Insert);
+        let object_path = object_store_pax_segment_path(schema, kind);
+        let local_path = temp_pax_segment_path(schema, kind);
+        let mut writer = PaxSegmentWriter::new(
+            &local_path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            &schema.name,
+            0,
+            embedding_count_for_records(&records),
+            None,
+        );
+        for record in &records {
+            writer.add_record(record).map_err(|err| {
+                anyhow!(
+                    "ObjectStoreVectorRecordStore failed to encode '{}' as PAX: {err}",
+                    schema.name
+                )
+            })?;
+        }
+        let segment_meta = writer.finish().map_err(|err| {
+            anyhow!(
+                "ObjectStoreVectorRecordStore failed to finish PAX segment for '{}': {err}",
+                schema.name
+            )
+        })?;
+        let bytes = fs::read(&segment_meta.path).map_err(|err| {
+            anyhow!(
+                "ObjectStoreVectorRecordStore failed to read staged PAX segment '{}': {err}",
+                segment_meta.path.display()
+            )
+        })?;
+        let remove_result = fs::remove_file(&segment_meta.path);
+        self.bridge
+            .persist_vector_segment(&object_path, &bytes)
+            .await
+            .map_err(|err| {
+                anyhow!(
+                    "ObjectStoreVectorRecordStore failed to persist '{}' to '{}': {err}",
+                    schema.name,
+                    object_path
+                )
+            })?;
+        if let Err(err) = remove_result {
+            tracing::debug!(
+                "failed to remove staged PAX segment '{}': {}",
+                segment_meta.path.display(),
+                err
+            );
+        }
+
+        Ok(TableRecordWriteResult {
+            success: true,
+            record_ids,
+            metrics: OperationMetrics::default(),
+            errors: vec![],
+            error_code: None,
+        })
+    }
+
+    async fn get_by_key(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordGetRequest,
+        _tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordGetResponse> {
+        let records = self.read_all_records(table_schema).await?;
+        let found = records.into_iter().find(|record| record.oid == request.key);
+        Ok(found.map(|record| {
+            proxima_record_to_get_response(
+                record,
+                table_schema,
+                request.include_vector,
+                request.include_props,
+            )
+        }))
+    }
+
+    async fn scan_records(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordScanRequest,
+        _tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        let mut records = self.read_all_records(table_schema).await?;
+        if let Some(limit) = request.limit {
+            records.truncate(limit);
+        }
+        if !request.include_vector {
+            for record in &mut records {
+                record.embeddings.clear();
+            }
+        }
+        if !request.include_props {
+            for record in &mut records {
+                record.props.clear();
+            }
+        }
+        Ok(records)
     }
 }
