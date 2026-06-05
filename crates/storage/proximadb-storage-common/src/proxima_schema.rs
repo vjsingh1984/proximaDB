@@ -245,6 +245,201 @@ impl PartialEq for ProximaDataType {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Canonical bridge: ProximaDataType <-> ProximaType (ADR-024 Step 2a)
+//
+// `ProximaType` (proximadb-data-model) is the single canonical *logical* type;
+// `ProximaDataType` is the storage/Arrow schema descriptor being folded into it.
+// These conversions are the previously-missing link, so all code can funnel
+// through `ProximaType` and the duplicate Arrow/pgwire logic can delegate.
+//
+// Per ADR-024, quantization is *physical* encoding, not a logical type: the
+// quantized `ProximaDataType` variants map to their logical vector type
+// (`DenseVector`/`BinaryVector`), dropping the encoding parameters (those belong
+// on a storage encoding attribute, added when `ProximaDataType` is deleted).
+// Logical types `ProximaDataType` cannot represent (Float16/Symbol/Interval/
+// Duration/ULID/Jsonb/Point/Null) map to their nearest physical carrier — lossy
+// by design (the logical `ProximaType` stays authoritative).
+// ---------------------------------------------------------------------------
+
+fn file_time_unit_to_dm(unit: &TimeUnit) -> proximadb_data_model::TimeUnit {
+    match unit {
+        TimeUnit::Second => proximadb_data_model::TimeUnit::Second,
+        TimeUnit::Millisecond => proximadb_data_model::TimeUnit::Millisecond,
+        TimeUnit::Microsecond => proximadb_data_model::TimeUnit::Microsecond,
+        TimeUnit::Nanosecond => proximadb_data_model::TimeUnit::Nanosecond,
+    }
+}
+
+fn dm_time_unit_to_file(unit: proximadb_data_model::TimeUnit) -> TimeUnit {
+    match unit {
+        proximadb_data_model::TimeUnit::Second => TimeUnit::Second,
+        proximadb_data_model::TimeUnit::Millisecond => TimeUnit::Millisecond,
+        proximadb_data_model::TimeUnit::Microsecond => TimeUnit::Microsecond,
+        proximadb_data_model::TimeUnit::Nanosecond => TimeUnit::Nanosecond,
+    }
+}
+
+impl From<&ProximaDataType> for proximadb_data_model::ProximaType {
+    fn from(dt: &ProximaDataType) -> Self {
+        use proximadb_data_model::{ProximaType as P, VectorElement as Ve};
+        let elem = |e: &VectorElementType| match e {
+            VectorElementType::Float16 => Ve::Float16,
+            VectorElementType::BFloat16 => Ve::BFloat16,
+            VectorElementType::Float32 => Ve::Float32,
+            VectorElementType::Float64 => Ve::Float64,
+        };
+        match dt {
+            ProximaDataType::Boolean => P::Boolean,
+            ProximaDataType::Int8 => P::Int8,
+            ProximaDataType::Int16 => P::Int16,
+            ProximaDataType::Int32 => P::Int32,
+            ProximaDataType::Int64 => P::Int64,
+            ProximaDataType::UInt8 => P::UInt8,
+            ProximaDataType::UInt16 => P::UInt16,
+            ProximaDataType::UInt32 => P::UInt32,
+            ProximaDataType::UInt64 => P::UInt64,
+            ProximaDataType::Float32 => P::Float32,
+            ProximaDataType::Float64 => P::Float64,
+            ProximaDataType::Decimal { precision, scale } => P::Decimal {
+                precision: *precision,
+                scale: *scale as u8,
+            },
+            ProximaDataType::String => P::String,
+            ProximaDataType::Binary => P::Binary,
+            ProximaDataType::Date => P::Date,
+            ProximaDataType::Time { unit } => P::Time(file_time_unit_to_dm(unit)),
+            ProximaDataType::Timestamp { unit, timezone } => {
+                if timezone.is_some() {
+                    P::TimestampTz(file_time_unit_to_dm(unit))
+                } else {
+                    P::Timestamp(file_time_unit_to_dm(unit))
+                }
+            }
+            ProximaDataType::Uuid => P::Uuid,
+            ProximaDataType::Json => P::Json,
+            ProximaDataType::List { element } => P::Array(Box::new(P::from(element.as_ref()))),
+            ProximaDataType::Map { key, value } => P::Map {
+                key: Box::new(P::from(key.as_ref())),
+                value: Box::new(P::from(value.as_ref())),
+            },
+            ProximaDataType::Struct { fields } => P::Struct {
+                fields: fields
+                    .iter()
+                    .map(|c| (c.name.clone(), P::from(&c.data_type)))
+                    .collect(),
+            },
+            ProximaDataType::Vector {
+                dimension,
+                element_type,
+            } => P::DenseVector {
+                element: elem(element_type),
+                dim: *dimension as usize,
+            },
+            ProximaDataType::SparseVector { .. } => P::SparseVector {
+                element: Ve::Float32,
+            },
+            ProximaDataType::BinaryVector { dimension } => P::BinaryVector {
+                dim: *dimension as usize,
+            },
+            // Quantized = physical encoding; reduce to the logical vector type.
+            ProximaDataType::QuantizedInt8Vector { dimension, .. }
+            | ProximaDataType::QuantizedPQVector { dimension, .. } => P::DenseVector {
+                element: Ve::Int8,
+                dim: *dimension as usize,
+            },
+            ProximaDataType::QuantizedBinaryVector { dimension } => P::BinaryVector {
+                dim: *dimension as usize,
+            },
+        }
+    }
+}
+
+impl From<&proximadb_data_model::ProximaType> for ProximaDataType {
+    fn from(ty: &proximadb_data_model::ProximaType) -> Self {
+        use proximadb_data_model::{ProximaType as P, VectorElement as Ve};
+        let elem = |e: &Ve| match e {
+            Ve::Float16 => VectorElementType::Float16,
+            Ve::BFloat16 => VectorElementType::BFloat16,
+            Ve::Float64 => VectorElementType::Float64,
+            // ProximaDataType has no Int8 vector element; carry as f32 (lossy).
+            Ve::Float32 | Ve::Int8 => VectorElementType::Float32,
+        };
+        match ty {
+            P::Boolean => ProximaDataType::Boolean,
+            P::Int8 => ProximaDataType::Int8,
+            P::Int16 => ProximaDataType::Int16,
+            P::Int32 => ProximaDataType::Int32,
+            P::Int64 => ProximaDataType::Int64,
+            P::UInt8 => ProximaDataType::UInt8,
+            P::UInt16 => ProximaDataType::UInt16,
+            P::UInt32 => ProximaDataType::UInt32,
+            P::UInt64 => ProximaDataType::UInt64,
+            // ProximaDataType has no Float16 scalar; widen to f32 (lossy).
+            P::Float16 | P::Float32 => ProximaDataType::Float32,
+            P::Float64 => ProximaDataType::Float64,
+            P::Decimal { precision, scale } => ProximaDataType::Decimal {
+                precision: *precision,
+                scale: *scale as i8,
+            },
+            P::String | P::Symbol => ProximaDataType::String,
+            P::Binary => ProximaDataType::Binary,
+            P::Date => ProximaDataType::Date,
+            P::Time(u) => ProximaDataType::Time {
+                unit: dm_time_unit_to_file(*u),
+            },
+            P::Timestamp(u) => ProximaDataType::Timestamp {
+                unit: dm_time_unit_to_file(*u),
+                timezone: None,
+            },
+            P::TimestampTz(u) => ProximaDataType::Timestamp {
+                unit: dm_time_unit_to_file(*u),
+                timezone: Some("UTC".to_string()),
+            },
+            // No interval/duration carrier in the storage descriptor.
+            P::Interval(_) | P::Duration(_) => ProximaDataType::Binary,
+            P::Uuid | P::ULID => ProximaDataType::Uuid,
+            P::Json | P::Jsonb => ProximaDataType::Json,
+            P::Array(element) => ProximaDataType::List {
+                element: Box::new(ProximaDataType::from(element.as_ref())),
+            },
+            P::Map { key, value } => ProximaDataType::Map {
+                key: Box::new(ProximaDataType::from(key.as_ref())),
+                value: Box::new(ProximaDataType::from(value.as_ref())),
+            },
+            P::Struct { fields } => ProximaDataType::Struct {
+                fields: fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (name, ty))| ProximaColumn {
+                        id: i as i32,
+                        name: name.clone(),
+                        data_type: ProximaDataType::from(ty),
+                        nullable: true,
+                        default_value: None,
+                        comment: None,
+                        metadata: std::collections::HashMap::new(),
+                        is_deleted: false,
+                        original_id: None,
+                    })
+                    .collect(),
+            },
+            P::DenseVector { element, dim } => ProximaDataType::Vector {
+                dimension: *dim as u32,
+                element_type: elem(element),
+            },
+            P::SparseVector { .. } => ProximaDataType::SparseVector {
+                max_dimension: None,
+            },
+            P::BinaryVector { dim } => ProximaDataType::BinaryVector {
+                dimension: *dim as u32,
+            },
+            // No geo / null carrier in the storage descriptor.
+            P::Point | P::GeographyPoint | P::Null => ProximaDataType::Binary,
+        }
+    }
+}
+
 /// Vector element type for dense vectors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VectorElementType {
@@ -1100,6 +1295,54 @@ impl TimeUnit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_data_model::ProximaType;
+
+    #[test]
+    fn proxima_data_type_bridges_to_canonical_logical_type() {
+        // Cleanly-mappable types round-trip through the canonical ProximaType.
+        for dt in [
+            ProximaDataType::Boolean,
+            ProximaDataType::Int64,
+            ProximaDataType::UInt32,
+            ProximaDataType::Float64,
+            ProximaDataType::String,
+            ProximaDataType::Binary,
+            ProximaDataType::Date,
+            ProximaDataType::Uuid,
+            ProximaDataType::Json,
+            ProximaDataType::Timestamp {
+                unit: TimeUnit::Nanosecond,
+                timezone: None,
+            },
+            ProximaDataType::Vector {
+                dimension: 8,
+                element_type: VectorElementType::Float32,
+            },
+            ProximaDataType::BinaryVector { dimension: 64 },
+        ] {
+            let logical = ProximaType::from(&dt);
+            let back = ProximaDataType::from(&logical);
+            assert_eq!(back, dt, "round-trip via ProximaType must preserve {dt:?}");
+        }
+    }
+
+    #[test]
+    fn quantized_storage_types_reduce_to_logical_vector() {
+        // Per ADR-024 quantization is physical: it folds to the logical vector
+        // type (params dropped), so the bridge is intentionally one-way here.
+        let q = ProximaDataType::QuantizedInt8Vector {
+            dimension: 16,
+            scale_factor: 1,
+            zero_point: 0,
+        };
+        assert_eq!(
+            ProximaType::from(&q),
+            ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Int8,
+                dim: 16,
+            }
+        );
+    }
 
     #[test]
     fn test_vector_record_schema() {

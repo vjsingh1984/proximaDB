@@ -30,6 +30,7 @@ object_store.workspace = true
 tokio = { version = "1.37", features = ["sync", "rt", "time"] }
 proximadb-kernel.workspace = true
 proximadb-compression-types.workspace = true
+proximadb-data-model = { workspace = true }
 proximadb-records = { workspace = true }
 proximadb-block-format = { workspace = true }
 crc32fast.workspace = true
