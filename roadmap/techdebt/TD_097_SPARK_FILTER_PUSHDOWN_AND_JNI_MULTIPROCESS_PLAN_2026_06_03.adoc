@@ -1,23 +1,24 @@
 = TD-097 Spark Filter Pushdown + Multi-Process JNI Safety
 :toc: auto
 :toclevels: 3
+:status: RUST FOUNDATION SHIPPED; JVM DATASOURCE V2 + LIFECYCLE HARDENING POST-MVP
 
 == Context
 
 Two smaller TD-097 follow-ups landed in scope after the 2026-06-02 sprint:
 
-. **Spark filter pushdown**: `spark_plan_input_partitions(emb, table, filters_json, num_partitions)` accepts `filters_json` but ignores it (the parameter is `_filters_json`). Spark sends predicates as JSON-serialized `SparkFilter` enum values; we should lower them into the scan path so executors don't pull rows that will be discarded.
+. **Spark filter pushdown**: `spark_plan_input_partitions(emb, table, filters_json, num_partitions)` originally accepted `filters_json` but ignored it. The Rust-side foundation now lowers supported Spark predicates into the canonical scan filter path; JVM DataSource V2 reporting remains post-MVP.
 . **Multi-process JNI safety**: `EMBEDDED: OnceLock<Arc<EmbeddedProximaDB>>` is process-level and set-once-strict. JVM class-loader reloads (Spark executor reuse, IDE hot-reload) leave the singleton pinned to its first data dir, with no teardown. Two JVM processes loading the cdylib share the OS-cached library but get independent ProximaDB instances, relying on the file-lock coordination in `src/embedded/coordination/`.
 
 This plan separates the two — they ship independently — but they're grouped because both touch the JNI surface and both are smaller than a full TD on their own.
 
 === Current state (verified)
 
-**Filter surface**: `src/connectors/spark.rs:562` defines `spark_plan_input_partitions(emb, table, _filters_json, num_partitions)`. The `SparkFilter` enum at lines 190-239 already serializes the 14 Spark DataSource V2 predicates (EqualTo, GreaterThan, LessThan, IsNull, In, And/Or/Not, StringContains, Always{True,False}, …). Java side already sends the JSON.
+**Filter surface**: `spark_plan_input_partitions(emb, table, filters_json, num_partitions)` now lowers Spark filter JSON into the canonical `FilterExpression` where possible. The Rust foundation is real; the JVM DataSource V2 layer that would report pushed/residual filters to Spark is still missing and remains Beta/post-MVP.
 
-**Scan predicate plumbing**: `VectorOperationsService::scan_records_with_tenant_context` (`src/services/operations/vectors/legacy.rs`) accepts no filter parameter. The closest predicate IR is `FilterExpression` (`src/core/search/integrated_search_optimization.rs:8`) — but it's wired into the vector-search optimizer, not the record-scan path.
+**Scan predicate plumbing**: `EmbeddedProximaDB::scan_records_filtered` forwards the optional filter to `VectorOperationsService::scan_records_paginated`, where tenant/RLS predicates and pushed filters are applied before the limit. TD-099(3d) added the deduped, time-ordered scan index that makes repeated cursor-page drains efficient once warm.
 
-**JNI singleton**: `crates/binding/proximadb-spark-jni/src/lib.rs:67` defines the OnceLock. `initialize` at line 84 sets it strictly (lines 93-96). No `JNI_OnUnload`, no `_reset` hook. Cross-process safety relies on `src/embedded/coordination/mod.rs` (`AccessMode::Exclusive` / `SharedRead` / `LeaderFollower`).
+**JNI singleton**: `crates/binding/proximadb-spark-jni/src/lib.rs` defines a process-local OnceLock. `initialize` sets it strictly. A diagnostic `JNI_OnUnload` hook now logs unload state and performs a best-effort flush when initialized, but there is still no `_reset` hook. Cross-process safety relies on `src/embedded/coordination/mod.rs` (`AccessMode::Exclusive` / `SharedRead` / `LeaderFollower`).
 
 == Part 1 — Spark Filter Pushdown
 
@@ -30,22 +31,24 @@ Shipped as 2 commits — `a9786bb27` (lowering) + `d9187bf0c` (scan-apply) — d
 * *F3 (record-level filter) — DONE*, via the TD-099(3d) scan predicate seam (`scan_records_paginated(filter)` → `evaluate_filter_proxima(f, &record.props)`, applied BEFORE the limit so cursor pagination stays correct). Threaded plan→partition→reader→`EmbeddedProximaDB::scan_records_filtered`. Filters evaluate against the record property tree (data columns); canonical fields are dropped.
 * *F2 (plan-time partition pruning) — DEFERRED*: the planner emits a single-partition fallback, so there is nothing to prune until shard-aware partitioning lands.
 * *F4 (docs) — DONE* (this note + `TECHNICAL_DEBT.adoc` + the `spark.rs` module doc).
-* *Part 2 (JNI multi-process/lifecycle safety, M1–M3) — NOT STARTED.*
+* *Part 2 (JNI multi-process/lifecycle safety) — M1 DONE 2026-06-04*: `NativeProximaDB.initialize(dataDir)` now emits structured `tracing` diagnostics for first init, duplicate init, empty data dir, construction failure, and set-once races; `crates/binding/proximadb-spark-jni/README.md` documents the one-embedded-instance-per-JVM lifecycle, class-loader reload constraint, multi-process coordination boundary, and fork-per-class test guidance. *M2 DONE 2026-06-04 (diagnostic scope)*: `JNI_OnUnload` logs unload state and performs a best-effort `EmbeddedProximaDB::flush()` when initialized; it deliberately does not reset/take the singleton because JVM native-library unload is process-scoped and rare. *M3 DONE 2026-06-04*: `crates/binding/proximadb-spark-jni/tests/cross_process_smoke.sh` verifies that a second JVM cannot initialize concurrently against the same exclusive embedded data dir and that a later JVM initializes after the first exits. The future Gradle/JUnit harness can wrap this behavior, but the release-blocking coordination smoke is now scriptable.
 
 CRITICAL open dependency: the JVM DataSource V2 layer (`SupportsPushDownFilters`/`ScanBuilder`/`pushedFilters`) DOES NOT EXIST — `clients/jvm/spark-connector` is a JNI smoke shim. So there is no production driver pushing `filters_json` yet, and the "Spark re-applies dropped filters" contract has no home until that JVM layer is built (a separate Java/Gradle effort, overlapping TD-097(4)). The Rust foundation is exact and tested (12 lowering + 4 e2e tests) and ready for that JVM layer to consume.
 ====
 
-=== Design
+=== Design (as-built plus deferred seam)
 
-Lower `SparkFilter` JSON → an existing predicate IR → push into `scan_records`. Two key questions:
+Lower `SparkFilter` JSON → the canonical predicate IR → push into `scan_records_filtered`. Two key questions:
 
-. **Which IR?** The existing `FilterExpression` (vector-search-only) covers the operators we care about (comparison, logical AND/OR/NOT, IsNull, In). Reuse it; don't create a parallel IR.
+. **Which IR?** `FilterExpression` is now the canonical reusable predicate shape for this path. Reuse it; do not create a Spark-specific predicate IR.
 
 . **Where does pruning happen?** Two layers:
-   * *Partition-level prune*: at plan time, drop partitions whose shard/cluster metadata bounds contradict the filter. This is where pushdown earns its keep — fewer partitions = fewer Spark tasks.
-   * *Record-level prune*: inside `scan_records`, evaluate the filter per record before adding it to the page.
+   * *Record-level prune*: shipped. `scan_records_filtered` evaluates the pushed predicate before the page limit so cursor pagination stays correct.
+   * *Split/partition-level prune*: deferred into the shared split-aware read planning seam, not a Spark-only `plan_partitions` tweak. See `roadmap/techdebt/TD_097_SHARD_AWARE_PARTITION_PLAN_2026_06_03.adoc`, which is now refined around `SplitSource`, `SplitPlanner`, `RoutedReadPlan`, DataFusion, and Spark as one consumer.
 
 === Slice F1 — JSON-to-IR lowering (1 commit)
+
+Status: DONE 2026-06-03. The details below are retained as the historical slice contract.
 
 Critical files:
 * `src/connectors/spark.rs` — add `fn lower_spark_filters_to_expression(json: &str) → Result<Option<FilterExpression>, SparkError>`. Parses the array of `SparkFilter` JSON values, folds with AND, returns `None` if empty. Unsupported operators are silently dropped (Spark accepts pushdown rejection — it'll re-apply on its side).
@@ -54,16 +57,22 @@ TDD: 10 inline tests in `src/connectors/spark.rs::tests::lower_filters_*` — on
 
 === Slice F2 — Plan-time partition pruning (1 commit)
 
-Critical files:
-* `src/embedded/mod.rs::plan_partitions` — accept `Option<&FilterExpression>` (new optional arg); for each candidate partition (shard or cluster), evaluate the filter against `metadata_bounds` (or `cluster_centroid_bounds` for IVF). Drop partitions that contradict.
-* `src/connectors/spark.rs::spark_plan_input_partitions` — call the lowering then forward the expression to `plan_partitions`.
+Status: DEFERRED / SUPERSEDED BY SHARED SPLIT-AWARE READ PLAN.
 
-TDD: 3 inline tests:
-* `plan_partitions_with_no_filter_returns_all_shards`
-* `plan_partitions_with_tenant_eq_filter_prunes_unmatched_shards`
-* `plan_partitions_with_contradictory_filter_returns_empty_partition_list`
+Do not implement this as a Spark-only method signature change. The canonical seam is now the
+read-route/split-generation path from the notebook/DataFusion blueprint:
+`RoutedReadPlan` + `SplitSource::generate_splits` + `SplitPlanner::plan_splits`, consumed by
+DataFusion first and Spark later.
+
+Historical sketch: this section originally proposed adding `Option<&FilterExpression>` directly to
+`EmbeddedProximaDB::plan_partitions` and writing Spark-specific partition-pruning tests. That is no
+longer the desired LLD. New tests belong in the shared split-aware plan and should validate
+`RoutedReadPlan`, `SplitSource`, `SplitPlanner`, DataFusion partitions, and Spark consumption of the
+same split inventory.
 
 === Slice F3 — Record-level filter in scan path (1 commit)
+
+Status: DONE 2026-06-03. The details below are retained as the historical slice contract.
 
 Critical files:
 * `src/services/operations/vectors/legacy.rs::scan_records_with_tenant_context` — accept `Option<&FilterExpression>`, evaluate per record before adding to the result vec.
@@ -87,7 +96,7 @@ Three failure modes to harden against:
 
 . **JVM class-loader reload**: Spark sometimes evicts and reloads classes (e.g. dynamic SQL, structured streaming hot-reload). The `OnceLock` outlives class reload because it lives in the OS-loaded cdylib, not the JVM's class-loaded state. A second `NativeProximaDB.initialize(dataDir)` after reload returns `false` (we set-once-strict). **Acceptable behavior**: log clearly, document the constraint.
 
-. **Two-JVM-on-same-host**: each JVM loads its own cdylib instance (OS deduplicates the file on disk but each process gets its own data segment), then both call `EmbeddedProximaDB::new(dataDir)`. The data dir's file-lock coordination layer (`src/embedded/coordination/`) handles this — `AccessMode::Exclusive` blocks one of them.
+. **Two-JVM-on-same-host**: each JVM loads its own cdylib instance (OS deduplicates the file on disk but each process gets its own data segment), then both call `EmbeddedProximaDB::new(dataDir)`. The data dir's file-lock coordination layer (`src/embedded/coordination/`) handles this — `AccessMode::Exclusive` prevents concurrent initialization; today this normally blocks the contender until the holder exits.
 
 . **JVM-exit recovery**: a crashed JVM leaves the file lock; the next JVM should detect a stale lock and reclaim. Today's coordination layer handles this (verified — `LockHeartbeat` timeout).
 
@@ -116,11 +125,13 @@ Note: `JNI_OnUnload` is only called when the cdylib is unloaded, which the JVM a
 
 TDD: a single integration test in `crates/binding/proximadb-spark-jni/tests/` — invoking `JNI_OnUnload` directly (it's safe; we control the function) and asserting a "shutdown logged" trace line.
 
-=== Slice M3 — Cross-process e2e smoke (1 commit, optional)
+=== Slice M3 — Cross-process e2e smoke (1 commit)
 
-Critical files: a single bash test under `crates/binding/proximadb-spark-jni/tests/cross_process_smoke.sh` that forks two Java processes both calling `initialize(sharedDir)`. Expected: one gets Exclusive, the other fails to acquire and exits cleanly with a clear error.
+Status: DONE 2026-06-04.
 
-This may slot more naturally into TD-097(4) (Gradle/JUnit) — `@Test` annotated, JUnit-driven. If TD-097(4) ships first, do this test there.
+Critical files: a single bash test under `crates/binding/proximadb-spark-jni/tests/cross_process_smoke.sh` that forks two Java processes both calling `initialize(sharedDir)`. Expected: one initializes and holds Exclusive, the second cannot initialize concurrently (current behavior is to block on the embedded file lock; a future nonblocking rejection is also acceptable), and a third JVM initializes after the first exits.
+
+This can later be wrapped by TD-097(4) (Gradle/JUnit), but it is intentionally scriptable before that harness exists.
 
 == Verification
 
@@ -128,13 +139,14 @@ This may slot more naturally into TD-097(4) (Gradle/JUnit) — `@Test` annotated
 ----
 # Part 1 — Filter pushdown
 cargo test --lib connectors::spark::tests::lower_filters_                          # F1
-cargo test --lib embedded::tests::plan_partitions_with_                            # F2
 cargo test --lib connectors::spark::tests::spark_filter_pushdown_                  # F3
+# F2 split/partition pruning moved to the shared split-aware read plan:
+# roadmap/techdebt/TD_097_SHARD_AWARE_PARTITION_PLAN_2026_06_03.adoc
 
 # Part 2 — JNI lifecycle
 cargo test -p proximadb-spark-jni initialize_logs_                                  # M1
 cargo test -p proximadb-spark-jni jni_on_unload_                                    # M2
-bash crates/binding/proximadb-spark-jni/tests/cross_process_smoke.sh                # M3 (optional)
+bash crates/binding/proximadb-spark-jni/tests/cross_process_smoke.sh                # M3
 
 # Aggregate
 cargo fmt && cargo clippy --lib -- -D warnings
@@ -152,6 +164,6 @@ clients/jvm/spark-connector/run-smoke.sh
 
 == Convergence summary (Convergence Gate)
 
-* Single predicate IR: `FilterExpression` already canonical for vector search; extending it to record scan keeps the catalog and observability surfaces unified.
-* Filter pushdown converges all connectors (Hadoop, DuckDB, Trino, Spark) on the same `scan_records(filter)` API — once the scan path accepts the optional filter, the other connectors get it for free via their existing entry points.
+* Single predicate IR: `FilterExpression` is reused for Spark filter lowering and record-scan predicates; no Spark-local IR was introduced.
+* Split/partition pruning moves to the shared read-planning seam (`RoutedReadPlan` + `SplitSource` + `SplitPlanner`) so DataFusion/notebook/Spark/Flight consume one split contract.
 * JNI lifecycle docs go in the binding crate's README — not in the Rust top-level docs, since the lifecycle is JNI-specific. Pyo3/NAPI/CFFI bindings have their own equivalent constraints, documented in their own READMEs.

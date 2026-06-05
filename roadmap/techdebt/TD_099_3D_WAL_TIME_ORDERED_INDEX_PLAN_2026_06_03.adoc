@@ -17,7 +17,7 @@ Other as-built specifics: storage takes the raw `(last_updated_at_ns, last_oid)`
 
 == Context
 
-TD-099(3c) (`TD_099_3C_WAL_SCAN_PUSHDOWN_PLAN_2026_06_03.adoc`) shipped the *low-risk* half of WAL scan push-down: a bounded max-heap that drops paginated-scan *peak memory* from O(N) to O(limit) and *sort CPU* from O(N log N) to O(N log limit). It explicitly did **not** improve *record visits / wall-clock*, which stay O(collection_size) per page.
+TD-099(3c) (`TD_099_3C_WAL_SCAN_PUSHDOWN_PLAN_2026_06_03.adoc`) proposed a *low-risk* bounded-heap half of WAL scan push-down: lower per-page sort work without improving *record visits / wall-clock*, which would stay O(collection_size) per page. That design was not shipped separately; the MVCC/TTL discovery described above folded the work into this TD-099(3d) lazy scan-index implementation.
 
 The reason is structural (see memory `[[project-wal-memtable-no-time-index-2026-06-03]]`): the unflushed memtable is *one partition per collection* (`GlobalPartitionedMemtable.collections: HashMap<collection_id, CollectionPartition>`, `src/storage/memtable/implementations/global_partitioned.rs:612`), and within a partition records live in an *unordered* `wal_batches: HashMap<batch_id, WALVectorBatch>` (struct at global_partitioned.rs:94) with no timestamp ordering. The canonical scan order `(updated_at_ns, oid)` is materialized only at query time.
 
@@ -178,5 +178,5 @@ cargo bench --bench wal_scan_pagination                                         
 
 == Dependencies
 
-* Requires TD-099(3c) shipped (the `stream_unflushed_records` surface + heap fallback this plan extends).
+* Original prerequisite was TD-099(3c), but as-built folded 3c into this implementation; see the as-built banner at the top of this document.
 * Gated by Slice A evidence — do not build Slices B–D until the unflushed-set size distribution justifies it.

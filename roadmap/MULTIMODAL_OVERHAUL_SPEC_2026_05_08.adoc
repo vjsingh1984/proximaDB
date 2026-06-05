@@ -1,4 +1,4 @@
-= ProximaDB Multi-Modal Overhaul Specification
+= [SUPERSEDED] ProximaDB Multi-Modal Overhaul Specification
 :toc: left
 :toclevels: 3
 :icons: font
@@ -6,6 +6,23 @@
 :revdate: 2026-05-08
 :revnumber: 1.0
 :source-highlighter: rouge
+
+[WARNING]
+====
+**STATUS: SUPERSEDED (2026-06-04)**
+
+This specification has been superseded by the tiered HTAP / multi-engine architecture defined in:
+`docs/12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc`,
+`docs/12-design/RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc`, and
+`roadmap/techdebt/TD_110_OLTP_OLAP_HTAP_STORAGE_AND_CONSTRAINTS_PLAN_2026_06_04.adoc`.
+
+While this document correctly identified the need for a unified record envelope (`ProximaRecord`),
+its mandate for a *single* physical execution layer and formatting has been replaced. ProximaDB now
+uses a multi-engine routing strategy: native/Volcano over WAL plus OLTP row/delta state for
+PostgreSQL-style freshness and constraints, DataFusion over Parquet/Iceberg/Arrow publications for
+OLAP/MPP, and specialized vector engines as cataloged access methods/projections. PAX row-family is
+an internal HTAP layout candidate, not an independent schema authority.
+====
 
 [.lead]
 A research-grounded specification for promoting ProximaDB from "vector database with bolted-on
