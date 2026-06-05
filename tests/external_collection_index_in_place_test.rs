@@ -211,17 +211,23 @@ async fn external_hybrid_search_fuses_text_and_vector() {
 
     let cat = catalog_manager().await;
     let axis = Arc::new(AxisManager::new(AxisConfig::default()).await.unwrap());
-    let svc = ExternalCollectionService::new(
-        Arc::new(ExternalCollectionRegistry::new()),
-        cat,
-        axis,
-    );
+    let svc =
+        ExternalCollectionService::new(Arc::new(ExternalCollectionRegistry::new()), cat, axis);
 
-    let spec = ExternalCollectionSpec::parquet("ext_hybrid", parquet.to_str().unwrap(), "id", "vector", dim)
-        .with_text_column("title");
+    let spec = ExternalCollectionSpec::parquet(
+        "ext_hybrid",
+        parquet.to_str().unwrap(),
+        "id",
+        "vector",
+        dim,
+    )
+    .with_text_column("title");
     let ec = svc.register(spec).await.unwrap();
     svc.build(&ec.id).await.unwrap();
-    assert!(svc.has_fulltext_index("ext_hybrid"), "BM25 index built over the title column");
+    assert!(
+        svc.has_fulltext_index("ext_hybrid"),
+        "BM25 index built over the title column"
+    );
 
     // Vector query points at doc-3; lexical query is doc-7's title.
     let (_qid, qvec) = &expect[3];

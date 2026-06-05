@@ -427,18 +427,18 @@ impl ExternalCollectionService {
         // the persisted IVF survive but the in-memory BM25 does not. Rebuilt from
         // the (un-copied) source on the first hybrid query, mirroring the IVF
         // load-on-demand path.
-        if text_query.as_deref().map(|t| !t.trim().is_empty()).unwrap_or(false) {
+        if text_query
+            .as_deref()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false)
+        {
             self.ensure_fulltext_index(&ec.spec)?;
         }
 
         // Fuse only with a non-empty text query AND a built BM25 index; otherwise
         // return vector-only (current behaviour).
         let text_query = match text_query {
-            Some(t)
-                if !t.trim().is_empty() && self.has_fulltext_index(&ec.spec.name) =>
-            {
-                t
-            }
+            Some(t) if !t.trim().is_empty() && self.has_fulltext_index(&ec.spec.name) => t,
             _ => {
                 let mut hits = vector_hits;
                 hits.truncate(k);
@@ -484,10 +484,8 @@ impl ExternalCollectionService {
             .map_err(|e| anyhow::anyhow!("hybrid fusion failed: {e}"))?;
 
         // Assemble records: reuse the vector hits' records; fetch any BM25-only ids.
-        let mut by_id: std::collections::HashMap<String, ProximaRecord> = vector_hits
-            .into_iter()
-            .map(|h| (h.id, h.record))
-            .collect();
+        let mut by_id: std::collections::HashMap<String, ProximaRecord> =
+            vector_hits.into_iter().map(|h| (h.id, h.record)).collect();
         let missing: Vec<String> = fused
             .iter()
             .filter(|f| !by_id.contains_key(&f.doc_id))
@@ -938,8 +936,9 @@ mod tests {
             cat.clone(),
             axis_manager().await,
         );
-        let spec = ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
-            .with_text_column("text");
+        let spec =
+            ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
+                .with_text_column("text");
         let ec = svc.register(spec).await.unwrap();
         svc.build(&ec.id).await.unwrap();
         assert!(svc.has_fulltext_index("ext_docs"));
@@ -950,8 +949,13 @@ mod tests {
             catalog_manager_with_default().await,
             axis_manager().await,
         );
-        let spec2 =
-            ExternalCollectionSpec::parquet("ext_plain", path.to_str().unwrap(), "id", "vector", 20);
+        let spec2 = ExternalCollectionSpec::parquet(
+            "ext_plain",
+            path.to_str().unwrap(),
+            "id",
+            "vector",
+            20,
+        );
         let ec2 = svc2.register(spec2).await.unwrap();
         svc2.build(&ec2.id).await.unwrap();
         assert!(!svc2.has_fulltext_index("ext_plain"));
@@ -970,8 +974,9 @@ mod tests {
             cat,
             axis_manager().await,
         );
-        let spec = ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
-            .with_text_column("text");
+        let spec =
+            ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
+                .with_text_column("text");
         let ec = svc.register(spec).await.unwrap();
         svc.build(&ec.id).await.unwrap();
 
@@ -981,7 +986,10 @@ mod tests {
 
         // Vector-only: nearest is row-3.
         let vonly = svc.search(&ec.id, qv.clone(), 5).await.unwrap();
-        assert_eq!(vonly[0].id, "row-3", "vector-only top-1 is the nearest vector");
+        assert_eq!(
+            vonly[0].id, "row-3",
+            "vector-only top-1 is the nearest vector"
+        );
 
         // Hybrid: fusion pulls in the lexical-only match (row-7) alongside row-3.
         let hybrid = svc
@@ -989,8 +997,14 @@ mod tests {
             .await
             .unwrap();
         let ids: Vec<&str> = hybrid.iter().map(|h| h.id.as_str()).collect();
-        assert!(ids.contains(&"row-7"), "BM25 brought the lexical match into fused results: {ids:?}");
-        assert!(ids.contains(&"row-3"), "vector match retained in fused results: {ids:?}");
+        assert!(
+            ids.contains(&"row-7"),
+            "BM25 brought the lexical match into fused results: {ids:?}"
+        );
+        assert!(
+            ids.contains(&"row-3"),
+            "vector match retained in fused results: {ids:?}"
+        );
         // Hits still carry federated props.
         let row7 = hybrid.iter().find(|h| h.id == "row-7").unwrap();
         assert!(row7.record.props.contains_key("text"));
@@ -1008,15 +1022,19 @@ mod tests {
 
         // Build with the first service (BM25 populated in its in-memory map).
         let svc1 = ExternalCollectionService::new(registry.clone(), cat.clone(), axis.clone());
-        let spec = ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
-            .with_text_column("text");
+        let spec =
+            ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
+                .with_text_column("text");
         let ec = svc1.register(spec).await.unwrap();
         svc1.build(&ec.id).await.unwrap();
 
         // Simulate a restart: a fresh service shares the durable registry + the
         // (still-resident) IVF index, but starts with an EMPTY BM25 map.
         let svc2 = ExternalCollectionService::new(registry, cat, axis);
-        assert!(!svc2.has_fulltext_index("ext_docs"), "fresh service starts without BM25");
+        assert!(
+            !svc2.has_fulltext_index("ext_docs"),
+            "fresh service starts without BM25"
+        );
 
         let mut qv = vec![0.0f32; 20];
         qv[3] = 1.0;
@@ -1027,9 +1045,15 @@ mod tests {
 
         // The first hybrid query lazily rebuilt the BM25 index from the source,
         // so fusion still surfaces the lexical-only match.
-        assert!(svc2.has_fulltext_index("ext_docs"), "first hybrid query rebuilt the BM25 index");
+        assert!(
+            svc2.has_fulltext_index("ext_docs"),
+            "first hybrid query rebuilt the BM25 index"
+        );
         let ids: Vec<&str> = hybrid.iter().map(|h| h.id.as_str()).collect();
-        assert!(ids.contains(&"row-7"), "lazily-rebuilt BM25 fused the lexical match: {ids:?}");
+        assert!(
+            ids.contains(&"row-7"),
+            "lazily-rebuilt BM25 fused the lexical match: {ids:?}"
+        );
         assert!(ids.contains(&"row-3"), "vector match retained: {ids:?}");
 
         let _ = std::fs::remove_file(&path);
@@ -1046,8 +1070,9 @@ mod tests {
             cat,
             axis_manager().await,
         );
-        let spec = ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
-            .with_text_column("text");
+        let spec =
+            ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
+                .with_text_column("text");
         let ec = svc.register(spec).await.unwrap();
         svc.build(&ec.id).await.unwrap();
 
@@ -1069,7 +1094,10 @@ mod tests {
             .await
             .unwrap();
         let ids: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
-        assert!(ids.contains(&"row-7"), "weighted fusion surfaces the lexical match: {ids:?}");
+        assert!(
+            ids.contains(&"row-7"),
+            "weighted fusion surfaces the lexical match: {ids:?}"
+        );
         assert!(ids.contains(&"row-3"), "vector match retained: {ids:?}");
 
         let _ = std::fs::remove_file(&path);

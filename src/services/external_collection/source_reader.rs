@@ -552,11 +552,15 @@ mod tests {
         let path = tmp_path("text");
         write_parquet_with_meta(
             &path,
-            &[("a", "alpha bravo", 1, vec![1.0, 0.0]), ("b", "charlie", 2, vec![0.0, 1.0])],
+            &[
+                ("a", "alpha bravo", 1, vec![1.0, 0.0]),
+                ("b", "charlie", 2, vec![0.0, 1.0]),
+            ],
             2,
         );
-        let spec = ExternalCollectionSpec::parquet("docs", path.to_str().unwrap(), "id", "vector", 2)
-            .with_text_column("text");
+        let spec =
+            ExternalCollectionSpec::parquet("docs", path.to_str().unwrap(), "id", "vector", 2)
+                .with_text_column("text");
         let pairs = read_external_text(&spec).unwrap();
         assert_eq!(
             pairs,

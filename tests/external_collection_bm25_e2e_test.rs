@@ -18,8 +18,8 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use arrow_array::builder::{FixedSizeListBuilder, Float32Builder, StringBuilder};
 use arrow_array::RecordBatch;
+use arrow_array::builder::{FixedSizeListBuilder, Float32Builder, StringBuilder};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use serde_json::json;
@@ -120,7 +120,10 @@ fn write_parquet(path: &std::path::Path, n: usize, dim: usize) {
         Field::new("title", DataType::Utf8, false),
         Field::new(
             "vector",
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim as i32),
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                dim as i32,
+            ),
             false,
         ),
     ]));
@@ -211,7 +214,9 @@ async fn external_collection_bm25_hybrid_e2e_over_http() {
     let mut qvec = vec![0.0f32; dim];
     qvec[3] = 1.0;
     let search = http
-        .post(format!("{base}/api/v2/external-collections/{ext_id}/search"))
+        .post(format!(
+            "{base}/api/v2/external-collections/{ext_id}/search"
+        ))
         .json(&json!({ "vector": qvec, "text": "title-7", "k": 5 }))
         .send()
         .await
@@ -227,8 +232,14 @@ async fn external_collection_bm25_hybrid_e2e_over_http() {
     assert!(!hits.is_empty(), "hybrid search returned hits");
 
     let ids: Vec<&str> = hits.iter().filter_map(|h| h["id"].as_str()).collect();
-    assert!(ids.contains(&"doc-7"), "BM25 lexical match fused in over HTTP: {ids:?}");
-    assert!(ids.contains(&"doc-3"), "vector match retained over HTTP: {ids:?}");
+    assert!(
+        ids.contains(&"doc-7"),
+        "BM25 lexical match fused in over HTTP: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"doc-3"),
+        "vector match retained over HTTP: {ids:?}"
+    );
 
     // Fused hits carry federated props (the title) from the un-copied source.
     let doc7 = hits.iter().find(|h| h["id"] == "doc-7").expect("doc-7 hit");

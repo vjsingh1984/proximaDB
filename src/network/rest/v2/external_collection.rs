@@ -215,9 +215,7 @@ pub async fn search_external_collection_v2(
             bm25_normalize: true,
             vector_normalize: true,
         },
-        Some("rrf") | None => {
-            crate::core::search::hybrid::FusionStrategy::ReciprocalRank { k: 60 }
-        }
+        Some("rrf") | None => crate::core::search::hybrid::FusionStrategy::ReciprocalRank { k: 60 },
         Some(other) => {
             return Err(ApiError::InvalidArgument(format!(
                 "unknown fusion strategy '{other}' (expected 'rrf' or 'weighted')"
