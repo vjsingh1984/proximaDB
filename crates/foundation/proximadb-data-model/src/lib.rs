@@ -19,7 +19,11 @@
 //! Authoritative definition of the ProximaDB type system and model discriminators
 //! as specified in MULTIMODAL_OVERHAUL_SPEC_2026_05_08.
 
+use arrow_schema::{
+    DataType as ArrowDataType, Field, IntervalUnit as ArrowIntervalUnit, TimeUnit as ArrowTimeUnit,
+};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Modality Discriminators
@@ -252,26 +256,224 @@ pub enum ProximaType {
 
 impl ProximaType {
     /// Return the PostgreSQL OID for this type for pgwire compatibility.
+    ///
+    /// Canonical OID authority for ALL surfaces (ADR-024): catalog and storage
+    /// types map here via [`ProximaType`] rather than maintaining parallel OID
+    /// tables. Types without a precise pg builtin fall back to the closest
+    /// representable (wider int / `numeric` / `varchar`).
     pub fn pgwire_oid(&self) -> u32 {
         match self {
             ProximaType::Boolean => 16,
-            ProximaType::Int16 => 21,
-            ProximaType::Int32 => 23,
-            ProximaType::Int64 => 20,
-            ProximaType::Float32 => 700,
-            ProximaType::Float64 => 701,
-            ProximaType::String => 1043, // varchar
-            ProximaType::Symbol => 1043,
-            ProximaType::TimestampTz(_) => 1184,
-            ProximaType::Uuid => 2950,
             ProximaType::Binary => 17,
-            ProximaType::Date => 1082,
+            ProximaType::Int64 | ProximaType::UInt32 | ProximaType::UInt64 => 20, // int8 (uint32/64 widen)
+            ProximaType::Int8 | ProximaType::Int16 | ProximaType::UInt8 => 21,    // int2
+            ProximaType::Int32 | ProximaType::UInt16 => 23,                       // int4
             ProximaType::Json => 114,
-            ProximaType::Jsonb => 3802,
+            ProximaType::Point | ProximaType::GeographyPoint => 600, // point
+            ProximaType::Float16 | ProximaType::Float32 => 700,      // float4
+            ProximaType::Float64 => 701,
+            ProximaType::String | ProximaType::Symbol => 1043, // varchar
+            ProximaType::Date => 1082,
+            ProximaType::Time(_) => 1083,
+            ProximaType::Timestamp(_) => 1114,
+            ProximaType::TimestampTz(_) => 1184,
+            ProximaType::Interval(_) | ProximaType::Duration(_) => 1186, // interval
             ProximaType::Decimal { .. } => 1700,
+            ProximaType::Uuid | ProximaType::ULID => 2950,
+            ProximaType::Jsonb => 3802,
             ProximaType::Array(_) => 2277, // anyarray
-            _ => 1043,                     // Default to varchar
+            // Map/Struct/vectors/Null have no pg builtin → varchar text form.
+            _ => 1043,
         }
+    }
+
+    /// Canonical [`ProximaType`] → Arrow [`ArrowDataType`] mapping (ADR-024).
+    ///
+    /// This is the single home for the type→Arrow projection that the catalog
+    /// and storage layers previously duplicated (`CatalogDataType::to_arrow_datatype`,
+    /// `ProximaDataType::to_arrow_type`). Dense vectors encode as
+    /// `FixedSizeBinary(dim * element_width)` (little-endian); binary vectors as
+    /// `FixedSizeBinary(ceil(dim/8))`. Identifier/geo/jsonb types without an Arrow
+    /// builtin project to their physical carrier (Utf8 / FixedSizeBinary), which is
+    /// a lossy physical projection (the logical type stays authoritative here).
+    pub fn to_arrow_type(&self) -> ArrowDataType {
+        match self {
+            ProximaType::Boolean => ArrowDataType::Boolean,
+            ProximaType::Int8 => ArrowDataType::Int8,
+            ProximaType::Int16 => ArrowDataType::Int16,
+            ProximaType::Int32 => ArrowDataType::Int32,
+            ProximaType::Int64 => ArrowDataType::Int64,
+            ProximaType::UInt8 => ArrowDataType::UInt8,
+            ProximaType::UInt16 => ArrowDataType::UInt16,
+            ProximaType::UInt32 => ArrowDataType::UInt32,
+            ProximaType::UInt64 => ArrowDataType::UInt64,
+            ProximaType::Float16 => ArrowDataType::Float16,
+            ProximaType::Float32 => ArrowDataType::Float32,
+            ProximaType::Float64 => ArrowDataType::Float64,
+            ProximaType::Decimal { precision, scale } => {
+                ArrowDataType::Decimal128(*precision, *scale as i8)
+            }
+            ProximaType::String | ProximaType::Symbol => ArrowDataType::Utf8,
+            ProximaType::Binary => ArrowDataType::Binary,
+            ProximaType::Date => ArrowDataType::Date32,
+            ProximaType::Time(unit) => ArrowDataType::Time64(time_unit_to_arrow(*unit)),
+            ProximaType::Timestamp(unit) => {
+                ArrowDataType::Timestamp(time_unit_to_arrow(*unit), None)
+            }
+            ProximaType::TimestampTz(unit) => {
+                ArrowDataType::Timestamp(time_unit_to_arrow(*unit), Some("UTC".into()))
+            }
+            ProximaType::Interval(_) => ArrowDataType::Interval(ArrowIntervalUnit::MonthDayNano),
+            ProximaType::Duration(unit) => ArrowDataType::Duration(time_unit_to_arrow(*unit)),
+            // UUID/ULID are 16-byte identifiers; JSON text-backed.
+            ProximaType::Uuid | ProximaType::ULID => ArrowDataType::FixedSizeBinary(16),
+            ProximaType::Json | ProximaType::Jsonb => ArrowDataType::Utf8,
+            ProximaType::Array(element) => {
+                ArrowDataType::List(Arc::new(Field::new("item", element.to_arrow_type(), true)))
+            }
+            ProximaType::Map { key, value } => ArrowDataType::Map(
+                Arc::new(Field::new(
+                    "entries",
+                    ArrowDataType::Struct(
+                        vec![
+                            Field::new("key", key.to_arrow_type(), false),
+                            Field::new("value", value.to_arrow_type(), true),
+                        ]
+                        .into(),
+                    ),
+                    false,
+                )),
+                false,
+            ),
+            ProximaType::Struct { fields } => ArrowDataType::Struct(
+                fields
+                    .iter()
+                    .map(|(name, ty)| Field::new(name, ty.to_arrow_type(), true))
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+            ProximaType::DenseVector { element, dim } => {
+                ArrowDataType::FixedSizeBinary((*dim * element.byte_width()) as i32)
+            }
+            ProximaType::SparseVector { .. } => ArrowDataType::Map(
+                Arc::new(Field::new(
+                    "entries",
+                    ArrowDataType::Struct(
+                        vec![
+                            Field::new("key", ArrowDataType::Int32, false),
+                            Field::new("value", ArrowDataType::Float32, false),
+                        ]
+                        .into(),
+                    ),
+                    false,
+                )),
+                false,
+            ),
+            ProximaType::BinaryVector { dim } => {
+                ArrowDataType::FixedSizeBinary(dim.div_ceil(8) as i32)
+            }
+            // 2 × f64 little-endian carrier.
+            ProximaType::Point | ProximaType::GeographyPoint => ArrowDataType::FixedSizeBinary(16),
+            ProximaType::Null => ArrowDataType::Null,
+        }
+    }
+
+    /// Best-effort Arrow [`ArrowDataType`] → canonical [`ProximaType`] mapping
+    /// (the inverse of [`to_arrow_type`](Self::to_arrow_type)).
+    ///
+    /// Some logical types share a physical Arrow carrier (Symbol/String→Utf8,
+    /// Uuid/Point→FixedSizeBinary), so the reverse is necessarily heuristic: a
+    /// `FixedSizeBinary` whose width is a multiple of 4 is read back as a
+    /// `Float32` dense vector (matching `to_arrow_type`); other widths → `Binary`.
+    pub fn from_arrow_type(arrow_type: &ArrowDataType) -> Self {
+        match arrow_type {
+            ArrowDataType::Boolean => ProximaType::Boolean,
+            ArrowDataType::Int8 => ProximaType::Int8,
+            ArrowDataType::Int16 => ProximaType::Int16,
+            ArrowDataType::Int32 => ProximaType::Int32,
+            ArrowDataType::Int64 => ProximaType::Int64,
+            ArrowDataType::UInt8 => ProximaType::UInt8,
+            ArrowDataType::UInt16 => ProximaType::UInt16,
+            ArrowDataType::UInt32 => ProximaType::UInt32,
+            ArrowDataType::UInt64 => ProximaType::UInt64,
+            ArrowDataType::Float16 => ProximaType::Float16,
+            ArrowDataType::Float32 => ProximaType::Float32,
+            ArrowDataType::Float64 => ProximaType::Float64,
+            ArrowDataType::Decimal128(p, s) | ArrowDataType::Decimal256(p, s) => {
+                ProximaType::Decimal {
+                    precision: *p,
+                    scale: *s as u8,
+                }
+            }
+            ArrowDataType::Utf8 | ArrowDataType::LargeUtf8 => ProximaType::String,
+            ArrowDataType::Binary | ArrowDataType::LargeBinary => ProximaType::Binary,
+            ArrowDataType::Date32 | ArrowDataType::Date64 => ProximaType::Date,
+            ArrowDataType::Time64(unit) | ArrowDataType::Time32(unit) => {
+                ProximaType::Time(time_unit_from_arrow(*unit))
+            }
+            ArrowDataType::Timestamp(unit, tz) => {
+                if tz.is_some() {
+                    ProximaType::TimestampTz(time_unit_from_arrow(*unit))
+                } else {
+                    ProximaType::Timestamp(time_unit_from_arrow(*unit))
+                }
+            }
+            ArrowDataType::Duration(unit) => ProximaType::Duration(time_unit_from_arrow(*unit)),
+            ArrowDataType::Interval(_) => ProximaType::Interval(TimeUnit::Nanosecond),
+            ArrowDataType::Null => ProximaType::Null,
+            ArrowDataType::FixedSizeBinary(size) => {
+                if *size > 0 && *size % 4 == 0 {
+                    ProximaType::DenseVector {
+                        element: VectorElement::Float32,
+                        dim: (*size / 4) as usize,
+                    }
+                } else {
+                    ProximaType::Binary
+                }
+            }
+            ArrowDataType::List(field) | ArrowDataType::LargeList(field) => {
+                ProximaType::Array(Box::new(Self::from_arrow_type(field.data_type())))
+            }
+            ArrowDataType::Map(field, _) => {
+                if let ArrowDataType::Struct(fields) = field.data_type()
+                    && fields.len() >= 2
+                {
+                    ProximaType::Map {
+                        key: Box::new(Self::from_arrow_type(fields[0].data_type())),
+                        value: Box::new(Self::from_arrow_type(fields[1].data_type())),
+                    }
+                } else {
+                    ProximaType::Json
+                }
+            }
+            ArrowDataType::Struct(fields) => ProximaType::Struct {
+                fields: fields
+                    .iter()
+                    .map(|f| (f.name().clone(), Self::from_arrow_type(f.data_type())))
+                    .collect(),
+            },
+            _ => ProximaType::Binary,
+        }
+    }
+}
+
+/// Map the canonical [`TimeUnit`] to Arrow's time unit.
+fn time_unit_to_arrow(unit: TimeUnit) -> ArrowTimeUnit {
+    match unit {
+        TimeUnit::Second => ArrowTimeUnit::Second,
+        TimeUnit::Millisecond => ArrowTimeUnit::Millisecond,
+        TimeUnit::Microsecond => ArrowTimeUnit::Microsecond,
+        TimeUnit::Nanosecond => ArrowTimeUnit::Nanosecond,
+    }
+}
+
+/// Map Arrow's time unit back to the canonical [`TimeUnit`].
+fn time_unit_from_arrow(unit: ArrowTimeUnit) -> TimeUnit {
+    match unit {
+        ArrowTimeUnit::Second => TimeUnit::Second,
+        ArrowTimeUnit::Millisecond => TimeUnit::Millisecond,
+        ArrowTimeUnit::Microsecond => TimeUnit::Microsecond,
+        ArrowTimeUnit::Nanosecond => TimeUnit::Nanosecond,
     }
 }
 
@@ -288,9 +490,23 @@ pub enum TimeUnit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VectorElement {
     Float16,
+    /// Brain float16 (truncated f32 exponent range).
+    BFloat16,
     Float32,
     Float64,
     Int8,
+}
+
+impl VectorElement {
+    /// Byte width of one element in the dense little-endian layout.
+    pub fn byte_width(&self) -> usize {
+        match self {
+            VectorElement::Int8 => 1,
+            VectorElement::Float16 | VectorElement::BFloat16 => 2,
+            VectorElement::Float32 => 4,
+            VectorElement::Float64 => 8,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +640,77 @@ mod tests {
             ProximaType::TimestampTz(TimeUnit::Millisecond).pgwire_oid(),
             1184
         );
+        // Extended (ADR-024) coverage: previously fell through to varchar.
+        assert_eq!(ProximaType::Int8.pgwire_oid(), 21); // int2
+        assert_eq!(ProximaType::Time(TimeUnit::Microsecond).pgwire_oid(), 1083);
+        assert_eq!(
+            ProximaType::Timestamp(TimeUnit::Nanosecond).pgwire_oid(),
+            1114
+        );
+        assert_eq!(ProximaType::Point.pgwire_oid(), 600);
+        assert_eq!(
+            ProximaType::Uuid.pgwire_oid(),
+            ProximaType::ULID.pgwire_oid()
+        );
+    }
+
+    #[test]
+    fn proxima_type_arrow_round_trips_scalars_and_temporal() {
+        for ty in [
+            ProximaType::Boolean,
+            ProximaType::Int8,
+            ProximaType::Int16,
+            ProximaType::Int32,
+            ProximaType::Int64,
+            ProximaType::UInt8,
+            ProximaType::UInt16,
+            ProximaType::UInt32,
+            ProximaType::UInt64,
+            ProximaType::Float16,
+            ProximaType::Float32,
+            ProximaType::Float64,
+            ProximaType::String,
+            ProximaType::Binary,
+            ProximaType::Date,
+            ProximaType::Time(TimeUnit::Microsecond),
+            ProximaType::Timestamp(TimeUnit::Nanosecond),
+            ProximaType::TimestampTz(TimeUnit::Nanosecond),
+            ProximaType::Duration(TimeUnit::Second),
+            ProximaType::Null,
+        ] {
+            let arrow = ty.to_arrow_type();
+            let back = ProximaType::from_arrow_type(&arrow);
+            assert_eq!(ty, back, "Arrow round-trip must preserve {ty:?}");
+        }
+    }
+
+    #[test]
+    fn proxima_type_dense_vector_arrow_layout_matches_element_width() {
+        // f32 dim 8 -> FixedSizeBinary(32); reverse reads back as f32 dense vector.
+        let v = ProximaType::DenseVector {
+            element: VectorElement::Float32,
+            dim: 8,
+        };
+        assert_eq!(v.to_arrow_type(), ArrowDataType::FixedSizeBinary(32));
+        assert_eq!(ProximaType::from_arrow_type(&v.to_arrow_type()), v);
+        // int8 element is 1 byte wide.
+        let q = ProximaType::DenseVector {
+            element: VectorElement::Int8,
+            dim: 8,
+        };
+        assert_eq!(q.to_arrow_type(), ArrowDataType::FixedSizeBinary(8));
+        assert_eq!(VectorElement::BFloat16.byte_width(), 2);
+    }
+
+    #[test]
+    fn proxima_type_nested_arrow_round_trips() {
+        let ty = ProximaType::Array(Box::new(ProximaType::Int64));
+        assert_eq!(ProximaType::from_arrow_type(&ty.to_arrow_type()), ty);
+        let m = ProximaType::Map {
+            key: Box::new(ProximaType::String),
+            value: Box::new(ProximaType::Float64),
+        };
+        assert_eq!(ProximaType::from_arrow_type(&m.to_arrow_type()), m);
     }
 
     #[test]
