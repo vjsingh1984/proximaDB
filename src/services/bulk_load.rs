@@ -47,8 +47,8 @@ use anyhow::Result;
 use proximadb_records::ProximaRecord;
 use tracing::{debug, warn};
 
-use crate::api_handlers::RichRecordBatchRequest;
-use crate::api_handlers::request_handlers::UnifiedHandlers;
+use crate::services::VectorOperationsService;
+use proximadb_runtime::RecordOpsPort;
 
 /// Returned from a successful bulk-load. Once the storage-engine
 /// refactor exposes the real SST-write step, this will identify the
@@ -81,7 +81,15 @@ pub struct BulkLoadOptions {
 }
 
 pub struct BulkLoader {
-    handlers: Arc<UnifiedHandlers>,
+    /// Record-batch ingest via the canonical `RecordOpsPort` (the runtime
+    /// `RecordOpsService` after TD-104 S3-c) — no longer the concrete ROOT
+    /// `UnifiedHandlers`. The per-record WAL+memtable fallback below routes
+    /// through `insert_record_batch`.
+    record_ops: Arc<dyn RecordOpsPort>,
+    /// Concrete vector-ops service for the engine-specific LSM-bypass probe
+    /// (`get_engine_for_collection`); held directly rather than reached
+    /// through the root handler (TD-104 S3-e).
+    vector_operations_service: Arc<VectorOperationsService>,
     /// Default storage root URL passed to the engine's
     /// `ingest_sorted_segment` override when the per-collection
     /// `storage_assignment.base_location` isn't yet threaded.
@@ -99,9 +107,14 @@ pub struct BulkLoader {
 }
 
 impl BulkLoader {
-    pub fn new(handlers: Arc<UnifiedHandlers>, default_storage_root: String) -> Self {
+    pub fn new(
+        record_ops: Arc<dyn RecordOpsPort>,
+        vector_operations_service: Arc<VectorOperationsService>,
+        default_storage_root: String,
+    ) -> Self {
         Self {
-            handlers,
+            record_ops,
+            vector_operations_service,
             default_storage_root,
         }
     }
@@ -153,7 +166,6 @@ impl BulkLoader {
         // to the per-record WAL+memtable path via UnifiedHandlers —
         // correctness-equivalent, just slower.
         if let Ok(engine) = self
-            .handlers
             .vector_operations_service
             .get_engine_for_collection(&collection_id)
             .await
@@ -205,13 +217,9 @@ impl BulkLoader {
         // engine override exists OR when the override returned an
         // error. Customer-visible correctness is identical to the
         // pre-2F-b behavior.
-        let request = RichRecordBatchRequest {
-            collection_id: collection_id.clone(),
-            records,
-        };
         let result = self
-            .handlers
-            .handle_record_batch_for_tenant(request, tenant_id)
+            .record_ops
+            .insert_record_batch(&collection_id, records, tenant_id)
             .await
             .map_err(|e| anyhow::anyhow!("bulk-load delegate failed: {e}"))?;
         if !result.success {

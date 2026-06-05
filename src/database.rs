@@ -1055,7 +1055,8 @@ async fn spawn_embedding_drainer_from_resolved(
     tokio::sync::oneshot::Sender<()>,
 )> {
     let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(
-        handlers,
+        handlers.record_ops() as Arc<dyn proximadb_runtime::RecordOpsPort>,
+        handlers.vector_operations_service.clone(),
         default_storage_root,
     ));
     let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
@@ -1165,7 +1166,8 @@ async fn spawn_embedding_drainer(
     // the canonical storage_locations URL instead of this hard default.
     let default_storage_root = "file:///tmp/proximadb".to_string();
     let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(
-        handlers,
+        handlers.record_ops() as Arc<dyn proximadb_runtime::RecordOpsPort>,
+        handlers.vector_operations_service.clone(),
         default_storage_root,
     ));
     let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
