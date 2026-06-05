@@ -10,7 +10,9 @@
 ## Build, Test, and Development Commands
 - `make build`, `make build-release`, `make build-server`, `make server-start`, and `make server-start-release` are the main local Rust entry points.
 - `make test`, `make test-rust`, `make test-python`, `make test-integration`, `make benchmark`, and `make check` are the canonical aggregate validation targets.
-- For targeted Rust work, prefer `cargo test --lib`, `cargo test --test <name>`, or `cargo test --features test-quick|test-standard|test-full`.
+- Fast inner-loop targets: `make check-fast` (type-check only, no codegen/link) and `make test-fast` (nextest unit suite, parallel; falls back to `cargo test --lib --test-threads=6` if nextest is missing). One-shot install via `make install-fast-tools` (adds `cargo-nextest` and `cargo-watch`).
+- For targeted Rust work, prefer `cargo test --lib`, `cargo test --test <name>`, `cargo nxlib` (nextest, parallel), or `cargo test --features test-quick|test-standard|test-full`.
+- The dev/test profile uses `debug = "line-tables-only"` for fast incremental link (panic backtraces keep file:line; lldb variable inspection is unavailable — flip back to `debug = true` in `[profile.dev]` only when needed). `.cargo/config.toml` enforces `jobs = 3` and `RUST_TEST_THREADS = "1"` to stay OOM-safe on 10-core hosts; the fast-loop targets bypass the latter via nextest, while the inner `--test-threads=` flag overrides it for cargo test.
 - When touching gated code, build or test with the relevant features explicitly: `experimental-engines`, `distributed-graph`, `tiered-graph`, `datafusion-integration`, `llm-joins`, `experimental-cdc-connectors`, `python`, `java`, `nodejs`, `c_ffi`, `aws`, `azure`, or `gcp`.
 - Python SDK tests: `cd clients/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=$PWD/src python -m pytest`.
 - Python embedded build/test: `cd clients/python-embedded && maturin develop --features python`, then `pytest`.

@@ -35,11 +35,20 @@ test-batch = "test unit_tests::storage::write_buffer -- --nocapture"
 test-coverage = "tarpaulin --config tarpaulin.toml"
 test-coverage-safe = "tarpaulin --skip-clean --timeout 600 --avoid-cfg-tarpaulin --engine llvm --lib --jobs 3 --release"
 
-# Fast check (syntax only, no codegen)
+# Fast check (syntax only, no codegen) — typed-syntax loop, no linking
 check-fast = "check --all-targets --jobs 3"
+check-lib  = "check --lib --jobs 3"   # even tighter; library-only
 
-# Parallel test run (for unit tests that don't share state)
+# Parallel test run (for unit tests that don't share state).
+# Overrides the RUST_TEST_THREADS=1 from [env] via the inner --test-threads flag.
 test-parallel = "test --lib --jobs 3 -- --test-threads=3"
+
+# Nextest aliases (requires `cargo install cargo-nextest --locked`).
+# Nextest has its own runner — RUST_TEST_THREADS from [env] does NOT apply.
+# Profiles live in .config/nextest.toml.
+nx     = "nextest run --profile default"
+nxlib  = "nextest run --lib --profile unit"
+nxint  = "nextest run --profile integration"
 
 [target.aarch64-apple-darwin]
 # Apple Silicon specific optimizations

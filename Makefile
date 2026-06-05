@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check release-check docs-claim-check release-smoke
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check release-check docs-claim-check release-smoke
 
 # Default target
 all: build test
@@ -34,6 +34,34 @@ test-rust:
 test-integration:
 	@echo "🔗 Running integration tests..."
 	cargo test --test integration --verbose
+
+# Fast iteration loop. Uses nextest (parallel, process-isolated) if installed;
+# falls back to libtest with parallel --test-threads. Bypasses the
+# RUST_TEST_THREADS=1 env in .cargo/config.toml (which is for integration tests).
+test-fast:
+	@if command -v cargo-nextest >/dev/null 2>&1; then \
+		echo "Running unit tests via nextest (profile=unit)..."; \
+		cargo nextest run --lib --profile unit; \
+	else \
+		echo "nextest not installed; falling back to: cargo test --lib --test-threads=6"; \
+		echo "  install with: make install-fast-tools"; \
+		cargo test --lib -- --test-threads=6; \
+	fi
+
+# Type-check only (no codegen, no link) for the tightest inner edit loop.
+check-fast:
+	@cargo check-fast
+
+# Install optional build-speed tools. Idempotent.
+install-fast-tools:
+	@if ! command -v cargo-nextest >/dev/null 2>&1; then \
+		echo "Installing cargo-nextest..."; \
+		cargo install cargo-nextest --locked; \
+	else echo "cargo-nextest: already installed"; fi
+	@if ! command -v cargo-watch >/dev/null 2>&1; then \
+		echo "Installing cargo-watch..."; \
+		cargo install cargo-watch --locked; \
+	else echo "cargo-watch: already installed"; fi
 
 test-python:
 	@echo "🐍 Running Python tests..."
@@ -168,8 +196,10 @@ docs-claim-check:
 # whose contract v0.2 commits to.
 release-smoke:
 	@echo "🚦 Running release-smoke tests..."
-	cargo test --lib route_health query_optimizer object_economy_directory \
-		vector_hints_from_search_plan_hints_preserves_ann_reason -- --test-threads=1
+	cargo test --lib route_health -- --test-threads=1
+	cargo test --lib query_optimizer -- --test-threads=1
+	cargo test --lib object_economy_directory -- --test-threads=1
+	cargo test --lib vector_hints_from_search_plan_hints_preserves_ann_reason -- --test-threads=1
 	cargo test --test graph_branch_merge_integration_test -- --test-threads=1
 	cargo test --test grpc_hybrid_integration_test -- --test-threads=1
 	cargo test --test release_smoke_v2 -- --test-threads=1 --nocapture
