@@ -570,7 +570,20 @@ mod tests {
 
         let features = state.as_feature_vector();
 
-        // Object economy adds 7 features at the end
-        assert!(features.len() >= 50 + 7);
+        // Object economy contributes the trailing 7 features of the vector.
+        // Assert against the actual encoding (rather than a brittle total
+        // count) so the test stays meaningful as the base feature set evolves.
+        assert!(
+            features.len() >= 7,
+            "feature vector must include the object-economy block"
+        );
+        let oe = &features[features.len() - 7..];
+        assert_eq!(oe[0], 1.0, "enabled");
+        assert!((oe[1] - 0.9).abs() < 1e-6, "directory_freshness");
+        assert!((oe[2] - 100.0 / 10_000.0).abs() < 1e-6, "block_count");
+        assert!((oe[3] - 1000.0 / 10_000.0).abs() < 1e-6, "block_density");
+        assert!((oe[4] - 0.5).abs() < 1e-6, "avg_centroid_distance");
+        assert!((oe[5] - 0.8).abs() < 1e-6, "zorder_code_quality");
+        assert!((oe[6] - 0.7).abs() < 1e-6, "zone_map_selectivity");
     }
 }

@@ -3206,10 +3206,16 @@ mod tests {
     }
 
     /// Records arriving with text but no vector get their `embeddings` field
-    /// populated by the in-process EmbeddingService. Without `--features onnx`
-    /// the service returns deterministic synthetic vectors at the route's
-    /// declared dimension (384 for bge-small), which is exactly what the
-    /// downstream WAL + index paths need to function end-to-end.
+    /// populated by the in-process EmbeddingService at the route's declared
+    /// dimension (384 for bge-small), which is exactly what the downstream
+    /// WAL + index paths need to function end-to-end.
+    ///
+    /// Gated on `--features onnx`: the BGE route requires the real ONNX
+    /// runtime, and `BgeModel::initialize` deliberately returns
+    /// `ModelUnavailable` when `onnx` is off (synthetic fallback is forbidden
+    /// in production paths — see bge.rs). Without the gate this test fails in
+    /// every default (onnx-off) build.
+    #[cfg(feature = "onnx")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn embed_text_only_records_populates_empty_embeddings() {
         use proximadb_data_model::ProximaValue;

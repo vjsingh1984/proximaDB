@@ -287,9 +287,16 @@ mod tests {
         let coord = coordinator_with_table("c_pin").await;
         let pin = coord.pin("c_pin").await.unwrap();
         assert_eq!(pin.collection_id, "c_pin");
+        // The collection was just created with no writes, so it contributes no
+        // WAL entries → from_lsn pins at 0.
         assert_eq!(pin.from_lsn, 0);
-        assert_eq!(pin.checkpoint_id, 0);
-        assert_eq!(pin.source_range(), "wal:0..0");
+        // `to_lsn`/`checkpoint_id` track the GLOBAL WAL manifest service, which
+        // is a process singleton other tests in this binary may have advanced
+        // (the LSN allocator is shared). Assert the range is well-formed and
+        // anchored at from_lsn rather than a fixed `wal:0..0`, which is only
+        // true when this test runs in isolation.
+        assert!(pin.to_lsn >= pin.from_lsn, "range must be well-formed");
+        assert!(pin.source_range().starts_with("wal:0.."));
     }
 
     #[tokio::test]

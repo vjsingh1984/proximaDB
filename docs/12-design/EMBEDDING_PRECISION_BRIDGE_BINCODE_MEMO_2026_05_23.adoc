@@ -6,6 +6,20 @@ Status: Design proposal — pending review +
 Date: 2026-05-23 +
 Decides: how `EmbeddingCell.values` flips from `Vec<f32>` to `EmbeddingValues` without breaking existing v1 bincode WAL files.
 
+[NOTE]
+====
+**2026-06-05 correction.** The shipped `EmbeddingCell::serialize` drifted from
+§Step 2 below: it had been changed to *skip* the trailing `precision_epoch`
+field when `None` (emitting 0 bytes). Because bincode is positional, that
+desynced the decoder — every `deserialize_batch` of a `None`-epoch record (the
+common case) failed with `io error: unexpected end of file`, and `Vec`
+boundaries became ambiguous. This broke ~16 WAL serialization/recovery tests.
+The fix restores §Step 2's design: on binary (non-human-readable) wires
+`precision_epoch` is ALWAYS emitted (`None` = one `0x00` Option-tag byte);
+human-readable JSON still omits the key. The `embedding_cell_bincode_fixture_locks_pre_2_5b_layout`
+fixture was updated to include the trailing `0x00`.
+====
+
 == Problem
 
 PR 1 added the `EmbeddingValues` typed enum but kept `EmbeddingCell.values: Vec<f32>` as the durable storage field for back-compat. To realize the fp16 storage win, INT-2.5b must flip the field type so producers can carry typed values through to the PAX writer (INT-3).

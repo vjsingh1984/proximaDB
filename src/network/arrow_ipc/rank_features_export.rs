@@ -438,6 +438,36 @@ mod tests {
             Ok(Box::new(DocIdExec))
         }
     }
+    /// Test blueprint registered under an arbitrary feature name so that
+    /// match_features / summary_features expressions referencing that name
+    /// pass profile validation (which compiles every feature expression).
+    struct NamedBp(&'static str);
+    impl Blueprint for NamedBp {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn declared_outputs(&self) -> &[OutputSpec] {
+            &[]
+        }
+        fn build_executor(
+            &self,
+            _cfg: &PhaseConfig,
+            _q: &QueryContext,
+        ) -> RankResult<Box<dyn FeatureExecutor>> {
+            Ok(Box::new(DocIdExec))
+        }
+    }
+
+    /// Factory with `docid` plus a registered blueprint per requested feature
+    /// name, so a profile that lists those names as features validates.
+    fn factory_with_features(names: &[&'static str]) -> Arc<BlueprintFactory> {
+        let f = factory_with_docid();
+        for name in names {
+            f.register(Arc::new(NamedBp(name)));
+        }
+        f
+    }
+
     struct FixedCandidates(Vec<DocHandle>);
     #[async_trait::async_trait]
     impl CandidateProvider for FixedCandidates {
@@ -583,7 +613,7 @@ mod tests {
 
     #[test]
     fn profile_match_feature_names_returns_declaration_order() {
-        let f = factory_with_docid();
+        let f = factory_with_features(&["alpha", "beta", "gamma"]);
         let mut spec = RankProfileSpec::new("o");
         spec.first_phase = Some(PhaseSpec {
             expression: "docid()".into(),
@@ -601,7 +631,7 @@ mod tests {
 
     #[test]
     fn profile_feature_column_names_returns_match_and_summary_in_declaration_order() {
-        let f = factory_with_docid();
+        let f = factory_with_features(&["a", "b", "c", "d", "e"]);
         let mut spec = RankProfileSpec::new("o");
         spec.first_phase = Some(PhaseSpec {
             expression: "docid()".into(),

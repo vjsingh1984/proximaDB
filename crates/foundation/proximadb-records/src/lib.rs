@@ -447,7 +447,19 @@ impl Serialize for EmbeddingCell {
             }
         };
 
-        let field_count = if self.precision_epoch.is_some() { 6 } else { 5 };
+        // `precision_epoch` is the trailing field. bincode (and every other
+        // non-self-describing format) is positional with no field tags, so the
+        // decoder reads a FIXED field count. Skipping this field when `None`
+        // desyncs the positional decoder: it reads the next record's bytes as
+        // this cell's `precision_epoch` and then runs off the end of the buffer
+        // ("unexpected end of file"), and it makes `Vec<EmbeddingCell>`
+        // boundaries ambiguous. So for binary formats we ALWAYS emit
+        // `precision_epoch` — this matches the design in
+        // EMBEDDING_PRECISION_BRIDGE_BINCODE_MEMO §Step 2 (a `None` is a single
+        // `0x00` Option-tag byte). For human-readable formats (JSON) we keep
+        // skipping it so the key is omitted rather than rendered as `null`.
+        let skip_epoch = serializer.is_human_readable() && self.precision_epoch.is_none();
+        let field_count = if skip_epoch { 5 } else { 6 };
         let mut state = serializer.serialize_struct("EmbeddingCell", field_count)?;
         state.serialize_field("model_id", &self.model_id)?;
         state.serialize_field("modality", &self.modality)?;
@@ -457,9 +469,13 @@ impl Serialize for EmbeddingCell {
         state.serialize_field("values", values_fp32)?;
         state.serialize_field("dim", &self.dim)?;
         state.serialize_field("precision", &self.precision)?;
-        match &self.precision_epoch {
-            Some(epoch) => state.serialize_field("precision_epoch", epoch)?,
-            None => state.skip_field("precision_epoch")?,
+        if skip_epoch {
+            state.skip_field("precision_epoch")?;
+        } else {
+            // Serialize the full `Option<u64>` (not the unwrapped value) so the
+            // bincode bytes are symmetric with the `Option<u64>` field the
+            // deserialize shadow reads back.
+            state.serialize_field("precision_epoch", &self.precision_epoch)?;
         }
         state.end()
     }
@@ -1539,8 +1555,10 @@ mod tests {
         //   values   (len:u64 || elements:Vec<f32>)
         //   dim      (u32 LE)
         //   precision (u8 — EmbeddingScalarType discriminant)
-        //   precision_epoch is `#[serde(default, skip_serializing_if =
-        //     "Option::is_none")]` so when None it emits 0 bytes.
+        //   precision_epoch (Option<u64>) is ALWAYS emitted on the binary wire
+        //     (see EmbeddingCell::serialize). When None it is a single 0x00
+        //     Option-tag byte — NOT skipped — so the positional decoder stays
+        //     aligned and Vec<EmbeddingCell> boundaries are unambiguous.
         const EXPECTED_HEX: &str = "\
 \\x0d\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
 fixture-model\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
@@ -1548,7 +1566,7 @@ text\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
 \\xcd\\xcc\\xcc\\x3d\\xcd\\xcc\\x4c\\x3e\\x9a\\x99\\x99\\x3e\\xcd\\xcc\\xcc\\x3e\
 \\x04\\x00\\x00\\x00\
 \\x01\
-\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00";
+\\x00";
 
         // Strip the ASCII embeds for the comparison — they're there so
         // the literal is human-readable. Build the expected hex string
@@ -1578,8 +1596,10 @@ text\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
     ///   serialization. Serde emits the variant index as `u32` (4 bytes)
     ///   regardless of the repr. Fp32 is variant 0 → `00 00 00 00`, not
     ///   `0x01` like the repr suggests.
-    /// * `#[serde(default, skip_serializing_if = "Option::is_none")]`
-    ///   on `precision_epoch` IS honored by bincode (skipped when None).
+    /// * `precision_epoch: Option<u64>` is ALWAYS written on the binary wire
+    ///   (the custom Serialize skips it only for human-readable formats).
+    ///   `None` is a single `0x00` Option-tag byte — this keeps the positional
+    ///   bincode decoder aligned across a `Vec<EmbeddingCell>`.
     /// * `dim: u32` serializes as 4 LE bytes (bincode 1.x fixint).
     /// * String + Vec lengths use `u64` (8 bytes LE), not varint.
     fn build_expected_fixture_bytes() -> Vec<u8> {
@@ -1602,7 +1622,9 @@ text\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
         // variant index that serde-bincode would emit without the
         // custom Serialize impl on EmbeddingScalarType.
         b.push(EmbeddingScalarType::Fp32 as u8);
-        // precision_epoch: None → 0 bytes (skip_serializing_if works)
+        // precision_epoch: None → single 0x00 Option-tag byte (always emitted
+        // on the binary wire to keep the positional decoder aligned).
+        b.push(0x00);
         b
     }
 

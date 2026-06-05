@@ -291,31 +291,38 @@ impl MetadataIndex {
 
         // Process each record's metadata
         for record in &block.records {
-            if !record.props.is_empty() {
-                for (key, value) in &record.props {
-                    // Only index filterable columns
-                    if !self.filterable_columns.contains(key) {
-                        continue;
-                    }
+            if record.props.is_empty() {
+                continue;
+            }
 
-                    // Convert canonical ProximaTreeNode to serde_json::Value
-                    let json_value = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
+            // Flatten the canonical property tree to BARE JSON scalars. The
+            // `ProximaTreeNode` enum is externally tagged, so serializing a node
+            // directly (serde_json::to_value) yields `{"Value":{"String":...}}`
+            // — which never matches the bare query values used by
+            // `find_blocks_with_value` / `find_blocks_in_range`. The canonical
+            // `proxima_tree_to_json_map` unwraps each node to its scalar value.
+            let json_props =
+                crate::core::search::sql_value_filter::proxima_tree_to_json_map(&record.props);
+            for (key, json_value) in &json_props {
+                // Only index filterable columns
+                if !self.filterable_columns.contains(key) {
+                    continue;
+                }
 
-                    // Get or create column index
-                    let new_index = if !self.column_indexes.contains_key(key) {
-                        Some(self.create_column_index(&json_value))
-                    } else {
-                        None
-                    };
+                // Get or create column index
+                let new_index = if !self.column_indexes.contains_key(key) {
+                    Some(self.create_column_index(json_value))
+                } else {
+                    None
+                };
 
-                    if let Some(idx) = new_index {
-                        self.column_indexes.insert(key.clone(), idx);
-                    }
+                if let Some(idx) = new_index {
+                    self.column_indexes.insert(key.clone(), idx);
+                }
 
-                    // Update index with this value
-                    if let Some(column_index) = self.column_indexes.get_mut(key) {
-                        Self::update_column_index_static(column_index, &json_value, block_id)?;
-                    }
+                // Update index with this value
+                if let Some(column_index) = self.column_indexes.get_mut(key) {
+                    Self::update_column_index_static(column_index, json_value, block_id)?;
                 }
             }
         }

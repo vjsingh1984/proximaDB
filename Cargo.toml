@@ -523,6 +523,13 @@ standalone = []
 # in bootstrap_config.rs) actually compile when this feature is on.
 cluster = ["proximadb-runtime/cluster"]
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
+# Real ONNX-runtime embedding. Off by default (the `ort` runtime + model files
+# are heavyweight and not needed for the default build). Forwards to
+# proximadb-embedding/onnx so the in-process BGE embedder produces real vectors;
+# without it the BGE route returns ModelUnavailable (synthetic fallback is
+# forbidden in production paths). Tests that exercise real embedding are gated
+# on this feature.
+onnx = ["proximadb-embedding/onnx"]
 
 # Cloud storage features (optional to avoid linking issues during testing)
 aws = ["object_store/aws", "proximadb-catalog/aws"]

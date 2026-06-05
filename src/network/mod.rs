@@ -610,7 +610,9 @@ mod config_tests {
         let config = NetworkConfig::default();
         let debug_str = format!("{:?}", config);
 
-        assert!(debug_str.contains("NetworkConfig"));
+        // `NetworkConfig` is a type alias for `NetworkServerConfig`, so the
+        // derived Debug prints the underlying struct name.
+        assert!(debug_str.contains("NetworkServerConfig"));
         assert!(debug_str.contains("bind_address"));
         assert!(debug_str.contains("port"));
         assert!(debug_str.contains("enable_grpc"));

@@ -559,6 +559,15 @@ async fn test_multi_file_directory_scan() {
                 let mut r = ProximaRecord {
                     oid: format!("record_{:08}", global_id),
                     record_version: 1,
+                    // Deterministic per-record timestamp so the millisecond
+                    // filter below is meaningful. Without this the struct default
+                    // stamps wall-clock now() on every record, matching all 6000.
+                    // The columnar format persists the timestamp at MILLISECOND
+                    // granularity (writer divides created_at_ns by 1e6, reader
+                    // multiplies back), so encode global_id as whole
+                    // milliseconds: stored ms-column == global_id, which spans
+                    // 0..5999 → 3001..=5999 (2999 records) exceed 3000 ms.
+                    created_at_ns: global_id as i64 * 1_000_000,
                     ..Default::default()
                 };
                 r.embeddings.push(EmbeddingCell {
@@ -640,15 +649,17 @@ async fn test_multi_file_directory_scan() {
     let unique_records: std::collections::HashSet<_> = record_ids.iter().collect();
     assert_eq!(unique_records.len(), 6000, "All records should be unique");
 
-    // Test filtering by timestamp
+    // Test filtering by timestamp. The columnar format round-trips the
+    // timestamp at millisecond granularity, so compare in ms (created_at_ns
+    // was written as global_id whole-milliseconds above).
     let filtered_count = all_records
         .iter()
-        .filter(|record| record.created_at_ns > 3000)
+        .filter(|record| record.created_at_ns / 1_000_000 > 3000)
         .count();
 
     assert_eq!(
         filtered_count, 2999,
-        "Should find exactly 2999 records with timestamp > 3000"
+        "Should find exactly 2999 records with timestamp > 3000 ms"
     );
 
     // Verify all files are accessible via filesystem API
