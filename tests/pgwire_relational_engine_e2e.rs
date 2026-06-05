@@ -452,6 +452,31 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         plan.contains("Join kind=INNER") && plan.contains("strategy=Hash"),
         "join strategy disclosed as Hash: {plan}"
     );
+    // Plain EXPLAIN does NOT execute → no ANALYZE metrics.
+    assert!(
+        !plan.contains("execution_rows") && !plan.contains("execution_elapsed_us"),
+        "plain EXPLAIN omits ANALYZE execution metrics: {plan}"
+    );
+
+    // (3h-analyze) EXPLAIN ANALYZE additionally EXECUTES the (read-only) plan and
+    // reports measured rows + elapsed alongside the structural plan. emp×dept inner
+    // join over the equi key matches ann/bob (eng) + cas (sales) = 3 rows.
+    let rows = client
+        .simple_query(&format!(
+            "EXPLAIN ANALYZE SELECT ename, dname FROM {emp} JOIN {dept} \
+             ON {emp}.dept_id = {dept}.id"
+        ))
+        .await
+        .expect("EXPLAIN ANALYZE join");
+    let plan = query_plan_cell(&rows);
+    assert!(
+        plan.contains("physical_plan") && plan.contains("\"execution_rows\": 3"),
+        "EXPLAIN ANALYZE reports the actual row count (3): {plan}"
+    );
+    assert!(
+        plan.contains("execution_elapsed_us"),
+        "EXPLAIN ANALYZE reports measured elapsed time: {plan}"
+    );
 
     // (3i) EXPLAIN of a simple (non-engaging) SELECT stays route-only: no physical
     // plan is attached (the query runs on the legacy path, not PATH B).

@@ -1046,6 +1046,15 @@ pub struct SelectRouteExplanation {
     /// estimates — the planner is rule-based (ADR-004; CBO is a follow-up).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub physical_plan: Option<Vec<String>>,
+    /// EXPLAIN ANALYZE only: rows the executed plan actually returned. `None` for
+    /// plain EXPLAIN (the query is not executed) and non-native routes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_rows: Option<u64>,
+    /// EXPLAIN ANALYZE only: wall-clock microseconds to execute the whole plan
+    /// (build + open + drain). `None` for plain EXPLAIN. Whole-query granularity —
+    /// per-operator timing is a follow-up (no Volcano instrumentation yet).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_elapsed_us: Option<u64>,
 }
 
 /// Build the `EXPLAIN SELECT` payload. `Err` if `sql` is not a routable single
@@ -1069,21 +1078,24 @@ fn decision_to_explanation(
         freshness_sla,
         reason: decision.reason.clone(),
         // Populated by the catalog-aware EXPLAIN once the plan is built; the
-        // catalog-free route disclosure has no plan to render.
+        // catalog-free route disclosure has no plan to render. ANALYZE metrics are
+        // filled only when the catalog-aware ANALYZE path actually executes.
         physical_plan: None,
+        execution_rows: None,
+        execution_elapsed_us: None,
     }
 }
 
-/// Render the planned physical plan for an engaging SELECT (cold EXPLAIN path).
-/// Resolves table schemas, builds the snapshot, then lowers + plans via the SAME
-/// [`plan_over_snapshot`] execution uses, and renders the tree. `None` when a
-/// schema can't be resolved, lowering declines, or planning errors — EXPLAIN then
-/// falls back to route-only disclosure.
-async fn render_physical_plan(
+/// Prepare an engaging SELECT for EXPLAIN (cold path): resolve table schemas, build
+/// the snapshot, then lower + plan via the SAME [`plan_over_snapshot`] execution
+/// uses. Returns the snapshot+plan so EXPLAIN can render the tree and (for ANALYZE)
+/// execute it via [`execute_physical`]. `None` when a schema can't be resolved,
+/// lowering declines, or planning errors — EXPLAIN then falls back to route-only.
+async fn prepare_select_plan(
     sql: &str,
     query: &SqlQuery,
     dml: &Arc<DmlService>,
-) -> Option<Vec<String>> {
+) -> Option<(SnapshotCatalog, PhysicalPlan)> {
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
     let mut tables: HashMap<String, PreparedTable> = HashMap::new();
@@ -1100,7 +1112,7 @@ async fn render_physical_plan(
         tables,
     };
     match plan_over_snapshot(sql, &snapshot)? {
-        Ok(physical) => Some(explain_physical(&physical)),
+        Ok(physical) => Some((snapshot, physical)),
         Err(_) => None,
     }
 }
@@ -1115,12 +1127,36 @@ pub fn explain_select_route(sql: &str) -> Result<SelectRouteExplanation, String>
 }
 
 /// Catalog-aware `EXPLAIN SELECT`: resolves referenced tables so the disclosed route
-/// matches what [`try_run_select`] executes. Under `datafusion-integration`, an
-/// all-Parquet-backed query discloses `DataFusionLocal`; otherwise (and when the
-/// feature is off) it discloses the Volcano/Native route.
+/// matches what [`try_run_select`] executes. Discloses the planned physical plan but
+/// does NOT execute the query. Under `datafusion-integration`, an all-Parquet-backed
+/// query discloses `DataFusionLocal`; otherwise it discloses the Volcano/Native route.
 pub async fn explain_select_route_with_catalog(
     sql: &str,
     dml: &Arc<DmlService>,
+) -> Result<SelectRouteExplanation, String> {
+    route_and_plan_select(sql, dml, false).await
+}
+
+/// Catalog-aware `EXPLAIN ANALYZE SELECT`: like [`explain_select_route_with_catalog`]
+/// but ALSO executes the planned native (Volcano) plan and attaches the measured
+/// `execution_rows` + `execution_elapsed_us`. SELECT is read-only, so executing it is
+/// side-effect free (matches Postgres EXPLAIN ANALYZE). Execution errors propagate.
+pub async fn explain_analyze_select_with_catalog(
+    sql: &str,
+    dml: &Arc<DmlService>,
+) -> Result<SelectRouteExplanation, String> {
+    route_and_plan_select(sql, dml, true).await
+}
+
+/// Shared core for catalog-aware `EXPLAIN [ANALYZE] SELECT`. Routes the query, then for
+/// an engaging native plan renders the physical tree; when `analyze`, also executes it
+/// (timed) and records actual rows + wall-clock. The plan is built ONCE via
+/// [`prepare_select_plan`] and (for ANALYZE) executed via the same [`execute_physical`]
+/// path real queries use — so the disclosed plan and the measured run never diverge.
+async fn route_and_plan_select(
+    sql: &str,
+    dml: &Arc<DmlService>,
+    analyze: bool,
 ) -> Result<SelectRouteExplanation, String> {
     let statements =
         Parser::parse_sql(&GenericDialect {}, sql).map_err(|e| format!("parse: {e}"))?;
@@ -1156,15 +1192,24 @@ pub async fn explain_select_route_with_catalog(
         },
     );
     let mut explanation = decision_to_explanation(&decision);
-    // Disclose the planned physical plan for native (Volcano) PATH B queries —
-    // the same plan execution runs (via the shared `plan_over_snapshot`).
+    // Disclose the planned physical plan for native (Volcano) PATH B queries — the same
+    // plan execution runs (via the shared `prepare_select_plan` / `execute_physical`).
     if engages
         && matches!(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::Native
         )
     {
-        explanation.physical_plan = render_physical_plan(sql, query, dml).await;
+        if let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml).await {
+            explanation.physical_plan = Some(explain_physical(&physical));
+            if analyze {
+                // EXPLAIN ANALYZE: run the query (read-only) and record actuals.
+                let started = std::time::Instant::now();
+                let result = execute_physical(physical, &snapshot).await?;
+                explanation.execution_rows = Some(result.rows.len() as u64);
+                explanation.execution_elapsed_us = Some(started.elapsed().as_micros() as u64);
+            }
+        }
     }
     Ok(explanation)
 }
@@ -1208,6 +1253,21 @@ mod route_explain_tests {
         assert!(
             !json.contains("physical_plan"),
             "None physical_plan is skipped in JSON: {json}"
+        );
+    }
+
+    #[test]
+    fn route_only_explanation_omits_analyze_metrics() {
+        // Plain (non-ANALYZE) route disclosure never executes, so the ANALYZE metric
+        // fields stay None and are omitted from the JSON. They are populated only by
+        // the catalog-aware ANALYZE path that actually runs the plan (covered e2e).
+        let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
+            .expect("routable");
+        assert!(expl.execution_rows.is_none() && expl.execution_elapsed_us.is_none());
+        let json = serde_json::to_string(&expl).unwrap();
+        assert!(
+            !json.contains("execution_rows") && !json.contains("execution_elapsed_us"),
+            "None ANALYZE metrics are skipped in JSON: {json}"
         );
     }
 }

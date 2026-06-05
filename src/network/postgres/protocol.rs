@@ -1402,8 +1402,17 @@ impl PostgresProtocol {
         if inner_upper.starts_with("SELECT") || inner_upper.starts_with("WITH") {
             // Catalog-aware when a DmlService is available: discloses the planned
             // physical plan (access method, pushdowns, join/agg strategy) for native
-            // PATH B queries, not just the route. Falls back to route-only otherwise.
+            // PATH B queries, not just the route. EXPLAIN ANALYZE additionally executes
+            // the (read-only) plan and reports measured rows + elapsed. Falls back to
+            // route-only disclosure when no DmlService is available.
             let routing = match self.dml_service.clone() {
+                Some(dml) if is_analyze => {
+                    crate::network::postgres::relational_pipeline::explain_analyze_select_with_catalog(
+                        inner_query,
+                        &dml,
+                    )
+                    .await
+                }
                 Some(dml) => {
                     crate::network::postgres::relational_pipeline::explain_select_route_with_catalog(
                         inner_query,
