@@ -14,32 +14,26 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use arrow_array::{
-    Array, ArrayRef, BooleanArray, Date32Array, FixedSizeBinaryArray, Float32Array, Float64Array,
-    Int8Array, Int16Array, Int32Array, Int64Array, LargeStringArray, RecordBatch, StringArray,
-    UInt8Array, UInt16Array, UInt32Array, UInt64Array,
-};
+use arrow_array::RecordBatch;
 use arrow_schema::Schema as ArrowSchema;
 use async_trait::async_trait;
 use futures::StreamExt;
-use proximadb_block_format::col_id;
 use proximadb_block_format::{BlockCompression, BlockMode};
 use proximadb_catalog::{
     CatalogPhysicalFormat, CatalogStorageLayout, CatalogStorageSpecialization, CatalogTableSchema,
     CatalogWorkloadProfile,
 };
 use proximadb_records::{
-    EmbeddingCell, EmbeddingValues, ProximaRecord, ProximaTreeNode, ProximaValue, RecordKey,
-    RecordScanOptions, RecordScanPredicate, RecordStorage,
+    ProximaRecord, ProximaTreeNode, RecordKey, RecordScanOptions, RecordScanPredicate,
+    RecordStorage,
 };
 use proximadb_storage_common::object_store_bridge::{
-    BridgeObjectPath as ObjectPath, BridgeObjectStore, ObjectStoreBridge,
+    BridgeObjectPath as ObjectPath, ObjectStoreBridge,
 };
 use proximadb_storage_common::{
     CanonicalOpenTableFormat, CanonicalOperation, CanonicalWalEntry, ProjectionDirective,
-    pax_block::{
-        PAX_SEGMENT_EXT, PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate,
-    },
+    pax_block::{PAX_SEGMENT_EXT, PaxSegmentScanner, PaxSegmentWriter, ScanPredicate},
+    proxima_arrow,
 };
 
 use crate::services::operations::VectorOps;
@@ -346,171 +340,63 @@ fn embedding_count_for_records(records: &[ProximaRecord]) -> usize {
 /// whole objects in memory, so this only bounds the Arrow batch chunking.
 const OBJECT_STORE_READ_BATCH_SIZE: usize = 4096;
 
-/// Effective primary-key column names, preferring the relational-capabilities
-/// declaration and falling back to the legacy `primary_key` list.
-fn effective_primary_key(schema: &CatalogTableSchema) -> Vec<&str> {
-    if !schema.relational_capabilities.primary_key.is_empty() {
-        schema
-            .relational_capabilities
-            .primary_key
-            .iter()
-            .map(String::as_str)
-            .collect()
-    } else {
-        schema.primary_key.iter().map(String::as_str).collect()
-    }
-}
-
-/// Stringify a scalar [`ProximaValue`] for primary-key reconstruction. Complex
-/// values (which cannot be a PK column) yield `None`.
-fn proxima_value_to_key_string(value: &ProximaValue) -> Option<String> {
-    Some(match value {
-        ProximaValue::String(s) | ProximaValue::Symbol(s) | ProximaValue::Decimal(s) => s.clone(),
-        ProximaValue::Boolean(b) => b.to_string(),
-        ProximaValue::Int8(x) => x.to_string(),
-        ProximaValue::Int16(x) => x.to_string(),
-        ProximaValue::Int32(x) => x.to_string(),
-        ProximaValue::Int64(x) => x.to_string(),
-        ProximaValue::UInt8(x) => x.to_string(),
-        ProximaValue::UInt16(x) => x.to_string(),
-        ProximaValue::UInt32(x) => x.to_string(),
-        ProximaValue::UInt64(x) => x.to_string(),
-        ProximaValue::Float32(x) => x.to_string(),
-        ProximaValue::Float64(x) => x.to_string(),
-        _ => return None,
-    })
-}
-
 /// Recover the logical record key (`oid`) from a read-back record's `props`.
 ///
 /// The schema-less `write_records_to_parquet` path does not persist `oid`
-/// separately — it is the cataloged primary-key column value(s) in `props`
-/// (matching `CatalogRow::primary_key_string`). Composite keys join with `::`.
-/// Returns an empty string when the PK is absent/non-scalar (no fabricated key).
+/// separately — it is the cataloged primary-key column value(s) in `props`. This
+/// projects the record's leaf props into a [`CatalogRow`] and delegates to the
+/// canonical [`CatalogRow::primary_key_string`] so the recovered key byte-matches
+/// the one `CatalogRow::to_proxima_record` wrote (same `stable_value_string`
+/// encoding + unit separator). Returns an empty string when the PK is
+/// absent/non-scalar (the catalog builder errors → no fabricated key).
 fn reconstruct_oid(record: &ProximaRecord, schema: &CatalogTableSchema) -> String {
-    let pk = effective_primary_key(schema);
-    if pk.is_empty() {
-        return String::new();
-    }
-    let mut parts = Vec::with_capacity(pk.len());
-    for col in &pk {
-        match proximadb_records::tree_get(&record.props, col).and_then(proxima_value_to_key_string)
-        {
-            Some(part) => parts.push(part),
-            None => return String::new(),
+    let mut values = std::collections::HashMap::new();
+    for (key, node) in &record.props {
+        if let ProximaTreeNode::Value(value) = node {
+            values.insert(key.clone(), value.clone());
         }
     }
-    parts.join("::")
+    proximadb_catalog::relational::CatalogRow {
+        table: schema.name.clone(),
+        values,
+    }
+    .primary_key_string(schema)
+    .ok()
+    .flatten()
+    .unwrap_or_default()
 }
 
-/// Map a single Arrow cell to a [`ProximaValue`]; `null`/unsupported → `None`
-/// (the key is simply omitted from `props`, matching the write-side mapping).
-fn arrow_cell_to_proxima_value(array: &ArrayRef, row: usize) -> Option<ProximaValue> {
-    if array.is_null(row) {
-        return None;
-    }
-    let any = array.as_any();
-    if let Some(a) = any.downcast_ref::<StringArray>() {
-        Some(ProximaValue::String(a.value(row).to_string()))
-    } else if let Some(a) = any.downcast_ref::<LargeStringArray>() {
-        Some(ProximaValue::String(a.value(row).to_string()))
-    } else if let Some(a) = any.downcast_ref::<BooleanArray>() {
-        Some(ProximaValue::Boolean(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<Int64Array>() {
-        Some(ProximaValue::Int64(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<Int32Array>() {
-        Some(ProximaValue::Int32(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<Int16Array>() {
-        Some(ProximaValue::Int16(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<Int8Array>() {
-        Some(ProximaValue::Int8(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<UInt64Array>() {
-        Some(ProximaValue::UInt64(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<UInt32Array>() {
-        Some(ProximaValue::UInt32(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<UInt16Array>() {
-        Some(ProximaValue::UInt16(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<UInt8Array>() {
-        Some(ProximaValue::UInt8(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<Float64Array>() {
-        Some(ProximaValue::Float64(a.value(row)))
-    } else if let Some(a) = any.downcast_ref::<Float32Array>() {
-        Some(ProximaValue::Float32(a.value(row)))
-    } else {
-        any.downcast_ref::<Date32Array>()
-            .map(|a| ProximaValue::Date(a.value(row)))
-    }
-}
-
-/// Reverse of `proxima_records_to_record_batch`: turn one Arrow [`RecordBatch`]
-/// back into canonical [`ProximaRecord`]s. Scalar columns become `props`; a
-/// `FixedSizeBinary` column is decoded as the little-endian fp32 dense vector
-/// (the layout `proxima_arrow` writes for [`ProximaDataType::Vector`]).
+/// Turn one Arrow [`RecordBatch`] back into canonical [`ProximaRecord`]s via the
+/// single canonical inverse converter
+/// ([`proxima_arrow::record_batch_to_proxima_records`], the inverse of
+/// `proxima_records_to_record_batch`), then stamp the catalog-derived identity:
+/// `oid` recovered from the primary key and `variation_id` from the table name.
 fn record_batch_to_records(batch: &RecordBatch, schema: &CatalogTableSchema) -> Vec<ProximaRecord> {
-    let n = batch.num_rows();
-    let mut out: Vec<ProximaRecord> = (0..n).map(|_| ProximaRecord::default()).collect();
-    let arrow_schema = batch.schema();
-
-    for (col_idx, field) in arrow_schema.fields().iter().enumerate() {
-        let array = batch.column(col_idx);
-        if let Some(fsb) = array.as_any().downcast_ref::<FixedSizeBinaryArray>() {
-            for (row, record) in out.iter_mut().enumerate() {
-                if fsb.is_null(row) {
-                    continue;
-                }
-                let bytes = fsb.value(row);
-                let values: Vec<f32> = bytes
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
-                let dim = values.len() as u32;
-                record.embeddings.push(EmbeddingCell {
-                    values: EmbeddingValues::Fp32(values),
-                    dim,
-                    ..Default::default()
-                });
-            }
-            continue;
-        }
-        let name = field.name();
-        for (row, record) in out.iter_mut().enumerate() {
-            if let Some(value) = arrow_cell_to_proxima_value(array, row) {
-                record
-                    .props
-                    .insert(name.clone(), ProximaTreeNode::Value(value));
-            }
-        }
-    }
-
-    for record in &mut out {
+    let mut records = proxima_arrow::record_batch_to_proxima_records(batch);
+    for record in &mut records {
         record.oid = reconstruct_oid(record, schema);
         record.variation_id = Some(schema.name.clone());
     }
-    out
+    records
 }
 
-/// List object keys under `prefix` via the bridge's underlying store, keeping
-/// only those that end with `suffix` (e.g. `.parquet` / `.pax`).
-///
-/// NOTE: listing goes through the raw `inner_store()` (the bridge trait exposes
-/// no base-aware list), so the returned keys are correct for stores whose base
-/// prefix is empty — the `memory://` / `InMemory` and bucket-root deployments.
-/// A base-aware bridge list method is the follow-up for prefixed deployments.
+/// List object keys under `prefix` via the canonical base-aware bridge seam
+/// ([`ObjectStoreBridge::list_objects`]), keeping only those that end with
+/// `suffix` (e.g. `.parquet` / `.pax`). The bridge returns paths that are
+/// directly consumable by its read methods, so this is correct for both
+/// empty-base and base-prefixed (cloud) deployments.
 async fn list_objects_with_suffix(
     bridge: &Arc<dyn ObjectStoreBridge>,
     prefix: &ObjectPath,
     suffix: &str,
 ) -> Result<Vec<ObjectPath>> {
-    let store: Arc<dyn BridgeObjectStore> = bridge.inner_store();
-    let mut listing = store.list(Some(prefix));
-    let mut paths = Vec::new();
-    while let Some(meta) = listing.next().await {
-        let meta =
-            meta.map_err(|err| anyhow!("object-store list under '{prefix}' failed: {err}"))?;
-        if meta.location.as_ref().ends_with(suffix) {
-            paths.push(meta.location);
-        }
-    }
+    let mut paths: Vec<ObjectPath> = bridge
+        .list_objects(prefix)
+        .await
+        .map_err(|err| anyhow!("object-store list under '{prefix}' failed: {err}"))?
+        .into_iter()
+        .filter(|path| path.as_ref().ends_with(suffix))
+        .collect();
     paths.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     Ok(paths)
 }
@@ -576,7 +462,7 @@ pub trait TableRecordStore: Send + Sync {
             if kept >= limit {
                 return false;
             }
-            let keep = predicate.map_or(true, |p| p(record));
+            let keep = predicate.is_none_or(|p| p(record));
             if keep {
                 kept += 1;
             }
@@ -1223,10 +1109,11 @@ mod tests {
     use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogStorageLayout};
     use proximadb_data_model::ProximaValue;
     use proximadb_kernel::error::StorageError;
-    use proximadb_records::{RecordScan, RecordStore};
+    use proximadb_records::{EmbeddingCell, EmbeddingValues, RecordScan, RecordStore};
     use proximadb_storage_common::object_store_bridge::{
         BridgeInMemoryObjectStore as InMemory, BridgeObjectStore,
     };
+    use proximadb_storage_common::pax_block::SEGMENT_MAGIC;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Mutex, RwLock};
@@ -2276,9 +2163,16 @@ mod tests {
             .with_workload_profile(CatalogWorkloadProfile::Vector)
             .with_storage_specialization(CatalogStorageSpecialization::VectorAnn);
 
+        let mut props = HashMap::new();
+        props.insert(
+            "category".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("books".into())),
+        );
         let record = ProximaRecord {
             oid: "v1".to_string(),
             variation_id: Some("vectors".to_string()),
+            created_at_ns: 1_700_000_000_000_000_000,
+            props,
             embeddings: vec![EmbeddingCell {
                 modality: "dense".into(),
                 dim: 4,
@@ -2324,6 +2218,16 @@ mod tests {
             Some(vec![0.1, 0.2, 0.3, 0.4]),
             "dense embedding must round-trip through the PAX segment"
         );
+        // Phase B: props + timestamps now round-trip (was oid+embedding only).
+        assert_eq!(
+            proximadb_records::tree_get(&scanned[0].props, "category"),
+            Some(&ProximaValue::String("books".into())),
+            "props must round-trip through the PAX segment"
+        );
+        assert_eq!(
+            scanned[0].created_at_ns, 1_700_000_000_000_000_000,
+            "created_at must round-trip through the PAX segment"
+        );
 
         let fetched = store
             .get_by_key(
@@ -2340,6 +2244,49 @@ mod tests {
             .unwrap()
             .expect("get_by_key must find the persisted vector record");
         assert_eq!(fetched.vector, vec![0.1, 0.2, 0.3, 0.4]);
+    }
+
+    /// Phase D: the recovered `oid` byte-matches the catalog's canonical
+    /// composite-key encoding (`CatalogRow::primary_key_string`), not a divergent
+    /// local join — so a read-back record carries the same oid the write path
+    /// (`CatalogRow::to_proxima_record`) produced.
+    #[test]
+    fn reconstruct_oid_matches_catalog_canonical_composite_key() {
+        let mut schema = CatalogTableSchema::new("orders")
+            .with_column(CatalogColumn::new(1, "region", CatalogDataType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "id", CatalogDataType::Int64).nullable(false));
+        schema.primary_key = vec!["region".to_string(), "id".to_string()];
+
+        let mut props = HashMap::new();
+        props.insert(
+            "region".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("us".into())),
+        );
+        props.insert(
+            "id".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Int64(7)),
+        );
+        let record = ProximaRecord {
+            props,
+            ..Default::default()
+        };
+
+        let mut values = HashMap::new();
+        values.insert("region".to_string(), ProximaValue::String("us".into()));
+        values.insert("id".to_string(), ProximaValue::Int64(7));
+        let canonical = proximadb_catalog::relational::CatalogRow {
+            table: "orders".to_string(),
+            values,
+        }
+        .primary_key_string(&schema)
+        .unwrap()
+        .expect("composite PK must produce a key");
+
+        assert_eq!(
+            reconstruct_oid(&record, &schema),
+            canonical,
+            "recovered oid must match CatalogRow::primary_key_string"
+        );
     }
 }
 
@@ -2360,6 +2307,16 @@ impl ObjectStoreIcebergRecordStore {
     /// Read every current record for `schema` by listing the Parquet data
     /// objects the write path produced under the table's `data/` prefix and
     /// decoding each via the bridge's `read_parquet_batches`.
+    ///
+    /// This is a full-scan leaf read: every data object is listed and decoded.
+    /// The advisory schema is `empty()` because the bridge's v1 read returns the
+    /// file's batches as written (the Parquet file embeds its own schema) and the
+    /// canonical reverse converter is self-describing. The heavy read
+    /// optimizations — catalog-authoritative projection/coercion, Iceberg
+    /// manifest + row-group pruning, predicate pushdown, and true streaming/range
+    /// reads — are deferred to F5/P5 and layer behind this same `ObjectStoreBridge`
+    /// seam (see `iceberg-engine/src/lib.rs` v1-scope notes; routing these leaf
+    /// reads through DataFusion via `ComputeScheduler` is P1/P5).
     async fn read_all_records(&self, schema: &CatalogTableSchema) -> Result<Vec<ProximaRecord>> {
         let base = object_store_write_base_path(schema);
         let prefix = ObjectPath::from(format!("{base}/data"));
@@ -2510,44 +2467,28 @@ impl ObjectStoreVectorRecordStore {
     }
 }
 
-/// Reconstruct identity + dense embedding for each row of a PAX segment.
+/// Reconstruct full [`ProximaRecord`]s from a PAX segment via the canonical
+/// segment decoder ([`PaxSegmentScanner::read_records`], the inverse of
+/// `PaxSegmentWriter::add_record`). Props, labels, edges, timestamps, and the
+/// dense embedding all round-trip.
 ///
-/// The vector store's canonical payload is the (`oid`, embedding) pair, which we
-/// recover from the `OID` string stripe and the first embedding's f32-vector
-/// stripe. Props/labels/edges live in the msgpack `PROPS` stripe and require a
-/// stripe→`FlatRow` decoder to rebuild — a follow-up (this path is the cold
-/// OLAP/ANN segment store, not the document/relational read authority).
+/// Embedding model ids and promoted user-column keys are not persisted
+/// positionally by the format, so we pass empty slices (best-effort `model_N`
+/// defaults); deriving them from the catalog schema is a follow-up. `variation_id`
+/// (also not a canonical PAX column) is restamped from the table name.
 fn pax_segment_to_records(
     bytes: Vec<u8>,
     schema: &CatalogTableSchema,
 ) -> Result<Vec<ProximaRecord>> {
     let mut scanner = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default())
         .map_err(|err| anyhow!("ObjectStoreVectorRecordStore failed to open PAX segment: {err}"))?;
-
-    let mut out = Vec::new();
-    while let Some(block) = scanner.next_block() {
-        let oids = block.decode_str_stripe(col_id::OID).unwrap_or_default();
-        let embeddings = block.decode_f32_vec_stripe(col_id::EMBED_BASE);
-        for (row, oid) in oids.into_iter().enumerate() {
-            let mut record = ProximaRecord {
-                oid: oid.unwrap_or_default(),
-                variation_id: Some(schema.name.clone()),
-                ..Default::default()
-            };
-            if let Some(embeds) = &embeddings
-                && let Some(Some(values)) = embeds.get(row)
-            {
-                let dim = values.len() as u32;
-                record.embeddings.push(EmbeddingCell {
-                    values: EmbeddingValues::Fp32(values.clone()),
-                    dim,
-                    ..Default::default()
-                });
-            }
-            out.push(record);
-        }
+    let mut records = scanner.read_records(&[], &[]).map_err(|err| {
+        anyhow!("ObjectStoreVectorRecordStore failed to decode PAX segment: {err}")
+    })?;
+    for record in &mut records {
+        record.variation_id = Some(schema.name.clone());
     }
-    Ok(out)
+    Ok(records)
 }
 
 #[async_trait]

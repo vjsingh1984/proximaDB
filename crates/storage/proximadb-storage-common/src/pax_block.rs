@@ -40,7 +40,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use proximadb_block_format::{
-    BlockCompression, BlockMode, BlockStats, PaxBlockReader, PaxBlockWriter, header::fnv1a_hash,
+    BlockCompression, BlockMode, BlockStats, FlatRow, PaxBlockReader, PaxBlockWriter,
+    header::fnv1a_hash,
 };
 use proximadb_records::ProximaRecord;
 use serde::{Deserialize, Serialize};
@@ -439,6 +440,30 @@ impl PaxSegmentScanner {
     pub fn block_count(&self) -> usize {
         self.index.blocks.len()
     }
+
+    /// Reconstruct every row of the segment into full [`ProximaRecord`]s — the
+    /// canonical read-side inverse of `PaxSegmentWriter::add_record`. Iterates
+    /// the (predicate-pruned) blocks, rebuilds each row via
+    /// [`FlatRow::from_block_reader`], and materializes records through
+    /// [`FlatRow::into_record`].
+    ///
+    /// `embedding_model_ids` / `user_column_keys` come from the collection schema
+    /// (the segment stores embeddings positionally and does not persist model ids
+    /// or promoted-column names). Pass empty slices for best-effort defaults
+    /// (`model_0`, `model_1`, …).
+    pub fn read_records(
+        &mut self,
+        embedding_model_ids: &[String],
+        user_column_keys: &[String],
+    ) -> Result<Vec<ProximaRecord>> {
+        let mut records = Vec::new();
+        while let Some(block) = self.next_block() {
+            for flat in FlatRow::from_block_reader(&block)? {
+                records.push(flat.into_record(embedding_model_ids, user_column_keys)?);
+            }
+        }
+        Ok(records)
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -535,6 +560,71 @@ mod tests {
         }
         // tenant_b block(s) should be pruned
         assert!(matched_blocks < meta.block_count as usize);
+    }
+
+    /// `read_records` is the canonical inverse of `add_record`: props, labels,
+    /// timestamps, and the dense embedding all round-trip (not just oid+vector).
+    #[test]
+    fn segment_read_records_round_trips_full_fidelity() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaTreeNode, ProximaValue};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("full.pax");
+
+        let mut rich = make_record("r1", "tenant_a", 1_700_000_000_000_000_000);
+        rich.props.insert(
+            "category".into(),
+            ProximaTreeNode::Value(ProximaValue::String("books".into())),
+        );
+        rich.props
+            .insert("qty".into(), ProximaTreeNode::Value(ProximaValue::Int64(7)));
+        rich.labels = vec!["a".to_string(), "b".to_string()].into();
+        rich.embeddings.push(EmbeddingCell {
+            modality: "dense".into(),
+            dim: 3,
+            values: EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
+            ..Default::default()
+        });
+
+        let mut writer = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col_full",
+            0,
+            1, // embedding_count
+            None,
+        );
+        writer.add_record(&rich).unwrap();
+        writer
+            .add_record(&make_record("r2", "tenant_a", 1_700_000_000_000_000_001))
+            .unwrap();
+        writer.finish().unwrap();
+
+        let mut scanner = PaxSegmentScanner::open(&path, ScanPredicate::default()).unwrap();
+        let records = scanner.read_records(&[], &[]).unwrap();
+
+        assert_eq!(records.len(), 2);
+        let r1 = records.iter().find(|r| r.oid == "r1").expect("r1 present");
+        assert_eq!(r1.tenant_id, "tenant_a");
+        assert_eq!(r1.created_at_ns, 1_700_000_000_000_000_000);
+        assert_eq!(
+            r1.props.get("category"),
+            Some(&ProximaTreeNode::Value(ProximaValue::String(
+                "books".into()
+            )))
+        );
+        assert_eq!(
+            r1.props.get("qty"),
+            Some(&ProximaTreeNode::Value(ProximaValue::Int64(7)))
+        );
+        let mut labels: Vec<String> = r1.labels.iter().map(|s| s.to_string()).collect();
+        labels.sort();
+        assert_eq!(labels, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            r1.embeddings.first().map(|e| e.values.to_fp32_owned()),
+            Some(vec![1.0, 2.0, 3.0])
+        );
     }
 
     #[test]

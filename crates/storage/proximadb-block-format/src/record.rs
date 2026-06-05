@@ -15,6 +15,7 @@
 use proximadb_records::ProximaRecord;
 use serde::{Deserialize, Serialize};
 
+use crate::reader::PaxBlockReader;
 use crate::stripe::ColumnRole;
 
 /// Canonical column IDs for ProximaRecord fields in PAX blocks.
@@ -331,6 +332,97 @@ impl FlatRow {
             embeddings,
             ..Default::default()
         })
+    }
+
+    /// Reconstruct every row of a decoded PAX block into [`FlatRow`]s — the
+    /// reader-side inverse of the writer's per-row `add_record` + stripe flush.
+    ///
+    /// Decodes the canonical column stripes (`col_id::OID`/`TENANT_ID`/timestamps/
+    /// provenance/`PROPS`/`LABELS`/`EDGE_*`) plus every contiguous embedding
+    /// stripe from `EMBED_BASE`. Pair with [`FlatRow::into_record`] (which needs
+    /// the embedding model ids + promoted user-column keys from the schema) to
+    /// rebuild full `ProximaRecord`s.
+    ///
+    /// User-promoted columns (`USER_BASE`+) are not reconstructed here; the
+    /// canonical PAX writer path (`from_record`) does not promote, so `PROPS`
+    /// carries the full prop tree. Promoted-column reconstruction is a follow-up
+    /// for the props-auto-promotion read path.
+    pub fn from_block_reader(reader: &PaxBlockReader) -> anyhow::Result<Vec<FlatRow>> {
+        let n = reader.row_count() as usize;
+        // An absent stripe decodes to an empty Vec; every access below is via
+        // `.get(i)` so a short/empty column simply yields `None` for each row.
+        let oids = reader.decode_str_stripe(col_id::OID).unwrap_or_default();
+        let tenants = reader
+            .decode_str_stripe(col_id::TENANT_ID)
+            .unwrap_or_default();
+        let created = reader
+            .decode_i64_stripe(col_id::CREATED_AT)
+            .unwrap_or_default();
+        let updated = reader
+            .decode_i64_stripe(col_id::UPDATED_AT)
+            .unwrap_or_default();
+        let valid_from = reader
+            .decode_i64_stripe(col_id::VALID_FROM)
+            .unwrap_or_default();
+        let valid_to = reader
+            .decode_i64_stripe(col_id::VALID_TO)
+            .unwrap_or_default();
+        let actors = reader.decode_str_stripe(col_id::ACTOR).unwrap_or_default();
+        let origins = reader.decode_str_stripe(col_id::ORIGIN).unwrap_or_default();
+        let props = reader
+            .decode_bytes_stripe(col_id::PROPS)
+            .unwrap_or_default();
+        let labels = reader
+            .decode_bytes_stripe(col_id::LABELS)
+            .unwrap_or_default();
+        let edge_src = reader
+            .decode_str_stripe(col_id::EDGE_SRC)
+            .unwrap_or_default();
+        let edge_tgt = reader
+            .decode_str_stripe(col_id::EDGE_TGT)
+            .unwrap_or_default();
+        let edge_type = reader
+            .decode_str_stripe(col_id::EDGE_TYPE)
+            .unwrap_or_default();
+        let edge_weight = reader
+            .decode_f64_stripe(col_id::EDGE_WEIGHT)
+            .unwrap_or_default();
+
+        // Embedding stripes are contiguous from EMBED_BASE; probe until absent.
+        let mut embedding_stripes: Vec<Vec<Option<Vec<f32>>>> = Vec::new();
+        let mut e = 0;
+        while let Some(stripe) = reader.decode_f32_vec_stripe(col_id::EMBED_BASE + e) {
+            embedding_stripes.push(stripe);
+            e += 1;
+        }
+
+        let at = |col: &[Option<String>], i: usize| col.get(i).cloned().flatten();
+        let mut rows = Vec::with_capacity(n);
+        for i in 0..n {
+            let embeddings: Vec<Vec<f32>> = embedding_stripes
+                .iter()
+                .filter_map(|stripe| stripe.get(i).cloned().flatten())
+                .collect();
+            rows.push(FlatRow {
+                oid: at(&oids, i).unwrap_or_default(),
+                tenant_id: at(&tenants, i).unwrap_or_default(),
+                created_at_ns: created.get(i).copied().flatten().unwrap_or(0),
+                updated_at_ns: updated.get(i).copied().flatten().unwrap_or(0),
+                valid_from_ns: valid_from.get(i).copied().flatten(),
+                valid_to_ns: valid_to.get(i).copied().flatten(),
+                actor: at(&actors, i),
+                origin: at(&origins, i),
+                props_bytes: props.get(i).cloned().flatten(),
+                labels_bytes: labels.get(i).cloned().flatten(),
+                edge_src: at(&edge_src, i),
+                edge_tgt: at(&edge_tgt, i),
+                edge_type: at(&edge_type, i),
+                edge_weight: edge_weight.get(i).copied().flatten(),
+                embeddings,
+                user_columns: Vec::new(),
+            });
+        }
+        Ok(rows)
     }
 }
 

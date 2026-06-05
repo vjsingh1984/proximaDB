@@ -1,6 +1,7 @@
 use arrow_array::RecordBatch;
 use arrow_schema::Schema as ArrowSchema;
 use async_trait::async_trait;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use object_store::ObjectStore;
 use object_store::path::Path;
@@ -46,4 +47,35 @@ pub trait ObjectStoreBridge: Send + Sync {
 
     /// Persists a specialized PAX block or Segment to decoupled object storage.
     async fn persist_vector_segment(&self, path: &Path, data: &[u8]) -> Result<(), StorageError>;
+
+    /// Enumerate the object keys under `prefix`, returned as paths that are
+    /// directly consumable by this bridge's read methods (`read_parquet_batches`
+    /// / `fetch_vector_segment`).
+    ///
+    /// This is the read-side discovery seam: a record store does not track which
+    /// files the write path produced, so it lists them to read them back.
+    ///
+    /// The default implementation enumerates the raw [`inner_store`], returning
+    /// each object's full key. This is correct for stores whose base prefix is
+    /// empty (`memory://`, bucket-root). Implementations that wrap the store with
+    /// a non-empty base prefix (e.g. `IcebergObjectStoreBridge` over
+    /// `ProximaObjectStore`) MUST override this to return base-relative keys, so
+    /// the returned paths round-trip through the bridge's read methods (which
+    /// re-apply the base).
+    ///
+    /// [`inner_store`]: ObjectStoreBridge::inner_store
+    async fn list_objects(&self, prefix: &Path) -> Result<Vec<Path>, StorageError> {
+        let store = self.inner_store();
+        let mut listing = store.list(Some(prefix));
+        let mut paths = Vec::new();
+        while let Some(meta) = listing.next().await {
+            let meta = meta.map_err(|err| {
+                StorageError::DiskIO(std::io::Error::other(format!(
+                    "object-store list under `{prefix}` failed: {err}"
+                )))
+            })?;
+            paths.push(meta.location);
+        }
+        Ok(paths)
+    }
 }

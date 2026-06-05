@@ -213,6 +213,38 @@ impl<'a> PaxBlockReader<'a> {
         let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
         decode_f32_vec_with_encoding(raw, meta.encoding_id, n).ok()
     }
+
+    /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
+    /// inverse of the writer's `build_bytes_stripe` (used for the msgpack `PROPS`
+    /// and `LABELS` columns). Each value is a 4-byte little-endian length prefix
+    /// followed by that many bytes; a `0xFFFF_FFFF` prefix marks a null.
+    ///
+    /// Returns `None` if the column is absent or the layout is truncated.
+    pub fn decode_bytes_stripe(&self, column_id: i32) -> Option<Vec<Option<Vec<u8>>>> {
+        let raw = self.read_stripe_raw(column_id)?;
+        let n = self.row_count() as usize;
+        let mut out = Vec::with_capacity(n);
+        let mut pos = 0usize;
+        for _ in 0..n {
+            let len_end = pos.checked_add(4)?;
+            if len_end > raw.len() {
+                return None;
+            }
+            let len = u32::from_le_bytes(raw[pos..len_end].try_into().ok()?);
+            pos = len_end;
+            if len == u32::MAX {
+                out.push(None);
+                continue;
+            }
+            let val_end = pos.checked_add(len as usize)?;
+            if val_end > raw.len() {
+                return None;
+            }
+            out.push(Some(raw[pos..val_end].to_vec()));
+            pos = val_end;
+        }
+        Some(out)
+    }
 }
 
 fn scheme_from_encoding_id(encoding_id: u8) -> Option<ProximaScheme> {

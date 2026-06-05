@@ -48,9 +48,15 @@ use arrow_array::builder::{
 };
 use std::collections::HashMap;
 
-use arrow_array::{ArrayRef, RecordBatch};
+use arrow_array::{
+    Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, FixedSizeBinaryArray, Float32Array,
+    Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, LargeStringArray, RecordBatch,
+    StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+};
 use proximadb_kernel::error::StorageError;
-use proximadb_records::{ProximaRecord, ProximaTreeNode, ProximaValue, tree_get};
+use proximadb_records::{
+    EmbeddingCell, EmbeddingValues, ProximaRecord, ProximaTreeNode, ProximaValue, tree_get,
+};
 
 use crate::proxima_schema::{ProximaColumn, ProximaDataType, ProximaSchema, VectorElementType};
 
@@ -393,13 +399,106 @@ fn format_uuid(b: &[u8; 16]) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Reverse conversion: Arrow RecordBatch -> ProximaRecord (S7 canonical inverse)
+// ---------------------------------------------------------------------------
+
+/// Map a single Arrow cell to a [`ProximaValue`] — the scalar inverse of the
+/// per-family encoders in [`proxima_records_to_record_batch`]. Null cells and
+/// array types without a scalar `ProximaValue` (lists/structs/the vector column)
+/// yield `None`, so the key is simply omitted from `props` (sparse props are
+/// normal). This is the single canonical Arrow→ProximaValue mapper; consumers
+/// reading Proxima-written batches must reuse it rather than re-deriving one.
+pub fn arrow_cell_to_proxima_value(array: &ArrayRef, row: usize) -> Option<ProximaValue> {
+    if array.is_null(row) {
+        return None;
+    }
+    let any = array.as_any();
+    if let Some(a) = any.downcast_ref::<StringArray>() {
+        Some(ProximaValue::String(a.value(row).to_string()))
+    } else if let Some(a) = any.downcast_ref::<LargeStringArray>() {
+        Some(ProximaValue::String(a.value(row).to_string()))
+    } else if let Some(a) = any.downcast_ref::<BooleanArray>() {
+        Some(ProximaValue::Boolean(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Int8Array>() {
+        Some(ProximaValue::Int8(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Int16Array>() {
+        Some(ProximaValue::Int16(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Int32Array>() {
+        Some(ProximaValue::Int32(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Int64Array>() {
+        Some(ProximaValue::Int64(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<UInt8Array>() {
+        Some(ProximaValue::UInt8(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<UInt16Array>() {
+        Some(ProximaValue::UInt16(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<UInt32Array>() {
+        Some(ProximaValue::UInt32(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<UInt64Array>() {
+        Some(ProximaValue::UInt64(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Float32Array>() {
+        Some(ProximaValue::Float32(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Float64Array>() {
+        Some(ProximaValue::Float64(a.value(row)))
+    } else if let Some(a) = any.downcast_ref::<Date32Array>() {
+        Some(ProximaValue::Date(a.value(row)))
+    } else {
+        any.downcast_ref::<BinaryArray>()
+            .map(|a| ProximaValue::Binary(a.value(row).to_vec()))
+    }
+}
+
+/// Reverse of [`proxima_records_to_record_batch`]: materialize the rows of an
+/// Arrow [`RecordBatch`] back into canonical [`ProximaRecord`]s. Scalar columns
+/// become `props` (via [`arrow_cell_to_proxima_value`]); a `FixedSizeBinary`
+/// column is decoded as the little-endian fp32 dense vector (the layout
+/// `proxima_records_to_record_batch` writes for [`ProximaDataType::Vector`]) into
+/// `record.embeddings`.
+///
+/// Identity (`oid`) and `variation_id` are NOT inferred here — a self-describing
+/// Arrow batch does not carry them (the canonical write path stores the key as a
+/// PK column value). The catalog-aware caller stamps them after this returns.
+pub fn record_batch_to_proxima_records(batch: &RecordBatch) -> Vec<ProximaRecord> {
+    let n = batch.num_rows();
+    let mut out: Vec<ProximaRecord> = (0..n).map(|_| ProximaRecord::default()).collect();
+    let arrow_schema = batch.schema();
+
+    for (col_idx, field) in arrow_schema.fields().iter().enumerate() {
+        let array = batch.column(col_idx);
+        if let Some(fsb) = array.as_any().downcast_ref::<FixedSizeBinaryArray>() {
+            for (row, record) in out.iter_mut().enumerate() {
+                if fsb.is_null(row) {
+                    continue;
+                }
+                let bytes = fsb.value(row);
+                let values: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                let dim = values.len() as u32;
+                record.embeddings.push(EmbeddingCell {
+                    values: EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+            }
+            continue;
+        }
+        let name = field.name();
+        for (row, record) in out.iter_mut().enumerate() {
+            if let Some(value) = arrow_cell_to_proxima_value(array, row) {
+                record
+                    .props
+                    .insert(name.clone(), ProximaTreeNode::Value(value));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{
-        Array, BooleanArray, FixedSizeBinaryArray, Float64Array, Int64Array, StringArray,
-    };
-    use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaTreeNode};
     use std::collections::HashMap;
 
     use crate::proxima_schema::VectorElementType;
@@ -669,5 +768,75 @@ mod tests {
         let schema = infer_proxima_schema(&[r]);
         let names: Vec<&str> = schema.columns.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["ok"]);
+    }
+
+    /// S7 inverse identity: forward-encode records then reverse-decode them and
+    /// confirm scalar props + the dense vector survive (the vector column round-
+    /// trips through `FixedSizeBinary`; an absent embedding decodes to none).
+    #[test]
+    fn record_batch_reverse_round_trips_scalars_and_vector() {
+        let schema = ProximaSchema::new(
+            "rt".to_string(),
+            vec![
+                col(1, "name", ProximaDataType::String, true),
+                col(2, "age", ProximaDataType::Int64, true),
+                col(
+                    3,
+                    "vector",
+                    ProximaDataType::Vector {
+                        dimension: 3,
+                        element_type: VectorElementType::Float32,
+                    },
+                    true,
+                ),
+            ],
+            vec![1],
+        );
+
+        let mut r0 = record_with_props(
+            "r0",
+            vec![
+                ("name", ProximaValue::String("alice".into())),
+                ("age", ProximaValue::Int64(30)),
+            ],
+        );
+        r0.embeddings.push(EmbeddingCell {
+            values: EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
+            dim: 3,
+            ..Default::default()
+        });
+        let r1 = record_with_props(
+            "r1",
+            vec![
+                ("name", ProximaValue::String("bob".into())),
+                ("age", ProximaValue::Int64(41)),
+            ],
+        );
+
+        let batch = proxima_records_to_record_batch(&[r0, r1], &schema).unwrap();
+        let back = record_batch_to_proxima_records(&batch);
+
+        assert_eq!(back.len(), 2);
+        assert_eq!(
+            tree_get(&back[0].props, "name"),
+            Some(&ProximaValue::String("alice".into()))
+        );
+        assert_eq!(
+            tree_get(&back[0].props, "age"),
+            Some(&ProximaValue::Int64(30))
+        );
+        assert_eq!(
+            back[0].embeddings.first().map(|e| e.values.to_fp32_owned()),
+            Some(vec![1.0, 2.0, 3.0]),
+            "dense vector must survive the FixedSizeBinary round-trip"
+        );
+        assert!(
+            back[1].embeddings.is_empty(),
+            "a record without an embedding must decode to no embedding"
+        );
+        assert_eq!(
+            tree_get(&back[1].props, "name"),
+            Some(&ProximaValue::String("bob".into()))
+        );
     }
 }

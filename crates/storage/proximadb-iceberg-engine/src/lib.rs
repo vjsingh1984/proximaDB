@@ -114,6 +114,30 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
     async fn persist_vector_segment(&self, path: &Path, data: &[u8]) -> Result<(), StorageError> {
         self.store.put(path, Bytes::copy_from_slice(data)).await
     }
+
+    /// Base-aware override of the trait default: list through [`ProximaObjectStore`]
+    /// (which applies the store's base prefix) and strip that base from each
+    /// returned key, so the paths are base-relative and round-trip through
+    /// `read_parquet_batches` / `fetch_vector_segment` (which re-apply the base).
+    async fn list_objects(&self, prefix: &Path) -> Result<Vec<Path>, StorageError> {
+        let base = self.store.base().as_ref().to_string();
+        let metas = self.store.list(Some(prefix)).await?;
+        Ok(metas
+            .into_iter()
+            .map(|meta| {
+                if base.is_empty() {
+                    meta.location
+                } else {
+                    let key = meta.location.as_ref();
+                    let relative = key
+                        .strip_prefix(&base)
+                        .map(|rest| rest.trim_start_matches('/'))
+                        .unwrap_or(key);
+                    Path::from(relative)
+                }
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -222,5 +246,40 @@ mod tests {
         b.persist_vector_segment(&path, &payload).await.unwrap();
         let got = b.fetch_vector_segment(&path).await.unwrap();
         assert_eq!(got, payload);
+    }
+
+    /// With a NON-EMPTY store base, `list_objects` must return base-relative keys
+    /// that round-trip through the read methods. (A raw `inner_store().list` would
+    /// return base-prefixed keys that then double-prepend the base on read.)
+    #[tokio::test]
+    async fn list_objects_is_base_relative_and_round_trips_with_non_empty_base() {
+        let b = IcebergObjectStoreBridge::from_url("memory:///warehouse").unwrap();
+        assert!(
+            !b.object_store().base().as_ref().is_empty(),
+            "base must be non-empty"
+        );
+
+        let path = Path::from("t/data/part-0.parquet");
+        let r0 = record("r0", vec![("name", ProximaValue::String("alice".into()))]);
+        b.write_records_to_parquet(&path, &[r0]).await.unwrap();
+
+        let listed = b.list_objects(&Path::from("t/data")).await.unwrap();
+        assert_eq!(listed.len(), 1, "the written object must be discoverable");
+        assert_eq!(
+            listed[0].as_ref(),
+            "t/data/part-0.parquet",
+            "list_objects must strip the store base so the key round-trips through read"
+        );
+
+        // The listed key must be directly readable (the bridge re-applies the base).
+        let mut stream = b
+            .read_parquet_batches(&listed[0], Arc::new(ArrowSchema::empty()), 1024)
+            .await
+            .unwrap();
+        let mut rows = 0usize;
+        while let Some(batch) = stream.next().await {
+            rows += batch.unwrap().num_rows();
+        }
+        assert_eq!(rows, 1, "the listed key must read back the written record");
     }
 }
