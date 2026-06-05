@@ -628,9 +628,7 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
             not: *negated,
             case_insensitive: true,
         }),
-        SqlExpr::Function(_) => Err(FrontendError::Unsupported(
-            "aggregate function in non-aggregate position".into(),
-        )),
+        SqlExpr::Function(f) => lower_scalar_function(f, scope),
         SqlExpr::Subquery(_) | SqlExpr::Exists { .. } | SqlExpr::InSubquery { .. } => {
             Err(FrontendError::Unsupported("subqueries".into()))
         }
@@ -824,6 +822,63 @@ fn post_aggregate_scope(group_by: &[NamedExpr], aggregates: &[NamedAggregate]) -
         ordinal += 1;
     }
     Scope { columns }
+}
+
+/// Lower a non-aggregate SQL function call `f(args)` to [`Expr::FuncCall`].
+///
+/// Reaching here means the function is in **scalar position** (aggregate calls are
+/// handled by [`lower_aggregate_call`] in the SELECT/HAVING aggregate path), so a bare
+/// aggregate name here is a misuse and is rejected. Scalar functions resolve their
+/// `return_ty` from the shared builtin registry — the *same* registry the Volcano
+/// executor dispatches through, so definition and lowering stay single-sourced. Unknown
+/// names still lower (the DataFusion path may serve them via its own function set, and the
+/// Volcano path raises a clear `UnknownFunction` at execution rather than at parse).
+fn lower_scalar_function(
+    f: &sqlparser::ast::Function,
+    scope: &Scope,
+) -> Result<Expr, FrontendError> {
+    let raw_name = f.name.to_string();
+    if matches!(
+        raw_name.to_uppercase().as_str(),
+        "COUNT" | "SUM" | "AVG" | "MIN" | "MAX"
+    ) {
+        return Err(FrontendError::Unsupported(
+            "aggregate function in non-aggregate position".into(),
+        ));
+    }
+
+    let args = match &f.args {
+        FunctionArguments::List(list) => list
+            .args
+            .iter()
+            .map(|fa| match fa {
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => lower_expr(e, scope),
+                _ => Err(FrontendError::Unsupported(
+                    "unsupported scalar function argument".into(),
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        FunctionArguments::None => Vec::new(),
+        FunctionArguments::Subquery(_) => {
+            return Err(FrontendError::Unsupported(
+                "subquery as function argument".into(),
+            ));
+        }
+    };
+
+    // Resolve the declared return type from the shared registry; unknown functions get a
+    // permissive placeholder (the evaluator ignores `return_ty`, and the DataFusion path
+    // re-derives types from Arrow — see `Expr::FuncCall` eval).
+    let return_ty = proximadb_functions::builtins()
+        .lookup_scalar(&raw_name)
+        .map(|d| d.signature.return_ty.clone())
+        .unwrap_or(ProximaType::String);
+
+    Ok(Expr::FuncCall {
+        name: raw_name.to_ascii_lowercase(),
+        args,
+        return_ty,
+    })
 }
 
 fn lower_aggregate_call(
@@ -1491,6 +1546,62 @@ mod tests {
                 _ => panic!(),
             },
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn scalar_function_lowers_to_funccall_with_registry_return_type() {
+        // F1b: a scalar function in projection position now lowers to `Expr::FuncCall`
+        // (previously rejected as "aggregate function in non-aggregate position"). The
+        // `return_ty` is resolved from the shared builtin registry: `upper`→String,
+        // `abs`→Float64.
+        let plan = lower("SELECT upper(name), abs(age) FROM users");
+        let LogicalNode::Project { outputs, .. } = plan else {
+            panic!("expected Project");
+        };
+        assert_eq!(outputs.len(), 2);
+        match &outputs[0].expr {
+            Expr::FuncCall {
+                name,
+                args,
+                return_ty,
+            } => {
+                assert_eq!(name, "upper");
+                assert_eq!(args.len(), 1);
+                assert_eq!(*return_ty, ProximaType::String);
+            }
+            other => panic!("expected FuncCall upper, got {other:?}"),
+        }
+        match &outputs[1].expr {
+            Expr::FuncCall {
+                name, return_ty, ..
+            } => {
+                assert_eq!(name, "abs");
+                assert_eq!(*return_ty, ProximaType::Float64);
+            }
+            other => panic!("expected FuncCall abs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn aggregate_in_scalar_position_is_rejected() {
+        // A bare aggregate name in scalar (non-GROUP-BY) position is still a misuse.
+        let err = lower_sql("SELECT sum(age) + 1 FROM users", &catalog()).unwrap_err();
+        assert!(matches!(err, FrontendError::Unsupported(_)));
+    }
+
+    #[test]
+    fn unknown_scalar_function_still_lowers() {
+        // Unknown functions lower permissively (the DataFusion path may serve them; the
+        // Volcano path raises UnknownFunction at execution, not at parse). Placeholder
+        // return type is String.
+        let plan = lower("SELECT some_udf(name) FROM users");
+        let LogicalNode::Project { outputs, .. } = plan else {
+            panic!("expected Project");
+        };
+        match &outputs[0].expr {
+            Expr::FuncCall { name, .. } => assert_eq!(name, "some_udf"),
+            other => panic!("expected FuncCall, got {other:?}"),
         }
     }
 

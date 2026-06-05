@@ -17,6 +17,7 @@ path = "src/lib.rs"
 proximadb-data-model = { workspace = true }
 proximadb-relational-types = { workspace = true }
 proximadb-relational-algebra = { workspace = true }
+proximadb-functions = { workspace = true }
 sqlparser = { workspace = true }
 serde.workspace = true
 thiserror.workspace = true

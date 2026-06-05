@@ -32,10 +32,9 @@ use proximadb_relational_algebra::{
 use proximadb_relational_planner::{
     AggregateStrategy, DistinctStrategy, PhysicalPlan, ScanAccess, SortStrategy,
 };
+use proximadb_functions::builtins;
 use proximadb_relational_reader::{ReadSnapshot, ReaderError, RelationalReader, ScanContext};
-use proximadb_relational_types::{
-    BinaryOp, Expr, ExprError, NoFunctions, RelationalRow, RelationalSchema,
-};
+use proximadb_relational_types::{BinaryOp, Expr, ExprError, RelationalRow, RelationalSchema};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -348,7 +347,7 @@ fn evaluate_key(keys: &[Expr]) -> Result<Vec<ProximaValue>, ExecError> {
     let empty_row: RelationalRow = Vec::new();
     let mut out = Vec::with_capacity(keys.len());
     for k in keys {
-        out.push(k.eval(&empty_row, &NoFunctions)?);
+        out.push(k.eval(&empty_row, builtins())?);
     }
     Ok(out)
 }
@@ -389,7 +388,7 @@ impl ExecNode for FilterExec {
             match self.child.next_row().await? {
                 None => return Ok(None),
                 Some(row) => {
-                    let v = self.predicate.eval(&row, &NoFunctions)?;
+                    let v = self.predicate.eval(&row, builtins())?;
                     // Three-valued logic: NULL and false both
                     // exclude the row; only `true` admits.
                     if matches!(v, ProximaValue::Boolean(true)) {
@@ -451,7 +450,7 @@ impl ExecNode for ProjectExec {
         };
         let mut out = Vec::with_capacity(self.outputs.len());
         for o in &self.outputs {
-            out.push(o.expr.eval(&row, &NoFunctions)?);
+            out.push(o.expr.eval(&row, builtins())?);
         }
         Ok(Some(out))
     }
@@ -709,7 +708,7 @@ impl ExecNode for ValuesExec {
         let empty_row: RelationalRow = Vec::new();
         let mut row = Vec::with_capacity(exprs.len());
         for e in exprs {
-            row.push(e.eval(&empty_row, &NoFunctions)?);
+            row.push(e.eval(&empty_row, builtins())?);
         }
         Ok(Some(row))
     }
@@ -759,7 +758,7 @@ impl SortExec {
             .map(|r| -> Result<_, ExecError> {
                 let mut keys = Vec::with_capacity(self.keys.len());
                 for k in &self.keys {
-                    keys.push(k.expr.eval(&r, &NoFunctions)?);
+                    keys.push(k.expr.eval(&r, builtins())?);
                 }
                 Ok((keys, r))
             })
@@ -952,7 +951,7 @@ impl NestedLoopJoinExec {
         let mut combined = Vec::with_capacity(left.len() + right.len());
         combined.extend_from_slice(left);
         combined.extend_from_slice(right);
-        let v = pred.eval(&combined, &NoFunctions)?;
+        let v = pred.eval(&combined, builtins())?;
         Ok(matches!(v, ProximaValue::Boolean(true)))
     }
 }
@@ -1458,7 +1457,7 @@ impl ExecNode for StreamingAggregateExec {
         }
         let result: RelationalRow = accs.into_iter().map(|a| a.finalize()).collect();
         if let Some(having) = &self.having {
-            let v = having.eval(&result, &NoFunctions)?;
+            let v = having.eval(&result, builtins())?;
             if !matches!(v, ProximaValue::Boolean(true)) {
                 return Ok(None);
             }
@@ -1533,7 +1532,7 @@ impl HashAggregateExec {
         while let Some(row) = self.child.next_row().await? {
             let mut group_vals = Vec::with_capacity(self.group_by.len());
             for g in &self.group_by {
-                group_vals.push(g.expr.eval(&row, &NoFunctions)?);
+                group_vals.push(g.expr.eval(&row, builtins())?);
             }
             let key = GroupKey::from_values(&group_vals)?;
             let entry = match table.get_mut(&key) {
@@ -1586,7 +1585,7 @@ impl ExecNode for HashAggregateExec {
             let mut row: RelationalRow = gvals.clone();
             row.extend(accs.iter().map(|a| a.finalize()));
             if let Some(having) = &self.having {
-                let v = having.eval(&row, &NoFunctions)?;
+                let v = having.eval(&row, builtins())?;
                 if !matches!(v, ProximaValue::Boolean(true)) {
                     continue;
                 }
@@ -1680,7 +1679,7 @@ impl Accumulator {
             ) => {
                 let v = match arg {
                     None => ProximaValue::Boolean(true),
-                    Some(e) => e.eval(row, &NoFunctions)?,
+                    Some(e) => e.eval(row, builtins())?,
                 };
                 if *skip_null && matches!(v, ProximaValue::Null) {
                     return Ok(());
@@ -1696,7 +1695,7 @@ impl Accumulator {
                 Ok(())
             }
             (Accumulator::Sum { running, distinct }, AggregateExpr::Sum { arg, .. }) => {
-                let v = arg.eval(row, &NoFunctions)?;
+                let v = arg.eval(row, builtins())?;
                 if matches!(v, ProximaValue::Null) {
                     return Ok(());
                 }
@@ -1718,7 +1717,7 @@ impl Accumulator {
                 },
                 AggregateExpr::Avg { arg, .. },
             ) => {
-                let v = arg.eval(row, &NoFunctions)?;
+                let v = arg.eval(row, builtins())?;
                 if matches!(v, ProximaValue::Null) {
                     return Ok(());
                 }
@@ -1734,7 +1733,7 @@ impl Accumulator {
                 Ok(())
             }
             (Accumulator::Min { current }, AggregateExpr::Min { arg }) => {
-                let v = arg.eval(row, &NoFunctions)?;
+                let v = arg.eval(row, builtins())?;
                 if matches!(v, ProximaValue::Null) {
                     return Ok(());
                 }
@@ -1749,7 +1748,7 @@ impl Accumulator {
                 Ok(())
             }
             (Accumulator::Max { current }, AggregateExpr::Max { arg }) => {
-                let v = arg.eval(row, &NoFunctions)?;
+                let v = arg.eval(row, builtins())?;
                 if matches!(v, ProximaValue::Null) {
                     return Ok(());
                 }
@@ -2598,6 +2597,83 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0][0], ProximaValue::Int64(1));
         assert_eq!(rows[1][0], ProximaValue::Int64(2));
+    }
+
+    // ----- Scalar functions (F1b) -------------------------------------
+
+    #[tokio::test]
+    async fn project_dispatches_scalar_function_through_builtins() {
+        // F1b: a projected `Expr::FuncCall` now dispatches through the shared builtin
+        // registry. Before wiring, the executor passed `NoFunctions`, so every scalar
+        // call raised `UnknownFunction`. `upper('ab')`→"AB"; `concat('x','y')`→"xy".
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("x", ProximaType::Int64, false)]);
+        let values = PhysicalPlan::Values {
+            rows: vec![vec![Expr::literal(ProximaValue::Int64(0))]],
+            output_schema: schema,
+        };
+        let plan = PhysicalPlan::Project {
+            input: Box::new(values),
+            outputs: vec![
+                NamedExpr::new(
+                    "u",
+                    Expr::FuncCall {
+                        name: "upper".into(),
+                        args: vec![Expr::literal(ProximaValue::String("ab".into()))],
+                        return_ty: ProximaType::String,
+                    },
+                ),
+                NamedExpr::new(
+                    "c",
+                    Expr::FuncCall {
+                        name: "concat".into(),
+                        args: vec![
+                            Expr::literal(ProximaValue::String("x".into())),
+                            Expr::literal(ProximaValue::String("y".into())),
+                        ],
+                        return_ty: ProximaType::String,
+                    },
+                ),
+            ],
+        };
+        let f = factory_with_users();
+        let ctx = ExecutionContext::default();
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], ProximaValue::String("AB".into()));
+        assert_eq!(rows[0][1], ProximaValue::String("xy".into()));
+    }
+
+    #[tokio::test]
+    async fn unknown_scalar_function_errors_at_execution() {
+        // Unknown functions lower permissively in the frontend; the Volcano path raises a
+        // clear error at execution (not silently null).
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("x", ProximaType::Int64, false)]);
+        let plan = PhysicalPlan::Project {
+            input: Box::new(PhysicalPlan::Values {
+                rows: vec![vec![Expr::literal(ProximaValue::Int64(0))]],
+                output_schema: schema,
+            }),
+            outputs: vec![NamedExpr::new(
+                "z",
+                Expr::FuncCall {
+                    name: "no_such_fn".into(),
+                    args: vec![],
+                    return_ty: ProximaType::String,
+                },
+            )],
+        };
+        let f = factory_with_users();
+        let ctx = ExecutionContext::default();
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        let err = collect(&mut *exec).await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("no_such_fn") || msg.to_lowercase().contains("unknown"),
+            "expected UnknownFunction-style error, got {msg}"
+        );
     }
 
     // ----- Union -------------------------------------------------------

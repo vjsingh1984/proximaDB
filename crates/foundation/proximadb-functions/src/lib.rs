@@ -147,6 +147,16 @@ impl ProximaFunctionRegistry {
     }
 }
 
+/// The process-wide builtin scalar registry. Builtin functions are global (every query
+/// has them), like PostgreSQL's builtins; per-query/per-tenant *user* functions
+/// (`CREATE FUNCTION`, F5) are injected separately. Both the Volcano executor and the SQL
+/// frontend resolve against this single source.
+pub fn builtins() -> &'static ProximaFunctionRegistry {
+    static BUILTINS: std::sync::LazyLock<ProximaFunctionRegistry> =
+        std::sync::LazyLock::new(ProximaFunctionRegistry::with_builtins);
+    &BUILTINS
+}
+
 /// Volcano binding: the relational executor dispatches `Expr::FuncCall` through this.
 impl FunctionRegistry for ProximaFunctionRegistry {
     fn dispatch(
