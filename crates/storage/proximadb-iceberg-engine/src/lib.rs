@@ -52,6 +52,7 @@ use proximadb_storage_common::proxima_arrow::infer_proxima_schema;
 use proximadb_storage_common::proxima_parquet::{
     parquet_bytes_to_record_batches_with_batch_size, proxima_records_to_parquet_bytes,
 };
+use proximadb_storage_common::proxima_schema::ProximaSchema;
 
 /// An [`ObjectStoreBridge`] backed by a [`ProximaObjectStore`] (any `object_store` backend:
 /// local `file://`, `memory://`, or cloud `s3://`/`gs://`/`az://` when the F1 crate's cloud
@@ -84,6 +85,32 @@ impl IcebergObjectStoreBridge {
     pub fn full_object_path(&self, path: &Path) -> Path {
         self.store.full_path(path)
     }
+
+    /// Write `records` to a Parquet object at `path` using a CALLER-PROVIDED
+    /// (catalog-authoritative) [`ProximaSchema`] instead of inferring one from
+    /// the records.
+    ///
+    /// This is the F3 wiring hook flagged in this module's docs: when the
+    /// catalog knows a table's canonical schema, pass it here so the written
+    /// file's column set, order, types, and nullability match the catalog
+    /// exactly — including columns that are declared in the schema but absent
+    /// from every record in this batch. Such columns are written as all-null
+    /// columns (the canonical `ProximaSchema`-driven Arrow mapping appends a
+    /// null for any record missing the prop), which schema *inference* would
+    /// omit entirely. That makes the on-disk file shape stable across batches
+    /// regardless of which optional fields happen to be populated.
+    ///
+    /// The trait [`ObjectStoreBridge::write_records_to_parquet`] delegates here
+    /// after inferring a schema from the records.
+    pub async fn write_records_to_parquet_with_schema(
+        &self,
+        path: &Path,
+        records: &[ProximaRecord],
+        schema: &ProximaSchema,
+    ) -> Result<(), StorageError> {
+        let bytes = proxima_records_to_parquet_bytes(records, schema, None)?;
+        self.store.put(path, Bytes::from(bytes)).await
+    }
 }
 
 #[async_trait]
@@ -108,9 +135,12 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         path: &Path,
         records: &[ProximaRecord],
     ) -> Result<(), StorageError> {
+        // Schema-less entry point: infer the schema from the records, then
+        // delegate to the schema-explicit writer so both paths share one
+        // implementation.
         let schema = infer_proxima_schema(records);
-        let bytes = proxima_records_to_parquet_bytes(records, &schema, None)?;
-        self.store.put(path, Bytes::from(bytes)).await
+        self.write_records_to_parquet_with_schema(path, records, &schema)
+            .await
     }
 
     async fn fetch_vector_segment(&self, path: &Path) -> Result<Vec<u8>, StorageError> {
@@ -287,5 +317,82 @@ mod tests {
             rows += batch.unwrap().num_rows();
         }
         assert_eq!(rows, 1, "the listed key must read back the written record");
+    }
+
+    async fn read_first_batch(b: &IcebergObjectStoreBridge, path: &Path) -> RecordBatch {
+        let mut stream = b
+            .read_parquet_batches(path, Arc::new(ArrowSchema::empty()), 1024)
+            .await
+            .unwrap();
+        stream.next().await.expect("at least one batch").unwrap()
+    }
+
+    /// A schema-explicit write honors the CALLER's (catalog-authoritative)
+    /// schema, not inference: a column declared in the schema but absent from
+    /// every record is written as an all-null column, whereas the schema-less
+    /// (inferred) write omits it entirely. This is the F3 contract — the
+    /// on-disk file shape follows the catalog, not whichever optional fields a
+    /// given batch happens to populate.
+    #[tokio::test]
+    async fn write_with_explicit_schema_null_fills_columns_absent_from_records() {
+        use arrow_array::Float64Array;
+        use proximadb_data_model::ProximaType;
+        use proximadb_storage_common::proxima_schema::ProximaColumn;
+
+        fn col(id: i32, name: &str, dt: ProximaType, nullable: bool) -> ProximaColumn {
+            ProximaColumn {
+                id,
+                name: name.to_string(),
+                data_type: dt,
+                nullable,
+                default_value: None,
+                comment: None,
+                properties: std::collections::HashMap::new(),
+                is_deleted: false,
+                original_id: None,
+            }
+        }
+
+        let b = bridge();
+        // Records carry only `name`; NONE carry `score`.
+        let r0 = record("r0", vec![("name", ProximaValue::String("alice".into()))]);
+        let r1 = record("r1", vec![("name", ProximaValue::String("bob".into()))]);
+
+        // Catalog-authoritative schema declares `score` anyway.
+        let schema = ProximaSchema::from_columns(
+            "wh".to_string(),
+            vec![
+                col(1, "name", ProximaType::String, true),
+                col(2, "score", ProximaType::Float64, true),
+            ],
+            vec![1],
+        );
+
+        // Schema-explicit write: `score` must survive as an all-null column.
+        let explicit = Path::from("wh/explicit.parquet");
+        b.write_records_to_parquet_with_schema(&explicit, &[r0.clone(), r1.clone()], &schema)
+            .await
+            .unwrap();
+        let batch = read_first_batch(&b, &explicit).await;
+        let score = batch
+            .column_by_name("score")
+            .expect("explicit schema must keep the declared `score` column")
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_eq!(score.len(), 2);
+        assert!(
+            score.is_null(0) && score.is_null(1),
+            "a column absent from every record must be an all-null column"
+        );
+
+        // Schema-less (inferred) write: `score` is omitted (no record carries it).
+        let inferred = Path::from("wh/inferred.parquet");
+        b.write_records_to_parquet(&inferred, &[r0, r1]).await.unwrap();
+        let batch = read_first_batch(&b, &inferred).await;
+        assert!(
+            batch.column_by_name("score").is_none(),
+            "inference must omit a column that no record carries"
+        );
     }
 }

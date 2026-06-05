@@ -29,3 +29,6 @@ futures.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread"] }
+# Test-only: name `ProximaType` when building a catalog-authoritative schema for
+# the schema-explicit write test.
+proximadb-data-model = { workspace = true }
