@@ -23,8 +23,9 @@ use tracing::{debug, info, warn};
 
 use crate::catalog::CatalogManager;
 use crate::query::table_write_executor::{
-    NativeTableWriteExecutor, PlannedOnlyTableWriteExecutor, TableRecordStoreSourceReader,
-    TableWriteExecutionRequest, TableWriteExecutionStatus, TableWriteExecutor,
+    DataFusionTableWriteExecutor, NativeTableWriteExecutor, PlannedOnlyTableWriteExecutor,
+    TableRecordStoreSourceReader, TableWriteExecutionRequest, TableWriteExecutionStatus,
+    TableWriteExecutor,
 };
 use crate::query::table_write_plan::{
     ConflictPolicy, CopyIntoPlan, DistributionMode, DmlWritePlanRequest, DmlWritePlanner,
@@ -34,13 +35,15 @@ use crate::query::table_write_plan::{
 use crate::services::operations::VectorOps;
 use crate::services::operations::vectors::RichSearchResult;
 use crate::services::record_store::{
-    CatalogRoutingTableRecordStore, DirectWalTableRecordStore, TableRecordGetRequest,
-    TableRecordMutation, TableRecordMutationKind, TableRecordScanRequest, TableRecordStore,
-    TableWalAppender, VectorOpsTableRecordStore,
+    CatalogRoutingTableRecordStore, DirectWalTableRecordStore, ObjectStoreIcebergRecordStore,
+    ObjectStoreVectorRecordStore, TableRecordGetRequest, TableRecordMutation,
+    TableRecordMutationKind, TableRecordScanRequest, TableRecordStore, TableWalAppender,
+    VectorOpsTableRecordStore,
 };
 use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLaneDecision, WriteLaneRouter, WriteOperationKind,
 };
+use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 
 /// Comparison operators supported by the lightweight catalog-table SELECT path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -423,11 +426,13 @@ impl DmlService {
         )
     }
 
-    /// Create a DML service with the target direct canonical writer enabled.
+    /// Create a DML service with the native direct canonical writer enabled.
     ///
-    /// Relational/PAX/OLTP/OLAP/HTAP tables route through
-    /// `DirectWalTableRecordStore` into canonical WAL plus `RecordStorage`.
-    /// Legacy vector/LSM-specialized tables still route through the VectorOps
+    /// Mutable Proxima-owned relational/OLTP/HTAP tables route through
+    /// `DirectWalTableRecordStore` into canonical WAL plus the `RecordStorage`
+    /// row/delta spine. OLAP/open-format publication is a projection of that
+    /// state unless xCatalog declares an explicit external authority. Legacy
+    /// vector/LSM-specialized tables still route through the VectorOps
     /// compatibility adapter until those formats are retired or migrated.
     pub fn with_direct_record_storage(
         catalog_manager: Arc<CatalogManager>,
@@ -439,7 +444,8 @@ impl DmlService {
             Arc::new(DirectWalTableRecordStore::new(record_storage, wal_appender));
         let legacy_store = Arc::new(VectorOpsTableRecordStore::new(vector_ops));
         let routed_store: Arc<dyn TableRecordStore> = Arc::new(
-            // Temporary wiring during migration: canonical acts as iceberg, legacy acts as vector.
+            // Temporary wiring during migration: canonical acts as the native
+            // row/delta path, legacy acts as the vector-specialized path.
             CatalogRoutingTableRecordStore::new(
                 canonical_store.clone(),
                 legacy_store.clone(),
@@ -451,6 +457,35 @@ impl DmlService {
             source_reader,
             routed_store.clone(),
         ));
+
+        Self::with_record_store_and_table_write_executor(
+            catalog_manager,
+            routed_store,
+            table_write_executor,
+        )
+    }
+
+    /// Create a DML service with the decoupled object-store routes enabled.
+    ///
+    /// Relational/analytics table writes route to the Parquet/Iceberg object
+    /// store path, vector-specialized writes route to the PAX/vector object
+    /// store path, and legacy vector/LSM tables keep the VectorOps adapter.
+    pub fn with_object_store_bridge(
+        catalog_manager: Arc<CatalogManager>,
+        vector_ops: Arc<VectorOps>,
+        bridge: Arc<dyn ObjectStoreBridge>,
+    ) -> Self {
+        let iceberg_store = Arc::new(ObjectStoreIcebergRecordStore::new(bridge.clone()));
+        let vector_store = Arc::new(ObjectStoreVectorRecordStore::new(bridge.clone()));
+        let legacy_store = Arc::new(VectorOpsTableRecordStore::new(vector_ops));
+        let routed_store: Arc<dyn TableRecordStore> = Arc::new(
+            CatalogRoutingTableRecordStore::new(iceberg_store, vector_store, legacy_store),
+        );
+        let source_reader = Arc::new(TableRecordStoreSourceReader::new(routed_store.clone()));
+        let table_write_executor = Arc::new(
+            DataFusionTableWriteExecutor::new(source_reader, routed_store.clone())
+                .with_object_store_bridge(bridge),
+        );
 
         Self::with_record_store_and_table_write_executor(
             catalog_manager,
@@ -3411,6 +3446,7 @@ mod tests {
     };
     use crate::services::{DdlService, DdlStatement};
     use proximadb_catalog::{CatalogColumn, CatalogStorageSpecialization, CatalogWorkloadProfile};
+    use proximadb_iceberg_engine::IcebergObjectStoreBridge;
 
     struct ExplainOnlyRecordStore;
 
@@ -3891,6 +3927,115 @@ mod tests {
                 .candidate_paths
                 .iter()
                 .any(|path| path.backend == "DataFusionLocal")
+        );
+    }
+
+    #[tokio::test]
+    async fn object_store_bridge_insert_select_executes_through_datafusion_route() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        for ddl_sql in [
+            "CREATE TABLE staging (id TEXT NOT NULL, amount INTEGER NOT NULL, PRIMARY KEY (id));",
+            "CREATE TABLE facts (id TEXT NOT NULL, amount INTEGER NOT NULL, PRIMARY KEY (id))
+             WITH (
+                workload = 'olap',
+                layout = 'columnar',
+                compute_route = 'datafusion-local',
+                freshness_sla = '5s'
+             );",
+        ] {
+            let statement = parser
+                .parse_ddl(ddl_sql)
+                .expect("parse ddl")
+                .expect("ddl statement");
+            ddl.execute(statement).await.expect("execute ddl");
+        }
+
+        let bridge: Arc<dyn ObjectStoreBridge> =
+            Arc::new(IcebergObjectStoreBridge::from_url("memory://").expect("object bridge"));
+        let iceberg_store: Arc<dyn TableRecordStore> =
+            Arc::new(ObjectStoreIcebergRecordStore::new(bridge.clone()));
+        let vector_store: Arc<dyn TableRecordStore> =
+            Arc::new(ObjectStoreVectorRecordStore::new(bridge.clone()));
+        let routed_store: Arc<dyn TableRecordStore> = Arc::new(
+            CatalogRoutingTableRecordStore::new(iceberg_store, vector_store.clone(), vector_store),
+        );
+        let source_reader = Arc::new(TableRecordStoreSourceReader::new(routed_store.clone()));
+        let table_write_executor = Arc::new(
+            DataFusionTableWriteExecutor::new(source_reader, routed_store.clone())
+                .with_object_store_bridge(bridge),
+        );
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager,
+            routed_store,
+            table_write_executor,
+        );
+
+        let insert = dml
+            .execute(DmlStatement::Insert {
+                table_name: "staging".to_string(),
+                columns: vec!["id".to_string(), "amount".to_string()],
+                values: vec![
+                    vec![
+                        SqlValueLiteral::String("s1".to_string()),
+                        SqlValueLiteral::Integer(42),
+                    ],
+                    vec![
+                        SqlValueLiteral::String("s2".to_string()),
+                        SqlValueLiteral::Integer(77),
+                    ],
+                ],
+            })
+            .await
+            .expect("insert source rows");
+        assert_eq!(insert.rows_affected, 2);
+
+        let statement = parser
+            .parse_dml("INSERT INTO facts SELECT * FROM staging;")
+            .expect("parse dml")
+            .expect("dml statement");
+        let copy = dml.execute(statement).await.expect("execute insert select");
+
+        assert_eq!(copy.rows_affected, 2);
+        assert!(copy.message.contains("DataFusionLocal"));
+
+        let (_schema, mut records) = dml
+            .scan_table_records("facts", None)
+            .await
+            .expect("scan target rows");
+        records.sort_by(|left, right| left.oid.cmp(&right.oid));
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.oid.as_str())
+                .collect::<Vec<_>>(),
+            vec!["s1", "s2"]
+        );
+        let amounts = records
+            .iter()
+            .map(|record| proximadb_records::tree_get(&record.props, "amount"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            amounts,
+            vec![
+                Some(&ProximaValue::Int32(42)),
+                Some(&ProximaValue::Int32(77))
+            ]
         );
     }
 
