@@ -200,6 +200,92 @@ pub struct RestColumnDefinition {
     pub vector_dimension: Option<u32>,
 }
 
+/// Parse a v2 REST column definition's `data_type` string into the canonical
+/// [`proximadb_data_model::ProximaType`] (ADR-024 Step 5).
+///
+/// This is the SINGLE source for the type vocabulary the v2 collection API
+/// accepts: the accepted set is exactly what maps to a `ProximaType`, rather than
+/// a separate hardcoded allowlist. Type-specific validation (decimal
+/// precision/scale, vector dimension) is performed here so the REST surface and
+/// the catalog/storage layers share one type authority.
+pub fn parse_rest_data_type(
+    column: &RestColumnDefinition,
+) -> Result<proximadb_data_model::ProximaType, ApiError> {
+    use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+    let ty = match column.data_type.as_str() {
+        "text" | "text_large" => ProximaType::String,
+        "integer" => ProximaType::Int64,
+        "float" => ProximaType::Float64,
+        "decimal" => {
+            let precision = column.precision.ok_or_else(|| {
+                ApiError::InvalidArgument(format!(
+                    "Column '{}' with type 'decimal' requires precision",
+                    column.name
+                ))
+            })?;
+            let scale = column.scale.ok_or_else(|| {
+                ApiError::InvalidArgument(format!(
+                    "Column '{}' with type 'decimal' requires scale",
+                    column.name
+                ))
+            })?;
+            if precision == 0 || precision > 38 {
+                return Err(ApiError::InvalidArgument(format!(
+                    "Column '{}': decimal precision must be between 1 and 38",
+                    column.name
+                )));
+            }
+            if scale > precision {
+                return Err(ApiError::InvalidArgument(format!(
+                    "Column '{}': decimal scale cannot exceed precision",
+                    column.name
+                )));
+            }
+            ProximaType::Decimal { precision, scale }
+        }
+        "boolean" => ProximaType::Boolean,
+        "timestamp" => ProximaType::Timestamp(TimeUnit::Nanosecond),
+        "timestamp_tz" => ProximaType::TimestampTz(TimeUnit::Nanosecond),
+        "date" => ProximaType::Date,
+        "time" => ProximaType::Time(TimeUnit::Nanosecond),
+        "uuid" => ProximaType::Uuid,
+        "binary" => ProximaType::Binary,
+        "json" => ProximaType::Json,
+        "array_text" => ProximaType::Array(Box::new(ProximaType::String)),
+        "array_integer" => ProximaType::Array(Box::new(ProximaType::Int64)),
+        "array_float" => ProximaType::Array(Box::new(ProximaType::Float64)),
+        "array_boolean" => ProximaType::Array(Box::new(ProximaType::Boolean)),
+        "map_string_string" => ProximaType::Map {
+            key: Box::new(ProximaType::String),
+            value: Box::new(ProximaType::String),
+        },
+        "map_string_any" => ProximaType::Map {
+            key: Box::new(ProximaType::String),
+            value: Box::new(ProximaType::Json),
+        },
+        "geo_point" => ProximaType::Point,
+        "vector" => {
+            let dim = column.vector_dimension.ok_or_else(|| {
+                ApiError::InvalidArgument(format!(
+                    "Column '{}' with type 'vector' requires vector_dimension",
+                    column.name
+                ))
+            })? as usize;
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim,
+            }
+        }
+        other => {
+            return Err(ApiError::InvalidArgument(format!(
+                "Invalid data type '{}' for column '{}'",
+                other, column.name
+            )));
+        }
+    };
+    Ok(ty)
+}
+
 /// Response for collection creation
 #[derive(Debug, Serialize)]
 pub struct CreateCollectionV2Response {
@@ -303,72 +389,11 @@ pub async fn create_collection_v2(
                 ));
             }
 
-            // Validate data type
-            let valid_types = [
-                "text",
-                "text_large",
-                "integer",
-                "float",
-                "decimal",
-                "boolean",
-                "timestamp",
-                "timestamp_tz",
-                "date",
-                "time",
-                "uuid",
-                "binary",
-                "json",
-                "array_text",
-                "array_integer",
-                "array_float",
-                "array_boolean",
-                "map_string_string",
-                "map_string_any",
-                "geo_point",
-                "vector",
-            ];
-            if !valid_types.contains(&column.data_type.as_str()) {
-                return Err(ApiError::InvalidArgument(format!(
-                    "Invalid data type '{}' for column '{}'. Valid types: {:?}",
-                    column.data_type, column.name, valid_types
-                )));
-            }
-
-            // Validate decimal precision/scale
-            if column.data_type == "decimal" {
-                let precision = column.precision.ok_or_else(|| {
-                    ApiError::InvalidArgument(format!(
-                        "Column '{}' with type 'decimal' requires precision",
-                        column.name
-                    ))
-                })?;
-                let scale = column.scale.ok_or_else(|| {
-                    ApiError::InvalidArgument(format!(
-                        "Column '{}' with type 'decimal' requires scale",
-                        column.name
-                    ))
-                })?;
-                if precision == 0 || precision > 38 {
-                    return Err(ApiError::InvalidArgument(format!(
-                        "Column '{}': decimal precision must be between 1 and 38",
-                        column.name
-                    )));
-                }
-                if scale > precision {
-                    return Err(ApiError::InvalidArgument(format!(
-                        "Column '{}': decimal scale cannot exceed precision",
-                        column.name
-                    )));
-                }
-            }
-
-            // Validate vector dimension
-            if column.data_type == "vector" && column.vector_dimension.is_none() {
-                return Err(ApiError::InvalidArgument(format!(
-                    "Column '{}' with type 'vector' requires vector_dimension",
-                    column.name
-                )));
-            }
+            // Validate the column type by parsing it into the canonical
+            // ProximaType — the accepted vocabulary derives from ProximaType
+            // (ADR-024 Step 5), and decimal precision/scale + vector dimension
+            // are validated inside the parser. No separate hardcoded allowlist.
+            let _ = parse_rest_data_type(column)?;
         }
 
         // Generate schema ID
@@ -4045,5 +4070,89 @@ mod tests {
             assert_eq!(h.storage_size_bytes, 11);
             assert_eq!(h.index_size_bytes, 13);
         }
+    }
+
+    fn rest_col(data_type: &str) -> RestColumnDefinition {
+        RestColumnDefinition {
+            name: "c".to_string(),
+            data_type: data_type.to_string(),
+            nullable: None,
+            indexed: None,
+            filterable: None,
+            max_length: None,
+            precision: None,
+            scale: None,
+            vector_dimension: None,
+        }
+    }
+
+    #[test]
+    fn rest_data_type_vocabulary_maps_to_canonical_proxima_type() {
+        use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+        // Representative vocabulary → canonical type (ADR-024 Step 5).
+        assert_eq!(
+            parse_rest_data_type(&rest_col("text")).unwrap(),
+            ProximaType::String
+        );
+        assert_eq!(
+            parse_rest_data_type(&rest_col("text_large")).unwrap(),
+            ProximaType::String
+        );
+        assert_eq!(
+            parse_rest_data_type(&rest_col("integer")).unwrap(),
+            ProximaType::Int64
+        );
+        assert_eq!(
+            parse_rest_data_type(&rest_col("float")).unwrap(),
+            ProximaType::Float64
+        );
+        assert_eq!(
+            parse_rest_data_type(&rest_col("boolean")).unwrap(),
+            ProximaType::Boolean
+        );
+        assert_eq!(
+            parse_rest_data_type(&rest_col("timestamp_tz")).unwrap(),
+            ProximaType::TimestampTz(TimeUnit::Nanosecond)
+        );
+        assert_eq!(
+            parse_rest_data_type(&rest_col("uuid")).unwrap(),
+            ProximaType::Uuid
+        );
+        assert_eq!(
+            parse_rest_data_type(&rest_col("array_integer")).unwrap(),
+            ProximaType::Array(Box::new(ProximaType::Int64))
+        );
+        assert_eq!(
+            parse_rest_data_type(&rest_col("geo_point")).unwrap(),
+            ProximaType::Point
+        );
+
+        // vector requires a dimension.
+        assert!(parse_rest_data_type(&rest_col("vector")).is_err());
+        let mut v = rest_col("vector");
+        v.vector_dimension = Some(384);
+        assert_eq!(
+            parse_rest_data_type(&v).unwrap(),
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 384
+            }
+        );
+
+        // decimal requires precision + scale, validated inline.
+        assert!(parse_rest_data_type(&rest_col("decimal")).is_err());
+        let mut d = rest_col("decimal");
+        d.precision = Some(18);
+        d.scale = Some(4);
+        assert_eq!(
+            parse_rest_data_type(&d).unwrap(),
+            ProximaType::Decimal {
+                precision: 18,
+                scale: 4
+            }
+        );
+
+        // unknown type is rejected (the vocabulary is exactly the ProximaType-mappable set).
+        assert!(parse_rest_data_type(&rest_col("not_a_type")).is_err());
     }
 }
