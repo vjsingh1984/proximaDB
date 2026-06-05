@@ -106,6 +106,31 @@ impl CanonicalWalFunctionStore {
     }
 }
 
+/// Lower a [`StoredFunction`]'s body and register it as a `sql_bodied_scalar` in the shared
+/// `proximadb_functions::builtins()` registry — making the user function callable on both
+/// engines. Shared by the `CREATE FUNCTION` DDL handler and startup recovery (which replays the
+/// persisted catalog through here).
+pub fn register_stored_function(f: &StoredFunction) -> Result<()> {
+    let body_expr = proximadb_relational_frontend::lower_function_body(&f.body, &f.params)
+        .map_err(|e| anyhow::anyhow!("function '{}': {e}", f.name))?;
+    let arg_types: Vec<ProximaType> = f.params.iter().map(|(_, t)| t.clone()).collect();
+    proximadb_functions::builtins().register_scalar(proximadb_functions::sql_bodied_scalar(
+        &f.name,
+        arg_types,
+        f.return_ty.clone(),
+        body_expr,
+    ));
+    Ok(())
+}
+
+/// Current wall-clock time in milliseconds since the Unix epoch (function install timestamp).
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 fn now_ns() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -436,6 +436,10 @@ pub struct DdlService {
     /// also compiles + installs the profile into the live registry so SQL
     /// `RERANK(...)` sees it immediately without waiting for the next boot.
     rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+    /// Optional durable function catalog (F5). When present, `CREATE FUNCTION`
+    /// persists the definition so it is re-registered after a restart; absent
+    /// for embedded/test paths (the in-process registration still happens).
+    function_store: Option<Arc<dyn crate::services::FunctionStore>>,
 }
 
 impl DdlService {
@@ -445,7 +449,18 @@ impl DdlService {
             catalog_manager,
             rank_profile_store: None,
             rank_services: None,
+            function_store: None,
         }
+    }
+
+    /// Attach the durable function catalog (F5). When present, every successful
+    /// `CREATE FUNCTION` is persisted so it survives a restart (boot re-registers it).
+    pub fn with_function_store(
+        mut self,
+        store: Arc<dyn crate::services::FunctionStore>,
+    ) -> Self {
+        self.function_store = Some(store);
+        self
     }
 
     /// Attach the rank-profile catalog. Required by `CREATE RANK PROFILE` /
@@ -672,14 +687,25 @@ impl DdlService {
                 "function '{name}' already exists (use CREATE OR REPLACE FUNCTION)"
             ));
         }
-        // Reuse the shared frontend lowering so the body supports the full scalar grammar.
-        let body_expr = proximadb_relational_frontend::lower_function_body(body, &params)
+        let stored = crate::services::StoredFunction {
+            name: key.clone(),
+            params,
+            return_ty,
+            body: body.to_string(),
+            created_at_ms: crate::services::function_store::now_ms(),
+        };
+        // Register live (this also validates the body via the shared frontend lowering) ...
+        crate::services::function_store::register_stored_function(&stored)
             .map_err(|e| anyhow!("CREATE FUNCTION {name}: {e}"))?;
-        let arg_types: Vec<ProximaType> = params.iter().map(|(_, t)| t.clone()).collect();
-        proximadb_functions::builtins().register_scalar(proximadb_functions::sql_bodied_scalar(
-            &key, arg_types, return_ty, body_expr,
-        ));
-        info!(function = %name, params = params.len(), "Created SQL function");
+        // ... and persist to the durable catalog when one is configured, so it survives a
+        // restart (boot recovery replays the catalog through `register_stored_function`).
+        if let Some(store) = &self.function_store {
+            store
+                .put(stored)
+                .await
+                .map_err(|e| anyhow!("CREATE FUNCTION {name}: persisting to catalog: {e}"))?;
+        }
+        info!(function = %name, "Created SQL function");
         Ok(DdlResult::success(format!("Function '{name}' created")))
     }
 
@@ -2731,5 +2757,37 @@ mod tests {
             .await
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn create_function_persists_to_durable_catalog() {
+        // F5: with a durable catalog attached, CREATE FUNCTION persists the definition (so boot
+        // recovery can re-register it) in addition to the live registration.
+        use crate::services::canonical_wal::FramedTableWalAppender;
+        let dir = tempfile::tempdir().unwrap();
+        let appender = Arc::new(
+            FramedTableWalAppender::open(dir.path().join("fns.wal"))
+                .await
+                .unwrap(),
+        );
+        let store = Arc::new(crate::services::CanonicalWalFunctionStore::new(appender));
+        let ddl =
+            DdlService::new(Arc::new(CatalogManager::new())).with_function_store(store.clone());
+
+        ddl.execute(DdlStatement::CreateFunction {
+            name: "quad".to_string(),
+            params: vec![("x".to_string(), ProximaType::Int64)],
+            return_ty: ProximaType::Int64,
+            body: "x * 4".to_string(),
+            or_replace: false,
+        })
+        .await
+        .expect("CREATE FUNCTION quad");
+
+        use crate::services::FunctionStore;
+        let persisted = store.list_all().await.unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].name, "quad");
+        assert_eq!(persisted[0].body, "x * 4");
     }
 }
