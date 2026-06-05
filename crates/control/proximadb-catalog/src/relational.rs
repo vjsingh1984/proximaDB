@@ -551,6 +551,32 @@ fn evaluate_simple_check_expression(
     let left = tokens[0].as_str();
     let op = tokens[1].as_str();
     let right = tokens[2].as_str();
+
+    // Column-to-column comparison (e.g. `CHECK (start_date < end_date)`): both operands are
+    // catalog columns. NULL on either side yields SQL UNKNOWN (the row is allowed).
+    let left_is_column = schema.columns.iter().any(|column| column.name == left);
+    let right_is_column = schema.columns.iter().any(|column| column.name == right);
+    if left_is_column && right_is_column {
+        let (Some(left_value), Some(right_value)) = (row.values.get(left), row.values.get(right))
+        else {
+            return Ok(CheckOutcome::Unknown);
+        };
+        if matches!(left_value, ProximaValue::Null) || matches!(right_value, ProximaValue::Null) {
+            return Ok(CheckOutcome::Unknown);
+        }
+        let passed = compare_value_to_value(left_value, op, right_value).ok_or_else(|| {
+            anyhow!(
+                "Unsupported CHECK constraint expression '{}'; incompatible column comparison",
+                expression
+            )
+        })?;
+        return Ok(if passed {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        });
+    }
+
     let Some((column_name, literal, column_on_left)) = resolve_check_operands(schema, left, right)
     else {
         return Err(anyhow!(
@@ -626,6 +652,22 @@ fn compare_value_to_literal(
         return compare_equality(*value, op, literal, column_on_left);
     }
 
+    None
+}
+
+/// Compare two row values (both catalog columns) under `op`. Numeric vs numeric and string vs
+/// string use ordering; boolean vs boolean uses equality only. Mismatched/unsupported kinds
+/// return `None` (the caller surfaces an "incompatible comparison" error).
+fn compare_value_to_value(left: &ProximaValue, op: &str, right: &ProximaValue) -> Option<bool> {
+    if let (Some(left), Some(right)) = (proxima_value_as_f64(left), proxima_value_as_f64(right)) {
+        return compare_ordered(left, op, right, true);
+    }
+    if let (Some(left), Some(right)) = (proxima_value_as_str(left), proxima_value_as_str(right)) {
+        return compare_ordered(left, op, right, true);
+    }
+    if let (ProximaValue::Boolean(left), ProximaValue::Boolean(right)) = (left, right) {
+        return compare_equality(*left, op, *right, true);
+    }
     None
 }
 
@@ -1074,6 +1116,59 @@ mod tests {
             err.to_string()
                 .contains("CHECK constraint 'amount > 0' failed")
         );
+    }
+
+    fn range_schema_with_check(expression: &str) -> CatalogTableSchema {
+        CatalogTableSchema::new("ranges")
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "lo", ProximaType::Float64))
+            .with_column(CatalogColumn::new(3, "hi", ProximaType::Float64))
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["id".to_string()],
+                constraints: vec![ColumnConstraint::Check {
+                    expression: expression.to_string(),
+                }],
+                ..Default::default()
+            })
+    }
+
+    #[test]
+    fn enforces_column_to_column_check_on_write() {
+        // TD-110 Slice B: CHECK comparing two columns (`lo < hi`).
+        let schema = range_schema_with_check("lo < hi");
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(1));
+        values.insert("lo".to_string(), ProximaValue::Float64(1.0));
+        values.insert("hi".to_string(), ProximaValue::Float64(2.0));
+        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect("lo < hi should pass");
+    }
+
+    #[test]
+    fn rejects_column_to_column_check_violation_on_write() {
+        let schema = range_schema_with_check("lo < hi");
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(1));
+        values.insert("lo".to_string(), ProximaValue::Float64(5.0));
+        values.insert("hi".to_string(), ProximaValue::Float64(2.0));
+        let err = CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect_err("lo >= hi should fail");
+        assert!(
+            err.to_string()
+                .contains("CHECK constraint 'lo < hi' failed")
+        );
+    }
+
+    #[test]
+    fn column_to_column_check_with_null_operand_is_unknown() {
+        // SQL UNKNOWN (NULL operand) allows the row — matches column-literal NULL semantics.
+        let schema = range_schema_with_check("lo < hi");
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(1));
+        values.insert("lo".to_string(), ProximaValue::Float64(5.0));
+        values.insert("hi".to_string(), ProximaValue::Null);
+        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect("NULL operand → UNKNOWN → row allowed");
     }
 
     #[test]
