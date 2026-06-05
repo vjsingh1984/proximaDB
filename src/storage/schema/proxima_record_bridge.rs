@@ -42,7 +42,9 @@ use proximadb_records::{
 };
 use serde_json::Value as JsonValue;
 
-use super::proxima_schema::{ProximaDataType, ProximaSchema};
+use proximadb_data_model::ProximaType;
+
+use super::proxima_schema::ProximaSchema;
 
 // ============================================================================
 // ProximaRecordBridge Trait
@@ -987,10 +989,10 @@ impl ProximaRecordBridge for DefaultProximaRecordBridge {
         let metadata_schema = self.infer_metadata_schema(records)?;
 
         // Build ProximaSchema
-        let metadata_columns: Vec<(String, ProximaDataType)> = metadata_schema
+        let metadata_columns: Vec<(String, ProximaType)> = metadata_schema
             .into_iter()
             .map(|(name, arrow_type)| {
-                let proxima_type = ProximaDataType::from_arrow_type(&arrow_type);
+                let proxima_type = ProximaType::from_arrow_type(&arrow_type);
                 (name, proxima_type)
             })
             .collect();
@@ -1072,7 +1074,7 @@ pub fn infer_schema_from_proxima_records(
     }
 
     // Collect metadata field types
-    let mut field_types: HashMap<String, ProximaDataType> = HashMap::new();
+    let mut field_types: HashMap<String, ProximaType> = HashMap::new();
 
     for record in records {
         for (key, value) in &record.props {
@@ -1082,7 +1084,7 @@ pub fn infer_schema_from_proxima_records(
     }
 
     // Convert to ordered list
-    let mut metadata_fields: Vec<(String, ProximaDataType)> = field_types.into_iter().collect();
+    let mut metadata_fields: Vec<(String, ProximaType)> = field_types.into_iter().collect();
     metadata_fields.sort_by(|a, b| a.0.cmp(&b.0));
 
     Ok(ProximaSchema::with_metadata_columns(
@@ -1092,18 +1094,18 @@ pub fn infer_schema_from_proxima_records(
     ))
 }
 
-/// Infer ProximaDataType from a property tree node.
-fn infer_proxima_type_from_tree_node(value: &ProximaTreeNode) -> ProximaDataType {
+/// Infer ProximaType from a property tree node.
+fn infer_proxima_type_from_tree_node(value: &ProximaTreeNode) -> ProximaType {
     match value {
-        ProximaTreeNode::Object(_) => ProximaDataType::Json,
+        ProximaTreeNode::Object(_) => ProximaType::Json,
         ProximaTreeNode::Value(value) => infer_proxima_type_from_value(value),
     }
 }
 
-/// Infer ProximaDataType from ProximaValue.
-fn infer_proxima_type_from_value(value: &ProximaValue) -> ProximaDataType {
+/// Infer ProximaType from ProximaValue.
+fn infer_proxima_type_from_value(value: &ProximaValue) -> ProximaType {
     match value {
-        ProximaValue::Boolean(_) => ProximaDataType::Boolean,
+        ProximaValue::Boolean(_) => ProximaType::Boolean,
         ProximaValue::Int8(_)
         | ProximaValue::Int16(_)
         | ProximaValue::Int32(_)
@@ -1111,17 +1113,17 @@ fn infer_proxima_type_from_value(value: &ProximaValue) -> ProximaDataType {
         | ProximaValue::UInt8(_)
         | ProximaValue::UInt16(_)
         | ProximaValue::UInt32(_)
-        | ProximaValue::UInt64(_) => ProximaDataType::Int64,
+        | ProximaValue::UInt64(_) => ProximaType::Int64,
         ProximaValue::Float16(_) | ProximaValue::Float32(_) | ProximaValue::Float64(_) => {
-            ProximaDataType::Float64
+            ProximaType::Float64
         }
-        ProximaValue::Binary(_) | ProximaValue::BinaryVector(_) => ProximaDataType::Binary,
+        ProximaValue::Binary(_) | ProximaValue::BinaryVector(_) => ProximaType::Binary,
         ProximaValue::Array(_)
         | ProximaValue::Map(_)
         | ProximaValue::Struct(_)
         | ProximaValue::Json(_)
-        | ProximaValue::Jsonb(_) => ProximaDataType::Json,
-        _ => ProximaDataType::String,
+        | ProximaValue::Jsonb(_) => ProximaType::Json,
+        _ => ProximaType::String,
     }
 }
 

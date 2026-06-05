@@ -30,7 +30,7 @@
 //!   [`ProximaValue::Null`], or a value that cannot be coerced to the column's family yields
 //!   an Arrow null (NOT an error — sparse props are normal). Cross-family coercions are
 //!   modest and lossless-widening only (any integer → a wider int; any int/float → float).
-//! - **Vector columns** ([`ProximaDataType::Vector`]) read `record.embeddings.first()` and
+//! - **Vector columns** ([`ProximaType::DenseVector`]) read `record.embeddings.first()` and
 //!   encode the fp32 values as little-endian bytes into a `FixedSizeBinary(dimension * 4)`
 //!   array — exactly the Arrow type `to_arrow_type` declares. A record with no embedding is
 //!   null; a dimension mismatch is a hard error (it would corrupt the fixed-width layout).
@@ -58,7 +58,9 @@ use proximadb_records::{
     EmbeddingCell, EmbeddingValues, ProximaRecord, ProximaTreeNode, ProximaValue, tree_get,
 };
 
-use crate::proxima_schema::{ProximaColumn, ProximaDataType, ProximaSchema, VectorElementType};
+use proximadb_data_model::{ProximaType, VectorElement as DmVectorElement};
+
+use crate::proxima_schema::{ProximaColumn, ProximaSchema};
 
 /// Convert a slice of canonical [`ProximaRecord`]s into an Arrow [`RecordBatch`] whose schema
 /// is `schema.to_arrow_schema()` and whose columns are materialized per the mapping contract
@@ -103,20 +105,20 @@ fn build_column(records: &[ProximaRecord], col: &ProximaColumn) -> Result<ArrayR
     }
 
     match &col.data_type {
-        ProximaDataType::Boolean => scalar_col!(BooleanBuilder, pv_as_bool),
-        ProximaDataType::Int8 => scalar_col!(Int8Builder, |v| pv_as_i64(v).map(|x| x as i8)),
-        ProximaDataType::Int16 => scalar_col!(Int16Builder, |v| pv_as_i64(v).map(|x| x as i16)),
-        ProximaDataType::Int32 => scalar_col!(Int32Builder, |v| pv_as_i64(v).map(|x| x as i32)),
-        ProximaDataType::Int64 => scalar_col!(Int64Builder, pv_as_i64),
-        ProximaDataType::UInt8 => scalar_col!(UInt8Builder, |v| pv_as_u64(v).map(|x| x as u8)),
-        ProximaDataType::UInt16 => scalar_col!(UInt16Builder, |v| pv_as_u64(v).map(|x| x as u16)),
-        ProximaDataType::UInt32 => scalar_col!(UInt32Builder, |v| pv_as_u64(v).map(|x| x as u32)),
-        ProximaDataType::UInt64 => scalar_col!(UInt64Builder, pv_as_u64),
-        ProximaDataType::Float32 => scalar_col!(Float32Builder, |v| pv_as_f64(v).map(|x| x as f32)),
-        ProximaDataType::Float64 => scalar_col!(Float64Builder, pv_as_f64),
-        ProximaDataType::Date => scalar_col!(Date32Builder, pv_as_date32),
-        // Utf8-backed types per `to_arrow_type` (String, Uuid, Json).
-        ProximaDataType::String | ProximaDataType::Uuid | ProximaDataType::Json => {
+        ProximaType::Boolean => scalar_col!(BooleanBuilder, pv_as_bool),
+        ProximaType::Int8 => scalar_col!(Int8Builder, |v| pv_as_i64(v).map(|x| x as i8)),
+        ProximaType::Int16 => scalar_col!(Int16Builder, |v| pv_as_i64(v).map(|x| x as i16)),
+        ProximaType::Int32 => scalar_col!(Int32Builder, |v| pv_as_i64(v).map(|x| x as i32)),
+        ProximaType::Int64 => scalar_col!(Int64Builder, pv_as_i64),
+        ProximaType::UInt8 => scalar_col!(UInt8Builder, |v| pv_as_u64(v).map(|x| x as u8)),
+        ProximaType::UInt16 => scalar_col!(UInt16Builder, |v| pv_as_u64(v).map(|x| x as u16)),
+        ProximaType::UInt32 => scalar_col!(UInt32Builder, |v| pv_as_u64(v).map(|x| x as u32)),
+        ProximaType::UInt64 => scalar_col!(UInt64Builder, pv_as_u64),
+        ProximaType::Float32 => scalar_col!(Float32Builder, |v| pv_as_f64(v).map(|x| x as f32)),
+        ProximaType::Float64 => scalar_col!(Float64Builder, pv_as_f64),
+        ProximaType::Date => scalar_col!(Date32Builder, pv_as_date32),
+        // Utf8-backed types per `to_arrow_type` (String, Json).
+        ProximaType::String | ProximaType::Json => {
             let mut b = StringBuilder::new();
             for r in records {
                 match tree_get(&r.props, &col.name).and_then(pv_as_string) {
@@ -126,7 +128,7 @@ fn build_column(records: &[ProximaRecord], col: &ProximaColumn) -> Result<ArrayR
             }
             Ok(Arc::new(b.finish()) as ArrayRef)
         }
-        ProximaDataType::Binary => {
+        ProximaType::Binary => {
             let mut b = BinaryBuilder::new();
             for r in records {
                 match tree_get(&r.props, &col.name).and_then(pv_as_binary) {
@@ -136,7 +138,7 @@ fn build_column(records: &[ProximaRecord], col: &ProximaColumn) -> Result<ArrayR
             }
             Ok(Arc::new(b.finish()) as ArrayRef)
         }
-        ProximaDataType::Vector { dimension, .. } => build_vector_column(records, col, *dimension),
+        ProximaType::DenseVector { dim, .. } => build_vector_column(records, col, *dim as u32),
         other => Err(StorageError::Serialization(format!(
             "proxima_arrow: column `{}` has type {:?}, which has no canonical ProximaValue→Arrow \
              materialization yet",
@@ -147,7 +149,13 @@ fn build_column(records: &[ProximaRecord], col: &ProximaColumn) -> Result<ArrayR
 
 /// Build the dense-vector column as `FixedSizeBinary(dimension * 4)`, encoding each record's
 /// first embedding as little-endian fp32 bytes (the layout `to_arrow_type` declares for
-/// [`ProximaDataType::Vector`]). Absent embedding → null; length mismatch → hard error.
+/// [`ProximaType::DenseVector`]). Absent embedding → null; length mismatch → hard error.
+///
+/// NOTE (ADR-024 Step 2b / TD-111 follow-up): this data-plane writer always emits fp32
+/// (`dimension * 4`), while `ProximaType::DenseVector::to_arrow_type` now declares
+/// `dimension * element.byte_width()`. For Float32 (the only element produced in practice)
+/// the declared and written widths agree; a non-f32 element would declare a wider schema than
+/// the bytes written. Latent, not a live regression — typed-element encoding is the follow-up.
 fn build_vector_column(
     records: &[ProximaRecord],
     col: &ProximaColumn,
@@ -278,28 +286,28 @@ fn pv_as_date32(v: &ProximaValue) -> Option<i32> {
 /// keeps it stable across a write→read round-trip.
 pub const INFERRED_VECTOR_COLUMN: &str = "vector";
 
-/// Map a concrete [`ProximaValue`] to the [`ProximaDataType`] the canonical converter can
+/// Map a concrete [`ProximaValue`] to the [`ProximaType`] the canonical converter can
 /// materialize. Returns `None` for `Null` and for variants without a scalar Arrow column in
 /// [`build_column`] (Decimal — needs precision/scale; Time/Timestamp; Array/Map/Struct;
-/// sparse/quantized vectors) so inference never produces a column the converter would reject.
-fn proxima_value_to_data_type(v: &ProximaValue) -> Option<ProximaDataType> {
+/// identifier (Uuid/ULID) and sparse/quantized vectors) so inference never produces a column
+/// the converter would reject.
+fn proxima_value_to_data_type(v: &ProximaValue) -> Option<ProximaType> {
     Some(match v {
-        ProximaValue::Boolean(_) => ProximaDataType::Boolean,
-        ProximaValue::Int8(_) => ProximaDataType::Int8,
-        ProximaValue::Int16(_) => ProximaDataType::Int16,
-        ProximaValue::Int32(_) => ProximaDataType::Int32,
-        ProximaValue::Int64(_) => ProximaDataType::Int64,
-        ProximaValue::UInt8(_) => ProximaDataType::UInt8,
-        ProximaValue::UInt16(_) => ProximaDataType::UInt16,
-        ProximaValue::UInt32(_) => ProximaDataType::UInt32,
-        ProximaValue::UInt64(_) => ProximaDataType::UInt64,
-        ProximaValue::Float16(_) | ProximaValue::Float32(_) => ProximaDataType::Float32,
-        ProximaValue::Float64(_) => ProximaDataType::Float64,
-        ProximaValue::String(_) | ProximaValue::Symbol(_) => ProximaDataType::String,
-        ProximaValue::Binary(_) => ProximaDataType::Binary,
-        ProximaValue::Date(_) => ProximaDataType::Date,
-        ProximaValue::Uuid(_) | ProximaValue::ULID(_) => ProximaDataType::Uuid,
-        ProximaValue::Json(_) | ProximaValue::Jsonb(_) => ProximaDataType::Json,
+        ProximaValue::Boolean(_) => ProximaType::Boolean,
+        ProximaValue::Int8(_) => ProximaType::Int8,
+        ProximaValue::Int16(_) => ProximaType::Int16,
+        ProximaValue::Int32(_) => ProximaType::Int32,
+        ProximaValue::Int64(_) => ProximaType::Int64,
+        ProximaValue::UInt8(_) => ProximaType::UInt8,
+        ProximaValue::UInt16(_) => ProximaType::UInt16,
+        ProximaValue::UInt32(_) => ProximaType::UInt32,
+        ProximaValue::UInt64(_) => ProximaType::UInt64,
+        ProximaValue::Float16(_) | ProximaValue::Float32(_) => ProximaType::Float32,
+        ProximaValue::Float64(_) => ProximaType::Float64,
+        ProximaValue::String(_) | ProximaValue::Symbol(_) => ProximaType::String,
+        ProximaValue::Binary(_) => ProximaType::Binary,
+        ProximaValue::Date(_) => ProximaType::Date,
+        ProximaValue::Json(_) | ProximaValue::Jsonb(_) => ProximaType::Json,
         _ => return None,
     })
 }
@@ -319,7 +327,7 @@ fn proxima_value_to_data_type(v: &ProximaValue) -> Option<ProximaDataType> {
 ///   is appended, its dimension = the first embedding's length, element type `Float32`.
 pub fn infer_proxima_schema(records: &[ProximaRecord]) -> ProximaSchema {
     let mut order: Vec<String> = Vec::new();
-    let mut types: HashMap<String, ProximaDataType> = HashMap::new();
+    let mut types: HashMap<String, ProximaType> = HashMap::new();
 
     for r in records {
         for (key, node) in &r.props {
@@ -339,7 +347,7 @@ pub fn infer_proxima_schema(records: &[ProximaRecord]) -> ProximaSchema {
 
     let mut columns: Vec<ProximaColumn> = Vec::with_capacity(order.len() + 1);
     let mut next_id = 1;
-    let mut push = |name: String, data_type: ProximaDataType, id: &mut i32| {
+    let mut push = |name: String, data_type: ProximaType, id: &mut i32| {
         columns.push(ProximaColumn {
             id: *id,
             name,
@@ -365,9 +373,9 @@ pub fn infer_proxima_schema(records: &[ProximaRecord]) -> ProximaSchema {
     {
         push(
             INFERRED_VECTOR_COLUMN.to_string(),
-            ProximaDataType::Vector {
-                dimension: dim as u32,
-                element_type: VectorElementType::Float32,
+            ProximaType::DenseVector {
+                element: DmVectorElement::Float32,
+                dim,
             },
             &mut next_id,
         );
@@ -452,7 +460,7 @@ pub fn arrow_cell_to_proxima_value(array: &ArrayRef, row: usize) -> Option<Proxi
 /// Arrow [`RecordBatch`] back into canonical [`ProximaRecord`]s. Scalar columns
 /// become `props` (via [`arrow_cell_to_proxima_value`]); a `FixedSizeBinary`
 /// column is decoded as the little-endian fp32 dense vector (the layout
-/// `proxima_records_to_record_batch` writes for [`ProximaDataType::Vector`]) into
+/// `proxima_records_to_record_batch` writes for [`ProximaType::DenseVector`]) into
 /// `record.embeddings`.
 ///
 /// Identity (`oid`) and `variation_id` are NOT inferred here — a self-describing
@@ -501,9 +509,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use crate::proxima_schema::VectorElementType;
-
-    fn col(id: i32, name: &str, dt: ProximaDataType, nullable: bool) -> ProximaColumn {
+    fn col(id: i32, name: &str, dt: ProximaType, nullable: bool) -> ProximaColumn {
         ProximaColumn {
             id,
             name: name.to_string(),
@@ -538,10 +544,10 @@ mod tests {
         let schema = ProximaSchema::new(
             "test".to_string(),
             vec![
-                col(1, "name", ProximaDataType::String, true),
-                col(2, "age", ProximaDataType::Int64, true),
-                col(3, "score", ProximaDataType::Float64, true),
-                col(4, "active", ProximaDataType::Boolean, true),
+                col(1, "name", ProximaType::String, true),
+                col(2, "age", ProximaType::Int64, true),
+                col(3, "score", ProximaType::Float64, true),
+                col(4, "active", ProximaType::Boolean, true),
             ],
             vec![1],
         );
@@ -609,13 +615,13 @@ mod tests {
         let schema = ProximaSchema::new(
             "vec".to_string(),
             vec![
-                col(1, "id", ProximaDataType::String, false),
+                col(1, "id", ProximaType::String, false),
                 col(
                     2,
                     "embedding",
-                    ProximaDataType::Vector {
-                        dimension: dim,
-                        element_type: VectorElementType::Float32,
+                    ProximaType::DenseVector {
+                        element: DmVectorElement::Float32,
+                        dim: dim as usize,
                     },
                     true,
                 ),
@@ -655,9 +661,9 @@ mod tests {
             vec![col(
                 1,
                 "embedding",
-                ProximaDataType::Vector {
-                    dimension: 4,
-                    element_type: VectorElementType::Float32,
+                ProximaType::DenseVector {
+                    element: DmVectorElement::Float32,
+                    dim: 4,
                 },
                 true,
             )],
@@ -680,7 +686,7 @@ mod tests {
         // Column is Int64 but the prop is an Int32 — widening must succeed, not null out.
         let schema = ProximaSchema::new(
             "coerce".to_string(),
-            vec![col(1, "n", ProximaDataType::Int64, true)],
+            vec![col(1, "n", ProximaType::Int64, true)],
             vec![],
         );
         let r = record_with_props("r0", vec![("n", ProximaValue::Int32(7))]);
@@ -726,18 +732,18 @@ mod tests {
             .map(|c| (c.name.as_str(), c))
             .collect();
 
-        assert_eq!(by_name["name"].data_type, ProximaDataType::String);
-        assert_eq!(by_name["age"].data_type, ProximaDataType::Int64);
-        assert_eq!(by_name["score"].data_type, ProximaDataType::Float64);
-        assert_eq!(by_name["tags"].data_type, ProximaDataType::String);
+        assert_eq!(by_name["name"].data_type, ProximaType::String);
+        assert_eq!(by_name["age"].data_type, ProximaType::Int64);
+        assert_eq!(by_name["score"].data_type, ProximaType::Float64);
+        assert_eq!(by_name["tags"].data_type, ProximaType::String);
         assert!(by_name.values().all(|c| c.nullable));
 
         let vec_col = by_name[INFERRED_VECTOR_COLUMN];
         assert_eq!(
             vec_col.data_type,
-            ProximaDataType::Vector {
-                dimension: 2,
-                element_type: VectorElementType::Float32
+            ProximaType::DenseVector {
+                element: DmVectorElement::Float32,
+                dim: 2,
             }
         );
 
@@ -778,14 +784,14 @@ mod tests {
         let schema = ProximaSchema::new(
             "rt".to_string(),
             vec![
-                col(1, "name", ProximaDataType::String, true),
-                col(2, "age", ProximaDataType::Int64, true),
+                col(1, "name", ProximaType::String, true),
+                col(2, "age", ProximaType::Int64, true),
                 col(
                     3,
                     "vector",
-                    ProximaDataType::Vector {
-                        dimension: 3,
-                        element_type: VectorElementType::Float32,
+                    ProximaType::DenseVector {
+                        element: DmVectorElement::Float32,
+                        dim: 3,
                     },
                     true,
                 ),

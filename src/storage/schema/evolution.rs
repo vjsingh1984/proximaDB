@@ -6,7 +6,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use super::proxima_schema::{DefaultValue, ProximaColumn, ProximaDataType, ProximaSchema};
+use proximadb_data_model::ProximaType;
+
+use super::proxima_schema::{DefaultValue, ProximaColumn, ProximaSchema};
 
 /// Schema evolution operations.
 #[derive(Debug, Clone)]
@@ -27,7 +29,7 @@ pub enum SchemaEvolutionOp {
     /// Change column type (must be compatible)
     ChangeType {
         column_id: i32,
-        new_type: ProximaDataType,
+        new_type: ProximaType,
         /// Optional conversion expression
         conversion: Option<String>,
     },
@@ -212,8 +214,8 @@ pub trait SchemaEvolution: Send + Sync {
     /// Check type compatibility for type change operations.
     fn check_type_compatibility(
         &self,
-        old_type: &ProximaDataType,
-        new_type: &ProximaDataType,
+        old_type: &ProximaType,
+        new_type: &ProximaType,
     ) -> TypeCompatibility;
 
     /// Get migration strategy for schema change.
@@ -227,7 +229,7 @@ pub trait SchemaEvolution: Send + Sync {
 /// Default implementation of schema evolution.
 pub struct DefaultSchemaEvolution {
     /// Compatible type widening rules
-    widening_rules: Vec<(ProximaDataType, ProximaDataType)>,
+    widening_rules: Vec<(ProximaType, ProximaType)>,
 }
 
 impl Default for DefaultSchemaEvolution {
@@ -241,26 +243,26 @@ impl DefaultSchemaEvolution {
         Self {
             widening_rules: vec![
                 // Integer widening
-                (ProximaDataType::Int8, ProximaDataType::Int16),
-                (ProximaDataType::Int8, ProximaDataType::Int32),
-                (ProximaDataType::Int8, ProximaDataType::Int64),
-                (ProximaDataType::Int16, ProximaDataType::Int32),
-                (ProximaDataType::Int16, ProximaDataType::Int64),
-                (ProximaDataType::Int32, ProximaDataType::Int64),
+                (ProximaType::Int8, ProximaType::Int16),
+                (ProximaType::Int8, ProximaType::Int32),
+                (ProximaType::Int8, ProximaType::Int64),
+                (ProximaType::Int16, ProximaType::Int32),
+                (ProximaType::Int16, ProximaType::Int64),
+                (ProximaType::Int32, ProximaType::Int64),
                 // Unsigned integer widening
-                (ProximaDataType::UInt8, ProximaDataType::UInt16),
-                (ProximaDataType::UInt8, ProximaDataType::UInt32),
-                (ProximaDataType::UInt8, ProximaDataType::UInt64),
-                (ProximaDataType::UInt16, ProximaDataType::UInt32),
-                (ProximaDataType::UInt16, ProximaDataType::UInt64),
-                (ProximaDataType::UInt32, ProximaDataType::UInt64),
+                (ProximaType::UInt8, ProximaType::UInt16),
+                (ProximaType::UInt8, ProximaType::UInt32),
+                (ProximaType::UInt8, ProximaType::UInt64),
+                (ProximaType::UInt16, ProximaType::UInt32),
+                (ProximaType::UInt16, ProximaType::UInt64),
+                (ProximaType::UInt32, ProximaType::UInt64),
                 // Float widening
-                (ProximaDataType::Float32, ProximaDataType::Float64),
+                (ProximaType::Float32, ProximaType::Float64),
             ],
         }
     }
 
-    fn is_safe_widening(&self, old: &ProximaDataType, new: &ProximaDataType) -> bool {
+    fn is_safe_widening(&self, old: &ProximaType, new: &ProximaType) -> bool {
         self.widening_rules
             .iter()
             .any(|(from, to)| from == old && to == new)
@@ -458,8 +460,8 @@ impl SchemaEvolution for DefaultSchemaEvolution {
 
     fn check_type_compatibility(
         &self,
-        old_type: &ProximaDataType,
-        new_type: &ProximaDataType,
+        old_type: &ProximaType,
+        new_type: &ProximaType,
     ) -> TypeCompatibility {
         if old_type == new_type {
             return TypeCompatibility::Identical;
@@ -475,8 +477,8 @@ impl SchemaEvolution for DefaultSchemaEvolution {
 
         // Check string coercion
         match (old_type, new_type) {
-            (_, ProximaDataType::String) => TypeCompatibility::StringCoercion,
-            (ProximaDataType::String, _) => TypeCompatibility::LossyNarrowing,
+            (_, ProximaType::String) => TypeCompatibility::StringCoercion,
+            (ProximaType::String, _) => TypeCompatibility::LossyNarrowing,
             _ => TypeCompatibility::Incompatible,
         }
     }
@@ -545,7 +547,7 @@ mod tests {
             column: ProximaColumn {
                 id: 0, // Will be assigned
                 name: "category".to_string(),
-                data_type: ProximaDataType::String,
+                data_type: ProximaType::String,
                 nullable: true,
                 default_value: None,
                 comment: None,
@@ -575,7 +577,7 @@ mod tests {
             column: ProximaColumn {
                 id: 0,
                 name: "required_field".to_string(),
-                data_type: ProximaDataType::String,
+                data_type: ProximaType::String,
                 nullable: false,
                 default_value: None, // No default!
                 comment: None,
@@ -611,17 +613,17 @@ mod tests {
         let evolution = DefaultSchemaEvolution::new();
 
         assert_eq!(
-            evolution.check_type_compatibility(&ProximaDataType::Int32, &ProximaDataType::Int64),
+            evolution.check_type_compatibility(&ProximaType::Int32, &ProximaType::Int64),
             TypeCompatibility::SafeWidening
         );
 
         assert_eq!(
-            evolution.check_type_compatibility(&ProximaDataType::Int64, &ProximaDataType::Int32),
+            evolution.check_type_compatibility(&ProximaType::Int64, &ProximaType::Int32),
             TypeCompatibility::LossyNarrowing
         );
 
         assert_eq!(
-            evolution.check_type_compatibility(&ProximaDataType::Int32, &ProximaDataType::String),
+            evolution.check_type_compatibility(&ProximaType::Int32, &ProximaType::String),
             TypeCompatibility::StringCoercion
         );
     }

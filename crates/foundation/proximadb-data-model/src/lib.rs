@@ -290,8 +290,8 @@ impl ProximaType {
     /// Canonical [`ProximaType`] → Arrow [`ArrowDataType`] mapping (ADR-024).
     ///
     /// This is the single home for the type→Arrow projection that the catalog
-    /// and storage layers previously duplicated (`CatalogDataType::to_arrow_datatype`,
-    /// `ProximaDataType::to_arrow_type`). Dense vectors encode as
+    /// and storage layers previously duplicated (`CatalogDataType::to_arrow_datatype`
+    /// and the now-removed storage schema descriptor's `to_arrow_type`). Dense vectors encode as
     /// `FixedSizeBinary(dim * element_width)` (little-endian); binary vectors as
     /// `FixedSizeBinary(ceil(dim/8))`. Identifier/geo/jsonb types without an Arrow
     /// builtin project to their physical carrier (Utf8 / FixedSizeBinary), which is

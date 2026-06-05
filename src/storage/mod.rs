@@ -445,7 +445,6 @@ pub use schema::{
     PersistentSchemaRegistry,
     ProximaBlocksHeaderLoader,
     ProximaColumn,
-    ProximaDataType,
     // Header cache for smart I/O
     ProximaHeaderCache,
     // ProximaRecord bridge (WS5: ProximaRecord to Arrow RecordBatch conversion)
@@ -467,7 +466,6 @@ pub use schema::{
     TypeCompatibility,
     // Type mapping
     TypeMapper,
-    VectorElementType,
     global_header_cache,
     infer_schema_from_proxima_records,
     init_global_header_cache,

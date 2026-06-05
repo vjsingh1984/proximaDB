@@ -4,9 +4,8 @@
 //! Provides stable column IDs, schema evolution, and Arrow conversion.
 
 use anyhow::{Context, Result, anyhow};
-use arrow_schema::{
-    DataType as ArrowDataType, Field, Schema as ArrowSchema, TimeUnit as ArrowTimeUnit,
-};
+use arrow_schema::{Field, Schema as ArrowSchema, TimeUnit as ArrowTimeUnit};
+use proximadb_data_model::{ProximaType, TimeUnit as DmTimeUnit, VectorElement as DmVectorElement};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -56,8 +55,8 @@ pub struct ProximaColumn {
     /// Column name
     pub name: String,
 
-    /// Data type (ProximaDB native type)
-    pub data_type: ProximaDataType,
+    /// Data type (canonical ProximaDB logical type, ADR-024)
+    pub data_type: proximadb_data_model::ProximaType,
 
     /// Is nullable
     pub nullable: bool,
@@ -76,377 +75,6 @@ pub struct ProximaColumn {
 
     /// Original field ID (for tracking renames)
     pub original_id: Option<i32>,
-}
-
-/// ProximaDB native data types with vector extensions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ProximaDataType {
-    // Primitive types
-    Boolean,
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    UInt8,
-    UInt16,
-    UInt32,
-    UInt64,
-    Float32,
-    Float64,
-    Decimal {
-        precision: u8,
-        scale: i8,
-    },
-    String,
-    Binary,
-    Date,
-    Time {
-        unit: TimeUnit,
-    },
-    Timestamp {
-        unit: TimeUnit,
-        timezone: Option<String>,
-    },
-    Uuid,
-    Json,
-
-    // Complex types
-    List {
-        element: Box<ProximaDataType>,
-    },
-    Map {
-        key: Box<ProximaDataType>,
-        value: Box<ProximaDataType>,
-    },
-    Struct {
-        fields: Vec<ProximaColumn>,
-    },
-
-    // Vector types (ProximaDB extensions)
-    Vector {
-        dimension: u32,
-        element_type: VectorElementType,
-    },
-    SparseVector {
-        max_dimension: Option<u32>,
-    },
-    BinaryVector {
-        dimension: u32,
-    },
-
-    // Quantized vector types (internal use)
-    QuantizedInt8Vector {
-        dimension: u32,
-        scale_factor: u32,
-        zero_point: i8,
-    },
-    QuantizedPQVector {
-        dimension: u32,
-        segments: u8,
-        bits: u8,
-    },
-    QuantizedBinaryVector {
-        dimension: u32,
-    },
-}
-
-impl PartialEq for ProximaDataType {
-    fn eq(&self, other: &Self) -> bool {
-        use ProximaDataType::*;
-        match (self, other) {
-            (Boolean, Boolean) => true,
-            (Int8, Int8) => true,
-            (Int16, Int16) => true,
-            (Int32, Int32) => true,
-            (Int64, Int64) => true,
-            (UInt8, UInt8) => true,
-            (UInt16, UInt16) => true,
-            (UInt32, UInt32) => true,
-            (UInt64, UInt64) => true,
-            (Float32, Float32) => true,
-            (Float64, Float64) => true,
-            (
-                Decimal {
-                    precision: p1,
-                    scale: s1,
-                },
-                Decimal {
-                    precision: p2,
-                    scale: s2,
-                },
-            ) => p1 == p2 && s1 == s2,
-            (String, String) => true,
-            (Binary, Binary) => true,
-            (Date, Date) => true,
-            (Time { unit: u1 }, Time { unit: u2 }) => u1 == u2,
-            (
-                Timestamp {
-                    unit: u1,
-                    timezone: t1,
-                },
-                Timestamp {
-                    unit: u2,
-                    timezone: t2,
-                },
-            ) => u1 == u2 && t1 == t2,
-            (Uuid, Uuid) => true,
-            (Json, Json) => true,
-            (List { element: e1 }, List { element: e2 }) => e1 == e2,
-            (Map { key: k1, value: v1 }, Map { key: k2, value: v2 }) => k1 == k2 && v1 == v2,
-            (Struct { fields: f1 }, Struct { fields: f2 }) => {
-                // Compare by field count and ids (not full equality since ProximaColumn doesn't impl PartialEq)
-                f1.len() == f2.len()
-                    && f1
-                        .iter()
-                        .zip(f2.iter())
-                        .all(|(a, b)| a.id == b.id && a.name == b.name)
-            }
-            (
-                Vector {
-                    dimension: d1,
-                    element_type: e1,
-                },
-                Vector {
-                    dimension: d2,
-                    element_type: e2,
-                },
-            ) => d1 == d2 && e1 == e2,
-            (SparseVector { max_dimension: m1 }, SparseVector { max_dimension: m2 }) => m1 == m2,
-            (BinaryVector { dimension: d1 }, BinaryVector { dimension: d2 }) => d1 == d2,
-            (
-                QuantizedInt8Vector {
-                    dimension: d1,
-                    scale_factor: s1,
-                    zero_point: z1,
-                },
-                QuantizedInt8Vector {
-                    dimension: d2,
-                    scale_factor: s2,
-                    zero_point: z2,
-                },
-            ) => d1 == d2 && s1 == s2 && z1 == z2,
-            (
-                QuantizedPQVector {
-                    dimension: d1,
-                    segments: s1,
-                    bits: b1,
-                },
-                QuantizedPQVector {
-                    dimension: d2,
-                    segments: s2,
-                    bits: b2,
-                },
-            ) => d1 == d2 && s1 == s2 && b1 == b2,
-            (QuantizedBinaryVector { dimension: d1 }, QuantizedBinaryVector { dimension: d2 }) => {
-                d1 == d2
-            }
-            _ => false,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Canonical bridge: ProximaDataType <-> ProximaType (ADR-024 Step 2a)
-//
-// `ProximaType` (proximadb-data-model) is the single canonical *logical* type;
-// `ProximaDataType` is the storage/Arrow schema descriptor being folded into it.
-// These conversions are the previously-missing link, so all code can funnel
-// through `ProximaType` and the duplicate Arrow/pgwire logic can delegate.
-//
-// Per ADR-024, quantization is *physical* encoding, not a logical type: the
-// quantized `ProximaDataType` variants map to their logical vector type
-// (`DenseVector`/`BinaryVector`), dropping the encoding parameters (those belong
-// on a storage encoding attribute, added when `ProximaDataType` is deleted).
-// Logical types `ProximaDataType` cannot represent (Float16/Symbol/Interval/
-// Duration/ULID/Jsonb/Point/Null) map to their nearest physical carrier — lossy
-// by design (the logical `ProximaType` stays authoritative).
-// ---------------------------------------------------------------------------
-
-fn file_time_unit_to_dm(unit: &TimeUnit) -> proximadb_data_model::TimeUnit {
-    match unit {
-        TimeUnit::Second => proximadb_data_model::TimeUnit::Second,
-        TimeUnit::Millisecond => proximadb_data_model::TimeUnit::Millisecond,
-        TimeUnit::Microsecond => proximadb_data_model::TimeUnit::Microsecond,
-        TimeUnit::Nanosecond => proximadb_data_model::TimeUnit::Nanosecond,
-    }
-}
-
-fn dm_time_unit_to_file(unit: proximadb_data_model::TimeUnit) -> TimeUnit {
-    match unit {
-        proximadb_data_model::TimeUnit::Second => TimeUnit::Second,
-        proximadb_data_model::TimeUnit::Millisecond => TimeUnit::Millisecond,
-        proximadb_data_model::TimeUnit::Microsecond => TimeUnit::Microsecond,
-        proximadb_data_model::TimeUnit::Nanosecond => TimeUnit::Nanosecond,
-    }
-}
-
-impl From<&ProximaDataType> for proximadb_data_model::ProximaType {
-    fn from(dt: &ProximaDataType) -> Self {
-        use proximadb_data_model::{ProximaType as P, VectorElement as Ve};
-        let elem = |e: &VectorElementType| match e {
-            VectorElementType::Float16 => Ve::Float16,
-            VectorElementType::BFloat16 => Ve::BFloat16,
-            VectorElementType::Float32 => Ve::Float32,
-            VectorElementType::Float64 => Ve::Float64,
-        };
-        match dt {
-            ProximaDataType::Boolean => P::Boolean,
-            ProximaDataType::Int8 => P::Int8,
-            ProximaDataType::Int16 => P::Int16,
-            ProximaDataType::Int32 => P::Int32,
-            ProximaDataType::Int64 => P::Int64,
-            ProximaDataType::UInt8 => P::UInt8,
-            ProximaDataType::UInt16 => P::UInt16,
-            ProximaDataType::UInt32 => P::UInt32,
-            ProximaDataType::UInt64 => P::UInt64,
-            ProximaDataType::Float32 => P::Float32,
-            ProximaDataType::Float64 => P::Float64,
-            ProximaDataType::Decimal { precision, scale } => P::Decimal {
-                precision: *precision,
-                scale: *scale as u8,
-            },
-            ProximaDataType::String => P::String,
-            ProximaDataType::Binary => P::Binary,
-            ProximaDataType::Date => P::Date,
-            ProximaDataType::Time { unit } => P::Time(file_time_unit_to_dm(unit)),
-            ProximaDataType::Timestamp { unit, timezone } => {
-                if timezone.is_some() {
-                    P::TimestampTz(file_time_unit_to_dm(unit))
-                } else {
-                    P::Timestamp(file_time_unit_to_dm(unit))
-                }
-            }
-            ProximaDataType::Uuid => P::Uuid,
-            ProximaDataType::Json => P::Json,
-            ProximaDataType::List { element } => P::Array(Box::new(P::from(element.as_ref()))),
-            ProximaDataType::Map { key, value } => P::Map {
-                key: Box::new(P::from(key.as_ref())),
-                value: Box::new(P::from(value.as_ref())),
-            },
-            ProximaDataType::Struct { fields } => P::Struct {
-                fields: fields
-                    .iter()
-                    .map(|c| (c.name.clone(), P::from(&c.data_type)))
-                    .collect(),
-            },
-            ProximaDataType::Vector {
-                dimension,
-                element_type,
-            } => P::DenseVector {
-                element: elem(element_type),
-                dim: *dimension as usize,
-            },
-            ProximaDataType::SparseVector { .. } => P::SparseVector {
-                element: Ve::Float32,
-            },
-            ProximaDataType::BinaryVector { dimension } => P::BinaryVector {
-                dim: *dimension as usize,
-            },
-            // Quantized = physical encoding; reduce to the logical vector type.
-            ProximaDataType::QuantizedInt8Vector { dimension, .. }
-            | ProximaDataType::QuantizedPQVector { dimension, .. } => P::DenseVector {
-                element: Ve::Int8,
-                dim: *dimension as usize,
-            },
-            ProximaDataType::QuantizedBinaryVector { dimension } => P::BinaryVector {
-                dim: *dimension as usize,
-            },
-        }
-    }
-}
-
-impl From<&proximadb_data_model::ProximaType> for ProximaDataType {
-    fn from(ty: &proximadb_data_model::ProximaType) -> Self {
-        use proximadb_data_model::{ProximaType as P, VectorElement as Ve};
-        let elem = |e: &Ve| match e {
-            Ve::Float16 => VectorElementType::Float16,
-            Ve::BFloat16 => VectorElementType::BFloat16,
-            Ve::Float64 => VectorElementType::Float64,
-            // ProximaDataType has no Int8 vector element; carry as f32 (lossy).
-            Ve::Float32 | Ve::Int8 => VectorElementType::Float32,
-        };
-        match ty {
-            P::Boolean => ProximaDataType::Boolean,
-            P::Int8 => ProximaDataType::Int8,
-            P::Int16 => ProximaDataType::Int16,
-            P::Int32 => ProximaDataType::Int32,
-            P::Int64 => ProximaDataType::Int64,
-            P::UInt8 => ProximaDataType::UInt8,
-            P::UInt16 => ProximaDataType::UInt16,
-            P::UInt32 => ProximaDataType::UInt32,
-            P::UInt64 => ProximaDataType::UInt64,
-            // ProximaDataType has no Float16 scalar; widen to f32 (lossy).
-            P::Float16 | P::Float32 => ProximaDataType::Float32,
-            P::Float64 => ProximaDataType::Float64,
-            P::Decimal { precision, scale } => ProximaDataType::Decimal {
-                precision: *precision,
-                scale: *scale as i8,
-            },
-            P::String | P::Symbol => ProximaDataType::String,
-            P::Binary => ProximaDataType::Binary,
-            P::Date => ProximaDataType::Date,
-            P::Time(u) => ProximaDataType::Time {
-                unit: dm_time_unit_to_file(*u),
-            },
-            P::Timestamp(u) => ProximaDataType::Timestamp {
-                unit: dm_time_unit_to_file(*u),
-                timezone: None,
-            },
-            P::TimestampTz(u) => ProximaDataType::Timestamp {
-                unit: dm_time_unit_to_file(*u),
-                timezone: Some("UTC".to_string()),
-            },
-            // No interval/duration carrier in the storage descriptor.
-            P::Interval(_) | P::Duration(_) => ProximaDataType::Binary,
-            P::Uuid | P::ULID => ProximaDataType::Uuid,
-            P::Json | P::Jsonb => ProximaDataType::Json,
-            P::Array(element) => ProximaDataType::List {
-                element: Box::new(ProximaDataType::from(element.as_ref())),
-            },
-            P::Map { key, value } => ProximaDataType::Map {
-                key: Box::new(ProximaDataType::from(key.as_ref())),
-                value: Box::new(ProximaDataType::from(value.as_ref())),
-            },
-            P::Struct { fields } => ProximaDataType::Struct {
-                fields: fields
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (name, ty))| ProximaColumn {
-                        id: i as i32,
-                        name: name.clone(),
-                        data_type: ProximaDataType::from(ty),
-                        nullable: true,
-                        default_value: None,
-                        comment: None,
-                        metadata: std::collections::HashMap::new(),
-                        is_deleted: false,
-                        original_id: None,
-                    })
-                    .collect(),
-            },
-            P::DenseVector { element, dim } => ProximaDataType::Vector {
-                dimension: *dim as u32,
-                element_type: elem(element),
-            },
-            P::SparseVector { .. } => ProximaDataType::SparseVector {
-                max_dimension: None,
-            },
-            P::BinaryVector { dim } => ProximaDataType::BinaryVector {
-                dimension: *dim as u32,
-            },
-            // No geo / null carrier in the storage descriptor.
-            P::Point | P::GeographyPoint | P::Null => ProximaDataType::Binary,
-        }
-    }
-}
-
-/// Vector element type for dense vectors.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum VectorElementType {
-    Float32,
-    Float64,
-    Float16,
-    BFloat16,
 }
 
 /// Time unit for temporal types.
@@ -555,7 +183,7 @@ impl ProximaSchema {
             ProximaColumn {
                 id: 1,
                 name: "id".to_string(),
-                data_type: ProximaDataType::String,
+                data_type: ProximaType::String,
                 nullable: false,
                 default_value: None,
                 comment: Some("Vector record ID".to_string()),
@@ -566,9 +194,9 @@ impl ProximaSchema {
             ProximaColumn {
                 id: 2,
                 name: "vector".to_string(),
-                data_type: ProximaDataType::Vector {
-                    dimension,
-                    element_type: VectorElementType::Float32,
+                data_type: ProximaType::DenseVector {
+                    element: DmVectorElement::Float32,
+                    dim: dimension as usize,
                 },
                 nullable: false,
                 default_value: None,
@@ -580,7 +208,7 @@ impl ProximaSchema {
             ProximaColumn {
                 id: 3,
                 name: "metadata".to_string(),
-                data_type: ProximaDataType::Json,
+                data_type: ProximaType::Json,
                 nullable: true,
                 default_value: None,
                 comment: Some("JSON metadata".to_string()),
@@ -591,10 +219,7 @@ impl ProximaSchema {
             ProximaColumn {
                 id: 4,
                 name: "timestamp".to_string(),
-                data_type: ProximaDataType::Timestamp {
-                    unit: TimeUnit::Millisecond,
-                    timezone: None,
-                },
+                data_type: ProximaType::Timestamp(DmTimeUnit::Millisecond),
                 nullable: false,
                 default_value: Some(DefaultValue::AutoGenerate(
                     AutoGenerateType::CurrentTimestamp,
@@ -607,7 +232,7 @@ impl ProximaSchema {
             ProximaColumn {
                 id: 5,
                 name: "version".to_string(),
-                data_type: ProximaDataType::Int64,
+                data_type: ProximaType::Int64,
                 nullable: true,
                 default_value: Some(DefaultValue::Literal("1".to_string())),
                 comment: Some("MVCC version".to_string()),
@@ -652,13 +277,13 @@ impl ProximaSchema {
     pub fn with_metadata_columns(
         schema_id: String,
         dimension: u32,
-        metadata_fields: Vec<(String, ProximaDataType)>,
+        metadata_fields: Vec<(String, ProximaType)>,
     ) -> Self {
         let mut columns = vec![
             ProximaColumn {
                 id: 1,
                 name: "id".to_string(),
-                data_type: ProximaDataType::String,
+                data_type: ProximaType::String,
                 nullable: false,
                 default_value: None,
                 comment: None,
@@ -669,9 +294,9 @@ impl ProximaSchema {
             ProximaColumn {
                 id: 2,
                 name: "vector".to_string(),
-                data_type: ProximaDataType::Vector {
-                    dimension,
-                    element_type: VectorElementType::Float32,
+                data_type: ProximaType::DenseVector {
+                    element: DmVectorElement::Float32,
+                    dim: dimension as usize,
                 },
                 nullable: false,
                 default_value: None,
@@ -683,10 +308,7 @@ impl ProximaSchema {
             ProximaColumn {
                 id: 3,
                 name: "timestamp".to_string(),
-                data_type: ProximaDataType::Timestamp {
-                    unit: TimeUnit::Millisecond,
-                    timezone: None,
-                },
+                data_type: ProximaType::Timestamp(DmTimeUnit::Millisecond),
                 nullable: false,
                 default_value: Some(DefaultValue::AutoGenerate(
                     AutoGenerateType::CurrentTimestamp,
@@ -793,8 +415,8 @@ impl ProximaSchema {
     /// Get vector dimension if this schema has a vector column.
     pub fn vector_dimension(&self) -> Option<u32> {
         for col in &self.columns {
-            if let ProximaDataType::Vector { dimension, .. } = &col.data_type {
-                return Some(*dimension);
+            if let ProximaType::DenseVector { dim, .. } = &col.data_type {
+                return Some(*dim as u32);
             }
         }
         None
@@ -880,7 +502,7 @@ impl ProximaColumn {
         Self {
             id,
             name: field.name().clone(),
-            data_type: ProximaDataType::from_arrow_type(field.data_type()),
+            data_type: ProximaType::from_arrow_type(field.data_type()),
             nullable: field.is_nullable(),
             default_value: None,
             comment: field.metadata().get("comment").cloned(),
@@ -892,7 +514,7 @@ impl ProximaColumn {
 
     /// Convert to Avro-style field.
     fn to_avro_field(&self) -> AvroStyleField {
-        let field_type = self.data_type.to_avro_type(self.nullable);
+        let field_type = proxima_type_to_avro_type(&self.data_type, self.nullable);
 
         AvroStyleField {
             name: self.name.clone(),
@@ -910,260 +532,93 @@ impl ProximaColumn {
     }
 }
 
-impl ProximaDataType {
-    /// Convert to Arrow DataType.
-    pub fn to_arrow_type(&self) -> ArrowDataType {
-        match self {
-            ProximaDataType::Boolean => ArrowDataType::Boolean,
-            ProximaDataType::Int8 => ArrowDataType::Int8,
-            ProximaDataType::Int16 => ArrowDataType::Int16,
-            ProximaDataType::Int32 => ArrowDataType::Int32,
-            ProximaDataType::Int64 => ArrowDataType::Int64,
-            ProximaDataType::UInt8 => ArrowDataType::UInt8,
-            ProximaDataType::UInt16 => ArrowDataType::UInt16,
-            ProximaDataType::UInt32 => ArrowDataType::UInt32,
-            ProximaDataType::UInt64 => ArrowDataType::UInt64,
-            ProximaDataType::Float32 => ArrowDataType::Float32,
-            ProximaDataType::Float64 => ArrowDataType::Float64,
-            ProximaDataType::Decimal { precision, scale } => {
-                ArrowDataType::Decimal128(*precision, *scale)
-            }
-            ProximaDataType::String => ArrowDataType::Utf8,
-            ProximaDataType::Binary => ArrowDataType::Binary,
-            ProximaDataType::Date => ArrowDataType::Date32,
-            ProximaDataType::Time { unit } => ArrowDataType::Time64(unit.to_arrow_time_unit()),
-            ProximaDataType::Timestamp { unit, timezone } => ArrowDataType::Timestamp(
-                unit.to_arrow_time_unit(),
-                timezone.clone().map(Into::into),
-            ),
-            ProximaDataType::Uuid => ArrowDataType::Utf8, // UUID as string
-            ProximaDataType::Json => ArrowDataType::Utf8, // JSON as string
-            ProximaDataType::List { element } => {
-                ArrowDataType::List(Arc::new(Field::new("item", element.to_arrow_type(), true)))
-            }
-            ProximaDataType::Map { key, value } => ArrowDataType::Map(
-                Arc::new(Field::new(
-                    "entries",
-                    ArrowDataType::Struct(
-                        vec![
-                            Field::new("key", key.to_arrow_type(), false),
-                            Field::new("value", value.to_arrow_type(), true),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                )),
-                false,
-            ),
-            ProximaDataType::Struct { fields } => ArrowDataType::Struct(
-                fields
-                    .iter()
-                    .map(|f| f.to_arrow_field())
-                    .collect::<Vec<_>>()
-                    .into(),
-            ),
-            ProximaDataType::Vector { dimension, .. } => {
-                ArrowDataType::FixedSizeBinary((*dimension * 4) as i32)
-            }
-            ProximaDataType::SparseVector { .. } => {
-                // Sparse vector as Map<i32, f32>
-                ArrowDataType::Map(
-                    Arc::new(Field::new(
-                        "entries",
-                        ArrowDataType::Struct(
-                            vec![
-                                Field::new("key", ArrowDataType::Int32, false),
-                                Field::new("value", ArrowDataType::Float32, false),
-                            ]
-                            .into(),
-                        ),
-                        false,
-                    )),
-                    false,
-                )
-            }
-            ProximaDataType::BinaryVector { dimension } => {
-                ArrowDataType::FixedSizeBinary(dimension.div_ceil(8) as i32)
-            }
-            ProximaDataType::QuantizedInt8Vector { dimension, .. } => {
-                ArrowDataType::FixedSizeBinary(*dimension as i32)
-            }
-            ProximaDataType::QuantizedPQVector { segments, .. } => {
-                ArrowDataType::FixedSizeBinary(*segments as i32)
-            }
-            ProximaDataType::QuantizedBinaryVector { dimension } => {
-                ArrowDataType::FixedSizeBinary(dimension.div_ceil(8) as i32)
-            }
+/// Convert a canonical [`ProximaType`] to an Avro-style type descriptor.
+///
+/// Free function (ADR-024): the Arrow projection now lives canonically on
+/// [`ProximaType::to_arrow_type`]; only this Avro projection remains local to
+/// the storage schema descriptor. Logical types without a distinct Avro carrier
+/// fall back to their nearest representation (the logical type stays
+/// authoritative on the column itself).
+fn proxima_type_to_avro_type(ty: &ProximaType, nullable: bool) -> AvroStyleType {
+    let base_type = match ty {
+        ProximaType::Boolean => AvroStyleType::Simple("boolean".to_string()),
+        ProximaType::Int8 | ProximaType::Int16 | ProximaType::Int32 => {
+            AvroStyleType::Simple("int".to_string())
         }
-    }
-
-    /// Convert from Arrow DataType.
-    pub fn from_arrow_type(arrow_type: &ArrowDataType) -> Self {
-        match arrow_type {
-            ArrowDataType::Boolean => ProximaDataType::Boolean,
-            ArrowDataType::Int8 => ProximaDataType::Int8,
-            ArrowDataType::Int16 => ProximaDataType::Int16,
-            ArrowDataType::Int32 => ProximaDataType::Int32,
-            ArrowDataType::Int64 => ProximaDataType::Int64,
-            ArrowDataType::UInt8 => ProximaDataType::UInt8,
-            ArrowDataType::UInt16 => ProximaDataType::UInt16,
-            ArrowDataType::UInt32 => ProximaDataType::UInt32,
-            ArrowDataType::UInt64 => ProximaDataType::UInt64,
-            ArrowDataType::Float32 => ProximaDataType::Float32,
-            ArrowDataType::Float64 => ProximaDataType::Float64,
-            ArrowDataType::Decimal128(p, s) | ArrowDataType::Decimal256(p, s) => {
-                ProximaDataType::Decimal {
-                    precision: *p,
-                    scale: *s,
-                }
-            }
-            ArrowDataType::Utf8 | ArrowDataType::LargeUtf8 => ProximaDataType::String,
-            ArrowDataType::Binary | ArrowDataType::LargeBinary => ProximaDataType::Binary,
-            ArrowDataType::Date32 | ArrowDataType::Date64 => ProximaDataType::Date,
-            ArrowDataType::Time64(unit) => ProximaDataType::Time {
-                unit: TimeUnit::from_arrow(*unit),
-            },
-            ArrowDataType::Timestamp(unit, tz) => ProximaDataType::Timestamp {
-                unit: TimeUnit::from_arrow(*unit),
-                timezone: tz.as_ref().map(|s| s.to_string()),
-            },
-            ArrowDataType::FixedSizeBinary(size) => {
-                // Heuristic: if divisible by 4 and reasonable size, assume vector
-                if *size % 4 == 0 && *size >= 4 && *size <= 16384 {
-                    ProximaDataType::Vector {
-                        dimension: (*size / 4) as u32,
-                        element_type: VectorElementType::Float32,
-                    }
-                } else {
-                    ProximaDataType::Binary
-                }
-            }
-            ArrowDataType::List(field) => ProximaDataType::List {
-                element: Box::new(Self::from_arrow_type(field.data_type())),
-            },
-            ArrowDataType::LargeList(field) => ProximaDataType::List {
-                element: Box::new(Self::from_arrow_type(field.data_type())),
-            },
-            ArrowDataType::Map(field, _) => {
-                // Extract key/value types from Map struct
-                if let ArrowDataType::Struct(fields) = field.data_type()
-                    && fields.len() >= 2
-                {
-                    return ProximaDataType::Map {
-                        key: Box::new(Self::from_arrow_type(fields[0].data_type())),
-                        value: Box::new(Self::from_arrow_type(fields[1].data_type())),
-                    };
-                }
-                ProximaDataType::Json // Fallback
-            }
-            ArrowDataType::Struct(fields) => ProximaDataType::Struct {
-                fields: fields
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| ProximaColumn::from_arrow_field(f, i as i32))
-                    .collect(),
-            },
-            _ => ProximaDataType::Binary, // Fallback for unsupported types
+        ProximaType::Int64 => AvroStyleType::Simple("long".to_string()),
+        ProximaType::UInt8 | ProximaType::UInt16 | ProximaType::UInt32 => {
+            AvroStyleType::Simple("int".to_string())
         }
-    }
-
-    /// Convert to Avro-style type.
-    fn to_avro_type(&self, nullable: bool) -> AvroStyleType {
-        let base_type = match self {
-            ProximaDataType::Boolean => AvroStyleType::Simple("boolean".to_string()),
-            ProximaDataType::Int8 | ProximaDataType::Int16 | ProximaDataType::Int32 => {
-                AvroStyleType::Simple("int".to_string())
-            }
-            ProximaDataType::Int64 => AvroStyleType::Simple("long".to_string()),
-            ProximaDataType::UInt8 | ProximaDataType::UInt16 | ProximaDataType::UInt32 => {
-                AvroStyleType::Simple("int".to_string())
-            }
-            ProximaDataType::UInt64 => AvroStyleType::Simple("long".to_string()),
-            ProximaDataType::Float32 => AvroStyleType::Simple("float".to_string()),
-            ProximaDataType::Float64 => AvroStyleType::Simple("double".to_string()),
-            ProximaDataType::Decimal { precision, scale } => AvroStyleType::Complex {
-                type_name: "bytes".to_string(),
-                items: None,
-                values: None,
-                dimension: None,
-                precision: Some(*precision),
-                scale: Some(*scale),
-            },
-            ProximaDataType::String | ProximaDataType::Uuid | ProximaDataType::Json => {
-                AvroStyleType::Simple("string".to_string())
-            }
-            ProximaDataType::Binary => AvroStyleType::Simple("bytes".to_string()),
-            ProximaDataType::Date => AvroStyleType::Simple("int".to_string()),
-            ProximaDataType::Time { .. } => AvroStyleType::Simple("long".to_string()),
-            ProximaDataType::Timestamp { .. } => AvroStyleType::Simple("long".to_string()),
-            ProximaDataType::List { element } => AvroStyleType::Complex {
-                type_name: "array".to_string(),
-                items: Some(Box::new(element.to_avro_type(true))),
-                values: None,
-                dimension: None,
-                precision: None,
-                scale: None,
-            },
-            ProximaDataType::Map { key: _, value } => AvroStyleType::Complex {
-                type_name: "map".to_string(),
-                items: None,
-                values: Some(Box::new(value.to_avro_type(true))),
-                dimension: None,
-                precision: None,
-                scale: None,
-            },
-            ProximaDataType::Struct { .. } => AvroStyleType::Simple("string".to_string()),
-            ProximaDataType::Vector { dimension, .. } => AvroStyleType::Complex {
-                type_name: "fixed".to_string(),
-                items: None,
-                values: None,
-                dimension: Some(*dimension),
-                precision: None,
-                scale: None,
-            },
-            ProximaDataType::SparseVector { .. } => AvroStyleType::Simple("bytes".to_string()),
-            ProximaDataType::BinaryVector { dimension } => AvroStyleType::Complex {
-                type_name: "fixed".to_string(),
-                items: None,
-                values: None,
-                dimension: Some(*dimension),
-                precision: None,
-                scale: None,
-            },
-            ProximaDataType::QuantizedInt8Vector { dimension, .. } => AvroStyleType::Complex {
-                type_name: "fixed".to_string(),
-                items: None,
-                values: None,
-                dimension: Some(*dimension),
-                precision: None,
-                scale: None,
-            },
-            ProximaDataType::QuantizedPQVector { dimension, .. } => AvroStyleType::Complex {
-                type_name: "fixed".to_string(),
-                items: None,
-                values: None,
-                dimension: Some(*dimension),
-                precision: None,
-                scale: None,
-            },
-            ProximaDataType::QuantizedBinaryVector { dimension } => AvroStyleType::Complex {
-                type_name: "fixed".to_string(),
-                items: None,
-                values: None,
-                dimension: Some(*dimension),
-                precision: None,
-                scale: None,
-            },
-        };
-
-        if nullable {
-            match base_type {
-                AvroStyleType::Simple(t) => AvroStyleType::Union(vec!["null".to_string(), t]),
-                _ => base_type,
-            }
-        } else {
-            base_type
+        ProximaType::UInt64 => AvroStyleType::Simple("long".to_string()),
+        ProximaType::Float16 | ProximaType::Float32 => AvroStyleType::Simple("float".to_string()),
+        ProximaType::Float64 => AvroStyleType::Simple("double".to_string()),
+        ProximaType::Decimal { precision, scale } => AvroStyleType::Complex {
+            type_name: "bytes".to_string(),
+            items: None,
+            values: None,
+            dimension: None,
+            precision: Some(*precision),
+            scale: Some(*scale as i8),
+        },
+        ProximaType::String
+        | ProximaType::Symbol
+        | ProximaType::Uuid
+        | ProximaType::ULID
+        | ProximaType::Json
+        | ProximaType::Jsonb => AvroStyleType::Simple("string".to_string()),
+        ProximaType::Binary => AvroStyleType::Simple("bytes".to_string()),
+        ProximaType::Date => AvroStyleType::Simple("int".to_string()),
+        ProximaType::Time(_)
+        | ProximaType::Timestamp(_)
+        | ProximaType::TimestampTz(_)
+        | ProximaType::Interval(_)
+        | ProximaType::Duration(_) => AvroStyleType::Simple("long".to_string()),
+        ProximaType::Array(element) => AvroStyleType::Complex {
+            type_name: "array".to_string(),
+            items: Some(Box::new(proxima_type_to_avro_type(element, true))),
+            values: None,
+            dimension: None,
+            precision: None,
+            scale: None,
+        },
+        ProximaType::Map { key: _, value } => AvroStyleType::Complex {
+            type_name: "map".to_string(),
+            items: None,
+            values: Some(Box::new(proxima_type_to_avro_type(value, true))),
+            dimension: None,
+            precision: None,
+            scale: None,
+        },
+        ProximaType::Struct { .. } => AvroStyleType::Simple("string".to_string()),
+        ProximaType::DenseVector { dim, .. } => AvroStyleType::Complex {
+            type_name: "fixed".to_string(),
+            items: None,
+            values: None,
+            dimension: Some(*dim as u32),
+            precision: None,
+            scale: None,
+        },
+        ProximaType::SparseVector { .. } => AvroStyleType::Simple("bytes".to_string()),
+        ProximaType::BinaryVector { dim } => AvroStyleType::Complex {
+            type_name: "fixed".to_string(),
+            items: None,
+            values: None,
+            dimension: Some(*dim as u32),
+            precision: None,
+            scale: None,
+        },
+        ProximaType::Point | ProximaType::GeographyPoint | ProximaType::Null => {
+            AvroStyleType::Simple("bytes".to_string())
         }
+    };
+
+    if nullable {
+        match base_type {
+            AvroStyleType::Simple(t) => AvroStyleType::Union(vec!["null".to_string(), t]),
+            _ => base_type,
+        }
+    } else {
+        base_type
     }
 }
 
@@ -1190,20 +645,20 @@ impl AvroStyleField {
 }
 
 impl AvroStyleType {
-    /// Convert to ProximaDataType.
-    fn to_proxima_type(&self) -> Result<(ProximaDataType, bool)> {
+    /// Convert to the canonical [`ProximaType`].
+    fn to_proxima_type(&self) -> Result<(ProximaType, bool)> {
         match self {
             AvroStyleType::Simple(t) => {
                 let dtype = match t.as_str() {
-                    "null" => ProximaDataType::String,
-                    "boolean" => ProximaDataType::Boolean,
-                    "int" => ProximaDataType::Int32,
-                    "long" => ProximaDataType::Int64,
-                    "float" => ProximaDataType::Float32,
-                    "double" => ProximaDataType::Float64,
-                    "bytes" => ProximaDataType::Binary,
-                    "string" => ProximaDataType::String,
-                    _ => ProximaDataType::String,
+                    "null" => ProximaType::String,
+                    "boolean" => ProximaType::Boolean,
+                    "int" => ProximaType::Int32,
+                    "long" => ProximaType::Int64,
+                    "float" => ProximaType::Float32,
+                    "double" => ProximaType::Float64,
+                    "bytes" => ProximaType::Binary,
+                    "string" => ProximaType::String,
+                    _ => ProximaType::String,
                 };
                 Ok((dtype, false))
             }
@@ -1214,7 +669,7 @@ impl AvroStyleType {
                     let (dtype, _) = AvroStyleType::Simple((*t).clone()).to_proxima_type()?;
                     Ok((dtype, nullable))
                 } else {
-                    Ok((ProximaDataType::String, true))
+                    Ok((ProximaType::String, true))
                 }
             }
             AvroStyleType::Complex {
@@ -1232,9 +687,7 @@ impl AvroStyleType {
                             .map(|i| i.to_proxima_type().map(|(t, _)| t))
                             .transpose()?
                             .ok_or_else(|| anyhow!("Array type missing items specification"))?;
-                        ProximaDataType::List {
-                            element: Box::new(element),
-                        }
+                        ProximaType::Array(Box::new(element))
                     }
                     "map" => {
                         let value = values
@@ -1242,27 +695,27 @@ impl AvroStyleType {
                             .map(|v| v.to_proxima_type().map(|(t, _)| t))
                             .transpose()?
                             .ok_or_else(|| anyhow!("Map type missing values specification"))?;
-                        ProximaDataType::Map {
-                            key: Box::new(ProximaDataType::String),
+                        ProximaType::Map {
+                            key: Box::new(ProximaType::String),
                             value: Box::new(value),
                         }
                     }
                     "fixed" => {
                         if let Some(dim) = dimension {
-                            ProximaDataType::Vector {
-                                dimension: *dim,
-                                element_type: VectorElementType::Float32,
+                            ProximaType::DenseVector {
+                                element: DmVectorElement::Float32,
+                                dim: *dim as usize,
                             }
                         } else {
-                            ProximaDataType::Binary
+                            ProximaType::Binary
                         }
                     }
-                    "bytes" if precision.is_some() => ProximaDataType::Decimal {
+                    "bytes" if precision.is_some() => ProximaType::Decimal {
                         precision: precision
                             .ok_or_else(|| anyhow!("Decimal type missing precision"))?,
-                        scale: scale.ok_or_else(|| anyhow!("Decimal type missing scale"))?,
+                        scale: scale.ok_or_else(|| anyhow!("Decimal type missing scale"))? as u8,
                     },
-                    _ => ProximaDataType::String,
+                    _ => ProximaType::String,
                 };
                 Ok((dtype, false))
             }
@@ -1295,54 +748,7 @@ impl TimeUnit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_data_model::ProximaType;
-
-    #[test]
-    fn proxima_data_type_bridges_to_canonical_logical_type() {
-        // Cleanly-mappable types round-trip through the canonical ProximaType.
-        for dt in [
-            ProximaDataType::Boolean,
-            ProximaDataType::Int64,
-            ProximaDataType::UInt32,
-            ProximaDataType::Float64,
-            ProximaDataType::String,
-            ProximaDataType::Binary,
-            ProximaDataType::Date,
-            ProximaDataType::Uuid,
-            ProximaDataType::Json,
-            ProximaDataType::Timestamp {
-                unit: TimeUnit::Nanosecond,
-                timezone: None,
-            },
-            ProximaDataType::Vector {
-                dimension: 8,
-                element_type: VectorElementType::Float32,
-            },
-            ProximaDataType::BinaryVector { dimension: 64 },
-        ] {
-            let logical = ProximaType::from(&dt);
-            let back = ProximaDataType::from(&logical);
-            assert_eq!(back, dt, "round-trip via ProximaType must preserve {dt:?}");
-        }
-    }
-
-    #[test]
-    fn quantized_storage_types_reduce_to_logical_vector() {
-        // Per ADR-024 quantization is physical: it folds to the logical vector
-        // type (params dropped), so the bridge is intentionally one-way here.
-        let q = ProximaDataType::QuantizedInt8Vector {
-            dimension: 16,
-            scale_factor: 1,
-            zero_point: 0,
-        };
-        assert_eq!(
-            ProximaType::from(&q),
-            ProximaType::DenseVector {
-                element: proximadb_data_model::VectorElement::Int8,
-                dim: 16,
-            }
-        );
-    }
+    use arrow_schema::DataType as ArrowDataType;
 
     #[test]
     fn test_vector_record_schema() {
@@ -1388,14 +794,14 @@ mod tests {
             "products".to_string(),
             384,
             vec![
-                ("category".to_string(), ProximaDataType::String),
-                ("score".to_string(), ProximaDataType::Float64),
+                ("category".to_string(), ProximaType::String),
+                ("score".to_string(), ProximaType::Float64),
             ],
         );
         schema.columns.push(ProximaColumn {
             id: 99,
             name: "deleted".to_string(),
-            data_type: ProximaDataType::Boolean,
+            data_type: ProximaType::Boolean,
             nullable: true,
             default_value: None,
             comment: None,
@@ -1420,86 +826,52 @@ mod tests {
     }
 
     #[test]
-    fn proxima_data_type_arrow_mapping_covers_primitives_complex_vectors_and_fallbacks() {
-        let nested_field = ProximaColumn {
-            id: 1,
-            name: "nested".to_string(),
-            data_type: ProximaDataType::Int32,
-            nullable: false,
-            default_value: None,
-            comment: None,
-            metadata: HashMap::new(),
-            is_deleted: false,
-            original_id: None,
-        };
-
+    fn proxima_type_arrow_mapping_covers_primitives_complex_vectors_and_fallbacks() {
+        // Canonical mapping lives on `ProximaType::to_arrow_type` (ADR-024).
+        // `ProximaColumn::to_arrow_field` routes through it; assert via that.
         let cases = vec![
-            (ProximaDataType::Boolean, ArrowDataType::Boolean),
-            (ProximaDataType::Int8, ArrowDataType::Int8),
-            (ProximaDataType::Int16, ArrowDataType::Int16),
-            (ProximaDataType::Int32, ArrowDataType::Int32),
-            (ProximaDataType::Int64, ArrowDataType::Int64),
-            (ProximaDataType::UInt8, ArrowDataType::UInt8),
-            (ProximaDataType::UInt16, ArrowDataType::UInt16),
-            (ProximaDataType::UInt32, ArrowDataType::UInt32),
-            (ProximaDataType::UInt64, ArrowDataType::UInt64),
-            (ProximaDataType::Float32, ArrowDataType::Float32),
-            (ProximaDataType::Float64, ArrowDataType::Float64),
+            (ProximaType::Boolean, ArrowDataType::Boolean),
+            (ProximaType::Int8, ArrowDataType::Int8),
+            (ProximaType::Int16, ArrowDataType::Int16),
+            (ProximaType::Int32, ArrowDataType::Int32),
+            (ProximaType::Int64, ArrowDataType::Int64),
+            (ProximaType::UInt8, ArrowDataType::UInt8),
+            (ProximaType::UInt16, ArrowDataType::UInt16),
+            (ProximaType::UInt32, ArrowDataType::UInt32),
+            (ProximaType::UInt64, ArrowDataType::UInt64),
+            (ProximaType::Float32, ArrowDataType::Float32),
+            (ProximaType::Float64, ArrowDataType::Float64),
             (
-                ProximaDataType::Decimal {
+                ProximaType::Decimal {
                     precision: 12,
                     scale: 2,
                 },
                 ArrowDataType::Decimal128(12, 2),
             ),
-            (ProximaDataType::String, ArrowDataType::Utf8),
-            (ProximaDataType::Binary, ArrowDataType::Binary),
-            (ProximaDataType::Date, ArrowDataType::Date32),
+            (ProximaType::String, ArrowDataType::Utf8),
+            (ProximaType::Binary, ArrowDataType::Binary),
+            (ProximaType::Date, ArrowDataType::Date32),
             (
-                ProximaDataType::Time {
-                    unit: TimeUnit::Nanosecond,
-                },
+                ProximaType::Time(DmTimeUnit::Nanosecond),
                 ArrowDataType::Time64(ArrowTimeUnit::Nanosecond),
             ),
             (
-                ProximaDataType::Timestamp {
-                    unit: TimeUnit::Microsecond,
-                    timezone: Some("UTC".to_string()),
-                },
+                ProximaType::TimestampTz(DmTimeUnit::Microsecond),
                 ArrowDataType::Timestamp(ArrowTimeUnit::Microsecond, Some("UTC".into())),
             ),
-            (ProximaDataType::Uuid, ArrowDataType::Utf8),
-            (ProximaDataType::Json, ArrowDataType::Utf8),
+            // Canonical change (ADR-024): UUID is a 16-byte identifier, not Utf8.
+            (ProximaType::Uuid, ArrowDataType::FixedSizeBinary(16)),
+            (ProximaType::Json, ArrowDataType::Utf8),
             (
-                ProximaDataType::Vector {
-                    dimension: 3,
-                    element_type: VectorElementType::Float32,
+                ProximaType::DenseVector {
+                    element: DmVectorElement::Float32,
+                    dim: 3,
                 },
                 ArrowDataType::FixedSizeBinary(12),
             ),
             (
-                ProximaDataType::BinaryVector { dimension: 17 },
+                ProximaType::BinaryVector { dim: 17 },
                 ArrowDataType::FixedSizeBinary(3),
-            ),
-            (
-                ProximaDataType::QuantizedInt8Vector {
-                    dimension: 8,
-                    scale_factor: 100,
-                    zero_point: -1,
-                },
-                ArrowDataType::FixedSizeBinary(8),
-            ),
-            (
-                ProximaDataType::QuantizedPQVector {
-                    dimension: 128,
-                    segments: 16,
-                    bits: 8,
-                },
-                ArrowDataType::FixedSizeBinary(16),
-            ),
-            (
-                ProximaDataType::QuantizedBinaryVector { dimension: 9 },
-                ArrowDataType::FixedSizeBinary(2),
             ),
         ];
 
@@ -1508,30 +880,27 @@ mod tests {
         }
 
         assert!(matches!(
-            ProximaDataType::List {
-                element: Box::new(ProximaDataType::String)
-            }
-            .to_arrow_type(),
+            ProximaType::Array(Box::new(ProximaType::String)).to_arrow_type(),
             ArrowDataType::List(_)
         ));
         assert!(matches!(
-            ProximaDataType::Map {
-                key: Box::new(ProximaDataType::String),
-                value: Box::new(ProximaDataType::Float64)
+            ProximaType::Map {
+                key: Box::new(ProximaType::String),
+                value: Box::new(ProximaType::Float64)
             }
             .to_arrow_type(),
             ArrowDataType::Map(_, false)
         ));
         assert!(matches!(
-            ProximaDataType::Struct {
-                fields: vec![nested_field]
+            ProximaType::Struct {
+                fields: vec![("nested".to_string(), ProximaType::Int32)]
             }
             .to_arrow_type(),
             ArrowDataType::Struct(_)
         ));
         assert!(matches!(
-            ProximaDataType::SparseVector {
-                max_dimension: Some(100)
+            ProximaType::SparseVector {
+                element: DmVectorElement::Float32
             }
             .to_arrow_type(),
             ArrowDataType::Map(_, false)
@@ -1547,31 +916,31 @@ mod tests {
         }
 
         assert_eq!(
-            ProximaDataType::from_arrow_type(&ArrowDataType::LargeUtf8),
-            ProximaDataType::String
+            ProximaType::from_arrow_type(&ArrowDataType::LargeUtf8),
+            ProximaType::String
         );
         assert_eq!(
-            ProximaDataType::from_arrow_type(&ArrowDataType::LargeBinary),
-            ProximaDataType::Binary
+            ProximaType::from_arrow_type(&ArrowDataType::LargeBinary),
+            ProximaType::Binary
         );
         assert_eq!(
-            ProximaDataType::from_arrow_type(&ArrowDataType::Date64),
-            ProximaDataType::Date
+            ProximaType::from_arrow_type(&ArrowDataType::Date64),
+            ProximaType::Date
         );
         assert_eq!(
-            ProximaDataType::from_arrow_type(&ArrowDataType::Decimal256(20, 4)),
-            ProximaDataType::Decimal {
+            ProximaType::from_arrow_type(&ArrowDataType::Decimal256(20, 4)),
+            ProximaType::Decimal {
                 precision: 20,
                 scale: 4
             }
         );
         assert_eq!(
-            ProximaDataType::from_arrow_type(&ArrowDataType::FixedSizeBinary(3)),
-            ProximaDataType::Binary
+            ProximaType::from_arrow_type(&ArrowDataType::FixedSizeBinary(3)),
+            ProximaType::Binary
         );
         assert_eq!(
-            ProximaDataType::from_arrow_type(&ArrowDataType::Duration(ArrowTimeUnit::Second)),
-            ProximaDataType::Binary
+            ProximaType::from_arrow_type(&ArrowDataType::Duration(ArrowTimeUnit::Second)),
+            ProximaType::Duration(DmTimeUnit::Second)
         );
     }
 
@@ -1581,7 +950,7 @@ mod tests {
             ProximaColumn {
                 id: 10,
                 name: "id".to_string(),
-                data_type: ProximaDataType::String,
+                data_type: ProximaType::String,
                 nullable: false,
                 default_value: Some(DefaultValue::Literal("\"p1\"".to_string())),
                 comment: Some("primary id".to_string()),
@@ -1592,9 +961,7 @@ mod tests {
             ProximaColumn {
                 id: 11,
                 name: "tags".to_string(),
-                data_type: ProximaDataType::List {
-                    element: Box::new(ProximaDataType::String),
-                },
+                data_type: ProximaType::Array(Box::new(ProximaType::String)),
                 nullable: true,
                 default_value: Some(DefaultValue::Expression("array[]".to_string())),
                 comment: None,
@@ -1605,9 +972,9 @@ mod tests {
             ProximaColumn {
                 id: 12,
                 name: "embedding".to_string(),
-                data_type: ProximaDataType::Vector {
-                    dimension: 4,
-                    element_type: VectorElementType::Float32,
+                data_type: ProximaType::DenseVector {
+                    element: DmVectorElement::Float32,
+                    dim: 4,
                 },
                 nullable: false,
                 default_value: Some(DefaultValue::AutoGenerate(AutoGenerateType::Uuid)),
@@ -1619,7 +986,7 @@ mod tests {
             ProximaColumn {
                 id: 13,
                 name: "price".to_string(),
-                data_type: ProximaDataType::Decimal {
+                data_type: ProximaType::Decimal {
                     precision: 8,
                     scale: 2,
                 },
@@ -1652,7 +1019,7 @@ mod tests {
         assert_eq!(from_json.active_column_count(), 4);
         assert!(matches!(
             from_json.column_by_name("tags").unwrap().data_type,
-            ProximaDataType::List { .. }
+            ProximaType::Array(_)
         ));
         assert_eq!(from_json.vector_dimension(), Some(4));
 
@@ -1722,87 +1089,13 @@ mod tests {
             AvroStyleType::Union(vec!["null".to_string()])
                 .to_proxima_type()
                 .unwrap(),
-            (ProximaDataType::String, true)
+            (ProximaType::String, true)
         );
         assert_eq!(
             AvroStyleType::Simple("unknown".to_string())
                 .to_proxima_type()
                 .unwrap(),
-            (ProximaDataType::String, false)
-        );
-    }
-
-    #[test]
-    fn proxima_type_equality_covers_nested_and_vector_variants() {
-        assert_eq!(
-            ProximaDataType::Struct {
-                fields: vec![ProximaColumn {
-                    id: 1,
-                    name: "a".to_string(),
-                    data_type: ProximaDataType::Int32,
-                    nullable: false,
-                    default_value: None,
-                    comment: None,
-                    metadata: HashMap::new(),
-                    is_deleted: false,
-                    original_id: None,
-                }]
-            },
-            ProximaDataType::Struct {
-                fields: vec![ProximaColumn {
-                    id: 1,
-                    name: "a".to_string(),
-                    data_type: ProximaDataType::String,
-                    nullable: true,
-                    default_value: None,
-                    comment: None,
-                    metadata: HashMap::new(),
-                    is_deleted: true,
-                    original_id: Some(99),
-                }]
-            }
-        );
-        assert_ne!(
-            ProximaDataType::Vector {
-                dimension: 3,
-                element_type: VectorElementType::Float32,
-            },
-            ProximaDataType::Vector {
-                dimension: 3,
-                element_type: VectorElementType::Float64,
-            }
-        );
-        assert_eq!(
-            ProximaDataType::QuantizedInt8Vector {
-                dimension: 4,
-                scale_factor: 10,
-                zero_point: 0,
-            },
-            ProximaDataType::QuantizedInt8Vector {
-                dimension: 4,
-                scale_factor: 10,
-                zero_point: 0,
-            }
-        );
-        assert_ne!(
-            ProximaDataType::QuantizedPQVector {
-                dimension: 8,
-                segments: 2,
-                bits: 8,
-            },
-            ProximaDataType::QuantizedPQVector {
-                dimension: 8,
-                segments: 4,
-                bits: 8,
-            }
-        );
-        assert_eq!(
-            ProximaDataType::SparseVector {
-                max_dimension: None
-            },
-            ProximaDataType::SparseVector {
-                max_dimension: None
-            }
+            (ProximaType::String, false)
         );
     }
 }

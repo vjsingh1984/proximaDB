@@ -49,7 +49,7 @@ pub use evolution::{
 };
 pub use proxima_schema::{
     AutoGenerateType, AvroStyleField, AvroStyleSchema, AvroStyleType, DefaultValue, ProximaColumn,
-    ProximaDataType, ProximaSchema, TimeUnit, VectorElementType,
+    ProximaSchema, TimeUnit,
 };
 pub use registry::{
     InMemorySchemaRegistry, PersistentSchemaRegistry, SchemaRegistry, SchemaVersionInfo,

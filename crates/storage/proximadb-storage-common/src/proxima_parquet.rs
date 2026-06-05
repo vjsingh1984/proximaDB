@@ -127,9 +127,11 @@ mod tests {
     use arrow_schema::{DataType, Field, Schema};
     use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaTreeNode, ProximaValue};
 
-    use crate::proxima_schema::{ProximaColumn, ProximaDataType, VectorElementType};
+    use proximadb_data_model::{ProximaType, VectorElement as DmVectorElement};
 
-    fn col(id: i32, name: &str, dt: ProximaDataType, nullable: bool) -> ProximaColumn {
+    use crate::proxima_schema::ProximaColumn;
+
+    fn col(id: i32, name: &str, dt: ProximaType, nullable: bool) -> ProximaColumn {
         ProximaColumn {
             id,
             name: name.to_string(),
@@ -162,15 +164,15 @@ mod tests {
         let schema = ProximaSchema::new(
             "wh".to_string(),
             vec![
-                col(1, "name", ProximaDataType::String, true),
-                col(2, "age", ProximaDataType::Int64, true),
-                col(3, "score", ProximaDataType::Float64, true),
+                col(1, "name", ProximaType::String, true),
+                col(2, "age", ProximaType::Int64, true),
+                col(3, "score", ProximaType::Float64, true),
                 col(
                     4,
                     "embedding",
-                    ProximaDataType::Vector {
-                        dimension: dim,
-                        element_type: VectorElementType::Float32,
+                    ProximaType::DenseVector {
+                        element: DmVectorElement::Float32,
+                        dim: dim as usize,
                     },
                     true,
                 ),
@@ -260,8 +262,8 @@ mod tests {
         let schema = ProximaSchema::new(
             "empty".to_string(),
             vec![
-                col(1, "id", ProximaDataType::String, false),
-                col(2, "n", ProximaDataType::Int64, true),
+                col(1, "id", ProximaType::String, false),
+                col(2, "n", ProximaType::Int64, true),
             ],
             vec![1],
         );
