@@ -176,6 +176,17 @@ mod write_ahead_log_batch_strategy_tests {
                 .await
         }
 
+        fn serialize_records_for_disk(
+            &self,
+            records: &[proximadb_records::ProximaRecord],
+        ) -> Result<Vec<u8>> {
+            // Mock on-disk serialization. The real strategies encode records
+            // with bincode (the canonical disk format); mirror that so the
+            // unified-write path (which calls this in step 3) round-trips.
+            bincode::serialize(records)
+                .map_err(|e| anyhow::anyhow!("mock serialize_records_for_disk: {e}"))
+        }
+
         async fn read_all_batches(
             &self,
             collection_id: &str,
