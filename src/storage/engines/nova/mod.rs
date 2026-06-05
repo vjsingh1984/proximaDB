@@ -477,8 +477,7 @@ mod tests {
 
     // Optimization tests for NOVA engine
     use crate::storage::engines::nova::{
-        hierarchical_stats::*, progressive_search::*, streaming_processor::*, streaming_search::*,
-        zone_maps::*,
+        hierarchical_stats::*, progressive_search::*, streaming_processor::*, zone_maps::*,
     };
     use tokio;
 

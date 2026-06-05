@@ -183,13 +183,17 @@ impl TableFunctionImpl for VectorSearchTableFunction {
             )
         })?;
         let query_text = arg_string(args, 1).ok_or_else(|| {
-            DataFusionError::Plan("vector_search: arg 2 must be a '[..]' query-vector string".into())
+            DataFusionError::Plan(
+                "vector_search: arg 2 must be a '[..]' query-vector string".into(),
+            )
         })?;
         let top_k = arg_i64(args, 2).ok_or_else(|| {
             DataFusionError::Plan("vector_search: arg 3 must be an integer top_k".into())
         })?;
         let query_vector = parse_vector_literal(&query_text).ok_or_else(|| {
-            DataFusionError::Plan(format!("vector_search: cannot parse query vector {query_text:?}"))
+            DataFusionError::Plan(format!(
+                "vector_search: cannot parse query vector {query_text:?}"
+            ))
         })?;
         Ok(Arc::new(VectorSearchTableProvider::new(
             self.vector_ops.clone(),
@@ -424,7 +428,10 @@ mod tests {
 
     #[test]
     fn parses_pgvector_text_literal() {
-        assert_eq!(parse_vector_literal("[0.1, 0.2, 0.3]"), Some(vec![0.1, 0.2, 0.3]));
+        assert_eq!(
+            parse_vector_literal("[0.1, 0.2, 0.3]"),
+            Some(vec![0.1, 0.2, 0.3])
+        );
         assert_eq!(parse_vector_literal("[]"), Some(vec![]));
         assert_eq!(parse_vector_literal("0.1,0.2"), None); // missing brackets
     }
@@ -437,7 +444,10 @@ mod tests {
             matches: vec![("a".into(), 0.95), ("b".into(), 0.80), ("c".into(), 0.70)],
         });
         let ctx = SessionContext::new();
-        ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::new(ops)));
+        ctx.register_udtf(
+            "vector_search",
+            Arc::new(VectorSearchTableFunction::new(ops)),
+        );
 
         let docs_schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),

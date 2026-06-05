@@ -1235,8 +1235,8 @@ mod tests {
         // skip" path. An unrecognised string must NOT poison the rest
         // of the permission set.
         let service = UnifiedAuthService::new(minimal_auth_config(HashMap::new())).unwrap();
-        let ctx = service
-            .convert_api_key_to_unified(api_key_info("u", vec!["bogus_perm", "read", "*"]));
+        let ctx =
+            service.convert_api_key_to_unified(api_key_info("u", vec!["bogus_perm", "read", "*"]));
         // 6 (from wildcard) + 0 (bogus_perm dropped) — read is already
         // inside the wildcard fan-out so no extra entry is added.
         assert_eq!(ctx.effective_permissions.len(), 6);

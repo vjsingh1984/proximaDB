@@ -1019,14 +1019,13 @@ pub(super) fn active_algorithm_for(
     // operator declared ≥ 2 modalities, the advisor's selector
     // routed to HMGI (or fell back gracefully). This matches the
     // route-health response shape's literal mapping.
-    let modality_count =
-        crate::services::collection::recall_target::parse_modalities(config).len();
+    let modality_count = crate::services::collection::recall_target::parse_modalities(config).len();
     if modality_count >= 2 {
         return "hmgi";
     }
     for idx in &config.index_configs {
-        let algo = IndexingAlgorithm::try_from(idx.algorithm)
-            .unwrap_or(IndexingAlgorithm::Unspecified);
+        let algo =
+            IndexingAlgorithm::try_from(idx.algorithm).unwrap_or(IndexingAlgorithm::Unspecified);
         if matches!(algo, IndexingAlgorithm::Ivf) {
             return "ivf";
         }
@@ -1708,9 +1707,7 @@ pub async fn get_collection_route_health_v2(
     // cold→warm window + per-cluster warm-fill progress for a loaded IVF index.
     health.cold_serving = match crate::storage::engines::sst::core::get_sst_axis_manager() {
         Some(axis) => match axis.cold_serving_status(&collection_id_for_discovery).await {
-            Some((state, fetched, total)) => {
-                ColdServingHealth::from_status(state, fetched, total)
-            }
+            Some((state, fetched, total)) => ColdServingHealth::from_status(state, fetched, total),
             None => ColdServingHealth::unobservable(),
         },
         None => ColdServingHealth::unobservable(),
@@ -2019,14 +2016,12 @@ pub async fn post_collection_recall_tune_v2(
     };
 
     let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
-    let max_ef_search =
-        crate::services::collection::recall_target::parse_max_ef_search(&config);
+    let max_ef_search = crate::services::collection::recall_target::parse_max_ef_search(&config);
     // P2.4: also parse the algorithm-agnostic budgets — the IVF
     // dispatch arm below feeds them to the IVF advisor.
     let max_query_latency_ms =
         crate::services::collection::recall_target::parse_max_query_latency_ms(&config);
-    let max_memory_mb =
-        crate::services::collection::recall_target::parse_max_memory_mb(&config);
+    let max_memory_mb = crate::services::collection::recall_target::parse_max_memory_mb(&config);
     let drift = crate::index::axis::management::detect_recall_drift(
         crate::index::axis::management::RecallDriftInput {
             baseline_n,
@@ -2142,20 +2137,19 @@ pub async fn post_collection_recall_tune_v2(
                 }
                 _ => crate::compute::distance_computation::DistanceMetric::Cosine,
             };
-            let binary_rerank = crate::services::collection::recall_target::parse_binary_rerank_allowed(&config);
-            let Some(advised) = advisor.advise(
-                &crate::index::axis::management::AnnAdvisorInput {
-                    vector_count: current_n,
-                    top_k,
-                    recall_target,
-                    dimension: config.dimension,
-                    distance_metric: metric,
-                    max_query_latency_ms,
-                    max_memory_mb,
-                    binary_rerank_allowed: binary_rerank,
-                    modalities: Vec::new(),
-                },
-            ) else {
+            let binary_rerank =
+                crate::services::collection::recall_target::parse_binary_rerank_allowed(&config);
+            let Some(advised) = advisor.advise(&crate::index::axis::management::AnnAdvisorInput {
+                vector_count: current_n,
+                top_k,
+                recall_target,
+                dimension: config.dimension,
+                distance_metric: metric,
+                max_query_latency_ms,
+                max_memory_mb,
+                binary_rerank_allowed: binary_rerank,
+                modalities: Vec::new(),
+            }) else {
                 // IVF advisor declined — nothing to tune.
                 return Ok(Json(RecallTuneResponse {
                     stability: "experimental",
@@ -2500,12 +2494,10 @@ pub async fn post_collection_recluster_v2(
 
     let count = records.len() as u64;
     let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
-    let max_ef_search =
-        crate::services::collection::recall_target::parse_max_ef_search(&config);
+    let max_ef_search = crate::services::collection::recall_target::parse_max_ef_search(&config);
     let max_query_latency_ms =
         crate::services::collection::recall_target::parse_max_query_latency_ms(&config);
-    let max_memory_mb =
-        crate::services::collection::recall_target::parse_max_memory_mb(&config);
+    let max_memory_mb = crate::services::collection::recall_target::parse_max_memory_mb(&config);
     let binary_rerank =
         crate::services::collection::recall_target::parse_binary_rerank_allowed(&config);
 
@@ -2547,10 +2539,7 @@ pub async fn post_collection_recluster_v2(
                     nprobe,
                     quantizer,
                 } => (*nlist, *nprobe, quantizer.is_some()),
-                other => unreachable!(
-                    "IVF rebuild returned non-IVF algorithm spec: {:?}",
-                    other
-                ),
+                other => unreachable!("IVF rebuild returned non-IVF algorithm spec: {:?}", other),
             };
             Some(RecallReclusterSized {
                 recall_target,

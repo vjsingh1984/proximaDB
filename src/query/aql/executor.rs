@@ -126,7 +126,11 @@ impl AqlExecutor {
         Ok(trail)
     }
 
-    async fn persist_audit_trail(&self, log: &Arc<EventLogEngine>, trail: &AuditTrail) -> Result<()> {
+    async fn persist_audit_trail(
+        &self,
+        log: &Arc<EventLogEngine>,
+        trail: &AuditTrail,
+    ) -> Result<()> {
         // Converged onto the shared AuditEventSink foundation: build a
         // domain-neutral AuditRecord and emit; the Event{} construction +
         // append_event live once, in EventLogAuditSink.
@@ -136,7 +140,11 @@ impl AqlExecutor {
                 e
             ))
         })?;
-        let record = AuditRecord::new(format!("query:{}", trail.query_id), "AqlQueryExecuted", data);
+        let record = AuditRecord::new(
+            format!("query:{}", trail.query_id),
+            "AqlQueryExecuted",
+            data,
+        );
         let sink = EventLogAuditSink::new(log.clone());
         sink.emit(record).await.map_err(|e| {
             proximadb_kernel::error::ProximaDBError::Internal(format!(

@@ -31,13 +31,13 @@ use std::time::Duration;
 
 use proximadb::core::Config;
 use proximadb::database::ProximaDB;
+use proximadb::security::SecurityMode;
 use proximadb::security::auth_service::{
     ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
 };
 use proximadb::security::rbac_service::RBACConfig;
 use proximadb::security::security_coordinator::{ComplianceConfig, TlsConfig};
 use proximadb::security::{AuditConfig, EncryptionConfig, KeyStoreConfig, SecurityConfig};
-use proximadb::security::SecurityMode;
 use tempfile::TempDir;
 use tokio::time::sleep;
 
@@ -162,8 +162,7 @@ impl AuthTestServer {
         // metadata catalog and the collection name collides between
         // runs ("create_collection returned no collection:
         // error_code=Some(COLLECTION_EXISTS)").
-        config.storage.metadata_url =
-            format!("file://{}/metadata", tmp_data.path().display());
+        config.storage.metadata_url = format!("file://{}/metadata", tmp_data.path().display());
         config.storage.wal_config.write_buffer_directory =
             format!("file://{}/wal", tmp_data.path().display());
         config.security = Some(auth_config_with_dev_key());
@@ -338,9 +337,7 @@ async fn unified_port_auth_converged_recall_tune_e2e() {
         resp.status()
     );
     let tune_json: serde_json::Value = resp.json().await.expect("tune json");
-    let report = tune_json
-        .get("report")
-        .expect("response carries `report`");
+    let report = tune_json.get("report").expect("response carries `report`");
     assert_eq!(
         report.get("algorithm").and_then(|v| v.as_str()),
         Some("ivf"),

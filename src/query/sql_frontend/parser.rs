@@ -1587,8 +1587,7 @@ impl SqlFrontendParser {
     fn binary_op_matches_logical(op: &BinaryOperator, logical: LogicalOperator) -> bool {
         matches!(
             (op, logical),
-            (BinaryOperator::And, LogicalOperator::And)
-                | (BinaryOperator::Or, LogicalOperator::Or)
+            (BinaryOperator::And, LogicalOperator::And) | (BinaryOperator::Or, LogicalOperator::Or)
         )
     }
 

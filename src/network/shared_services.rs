@@ -410,13 +410,11 @@ impl SharedServices {
         );
 
         let collection_service = {
-            let mut cs = CollectionService::new(metadata_backend, storage_config.clone())
+            let cs = CollectionService::new(metadata_backend, storage_config.clone())
                 .await?
                 .with_catalog_manager(catalog_manager.clone());
             #[cfg(feature = "experimental-turboquant")]
-            {
-                cs = cs.with_turboquant_registry(turboquant_registry.clone());
-            }
+            let cs = cs.with_turboquant_registry(turboquant_registry.clone());
             Arc::new(cs)
         };
         debug!("✅ SharedServices: CollectionService created successfully");
@@ -451,7 +449,9 @@ impl SharedServices {
                 // proto Collection.config carries the dimension; absence
                 // is skipped (a collection with no config can't have
                 // declared TurboQuant intent either).
-                let Some(cfg) = c.config.as_ref() else { continue };
+                let Some(cfg) = c.config.as_ref() else {
+                    continue;
+                };
                 match collection_service.native_quantization_config(&c.id).await {
                     Ok(Some(qcfg)) if qcfg.enable_turboquant.unwrap_or(false) => {
                         let seed = proximadb_quantization_types::derive_rotation_seed(&c.id);
@@ -598,7 +598,11 @@ impl SharedServices {
             crate::cluster::primary_pod_registry::resolve_persistence_mode();
         let primary_pod_registry = match opt_config {
             Some(cfg) => {
-                let registry_path = cfg.server.data_dir.join("primary_pods").join("registry.json");
+                let registry_path = cfg
+                    .server
+                    .data_dir
+                    .join("primary_pods")
+                    .join("registry.json");
                 info!(
                     "📍 SharedServices: primary-pod registry persistence at {} (mode={})",
                     registry_path.display(),
@@ -1434,13 +1438,12 @@ impl SharedServices {
         // R-7c.3 production wiring: construct the durable rank-profile store,
         // the production hybrid backend, the rank metrics handle, and the
         // singleton `RankServices` that REST / gRPC / Arrow Flight share.
-        let (rank_services, rank_profile_store) =
-            build_rank_services(
-                vector_operations_service.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>,
-                fulltext_indexes.clone(),
-                canonical_wal_appender.clone(),
-            )
-            .await;
+        let (rank_services, rank_profile_store) = build_rank_services(
+            vector_operations_service.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>,
+            fulltext_indexes.clone(),
+            canonical_wal_appender.clone(),
+        )
+        .await;
         info!(
             "✅ SharedServices: RankServices ready (profile_count={}, metrics=on)",
             rank_services.profile_registry.len()
@@ -1587,12 +1590,13 @@ impl SharedServices {
                 Arc::new(crate::services::external_collection::ExternalCollectionRegistry::new())
             }
         };
-        let external_collection_service =
-            Arc::new(crate::services::external_collection::ExternalCollectionService::new(
+        let external_collection_service = Arc::new(
+            crate::services::external_collection::ExternalCollectionService::new(
                 external_collection_registry,
                 catalog_manager.clone(),
                 axis_manager.clone(),
-            ));
+            ),
+        );
         {
             let executor = Arc::new(
                 crate::services::discovery::DiscoveryJobExecutor::new(
@@ -1641,7 +1645,9 @@ impl SharedServices {
                 shutdown_rx,
                 crate::services::recall_observer::DEFAULT_OBSERVE_INTERVAL,
             );
-            info!("✅ SharedServices: RecallObserver spawned (Phase 5 recall gate + F1 recall-degradation trigger)");
+            info!(
+                "✅ SharedServices: RecallObserver spawned (Phase 5 recall gate + F1 recall-degradation trigger)"
+            );
         }
         {
             // Trigger arm (T1.9): the write-volume drift watcher is the first
@@ -2051,27 +2057,30 @@ async fn build_rank_services(
 
     // Load existing profiles from the canonical WAL (when present) so the
     // store starts populated even before the registry is built.
-    let (store_appender, recovered_entries): (Arc<dyn TableWalAppender>, _) =
-        if let Some(appender) = canonical_wal_appender {
-            let path = appender.path().to_path_buf();
-            let entries = match FramedTableWalAppender::read_entries_from_path(&path).await {
-                Ok(entries) => entries,
-                Err(err) => {
-                    warn!(
-                        "SharedServices: failed to replay rank-profile WAL at {}: {} — starting with empty profile catalog",
-                        path.display(),
-                        err
-                    );
-                    Vec::new()
-                }
-            };
-            (appender as Arc<dyn TableWalAppender>, entries)
-        } else {
-            (
-                Arc::new(MemoryTableWalAppender::new()) as Arc<dyn TableWalAppender>,
-                Vec::new(),
-            )
+    let (store_appender, recovered_entries): (Arc<dyn TableWalAppender>, _) = if let Some(
+        appender,
+    ) =
+        canonical_wal_appender
+    {
+        let path = appender.path().to_path_buf();
+        let entries = match FramedTableWalAppender::read_entries_from_path(&path).await {
+            Ok(entries) => entries,
+            Err(err) => {
+                warn!(
+                    "SharedServices: failed to replay rank-profile WAL at {}: {} — starting with empty profile catalog",
+                    path.display(),
+                    err
+                );
+                Vec::new()
+            }
         };
+        (appender as Arc<dyn TableWalAppender>, entries)
+    } else {
+        (
+            Arc::new(MemoryTableWalAppender::new()) as Arc<dyn TableWalAppender>,
+            Vec::new(),
+        )
+    };
 
     build_rank_services_with_appender(
         vector_ops,
@@ -2325,14 +2334,13 @@ heap_size = 50
         let entries = memory_appender.entries().await;
 
         let builder_appender: Arc<dyn TableWalAppender> = memory_appender.clone();
-        let (services, store) =
-            build_rank_services_with_appender(
-                Arc::new(NoopVectorPort),
-                empty_indexes(),
-                builder_appender,
-                &entries,
-            )
-            .await;
+        let (services, store) = build_rank_services_with_appender(
+            Arc::new(NoopVectorPort),
+            empty_indexes(),
+            builder_appender,
+            &entries,
+        )
+        .await;
 
         // Only the valid profile makes it into the live registry.
         assert!(services.profile_registry.get("good").is_some());

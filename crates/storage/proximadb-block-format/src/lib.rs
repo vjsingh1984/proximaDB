@@ -58,6 +58,18 @@
 
 #![forbid(unsafe_code)]
 
+//! PAX Block Format
+//!
+//! **Architectural Mandate (2026-06-04):**
+//! This crate implements the custom PAX (Partition Attributes Across) block format.
+//! It is retained strictly as the specialized, high-performance spatial co-location layout
+//! for **Vector Search and ANN workloads** (utilized by engines like SST, HELIX, NOVA, VIPER).
+//!
+//! For **Data Warehouse and Relational workloads**, this custom format is deprecated.
+//! All relational DML and MPP analytics must utilize standard **Parquet** encodings
+//! (via the `parquet` crate) backed by Iceberg manifests over decoupled Object Storage,
+//! driven by the DataFusion execution engine.
+
 pub mod header;
 pub mod reader;
 pub mod record;

@@ -237,12 +237,21 @@ async fn rest_v2_record_release_smoke_round_trip() {
     }
     // v0.2 contract: WriteContractHealth disallows conditional/filter/patch.
     let wc = &rh_json["writes"];
-    assert_eq!(wc.get("conditional_write").and_then(Value::as_bool), Some(false),
-        "v0.2: writes.conditional_write must be false. Body: {rh_body}");
-    assert_eq!(wc.get("filter_write").and_then(Value::as_bool), Some(false),
-        "v0.2: writes.filter_write must be false. Body: {rh_body}");
-    assert_eq!(wc.get("patch").and_then(Value::as_bool), Some(false),
-        "v0.2: writes.patch must be false. Body: {rh_body}");
+    assert_eq!(
+        wc.get("conditional_write").and_then(Value::as_bool),
+        Some(false),
+        "v0.2: writes.conditional_write must be false. Body: {rh_body}"
+    );
+    assert_eq!(
+        wc.get("filter_write").and_then(Value::as_bool),
+        Some(false),
+        "v0.2: writes.filter_write must be false. Body: {rh_body}"
+    );
+    assert_eq!(
+        wc.get("patch").and_then(Value::as_bool),
+        Some(false),
+        "v0.2: writes.patch must be false. Body: {rh_body}"
+    );
 
     // 5. DELETE — tombstone rec-0; subsequent search must drop it.
     let delete_resp = http

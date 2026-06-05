@@ -97,7 +97,11 @@ pub fn build(inputs: &ExplainInputs<'_>) -> RouteExplain {
 
     let summary = build_summary(trace, inputs.corpus_gb);
     let sections = vec![
-        plan_section(trace, inputs.quantized_route_downgraded, inputs.cold_stage1_only),
+        plan_section(
+            trace,
+            inputs.quantized_route_downgraded,
+            inputs.cold_stage1_only,
+        ),
         cache_section(trace),
         execution_section(trace, inputs.corpus_gb),
         repair_section(trace),

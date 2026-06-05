@@ -674,7 +674,10 @@ mod tests {
                 },
                 NamedExpr {
                     name: "a".to_string(),
-                    expr: func("abs", vec![RExpr::Column(colref("x", 1, ProximaType::Float64))]),
+                    expr: func(
+                        "abs",
+                        vec![RExpr::Column(colref("x", 1, ProximaType::Float64))],
+                    ),
                 },
                 NamedExpr {
                     name: "c".to_string(),

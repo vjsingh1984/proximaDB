@@ -124,7 +124,9 @@ async fn pgwire_extended_protocol_vector_search_with_bound_params() {
 
     let dim = 8usize;
     let vec_text = {
-        let v: Vec<String> = (0..dim).map(|j| format!("{:.4}", 0.10 + j as f32 * 0.01)).collect();
+        let v: Vec<String> = (0..dim)
+            .map(|j| format!("{:.4}", 0.10 + j as f32 * 0.01))
+            .collect();
         format!("[{}]", v.join(","))
     };
 

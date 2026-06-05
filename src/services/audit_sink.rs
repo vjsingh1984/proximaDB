@@ -59,11 +59,7 @@ impl AuditRecord {
     }
 
     /// Add one metadata key/value.
-    pub fn with_metadata_kv(
-        mut self,
-        key: impl Into<String>,
-        value: serde_json::Value,
-    ) -> Self {
+    pub fn with_metadata_kv(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.metadata.insert(key.into(), value);
         self
     }
@@ -141,11 +137,18 @@ mod tests {
 
     #[test]
     fn audit_record_builders_set_fields() {
-        let r = AuditRecord::new("memory-consolidation:t:s:m1", "MemoryConsolidationDecision", serde_json::json!({}))
-            .with_causation("s")
-            .with_metadata_kv("collection", serde_json::json!("mem"));
+        let r = AuditRecord::new(
+            "memory-consolidation:t:s:m1",
+            "MemoryConsolidationDecision",
+            serde_json::json!({}),
+        )
+        .with_causation("s")
+        .with_metadata_kv("collection", serde_json::json!("mem"));
         assert_eq!(r.causation_id.as_deref(), Some("s"));
-        assert_eq!(r.metadata.get("collection"), Some(&serde_json::json!("mem")));
+        assert_eq!(
+            r.metadata.get("collection"),
+            Some(&serde_json::json!("mem"))
+        );
     }
 
     #[tokio::test]

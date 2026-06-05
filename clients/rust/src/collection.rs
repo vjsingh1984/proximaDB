@@ -861,13 +861,8 @@ impl<'a> InsertBuilderWithId<'a> {
     /// multiple named TEXT fields per record alongside the vector and props
     /// (the REST shape lives in `src/network/rest/v2/records.rs::TextFieldInput`).
     /// TD-083 closure — was previously inaccessible from the Rust SDK.
-    pub fn text_field(
-        mut self,
-        name: impl Into<String>,
-        content: impl Into<String>,
-    ) -> Self {
-        self.text_fields
-            .push(TextFieldInput::new(name, content));
+    pub fn text_field(mut self, name: impl Into<String>, content: impl Into<String>) -> Self {
+        self.text_fields.push(TextFieldInput::new(name, content));
         self
     }
 
@@ -1313,7 +1308,10 @@ mod tests {
             .text_field("body", "Vector + relational storage.");
         assert_eq!(with_id.text_fields.len(), 2);
         assert_eq!(with_id.text_fields[0].name, "title");
-        assert_eq!(with_id.text_fields[1].content, "Vector + relational storage.");
+        assert_eq!(
+            with_id.text_fields[1].content,
+            "Vector + relational storage."
+        );
     }
 
     #[test]

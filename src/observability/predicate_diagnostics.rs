@@ -470,9 +470,14 @@ mod tests {
         })
         .await;
         let (inner, outer_remaining) = outer;
-        assert_eq!(inner.expect("inner record").get("blocks_skipped_by_mask"), Some(&serde_json::Value::from(22)));
         assert_eq!(
-            outer_remaining.expect("outer record preserved").get("blocks_skipped_by_mask"),
+            inner.expect("inner record").get("blocks_skipped_by_mask"),
+            Some(&serde_json::Value::from(22))
+        );
+        assert_eq!(
+            outer_remaining
+                .expect("outer record preserved")
+                .get("blocks_skipped_by_mask"),
             Some(&serde_json::Value::from(11)),
             "inner scope must not leak into outer scope",
         );

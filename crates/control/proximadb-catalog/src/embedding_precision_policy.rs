@@ -562,13 +562,10 @@ mod tests {
                 assert_eq!(*encoded_epoch, 0);
                 // The seed must match the canonical derivation — this is
                 // the wire-contract guard.
-                let expected =
-                    match DerivedQuantizationLevel::turboquant_for_collection("col-1") {
-                        DerivedQuantizationLevel::TurboQuant { rotation_seed, .. } => {
-                            rotation_seed
-                        }
-                        _ => panic!(),
-                    };
+                let expected = match DerivedQuantizationLevel::turboquant_for_collection("col-1") {
+                    DerivedQuantizationLevel::TurboQuant { rotation_seed, .. } => rotation_seed,
+                    _ => panic!(),
+                };
                 assert_eq!(*rotation_seed, expected);
             }
             _ => panic!("non-TurboQuant variant leaked into filter"),

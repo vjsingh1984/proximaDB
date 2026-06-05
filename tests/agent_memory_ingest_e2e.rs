@@ -146,7 +146,10 @@ async fn memory_ingest_route_is_mounted_and_guarded() {
             "with an LLM backend, ingest should succeed; got {status}"
         );
         let body: serde_json::Value = resp.json().await.expect("json body");
-        assert!(body.get("applied").is_some(), "response carries applied actions");
+        assert!(
+            body.get("applied").is_some(),
+            "response carries applied actions"
+        );
     } else {
         // No LLM backend in CI: the availability guard returns 501 Not Implemented.
         assert_eq!(
