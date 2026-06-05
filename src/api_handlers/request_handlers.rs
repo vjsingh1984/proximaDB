@@ -2242,7 +2242,8 @@ impl UnifiedHandlers {
         let start_time = std::time::Instant::now();
 
         // EXPLAIN detection: route EXPLAIN [ANALYZE] <DML> through DmlService before any other path.
-        if let Some((is_analyze, inner_query)) = Self::parse_explain_kind(query.trim())
+        if let Some((is_analyze, inner_query)) =
+            crate::query::sql_frontend::parse_explain_kind(query.trim())
             && let Some(dml_svc) = self.get_dml_service()
         {
             let parser = crate::query::sql_frontend::SqlFrontendParser::new();
@@ -2504,30 +2505,6 @@ impl UnifiedHandlers {
 impl UnifiedHandlers {
     /// Parse an EXPLAIN statement into `(is_analyze, inner_dml)`.
     /// Handles `EXPLAIN ANALYZE <dml>`, `EXPLAIN (ANALYZE) <dml>`, and plain `EXPLAIN <dml>`.
-    fn parse_explain_kind(query: &str) -> Option<(bool, &str)> {
-        let upper = query.to_ascii_uppercase();
-        if !upper.starts_with("EXPLAIN") {
-            return None;
-        }
-        let after_explain = query["EXPLAIN".len()..].trim_start();
-        let after_upper = after_explain.to_ascii_uppercase();
-
-        if after_upper.starts_with("ANALYZE") {
-            let inner = after_explain["ANALYZE".len()..].trim_start();
-            return Some((true, inner));
-        }
-
-        if after_explain.starts_with('(') {
-            let close = after_explain.find(')')?;
-            let options = &after_explain[1..close];
-            let is_analyze = options.to_ascii_uppercase().contains("ANALYZE");
-            let rest = after_explain[close + 1..].trim_start();
-            return Some((is_analyze, rest));
-        }
-
-        Some((false, after_explain))
-    }
-
     fn json_to_sql_value(v: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
         use crate::proto::proximadb_v1::{self, sql_value::Value as V};
         match v {
@@ -4006,44 +3983,6 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
                 .collect()
         });
         UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection).await
-    }
-}
-
-#[cfg(test)]
-mod explain_prefix_tests {
-    use super::UnifiedHandlers;
-
-    // Note: 5 prior tests for `UnifiedHandlers::strip_explain_prefix`
-    // were removed alongside the function itself in commit `555ed5b2a`
-    // (clippy cleanup batch 14). `parse_explain_kind` survives and is
-    // exercised below.
-
-    #[test]
-    fn parse_explain_kind_detects_bare_analyze() {
-        let (is_analyze, inner) =
-            UnifiedHandlers::parse_explain_kind("EXPLAIN ANALYZE INSERT INTO t SELECT * FROM s;")
-                .expect("should parse");
-        assert!(is_analyze);
-        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
-    }
-
-    #[test]
-    fn parse_explain_kind_detects_parenthesized_analyze() {
-        let (is_analyze, inner) = UnifiedHandlers::parse_explain_kind(
-            "EXPLAIN (ANALYZE, FORMAT JSON) INSERT INTO t SELECT * FROM s;",
-        )
-        .expect("should parse");
-        assert!(is_analyze);
-        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
-    }
-
-    #[test]
-    fn parse_explain_kind_plain_explain_returns_false() {
-        let (is_analyze, inner) =
-            UnifiedHandlers::parse_explain_kind("EXPLAIN INSERT INTO t SELECT * FROM s;")
-                .expect("should parse");
-        assert!(!is_analyze);
-        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
     }
 }
 

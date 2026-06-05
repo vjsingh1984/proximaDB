@@ -29,6 +29,39 @@ use crate::query::ast::{
     SetOp, TableRef, UnaryOp,
 };
 
+/// Detect an `EXPLAIN [ANALYZE] <inner>` wrapper.
+///
+/// Returns `Some((is_analyze, inner))` when `query` begins with `EXPLAIN`,
+/// where `inner` is the wrapped statement text with the `EXPLAIN [ANALYZE]`
+/// (or `EXPLAIN (… ANALYZE …)`) prefix stripped, and `is_analyze` is true when
+/// the EXPLAIN requested ANALYZE. Returns `None` when `query` is not an EXPLAIN.
+///
+/// This is the single source of truth for EXPLAIN-prefix parsing shared by the
+/// ROOT handler and the `QueryFacadeAdapter` SQL path (TD-104 / seam S1).
+pub fn parse_explain_kind(query: &str) -> Option<(bool, &str)> {
+    let upper = query.to_ascii_uppercase();
+    if !upper.starts_with("EXPLAIN") {
+        return None;
+    }
+    let after_explain = query["EXPLAIN".len()..].trim_start();
+    let after_upper = after_explain.to_ascii_uppercase();
+
+    if after_upper.starts_with("ANALYZE") {
+        let inner = after_explain["ANALYZE".len()..].trim_start();
+        return Some((true, inner));
+    }
+
+    if after_explain.starts_with('(') {
+        let close = after_explain.find(')')?;
+        let options = &after_explain[1..close];
+        let is_analyze = options.to_ascii_uppercase().contains("ANALYZE");
+        let rest = after_explain[close + 1..].trim_start();
+        return Some((is_analyze, rest));
+    }
+
+    Some((false, after_explain))
+}
+
 /// SQL frontend parser that converts SQL text into internal AST nodes
 pub struct SqlFrontendParser {
     dialect: GenericDialect,
@@ -3526,5 +3559,40 @@ mod rank_profile_ddl_tests {
             .unwrap()
             .expect("parse should succeed");
         assert!(matches!(stmt, DdlStatement::DropRankProfile { .. }));
+    }
+}
+
+#[cfg(test)]
+mod parse_explain_kind_tests {
+    use super::parse_explain_kind;
+
+    #[test]
+    fn parse_explain_kind_detects_bare_analyze() {
+        let (is_analyze, inner) =
+            parse_explain_kind("EXPLAIN ANALYZE INSERT INTO t SELECT * FROM s;").unwrap();
+        assert!(is_analyze);
+        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
+    }
+
+    #[test]
+    fn parse_explain_kind_detects_parenthesized_analyze() {
+        let (is_analyze, inner) =
+            parse_explain_kind("EXPLAIN (ANALYZE, VERBOSE) INSERT INTO t SELECT * FROM s;")
+                .unwrap();
+        assert!(is_analyze);
+        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
+    }
+
+    #[test]
+    fn parse_explain_kind_plain_explain_returns_false() {
+        let (is_analyze, inner) =
+            parse_explain_kind("EXPLAIN INSERT INTO t SELECT * FROM s;").unwrap();
+        assert!(!is_analyze);
+        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
+    }
+
+    #[test]
+    fn parse_explain_kind_non_explain_returns_none() {
+        assert!(parse_explain_kind("SELECT * FROM t").is_none());
     }
 }
