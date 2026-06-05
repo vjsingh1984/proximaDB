@@ -37,7 +37,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use proximadb_data_model::{ProximaType, ProximaValue};
-use proximadb_relational_types::{ExprError, FunctionRegistry};
+use proximadb_relational_types::{Expr, ExprError, FunctionRegistry, RelationalRow};
 
 /// What kind of function a registry entry is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,7 +218,9 @@ impl ProximaFunctionRegistry {
 
     /// Look up an aggregate function by name (case-insensitive).
     pub fn lookup_aggregate(&self, name: &str) -> Option<Arc<AggregateFunctionDef>> {
-        self.aggregates.get(&name.to_ascii_lowercase()).map(|e| e.clone())
+        self.aggregates
+            .get(&name.to_ascii_lowercase())
+            .map(|e| e.clone())
     }
 
     /// Number of registered aggregate functions.
@@ -494,6 +496,47 @@ pub fn register_builtin_aggregates(reg: &ProximaFunctionRegistry) {
     });
 }
 
+// =========================================================================
+// User functions (F5): SQL-expression-bodied scalar functions
+// =========================================================================
+
+/// Build a scalar function whose body is an engine-neutral [`Expr`] over its parameters —
+/// parameter `i` is referenced inside the body as column ordinal `i`. At call time the argument
+/// values are bound positionally to those ordinals and the body is evaluated through the SAME
+/// `Expr` evaluator + registry the engines already use.
+///
+/// This is how a SQL-language `CREATE FUNCTION double(x) RETURNS BIGINT AS 'x * 2'` body executes
+/// (F5): the DDL handler lowers the body SQL into an `Expr` against the parameter scope, then calls
+/// this. The resulting kernel runs *identically* on both engines — Volcano dispatches it directly
+/// (F1b), DataFusion wraps it via the `ScalarUDF` adapter (F2) — so a user function is defined once
+/// and served everywhere, no per-engine reimplementation. Nested calls in the body resolve against
+/// the global [`builtins`] registry (scalars, aggregates, and other user functions).
+///
+/// NOTE: this reuses the existing native machinery rather than a slow bespoke interpreter — the
+/// body's standard functions still take each engine's native fast path at lowering time.
+pub fn sql_bodied_scalar(
+    name: &str,
+    arg_types: Vec<ProximaType>,
+    return_ty: ProximaType,
+    body: Expr,
+) -> ScalarFunctionDef {
+    let body = Arc::new(body);
+    ScalarFunctionDef {
+        signature: FunctionSignature {
+            name: name.to_string(),
+            arg_types,
+            variadic: false,
+            return_ty,
+            volatility: Volatility::Immutable,
+        },
+        kernel: Arc::new(move |args: &[ProximaValue]| {
+            // The args ARE the parameter values, positionally == column ordinals 0..n.
+            let row: RelationalRow = args.to_vec();
+            body.eval(&row, builtins())
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,5 +671,64 @@ mod tests {
         let empty = def.kernel.new_accumulator();
         a.merge(&empty.state()).unwrap();
         assert_eq!(a.finalize(), ProximaValue::Float64(30.0));
+    }
+
+    #[test]
+    fn sql_bodied_scalar_evaluates_arithmetic_body() {
+        use proximadb_relational_types::{BinaryOp, ColumnRef};
+        // F5: double(x) AS 'x * 2' — body Expr over parameter ordinal 0.
+        let body = Expr::bin(
+            BinaryOp::Mul,
+            Expr::column(ColumnRef {
+                name: "x".into(),
+                ordinal: 0,
+                ty: ProximaType::Int64,
+                nullable: false,
+            }),
+            Expr::literal(ProximaValue::Int64(2)),
+        );
+        let r = reg();
+        r.register_scalar(sql_bodied_scalar(
+            "double",
+            vec![ProximaType::Int64],
+            ProximaType::Int64,
+            body,
+        ));
+        assert_eq!(
+            r.dispatch("double", &[ProximaValue::Int64(21)])
+                .unwrap()
+                .unwrap(),
+            ProximaValue::Int64(42)
+        );
+    }
+
+    #[test]
+    fn sql_bodied_scalar_body_calls_builtin() {
+        use proximadb_relational_types::ColumnRef;
+        // F5: myabs(x) AS 'abs(x)' — the body's nested call resolves through the builtin
+        // registry, proving user functions compose with the rest of the function surface.
+        let body = Expr::FuncCall {
+            name: "abs".into(),
+            args: vec![Expr::column(ColumnRef {
+                name: "x".into(),
+                ordinal: 0,
+                ty: ProximaType::Float64,
+                nullable: false,
+            })],
+            return_ty: ProximaType::Float64,
+        };
+        let r = reg();
+        r.register_scalar(sql_bodied_scalar(
+            "myabs",
+            vec![ProximaType::Float64],
+            ProximaType::Float64,
+            body,
+        ));
+        assert_eq!(
+            r.dispatch("myabs", &[ProximaValue::Float64(-3.5)])
+                .unwrap()
+                .unwrap(),
+            ProximaValue::Float64(3.5)
+        );
     }
 }
