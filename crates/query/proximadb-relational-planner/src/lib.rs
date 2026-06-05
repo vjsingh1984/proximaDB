@@ -2155,7 +2155,10 @@ mod tests {
         let non_equi = Expr::literal(ProximaValue::Boolean(true));
         for kind in [JoinKind::Right, JoinKind::Full, JoinKind::Inner] {
             assert!(
-                matches!(pick_join_strategy(kind, Some(&equi)), JoinStrategy::Hash { .. }),
+                matches!(
+                    pick_join_strategy(kind, Some(&equi)),
+                    JoinStrategy::Hash { .. }
+                ),
                 "{kind:?} equi join uses Hash"
             );
             assert_eq!(
@@ -2615,7 +2618,13 @@ mod tests {
         else {
             panic!("expected Join");
         };
-        assert!(matches!(*left, PhysicalPlan::Scan { predicate: Some(_), .. }));
+        assert!(matches!(
+            *left,
+            PhysicalPlan::Scan {
+                predicate: Some(_),
+                ..
+            }
+        ));
         match *right {
             PhysicalPlan::Scan {
                 predicate: Some(Expr::BinaryOp { left, .. }),
@@ -2650,11 +2659,23 @@ mod tests {
             panic!("expected Join");
         };
         assert!(
-            matches!(*left, PhysicalPlan::Scan { predicate: None, .. }),
+            matches!(
+                *left,
+                PhysicalPlan::Scan {
+                    predicate: None,
+                    ..
+                }
+            ),
             "preserved (left) scan untouched"
         );
         assert!(
-            matches!(*right, PhysicalPlan::Scan { predicate: Some(_), .. }),
+            matches!(
+                *right,
+                PhysicalPlan::Scan {
+                    predicate: Some(_),
+                    ..
+                }
+            ),
             "null-supplying (right) scan pre-filtered"
         );
 
@@ -2673,7 +2694,13 @@ mod tests {
             panic!("expected Join");
         };
         assert!(
-            matches!(*left, PhysicalPlan::Scan { predicate: None, .. }),
+            matches!(
+                *left,
+                PhysicalPlan::Scan {
+                    predicate: None,
+                    ..
+                }
+            ),
             "preserved-side ON conjunct left in place, not pushed"
         );
         assert!(on.is_some(), "preserved-side conjunct stays in residual ON");
@@ -2698,11 +2725,23 @@ mod tests {
             panic!("expected Join");
         };
         assert!(
-            matches!(*left, PhysicalPlan::Scan { predicate: Some(_), .. }),
+            matches!(
+                *left,
+                PhysicalPlan::Scan {
+                    predicate: Some(_),
+                    ..
+                }
+            ),
             "null-supplying (left) scan pre-filtered"
         );
         assert!(
-            matches!(*right, PhysicalPlan::Scan { predicate: None, .. }),
+            matches!(
+                *right,
+                PhysicalPlan::Scan {
+                    predicate: None,
+                    ..
+                }
+            ),
             "preserved (right) scan untouched"
         );
 
@@ -2721,7 +2760,13 @@ mod tests {
             panic!("expected Join");
         };
         assert!(
-            matches!(*right, PhysicalPlan::Scan { predicate: None, .. }),
+            matches!(
+                *right,
+                PhysicalPlan::Scan {
+                    predicate: None,
+                    ..
+                }
+            ),
             "preserved-side ON conjunct left in place, not pushed"
         );
         assert!(on.is_some(), "preserved-side conjunct stays in residual ON");
@@ -2746,8 +2791,19 @@ mod tests {
                 panic!("expected Join for FULL with {name}");
             };
             assert!(
-                matches!(*left, PhysicalPlan::Scan { predicate: None, .. })
-                    && matches!(*right, PhysicalPlan::Scan { predicate: None, .. }),
+                matches!(
+                    *left,
+                    PhysicalPlan::Scan {
+                        predicate: None,
+                        ..
+                    }
+                ) && matches!(
+                    *right,
+                    PhysicalPlan::Scan {
+                        predicate: None,
+                        ..
+                    }
+                ),
                 "no ON pushdown for FULL with {name}"
             );
         }
