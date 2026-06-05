@@ -36,6 +36,13 @@ Owner: Storage, catalog, query/runtime
   do not require a stateful probe. Table-write `EXPLAIN` reports
   `unique_non_null_fail_closed` and `foreign_key_non_null_fail_closed` in
   `constraint_enforcement` while still listing UNIQUE/FK in `constraint_gaps`.
+* **Slice B (CHECK extension) — column-to-column CHECK landed 2026-06-05.** `CatalogRow::validate`
+  now enforces CHECK constraints comparing two catalog columns (e.g. `CHECK (lo < hi)`), not just
+  column-vs-literal; NULL on either operand yields SQL UNKNOWN (row allowed). Tests:
+  `relational::tests::{enforces,rejects}_column_to_column_check*`,
+  `column_to_column_check_with_null_operand_is_unknown`. Commit `19ebbff4e`. Remaining Slice B work
+  (index-backed UNIQUE/PRIMARY KEY enforcement, same-partition FK) needs DML/record-store state and
+  stays as the next increment.
 * **Slice A2 — projection freshness/lineage EXPLAIN metadata landed 2026-06-04.** Table-write
   route metadata now carries cataloged projection/publication details: projection kind, physical
   format, rebuild source, freshness mode/state, max lag, WAL/source range, last included position,
