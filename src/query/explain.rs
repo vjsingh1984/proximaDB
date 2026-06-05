@@ -2014,16 +2014,52 @@ mod tests {
             .expect("turboquant key present")
             .as_object()
             .expect("turboquant is a JSON object");
-        assert_eq!(tq_obj.get("quantization").and_then(|v| v.as_str()), Some("turboquant_4bit"));
-        assert_eq!(tq_obj.get("calibration_mode").and_then(|v| v.as_str()), Some("identity"));
-        assert_eq!(tq_obj.get("encoded_epoch").and_then(|v| v.as_u64()), Some(11));
-        assert_eq!(tq_obj.get("current_epoch").and_then(|v| v.as_u64()), Some(11));
-        assert_eq!(tq_obj.get("mask_pushed_to_kernel").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(tq_obj.get("kernel_arch").and_then(|v| v.as_str()), Some("scalar"));
-        assert_eq!(tq_obj.get("blocks_skipped_by_mask").and_then(|v| v.as_u64()), Some(42));
-        assert_eq!(tq_obj.get("length_renorm_applied").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(tq_obj.get("candidate_set_size").and_then(|v| v.as_u64()), Some(128));
-        assert_eq!(tq_obj.get("n_vectors_scanned").and_then(|v| v.as_u64()), Some(2048));
+        assert_eq!(
+            tq_obj.get("quantization").and_then(|v| v.as_str()),
+            Some("turboquant_4bit")
+        );
+        assert_eq!(
+            tq_obj.get("calibration_mode").and_then(|v| v.as_str()),
+            Some("identity")
+        );
+        assert_eq!(
+            tq_obj.get("encoded_epoch").and_then(|v| v.as_u64()),
+            Some(11)
+        );
+        assert_eq!(
+            tq_obj.get("current_epoch").and_then(|v| v.as_u64()),
+            Some(11)
+        );
+        assert_eq!(
+            tq_obj
+                .get("mask_pushed_to_kernel")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            tq_obj.get("kernel_arch").and_then(|v| v.as_str()),
+            Some("scalar")
+        );
+        assert_eq!(
+            tq_obj
+                .get("blocks_skipped_by_mask")
+                .and_then(|v| v.as_u64()),
+            Some(42)
+        );
+        assert_eq!(
+            tq_obj
+                .get("length_renorm_applied")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            tq_obj.get("candidate_set_size").and_then(|v| v.as_u64()),
+            Some(128)
+        );
+        assert_eq!(
+            tq_obj.get("n_vectors_scanned").and_then(|v| v.as_u64()),
+            Some(2048)
+        );
     }
 
     #[cfg(feature = "experimental-turboquant")]

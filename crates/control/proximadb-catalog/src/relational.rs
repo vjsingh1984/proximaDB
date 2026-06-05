@@ -11,7 +11,7 @@ use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use serde::{Deserialize, Serialize};
 
-use crate::{CatalogColumn, CatalogDataType, CatalogTableSchema};
+use crate::{CatalogColumn, CatalogDataType, CatalogTableSchema, ColumnConstraint};
 
 /// Schema enforcement mode for table writes and external/schema-on-read scans.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,6 +182,8 @@ impl CatalogRow {
             values: projected,
         };
         row.primary_key_values(schema)?;
+        row.validate_check_constraints(schema)?;
+        row.reject_unenforced_stateful_constraints(schema)?;
         Ok(row)
     }
 
@@ -202,6 +204,58 @@ impl CatalogRow {
             }
         }
         Ok(values)
+    }
+
+    fn validate_check_constraints(&self, schema: &CatalogTableSchema) -> Result<()> {
+        for constraint in &schema.relational_capabilities.constraints {
+            if let ColumnConstraint::Check { expression } = constraint {
+                validate_check_expression(schema, self, expression)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn reject_unenforced_stateful_constraints(&self, schema: &CatalogTableSchema) -> Result<()> {
+        for index in &schema.relational_capabilities.unique_indexes {
+            if tuple_is_complete_non_null(self, &index.columns) {
+                return Err(anyhow!(
+                    "UNIQUE constraint/index '{}' on table '{}' is cataloged but native unique-index enforcement is not available yet",
+                    index.name,
+                    schema.name
+                ));
+            }
+        }
+
+        for constraint in &schema.relational_capabilities.constraints {
+            match constraint {
+                ColumnConstraint::Unique { columns }
+                    if tuple_is_complete_non_null(self, columns) =>
+                {
+                    return Err(anyhow!(
+                        "UNIQUE constraint on ({}) for table '{}' is cataloged but native unique-index enforcement is not available yet",
+                        columns.join(", "),
+                        schema.name
+                    ));
+                }
+                ColumnConstraint::ForeignKey {
+                    columns,
+                    references_table,
+                    references_columns,
+                    ..
+                } if tuple_is_complete_non_null(self, columns) => {
+                    return Err(anyhow!(
+                        "FOREIGN KEY ({}) REFERENCES {}({}) on table '{}' is cataloged but native reference enforcement is not available yet",
+                        columns.join(", "),
+                        references_table,
+                        references_columns.join(", "),
+                        schema.name
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
     }
 
     /// Validate primary-key-only values for point UPDATE/DELETE mutation paths.
@@ -450,6 +504,197 @@ fn validate_column_value(
     Ok(())
 }
 
+fn validate_check_expression(
+    schema: &CatalogTableSchema,
+    row: &CatalogRow,
+    expression: &str,
+) -> Result<()> {
+    match evaluate_simple_check_expression(schema, row, expression)? {
+        CheckOutcome::Pass | CheckOutcome::Unknown => Ok(()),
+        CheckOutcome::Fail => Err(anyhow!(
+            "CHECK constraint '{}' failed for table '{}'",
+            expression,
+            schema.name
+        )),
+    }
+}
+
+fn tuple_is_complete_non_null(row: &CatalogRow, columns: &[String]) -> bool {
+    !columns.is_empty()
+        && columns.iter().all(|column| {
+            row.values
+                .get(column)
+                .is_some_and(|value| !matches!(value, ProximaValue::Null))
+        })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckOutcome {
+    Pass,
+    Fail,
+    Unknown,
+}
+
+fn evaluate_simple_check_expression(
+    schema: &CatalogTableSchema,
+    row: &CatalogRow,
+    expression: &str,
+) -> Result<CheckOutcome> {
+    let tokens = tokenize_simple_check_expression(expression);
+    if tokens.len() != 3 {
+        return Err(anyhow!(
+            "Unsupported CHECK constraint expression '{}'; only simple column-literal comparisons are enforced",
+            expression
+        ));
+    }
+
+    let left = tokens[0].as_str();
+    let op = tokens[1].as_str();
+    let right = tokens[2].as_str();
+    let Some((column_name, literal, column_on_left)) = resolve_check_operands(schema, left, right)
+    else {
+        return Err(anyhow!(
+            "Unsupported CHECK constraint expression '{}'; one side must be a catalog column and the other a literal",
+            expression
+        ));
+    };
+
+    let Some(value) = row.values.get(column_name) else {
+        return Ok(CheckOutcome::Unknown);
+    };
+    if matches!(value, ProximaValue::Null) {
+        return Ok(CheckOutcome::Unknown);
+    }
+
+    let passed = compare_value_to_literal(value, op, literal, column_on_left).ok_or_else(|| {
+        anyhow!(
+            "Unsupported CHECK constraint expression '{}'; incompatible value/literal comparison",
+            expression
+        )
+    })?;
+    Ok(if passed {
+        CheckOutcome::Pass
+    } else {
+        CheckOutcome::Fail
+    })
+}
+
+fn tokenize_simple_check_expression(expression: &str) -> Vec<String> {
+    expression
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .split_whitespace()
+        .map(|token| token.trim_matches('"').to_string())
+        .collect()
+}
+
+fn resolve_check_operands<'a>(
+    schema: &'a CatalogTableSchema,
+    left: &'a str,
+    right: &'a str,
+) -> Option<(&'a str, &'a str, bool)> {
+    if schema.columns.iter().any(|column| column.name == left) {
+        Some((left, right, true))
+    } else if schema.columns.iter().any(|column| column.name == right) {
+        Some((right, left, false))
+    } else {
+        None
+    }
+}
+
+fn compare_value_to_literal(
+    value: &ProximaValue,
+    op: &str,
+    literal: &str,
+    column_on_left: bool,
+) -> Option<bool> {
+    if let Some(value) = proxima_value_as_f64(value)
+        && let Ok(literal) = literal.parse::<f64>()
+    {
+        return compare_ordered(value, op, literal, column_on_left);
+    }
+
+    if let Some(value) = proxima_value_as_str(value) {
+        let literal = literal.trim_matches('\'');
+        return compare_ordered(value, op, literal, column_on_left);
+    }
+
+    if let ProximaValue::Boolean(value) = value
+        && let Some(literal) = parse_bool_literal(literal)
+    {
+        return compare_equality(*value, op, literal, column_on_left);
+    }
+
+    None
+}
+
+fn proxima_value_as_f64(value: &ProximaValue) -> Option<f64> {
+    match value {
+        ProximaValue::Int8(value) => Some(*value as f64),
+        ProximaValue::Int16(value) => Some(*value as f64),
+        ProximaValue::Int32(value) => Some(*value as f64),
+        ProximaValue::Int64(value) => Some(*value as f64),
+        ProximaValue::UInt8(value) => Some(*value as f64),
+        ProximaValue::UInt16(value) => Some(*value as f64),
+        ProximaValue::UInt32(value) => Some(*value as f64),
+        ProximaValue::UInt64(value) => Some(*value as f64),
+        ProximaValue::Float32(value) => Some(*value as f64),
+        ProximaValue::Float64(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn proxima_value_as_str(value: &ProximaValue) -> Option<&str> {
+    match value {
+        ProximaValue::String(value) | ProximaValue::Symbol(value) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn parse_bool_literal(literal: &str) -> Option<bool> {
+    match literal.trim_matches('\'').to_ascii_lowercase().as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn compare_ordered<T: PartialOrd + PartialEq>(
+    value: T,
+    op: &str,
+    literal: T,
+    column_on_left: bool,
+) -> Option<bool> {
+    let result = match op {
+        ">" if column_on_left => value > literal,
+        ">" => literal > value,
+        ">=" if column_on_left => value >= literal,
+        ">=" => literal >= value,
+        "<" if column_on_left => value < literal,
+        "<" => literal < value,
+        "<=" if column_on_left => value <= literal,
+        "<=" => literal <= value,
+        "=" | "==" => value == literal,
+        "!=" | "<>" => value != literal,
+        _ => return None,
+    };
+    Some(result)
+}
+
+fn compare_equality<T: PartialEq>(
+    value: T,
+    op: &str,
+    literal: T,
+    _column_on_left: bool,
+) -> Option<bool> {
+    match op {
+        "=" | "==" => Some(value == literal),
+        "!=" | "<>" => Some(value != literal),
+        _ => None,
+    }
+}
+
 fn matches_catalog_type(value: &ProximaValue, data_type: CatalogDataType) -> bool {
     match data_type {
         CatalogDataType::Boolean => matches!(value, ProximaValue::Boolean(_)),
@@ -571,7 +816,9 @@ fn proxima_value_type_name(value: &ProximaValue) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CatalogColumn, RelationalCapabilities};
+    use crate::{
+        CatalogColumn, CatalogIndex, CatalogIndexType, ColumnConstraint, RelationalCapabilities,
+    };
 
     fn users_schema() -> CatalogTableSchema {
         CatalogTableSchema::new("users")
@@ -776,5 +1023,159 @@ mod tests {
         let err = CatalogRow::validate(&users_schema(), values, &RelationalWriteProfile::oltp())
             .expect_err("type mismatch should fail");
         assert!(err.to_string().contains("expects Int64"));
+    }
+
+    fn orders_schema_with_check(expression: &str) -> CatalogTableSchema {
+        CatalogTableSchema::new("orders")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "amount", CatalogDataType::Float64))
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["id".to_string()],
+                constraints: vec![ColumnConstraint::Check {
+                    expression: expression.to_string(),
+                }],
+                ..Default::default()
+            })
+    }
+
+    #[test]
+    fn enforces_simple_check_constraint_on_write() {
+        let schema = orders_schema_with_check("amount > 0");
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert("amount".to_string(), ProximaValue::Float64(10.5));
+
+        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect("positive amount should pass CHECK");
+    }
+
+    #[test]
+    fn rejects_simple_check_constraint_violation_on_write() {
+        let schema = orders_schema_with_check("amount > 0");
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert("amount".to_string(), ProximaValue::Float64(-1.0));
+
+        let err = CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect_err("negative amount should fail CHECK");
+        assert!(
+            err.to_string()
+                .contains("CHECK constraint 'amount > 0' failed")
+        );
+    }
+
+    #[test]
+    fn check_constraint_unknown_value_passes() {
+        let schema = orders_schema_with_check("amount > 0");
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+
+        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect("missing nullable CHECK input should evaluate to SQL unknown");
+    }
+
+    #[test]
+    fn unsupported_check_constraint_fails_closed() {
+        let schema = orders_schema_with_check("amount > discount + 1");
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert("amount".to_string(), ProximaValue::Float64(10.5));
+
+        let err = CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect_err("unsupported CHECK expression should fail closed");
+        assert!(
+            err.to_string()
+                .contains("Unsupported CHECK constraint expression")
+        );
+    }
+
+    fn users_schema_with_unique_email() -> CatalogTableSchema {
+        CatalogTableSchema::new("users")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "email", CatalogDataType::String))
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["id".to_string()],
+                unique_indexes: vec![
+                    CatalogIndex::new(
+                        "unique_email",
+                        vec!["email".to_string()],
+                        CatalogIndexType::BTree,
+                    )
+                    .unique(),
+                ],
+                ..Default::default()
+            })
+    }
+
+    #[test]
+    fn unique_constraint_rejects_non_null_tuple_until_index_enforcement_exists() {
+        let schema = users_schema_with_unique_email();
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert(
+            "email".to_string(),
+            ProximaValue::String("a@example.com".to_string()),
+        );
+
+        let err = CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect_err("non-null UNIQUE tuple should fail closed");
+        assert!(
+            err.to_string()
+                .contains("native unique-index enforcement is not available yet")
+        );
+    }
+
+    #[test]
+    fn nullable_unique_constraint_allows_null_tuple_without_index_probe() {
+        let schema = users_schema_with_unique_email();
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert("email".to_string(), ProximaValue::Null);
+
+        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect("nullable UNIQUE tuple with NULL does not require a uniqueness probe");
+    }
+
+    fn orders_schema_with_foreign_key() -> CatalogTableSchema {
+        CatalogTableSchema::new("orders")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "customer_id", CatalogDataType::Int64))
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["id".to_string()],
+                constraints: vec![ColumnConstraint::ForeignKey {
+                    columns: vec!["customer_id".to_string()],
+                    references_table: "customers".to_string(),
+                    references_columns: vec!["id".to_string()],
+                    on_delete: None,
+                    on_update: None,
+                }],
+                ..Default::default()
+            })
+    }
+
+    #[test]
+    fn foreign_key_rejects_non_null_tuple_until_reference_enforcement_exists() {
+        let schema = orders_schema_with_foreign_key();
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert("customer_id".to_string(), ProximaValue::Int64(7));
+
+        let err = CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect_err("non-null FK tuple should fail closed");
+        assert!(
+            err.to_string()
+                .contains("native reference enforcement is not available yet")
+        );
+    }
+
+    #[test]
+    fn nullable_foreign_key_allows_null_tuple_without_reference_probe() {
+        let schema = orders_schema_with_foreign_key();
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert("customer_id".to_string(), ProximaValue::Null);
+
+        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect("nullable FK tuple with NULL does not require a reference probe");
     }
 }

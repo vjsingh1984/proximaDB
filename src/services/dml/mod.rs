@@ -3445,7 +3445,10 @@ mod tests {
         TableRecordWriteResult,
     };
     use crate::services::{DdlService, DdlStatement};
-    use proximadb_catalog::{CatalogColumn, CatalogStorageSpecialization, CatalogWorkloadProfile};
+    use proximadb_catalog::{
+        CatalogColumn, CatalogProjection, CatalogProjectionKind, CatalogStorageSpecialization,
+        CatalogWorkloadProfile,
+    };
     use proximadb_iceberg_engine::IcebergObjectStoreBridge;
 
     struct ExplainOnlyRecordStore;
@@ -3836,22 +3839,39 @@ mod tests {
         .expect("create namespace");
 
         let parser = crate::query::sql_frontend::SqlFrontendParser::new();
-        for ddl_sql in [
-            "CREATE TABLE staging (id TEXT NOT NULL, payload JSONB);",
-            "CREATE TABLE facts (id TEXT NOT NULL, payload JSONB)
-             WITH (
-                workload = 'olap',
-                layout = 'columnar',
-                compute_route = 'datafusion-local',
-                freshness_sla = '5s'
-             );",
-        ] {
-            let statement = parser
-                .parse_ddl(ddl_sql)
-                .expect("parse ddl")
-                .expect("ddl statement");
-            ddl.execute(statement).await.expect("execute ddl");
-        }
+        let statement = parser
+            .parse_ddl("CREATE TABLE staging (id TEXT NOT NULL, payload JSONB);")
+            .expect("parse ddl")
+            .expect("ddl statement");
+        ddl.execute(statement).await.expect("execute ddl");
+
+        let mut facts_schema = CatalogTableSchema::new("facts")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "payload", CatalogDataType::Json))
+            .with_workload_profile(CatalogWorkloadProfile::Olap)
+            .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics)
+            .with_projection(
+                CatalogProjection::rebuildable(
+                    "facts_iceberg_publication",
+                    CatalogProjectionKind::Columnar,
+                    "primary",
+                )
+                .with_bounded_lag(5_000)
+                .with_lineage("wal:1..42", "wal:42")
+                .with_policy_and_gate("engine-enforced", "projection-publication-smoke"),
+            );
+        facts_schema
+            .properties
+            .insert("compute_route".to_string(), "datafusion-local".to_string());
+        facts_schema
+            .properties
+            .insert("freshness_sla".to_string(), "5s".to_string());
+
+        let (catalog, table_id) = manager.resolve_table("facts").await.expect("resolve facts");
+        catalog
+            .create_table(&table_id, facts_schema)
+            .await
+            .expect("create facts schema with projection metadata");
 
         for (table_name, stats) in [
             (
@@ -3915,6 +3935,31 @@ mod tests {
         assert_eq!(
             explanation.route_metadata.freshness_sla.as_deref(),
             Some("5s")
+        );
+        assert_eq!(
+            explanation
+                .route_metadata
+                .projection_freshness_state
+                .as_deref(),
+            Some("Fresh")
+        );
+        assert_eq!(explanation.route_metadata.projection_metadata.len(), 1);
+        let projection = &explanation.route_metadata.projection_metadata[0];
+        assert_eq!(projection.name, "facts_iceberg_publication");
+        assert_eq!(projection.kind, "Columnar");
+        assert_eq!(projection.rebuild_source, "primary");
+        assert_eq!(projection.freshness, "BoundedLag");
+        assert_eq!(projection.freshness_state, "Fresh");
+        assert_eq!(projection.max_lag_ms, Some(5_000));
+        assert_eq!(projection.source_range.as_deref(), Some("wal:1..42"));
+        assert_eq!(projection.last_included_position.as_deref(), Some("wal:42"));
+        assert_eq!(
+            projection.policy_boundary.as_deref(),
+            Some("engine-enforced")
+        );
+        assert_eq!(
+            projection.benchmark_gate.as_deref(),
+            Some("projection-publication-smoke")
         );
         assert_eq!(explanation.data_movement.source_rows, Some(1_000));
         assert_eq!(explanation.data_movement.source_bytes, Some(512_000));
@@ -4153,12 +4198,12 @@ mod tests {
         assert_eq!(delete_explanation.selected_backend, "Native");
     }
 
-    /// T9: OLAP/HTAP route validation — EXPLAIN on a columnar-analytics table must select
-    /// the DataFusion local backend, not Native, regardless of whether the source is SELECT
-    /// or VALUES. This verifies the catalog workload_profile + compute_route knobs flow
-    /// through the planner end-to-end.
+    /// TD-110: VALUES DML remains on the native WAL/row-delta route even when
+    /// the target is an OLAP-profile table with a preferred DataFusion route.
+    /// DataFusion is for analytical reads/transforms and OLAP publication, not
+    /// the direct authority for row-level PostgreSQL-style writes.
     #[tokio::test]
-    async fn explain_values_insert_to_olap_table_routes_to_datafusion() {
+    async fn explain_values_insert_to_olap_table_stays_native() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let manager = Arc::new(CatalogManager::new());
         manager
@@ -4209,8 +4254,8 @@ mod tests {
 
         assert_eq!(explanation.target_table, "metrics");
         assert_eq!(
-            explanation.selected_backend, "DataFusionLocal",
-            "OLAP table should route to DataFusion, not Native"
+            explanation.selected_backend, "Native",
+            "VALUES DML should commit through WAL/row-delta before OLAP publication"
         );
         assert_eq!(explanation.route_metadata.workload_profile, "olap");
         assert_eq!(
@@ -4223,6 +4268,20 @@ mod tests {
                 .preferred_compute_route
                 .as_deref(),
             Some("datafusion-local")
+        );
+        assert!(
+            explanation
+                .rejected_paths
+                .iter()
+                .any(|path| path.backend == "DataFusionLocal"
+                    && path.reason.contains("row/delta commit path")),
+            "DataFusion rejection should explain the TD-110 row/delta gate: {:?}",
+            explanation.rejected_paths
+        );
+        assert!(
+            explanation.write_lane.contains("Wal"),
+            "VALUES DML should remain WAL-backed, got {:?}",
+            explanation.write_lane
         );
     }
 
@@ -5964,6 +6023,171 @@ mod tests {
             .await
             .expect("explain table write must succeed for DDL-created table");
         assert_eq!(explanation.target_table, "meta_test");
+    }
+
+    #[tokio::test]
+    async fn ddl_constraints_surface_as_route_metadata_gaps() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let customers = parser
+            .parse_ddl("CREATE TABLE customers (id TEXT NOT NULL, PRIMARY KEY (id));")
+            .expect("parse customers")
+            .expect("customers ddl");
+        DdlService::new(manager.clone())
+            .execute(customers)
+            .await
+            .expect("create customers");
+
+        let orders = parser
+            .parse_ddl(
+                "CREATE TABLE orders_with_constraints (
+                    id TEXT NOT NULL,
+                    email TEXT,
+                    customer_id TEXT,
+                    amount FLOAT,
+                    PRIMARY KEY (id),
+                    UNIQUE (email),
+                    CHECK (amount > 0),
+                    FOREIGN KEY (customer_id) REFERENCES customers(id)
+                );",
+            )
+            .expect("parse orders")
+            .expect("orders ddl");
+        DdlService::new(manager.clone())
+            .execute(orders)
+            .await
+            .expect("create orders");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(ExplainOnlyRecordStore),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let explain_stmt = parser
+            .parse_dml("INSERT INTO orders_with_constraints SELECT * FROM orders_with_constraints;")
+            .expect("parse explain dml")
+            .expect("dml stmt");
+        let explanation = dml
+            .explain_table_write(explain_stmt)
+            .await
+            .expect("explain table write");
+
+        assert_eq!(explanation.target_table, "orders_with_constraints");
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_enforcement
+                .starts_with("partial_native_enforced:")
+        );
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_gaps
+                .contains(&"unique_indexes_cataloged_not_enforced".to_string())
+        );
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_enforcement
+                .contains("check")
+        );
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_enforcement
+                .contains("unique_non_null_fail_closed")
+        );
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_enforcement
+                .contains("foreign_key_non_null_fail_closed")
+        );
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_gaps
+                .contains(&"foreign_keys_cataloged_not_enforced".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn dml_rejects_non_null_unique_and_fk_until_stateful_enforcement_exists() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        for ddl in [
+            "CREATE TABLE customers_for_fk (id TEXT NOT NULL, PRIMARY KEY (id));",
+            "CREATE TABLE users_with_unique (id TEXT NOT NULL, email TEXT, PRIMARY KEY (id), UNIQUE (email));",
+            "CREATE TABLE orders_with_fk (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers_for_fk(id));",
+        ] {
+            let stmt = parser.parse_ddl(ddl).expect("parse ddl").expect("ddl stmt");
+            DdlService::new(manager.clone())
+                .execute(stmt)
+                .await
+                .expect("create table");
+        }
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager,
+            Arc::new(ExplainOnlyRecordStore),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let unique_insert = parser
+            .parse_dml("INSERT INTO users_with_unique (id, email) VALUES ('u1', 'a@example.com');")
+            .expect("parse unique insert")
+            .expect("unique insert");
+        let unique_err = dml
+            .execute(unique_insert)
+            .await
+            .expect_err("non-null UNIQUE tuple should fail closed");
+        assert!(
+            unique_err
+                .to_string()
+                .contains("native unique-index enforcement is not available yet")
+        );
+
+        let fk_insert = parser
+            .parse_dml("INSERT INTO orders_with_fk (id, customer_id) VALUES ('o1', 'c1');")
+            .expect("parse fk insert")
+            .expect("fk insert");
+        let fk_err = dml
+            .execute(fk_insert)
+            .await
+            .expect_err("non-null FK tuple should fail closed");
+        assert!(
+            fk_err
+                .to_string()
+                .contains("native reference enforcement is not available yet")
+        );
     }
 
     /// T15: `validate_record_batch_against_schema` passes for conforming records and returns `Err`

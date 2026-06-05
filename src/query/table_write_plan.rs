@@ -8,7 +8,7 @@
 
 use proximadb_catalog::{
     CatalogAuthorityMode, CatalogPhysicalFormat, CatalogStorageSpecialization, CatalogTableSchema,
-    CatalogTableStatistics, CatalogWorkloadProfile, ProjectionFreshnessState,
+    CatalogTableStatistics, CatalogWorkloadProfile, ColumnConstraint, ProjectionFreshnessState,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -275,7 +275,30 @@ pub struct RouteDecisionMetadata {
     pub isolation_profile: Option<String>,
     pub freshness_sla: Option<String>,
     pub projection_freshness_state: Option<ProjectionFreshnessState>,
+    pub projection_metadata: Vec<ProjectionRouteMetadata>,
     pub policy_boundary: String,
+    pub constraint_enforcement: String,
+    pub constraint_gaps: Vec<String>,
+}
+
+/// Explainable projection/publication freshness and repair metadata from xCatalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionRouteMetadata {
+    pub name: String,
+    pub kind: String,
+    pub physical_format: String,
+    pub rebuild_source: String,
+    pub freshness: String,
+    pub freshness_state: ProjectionFreshnessState,
+    pub max_lag_ms: Option<i64>,
+    pub source_range: Option<String>,
+    pub last_included_position: Option<String>,
+    pub rebuildable: bool,
+    pub invalidation_policy: Option<String>,
+    pub policy_boundary: Option<String>,
+    pub lossy: bool,
+    pub support_status: String,
+    pub benchmark_gate: Option<String>,
 }
 
 /// Stable, API-facing route metadata for table-write EXPLAIN output.
@@ -290,7 +313,30 @@ pub struct TableWriteRouteMetadataExplanation {
     pub isolation_profile: Option<String>,
     pub freshness_sla: Option<String>,
     pub projection_freshness_state: Option<String>,
+    pub projection_metadata: Vec<ProjectionRouteMetadataExplanation>,
     pub policy_boundary: String,
+    pub constraint_enforcement: String,
+    pub constraint_gaps: Vec<String>,
+}
+
+/// Stable, API-facing projection/publication metadata for table-write EXPLAIN output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProjectionRouteMetadataExplanation {
+    pub name: String,
+    pub kind: String,
+    pub physical_format: String,
+    pub rebuild_source: String,
+    pub freshness: String,
+    pub freshness_state: String,
+    pub max_lag_ms: Option<i64>,
+    pub source_range: Option<String>,
+    pub last_included_position: Option<String>,
+    pub rebuildable: bool,
+    pub invalidation_policy: Option<String>,
+    pub policy_boundary: Option<String>,
+    pub lossy: bool,
+    pub support_status: String,
+    pub benchmark_gate: Option<String>,
 }
 
 /// Stable, API-facing cost estimate for table-write EXPLAIN output.
@@ -658,6 +704,9 @@ impl TableWriteRouter {
         if projection_route_block_reason(target).is_some() {
             return false;
         }
+        if requires_native_row_delta_commit(context) {
+            return false;
+        }
         matches!(context.plan.distribution, DistributionMode::Distributed)
             || preferred_compute_route(target).is_some_and(|route| {
                 matches!(
@@ -939,7 +988,36 @@ fn route_metadata_explanation(
         projection_freshness_state: metadata
             .projection_freshness_state
             .map(|state| format!("{state:?}")),
+        projection_metadata: metadata
+            .projection_metadata
+            .iter()
+            .map(projection_metadata_explanation)
+            .collect(),
         policy_boundary: metadata.policy_boundary.clone(),
+        constraint_enforcement: metadata.constraint_enforcement.clone(),
+        constraint_gaps: metadata.constraint_gaps.clone(),
+    }
+}
+
+fn projection_metadata_explanation(
+    metadata: &ProjectionRouteMetadata,
+) -> ProjectionRouteMetadataExplanation {
+    ProjectionRouteMetadataExplanation {
+        name: metadata.name.clone(),
+        kind: metadata.kind.clone(),
+        physical_format: metadata.physical_format.clone(),
+        rebuild_source: metadata.rebuild_source.clone(),
+        freshness: metadata.freshness.clone(),
+        freshness_state: format!("{:?}", metadata.freshness_state),
+        max_lag_ms: metadata.max_lag_ms,
+        source_range: metadata.source_range.clone(),
+        last_included_position: metadata.last_included_position.clone(),
+        rebuildable: metadata.rebuildable,
+        invalidation_policy: metadata.invalidation_policy.clone(),
+        policy_boundary: metadata.policy_boundary.clone(),
+        lossy: metadata.lossy,
+        support_status: metadata.support_status.clone(),
+        benchmark_gate: metadata.benchmark_gate.clone(),
     }
 }
 
@@ -1164,6 +1242,10 @@ fn write_durability_for_context(context: &RoutingContext<'_>) -> WriteDurability
         return WriteDurabilityRequirement::ExternalAuthoritative;
     }
 
+    if requires_native_row_delta_commit(context) {
+        return WriteDurabilityRequirement::WalRequired;
+    }
+
     if matches!(
         context.plan.write_mode,
         WriteMode::Append
@@ -1176,6 +1258,18 @@ fn write_durability_for_context(context: &RoutingContext<'_>) -> WriteDurability
     }
 
     WriteDurabilityRequirement::WalRequired
+}
+
+fn requires_native_row_delta_commit(context: &RoutingContext<'_>) -> bool {
+    is_values_source(&context.plan.source)
+        || matches!(
+            context.plan.write_mode,
+            WriteMode::Upsert | WriteMode::Merge
+        )
+}
+
+fn is_values_source(source: &ReadSource) -> bool {
+    matches!(source, ReadSource::QuerySql(sql) if sql.trim().eq_ignore_ascii_case("VALUES"))
 }
 
 fn supports_direct_snapshot_commit(schema: &CatalogTableSchema) -> bool {
@@ -1349,7 +1443,10 @@ fn route_metadata_for_schema(schema: &CatalogTableSchema) -> RouteDecisionMetada
             .or_else(|| property_value(schema, &["isolation_profile", "isolation"])),
         freshness_sla: freshness_sla_for_schema(schema),
         projection_freshness_state: projection_freshness_state_for_schema(schema),
+        projection_metadata: projection_metadata_for_schema(schema),
         policy_boundary: policy_boundary_for_schema(schema),
+        constraint_enforcement: constraint_enforcement_for_schema(schema),
+        constraint_gaps: constraint_gaps_for_schema(schema),
     }
 }
 
@@ -1399,6 +1496,30 @@ fn projection_state_severity(state: ProjectionFreshnessState) -> u8 {
     }
 }
 
+fn projection_metadata_for_schema(schema: &CatalogTableSchema) -> Vec<ProjectionRouteMetadata> {
+    schema
+        .projections
+        .iter()
+        .map(|projection| ProjectionRouteMetadata {
+            name: projection.name.clone(),
+            kind: format!("{:?}", projection.kind),
+            physical_format: format!("{:?}", projection.physical_format),
+            rebuild_source: projection.rebuild_source.clone(),
+            freshness: format!("{:?}", projection.freshness),
+            freshness_state: projection.freshness_state,
+            max_lag_ms: projection.max_lag_ms,
+            source_range: projection.source_range.clone(),
+            last_included_position: projection.last_included_position.clone(),
+            rebuildable: projection.rebuildable,
+            invalidation_policy: projection.invalidation_policy.clone(),
+            policy_boundary: projection.policy_boundary.clone(),
+            lossy: projection.lossy,
+            support_status: projection.support_status.clone(),
+            benchmark_gate: projection.benchmark_gate.clone(),
+        })
+        .collect()
+}
+
 fn projection_route_block_reason(schema: &CatalogTableSchema) -> Option<String> {
     if property_value(schema, &["allow_stale_projection", "stale_projection_ok"]).is_some_and(
         |value| {
@@ -1436,9 +1557,13 @@ fn projection_route_block_reason(schema: &CatalogTableSchema) -> Option<String> 
 }
 
 fn datafusion_rejection_reason(context: &RoutingContext<'_>) -> String {
-    projection_route_block_reason(context.target_schema).unwrap_or_else(|| {
-        "DataFusion route is reserved for OLAP/HTAP/mixed, columnar/PAX-OLAP, or explicitly distributed writes".to_string()
-    })
+    if let Some(reason) = projection_route_block_reason(context.target_schema) {
+        return reason;
+    }
+    if requires_native_row_delta_commit(context) {
+        return "Row-level/VALUES DML requires the native WAL + row/delta commit path before OLAP publication".to_string();
+    }
+    "DataFusion route is reserved for OLAP/HTAP/mixed, columnar/PAX-OLAP, or explicitly distributed writes".to_string()
 }
 
 fn policy_boundary_for_schema(schema: &CatalogTableSchema) -> String {
@@ -1457,6 +1582,92 @@ fn policy_boundary_for_schema(schema: &CatalogTableSchema) -> String {
         Some(_) => "unsupported".to_string(),
         None => "engine-enforced".to_string(),
     }
+}
+
+fn constraint_enforcement_for_schema(schema: &CatalogTableSchema) -> String {
+    let mut enforced = vec![
+        "type".to_string(),
+        "not_null".to_string(),
+        "defaults".to_string(),
+    ];
+
+    if has_primary_key(schema) {
+        enforced.push("primary_key_identity".to_string());
+    }
+    if has_check_constraints(schema) {
+        enforced.push("check".to_string());
+    }
+    if has_unique_constraints(schema) {
+        enforced.push("unique_non_null_fail_closed".to_string());
+    }
+    if has_foreign_key_constraints(schema) {
+        enforced.push("foreign_key_non_null_fail_closed".to_string());
+    }
+
+    if constraint_gaps_for_schema(schema).is_empty() {
+        format!("native_enforced:{}", enforced.join(","))
+    } else {
+        format!(
+            "partial_native_enforced:{}; cataloged_gaps_present",
+            enforced.join(",")
+        )
+    }
+}
+
+fn constraint_gaps_for_schema(schema: &CatalogTableSchema) -> Vec<String> {
+    let mut gaps = Vec::new();
+
+    if !schema.relational_capabilities.unique_indexes.is_empty() {
+        gaps.push("unique_indexes_cataloged_not_enforced".to_string());
+    }
+
+    let mut has_foreign_key = false;
+    for constraint in &schema.relational_capabilities.constraints {
+        match constraint {
+            ColumnConstraint::Check { .. } => {}
+            ColumnConstraint::ForeignKey { .. } => has_foreign_key = true,
+            ColumnConstraint::Unique { .. } => {
+                gaps.push("unique_constraints_cataloged_not_enforced".to_string());
+            }
+        }
+    }
+
+    if has_foreign_key {
+        gaps.push("foreign_keys_cataloged_not_enforced".to_string());
+    }
+
+    gaps.sort();
+    gaps.dedup();
+    gaps
+}
+
+fn has_primary_key(schema: &CatalogTableSchema) -> bool {
+    !schema.primary_key.is_empty() || !schema.relational_capabilities.primary_key.is_empty()
+}
+
+fn has_check_constraints(schema: &CatalogTableSchema) -> bool {
+    schema
+        .relational_capabilities
+        .constraints
+        .iter()
+        .any(|constraint| matches!(constraint, ColumnConstraint::Check { .. }))
+}
+
+fn has_unique_constraints(schema: &CatalogTableSchema) -> bool {
+    !schema.relational_capabilities.unique_indexes.is_empty()
+        || schema
+            .relational_capabilities
+            .constraints
+            .iter()
+            .any(|constraint| matches!(constraint, ColumnConstraint::Unique { .. }))
+}
+
+fn has_foreign_key_constraints(schema: &CatalogTableSchema) -> bool {
+    schema
+        .relational_capabilities
+        .constraints
+        .iter()
+        .any(|constraint| matches!(constraint, ColumnConstraint::ForeignKey { .. }))
 }
 
 fn external_rejection_reason(schema: &CatalogTableSchema) -> String {
@@ -1523,9 +1734,9 @@ mod tests {
     use super::*;
     use crate::services::{DEFAULT_BULK_BYTES_THRESHOLD, DEFAULT_BULK_ROW_THRESHOLD};
     use proximadb_catalog::{
-        CatalogColumn, CatalogDataType, CatalogProjection, CatalogProjectionKind,
-        CatalogStorageLayout, CatalogStorageSpecialization, ProjectionFreshnessState,
-        RelationalCapabilities,
+        CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogProjection,
+        CatalogProjectionKind, CatalogStorageLayout, CatalogStorageSpecialization,
+        ProjectionFreshnessState, RelationalCapabilities,
     };
 
     #[test]
@@ -1690,6 +1901,16 @@ mod tests {
             .with_workload_profile(CatalogWorkloadProfile::Olap)
             .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics)
             .with_storage_layout(CatalogStorageLayout::proxima_authoritative_pax("primary"))
+            .with_projection(
+                CatalogProjection::rebuildable(
+                    "facts_iceberg_publication",
+                    CatalogProjectionKind::Columnar,
+                    "primary",
+                )
+                .with_bounded_lag(5_000)
+                .with_lineage("wal:1..42", "wal:42")
+                .with_policy_and_gate("engine-enforced", "projection-publication-smoke"),
+            )
             .with_relational_capabilities(RelationalCapabilities {
                 transaction_profile: Some("snapshot-isolation".to_string()),
                 ..Default::default()
@@ -1747,7 +1968,116 @@ mod tests {
             Some("snapshot-isolation")
         );
         assert_eq!(routed.route_metadata.freshness_sla.as_deref(), Some("5s"));
+        assert_eq!(
+            routed.route_metadata.projection_freshness_state,
+            Some(ProjectionFreshnessState::Fresh)
+        );
+        assert_eq!(routed.route_metadata.projection_metadata.len(), 1);
+        let projection = &routed.route_metadata.projection_metadata[0];
+        assert_eq!(projection.name, "facts_iceberg_publication");
+        assert_eq!(projection.kind, "Columnar");
+        assert_eq!(projection.rebuild_source, "primary");
+        assert_eq!(projection.freshness, "BoundedLag");
+        assert_eq!(projection.freshness_state, ProjectionFreshnessState::Fresh);
+        assert_eq!(projection.max_lag_ms, Some(5_000));
+        assert_eq!(projection.source_range.as_deref(), Some("wal:1..42"));
+        assert_eq!(projection.last_included_position.as_deref(), Some("wal:42"));
+        assert_eq!(
+            projection.policy_boundary.as_deref(),
+            Some("engine-enforced")
+        );
+        assert_eq!(
+            projection.benchmark_gate.as_deref(),
+            Some("projection-publication-smoke")
+        );
         assert_eq!(routed.route_metadata.policy_boundary, "engine-enforced");
+        assert!(
+            routed
+                .route_metadata
+                .constraint_enforcement
+                .starts_with("native_enforced:")
+        );
+        assert!(routed.route_metadata.constraint_gaps.is_empty());
+    }
+
+    #[test]
+    fn route_metadata_discloses_cataloged_constraint_gaps() {
+        let schema = CatalogTableSchema::new("orders")
+            .with_primary_key(vec!["id".to_string()])
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["id".to_string()],
+                unique_indexes: vec![
+                    CatalogIndex::new(
+                        "unique_email",
+                        vec!["email".to_string()],
+                        CatalogIndexType::BTree,
+                    )
+                    .unique(),
+                ],
+                constraints: vec![
+                    ColumnConstraint::Check {
+                        expression: "amount > 0".to_string(),
+                    },
+                    ColumnConstraint::ForeignKey {
+                        columns: vec!["customer_id".to_string()],
+                        references_table: "customers".to_string(),
+                        references_columns: vec!["id".to_string()],
+                        on_delete: None,
+                        on_update: None,
+                    },
+                ],
+                ..Default::default()
+            });
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
+
+        let routed = TableWriteRouter.route(RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
+        let explanation = routed.route_explanation();
+
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_enforcement
+                .starts_with("partial_native_enforced:")
+        );
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_enforcement
+                .contains("primary_key_identity")
+        );
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_enforcement
+                .contains("check")
+        );
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_enforcement
+                .contains("unique_non_null_fail_closed")
+        );
+        assert!(
+            explanation
+                .route_metadata
+                .constraint_enforcement
+                .contains("foreign_key_non_null_fail_closed")
+        );
+        assert_eq!(
+            explanation.route_metadata.constraint_gaps,
+            vec![
+                "foreign_keys_cataloged_not_enforced".to_string(),
+                "unique_indexes_cataloged_not_enforced".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -2103,6 +2433,47 @@ mod tests {
         assert_eq!(
             routed.route_metadata.preferred_compute_route.as_deref(),
             Some("datafusion-local")
+        );
+    }
+
+    #[test]
+    fn values_dml_to_olap_table_stays_native_wal() {
+        let mut schema = CatalogTableSchema::new("metrics")
+            .with_workload_profile(CatalogWorkloadProfile::Olap)
+            .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics);
+        schema
+            .properties
+            .insert("compute_route".to_string(), "datafusion-local".to_string());
+        let plan = CopyIntoPlan {
+            source: ReadSource::QuerySql("VALUES".to_string()),
+            target: LogicalTableRef::new("metrics"),
+            write_mode: WriteMode::InsertOnly,
+            conflict_policy: ConflictPolicy::Error,
+            distribution: DistributionMode::Auto,
+        };
+
+        let routed = TableWriteRouter.route(RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
+
+        assert_eq!(routed.backend, ComputeBackend::Native);
+        assert_eq!(
+            routed.write_intent.durability,
+            WriteDurabilityRequirement::WalRequired
+        );
+        assert!(
+            routed
+                .rejected_paths
+                .iter()
+                .any(|path| path.backend == ComputeBackend::DataFusionLocal
+                    && path.reason.contains("row/delta commit path")),
+            "expected TD-110 DataFusion rejection, got {:?}",
+            routed.rejected_paths
         );
     }
 
