@@ -7,12 +7,17 @@
 //! planned-only so pgwire/DML can depend on a stable executor trait before the
 //! concrete readers and writers are wired in.
 
-use std::{fmt, sync::Arc};
+use std::{
+    fmt,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use proximadb_catalog::CatalogTableSchema;
+use proximadb_catalog::{CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema};
 use proximadb_records::ProximaRecord;
+use proximadb_storage_common::object_store_bridge::{BridgeObjectPath as Path, ObjectStoreBridge};
 
 use crate::query::table_write_plan::{
     ComputeBackend, ExecutionGuard, ReadSource, RoutedExecutionPlan, WriteMode,
@@ -385,6 +390,102 @@ fn validate_native_write_lane(
     ))
 }
 
+fn is_datafusion_backend(backend: &ComputeBackend) -> bool {
+    matches!(
+        backend,
+        ComputeBackend::DataFusionLocal | ComputeBackend::DataFusionDistributed
+    )
+}
+
+fn validate_datafusion_write_lane(
+    target_schema: &CatalogTableSchema,
+    routed_plan: &RoutedExecutionPlan,
+) -> Result<()> {
+    if matches!(
+        routed_plan.write_lane_decision.lane,
+        WriteLane::WalCurrentState | WriteLane::BulkAppendCommit
+    ) {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "DataFusion table-write executor for '{}' cannot commit {:?} through {:?}",
+        target_schema.name,
+        routed_plan.plan.write_mode,
+        routed_plan.write_lane_decision.lane
+    ))
+}
+
+fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> {
+    schema
+        .storage_layouts
+        .iter()
+        .rev()
+        .find(|layout| layout.name == "primary")
+        .or_else(|| schema.storage_layouts.first())
+}
+
+fn object_write_base_path(schema: &CatalogTableSchema) -> String {
+    primary_layout(schema)
+        .and_then(|layout| match layout.physical_format {
+            CatalogPhysicalFormat::Iceberg | CatalogPhysicalFormat::Parquet => {
+                layout.location.as_deref()
+            }
+            _ => None,
+        })
+        .or(schema.location.as_deref())
+        .map(normalize_object_path_prefix)
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| format!("tables/{}", sanitize_object_path_segment(&schema.name)))
+}
+
+fn normalize_object_path_prefix(location: &str) -> String {
+    let without_scheme = location
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(location);
+    without_scheme.trim_matches('/').to_string()
+}
+
+fn sanitize_object_path_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+fn write_mode_label(write_mode: &WriteMode) -> &'static str {
+    match write_mode {
+        WriteMode::Append => "append",
+        WriteMode::InsertOnly => "insert-only",
+        WriteMode::Upsert => "upsert",
+        WriteMode::OverwriteTable => "overwrite",
+        WriteMode::ReplacePartitions(_) => "replace-partitions",
+        WriteMode::Merge => "merge",
+    }
+}
+
+fn object_write_path(schema: &CatalogTableSchema, routed_plan: &RoutedExecutionPlan) -> Path {
+    let base = object_write_base_path(schema);
+    let table = sanitize_object_path_segment(&schema.name);
+    let sequence = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    Path::from(format!(
+        "{base}/data/{table}-{}-{sequence}.parquet",
+        write_mode_label(&routed_plan.plan.write_mode)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,7 +500,17 @@ mod tests {
     };
     use crate::services::{DEFAULT_BULK_BYTES_THRESHOLD, DEFAULT_BULK_ROW_THRESHOLD};
     use crate::storage::tenant::context::TenantContext;
-    use proximadb_catalog::{CatalogStorageSpecialization, CatalogTableSchema};
+    use arrow_array::RecordBatch;
+    use arrow_schema::Schema as ArrowSchema;
+    use futures::stream::BoxStream;
+    use proximadb_catalog::{
+        CatalogPhysicalFormat, CatalogStorageLayout, CatalogStorageSpecialization,
+        CatalogTableSchema, CatalogWorkloadProfile,
+    };
+    use proximadb_kernel::error::StorageError;
+    use proximadb_storage_common::object_store_bridge::{
+        BridgeInMemoryObjectStore as InMemory, BridgeObjectStore as ObjectStore, ObjectStoreBridge,
+    };
     use std::sync::Mutex;
 
     struct VecSourceReader {
@@ -461,6 +572,66 @@ mod tests {
             _tenant_context: Option<&TenantContext>,
         ) -> Result<TableRecordGetResponse> {
             Ok(None)
+        }
+    }
+
+    struct CapturingObjectStoreBridge {
+        store: Arc<dyn ObjectStore>,
+        writes: Mutex<Vec<(Path, Vec<String>)>>,
+    }
+
+    impl CapturingObjectStoreBridge {
+        fn new() -> Self {
+            Self {
+                store: Arc::new(InMemory::new()),
+                writes: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ObjectStoreBridge for CapturingObjectStoreBridge {
+        fn inner_store(&self) -> Arc<dyn ObjectStore> {
+            self.store.clone()
+        }
+
+        async fn read_parquet_batches(
+            &self,
+            _path: &Path,
+            _schema: Arc<ArrowSchema>,
+            _batch_size: usize,
+        ) -> std::result::Result<
+            BoxStream<'static, std::result::Result<RecordBatch, StorageError>>,
+            StorageError,
+        > {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+
+        async fn write_records_to_parquet(
+            &self,
+            path: &Path,
+            records: &[ProximaRecord],
+        ) -> std::result::Result<(), StorageError> {
+            self.writes.lock().unwrap().push((
+                path.clone(),
+                records.iter().map(|record| record.oid.clone()).collect(),
+            ));
+            Ok(())
+        }
+
+        async fn fetch_vector_segment(
+            &self,
+            _path: &Path,
+        ) -> std::result::Result<Vec<u8>, StorageError> {
+            Ok(Vec::new())
+        }
+
+        async fn persist_vector_segment(
+            &self,
+            _path: &Path,
+            _data: &[u8],
+        ) -> std::result::Result<(), StorageError> {
+            Ok(())
         }
     }
 
@@ -907,5 +1078,268 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("BulkAppendCommit"));
+    }
+
+    #[tokio::test]
+    async fn datafusion_executor_writes_source_batches_through_record_store() {
+        let schema = CatalogTableSchema::new("facts")
+            .with_workload_profile(CatalogWorkloadProfile::Olap)
+            .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("facts"), "SELECT * FROM staging");
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: &schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: None,
+                plan: &plan,
+            });
+        assert_eq!(routed.backend, ComputeBackend::DataFusionLocal);
+
+        let source = Arc::new(VecSourceReader::new(vec![
+            vec![test_record("r1"), test_record("r2")],
+            vec![test_record("r3")],
+        ]));
+        let store = Arc::new(CapturingRecordStore {
+            writes: Mutex::new(Vec::new()),
+        });
+
+        let result = DataFusionTableWriteExecutor::new(source, store.clone())
+            .execute(TableWriteExecutionRequest {
+                target_schema: &schema,
+                source_schema: None,
+                routed_plan: routed,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, TableWriteExecutionStatus::Completed);
+        assert_eq!(result.rows_written, 3);
+        assert!(result.route_summary.contains("DataFusionLocal"));
+        assert_eq!(store.writes.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn datafusion_executor_allows_bulk_append_object_store_lane() {
+        let schema = CatalogTableSchema::new("facts")
+            .with_workload_profile(CatalogWorkloadProfile::Olap)
+            .with_storage_layout(CatalogStorageLayout::projection_publication(
+                "primary",
+                CatalogPhysicalFormat::Iceberg,
+                "warehouse/facts",
+            ))
+            .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("facts"), "SELECT * FROM staging");
+        let overrides = WriteIntentOverrides {
+            row_count_hint: Some(DEFAULT_BULK_ROW_THRESHOLD),
+            estimated_bytes: Some(DEFAULT_BULK_BYTES_THRESHOLD),
+            batch_local_constraints_sufficient: Some(true),
+            ..Default::default()
+        };
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: &schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: Some(&overrides),
+                plan: &plan,
+            });
+        assert_eq!(routed.backend, ComputeBackend::DataFusionLocal);
+        assert_eq!(routed.write_lane_decision.lane, WriteLane::BulkAppendCommit);
+
+        let store = Arc::new(CapturingRecordStore {
+            writes: Mutex::new(Vec::new()),
+        });
+        let bridge = Arc::new(CapturingObjectStoreBridge::new());
+        let result = DataFusionTableWriteExecutor::new(
+            Arc::new(VecSourceReader::new(vec![vec![test_record("r1")]])),
+            store.clone(),
+        )
+        .with_object_store_bridge(bridge.clone())
+        .execute(TableWriteExecutionRequest {
+            target_schema: &schema,
+            source_schema: None,
+            routed_plan: routed,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.status, TableWriteExecutionStatus::Completed);
+        assert_eq!(result.rows_written, 1);
+        assert_eq!(store.writes.lock().unwrap().len(), 0);
+        let writes = bridge.writes.lock().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].1, vec!["r1".to_string()]);
+        assert!(
+            writes[0]
+                .0
+                .as_ref()
+                .starts_with("warehouse/facts/data/facts-append-")
+        );
+        assert!(writes[0].0.as_ref().ends_with(".parquet"));
+    }
+
+    #[tokio::test]
+    async fn datafusion_bulk_append_requires_object_store_bridge() {
+        let schema = CatalogTableSchema::new("facts")
+            .with_workload_profile(CatalogWorkloadProfile::Olap)
+            .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("facts"), "SELECT * FROM staging");
+        let overrides = WriteIntentOverrides {
+            row_count_hint: Some(DEFAULT_BULK_ROW_THRESHOLD),
+            estimated_bytes: Some(DEFAULT_BULK_BYTES_THRESHOLD),
+            batch_local_constraints_sufficient: Some(true),
+            ..Default::default()
+        };
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: &schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: Some(&overrides),
+                plan: &plan,
+            });
+        assert_eq!(routed.write_lane_decision.lane, WriteLane::BulkAppendCommit);
+
+        let err = DataFusionTableWriteExecutor::new(
+            Arc::new(VecSourceReader::new(vec![vec![test_record("r1")]])),
+            Arc::new(CapturingRecordStore {
+                writes: Mutex::new(Vec::new()),
+            }),
+        )
+        .execute(TableWriteExecutionRequest {
+            target_schema: &schema,
+            source_schema: None,
+            routed_plan: routed,
+        })
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("ObjectStoreBridge"));
+    }
+}
+
+/// DataFusion-based executor for OLAP/table-to-table write workloads.
+///
+/// This executor materializes query output into `ProximaRecord` batches and
+/// commits through `TableRecordStore`. It is not the direct authority for
+/// PostgreSQL-style OLTP writes; constraint-sensitive mutations must still pass
+/// through the native WAL/row-delta commit path selected by xCatalog routing.
+pub struct DataFusionTableWriteExecutor {
+    source_reader: Arc<dyn TableRecordSourceReader>,
+    record_store: Arc<dyn TableRecordStore>,
+    object_store_bridge: Option<Arc<dyn ObjectStoreBridge>>,
+}
+
+impl DataFusionTableWriteExecutor {
+    pub fn new(
+        source_reader: Arc<dyn TableRecordSourceReader>,
+        record_store: Arc<dyn TableRecordStore>,
+    ) -> Self {
+        Self {
+            source_reader,
+            record_store,
+            object_store_bridge: None,
+        }
+    }
+
+    pub fn with_object_store_bridge(mut self, bridge: Arc<dyn ObjectStoreBridge>) -> Self {
+        self.object_store_bridge = Some(bridge);
+        self
+    }
+}
+
+#[async_trait]
+impl TableWriteExecutor for DataFusionTableWriteExecutor {
+    async fn execute(
+        &self,
+        request: TableWriteExecutionRequest<'_>,
+    ) -> Result<TableWriteExecutionResult> {
+        validate_required_guards(request.target_schema, &request.routed_plan)?;
+        if !is_datafusion_backend(&request.routed_plan.backend) {
+            return Ok(TableWriteExecutionResult::planned(&request.routed_plan));
+        }
+        validate_datafusion_write_lane(request.target_schema, &request.routed_plan)?;
+
+        let mutation_kind = mutation_kind_for_write_mode(&request.routed_plan.plan.write_mode)?;
+        let mut rows_written = 0;
+        let mut cursor = TableRecordSourceCursor::default();
+        let object_write_path =
+            if request.routed_plan.write_lane_decision.lane == WriteLane::BulkAppendCommit {
+                Some(object_write_path(
+                    request.target_schema,
+                    &request.routed_plan,
+                ))
+            } else {
+                None
+            };
+
+        while let Some(batch) = self
+            .source_reader
+            .next_batch(
+                &request.routed_plan.plan.source,
+                request.source_schema,
+                request.target_schema,
+                &mut cursor,
+            )
+            .await?
+        {
+            if batch.is_empty() {
+                continue;
+            }
+            if let Some(path) = object_write_path.as_ref() {
+                let bridge = self.object_store_bridge.as_ref().ok_or_else(|| {
+                    anyhow!(
+                        "DataFusion bulk append for '{}' requires an ObjectStoreBridge",
+                        request.target_schema.name
+                    )
+                })?;
+                bridge
+                    .write_records_to_parquet(path, &batch)
+                    .await
+                    .map_err(|err| {
+                        anyhow!(
+                            "DataFusion Parquet write failed for '{}' at '{}': {err}",
+                            request.target_schema.name,
+                            path
+                        )
+                    })?;
+                rows_written += batch.len() as u64;
+                continue;
+            }
+
+            let mutations = batch
+                .into_iter()
+                .map(|record| TableRecordMutation::new(mutation_kind, record))
+                .collect::<Vec<_>>();
+            let result = self
+                .record_store
+                .write_mutations(request.target_schema, mutations, None)
+                .await?;
+            if !result.success {
+                return Err(anyhow!(
+                    "DataFusion table write failed for '{}': {:?}",
+                    request.target_schema.name,
+                    result.errors
+                ));
+            }
+            rows_written += result.record_ids.len() as u64;
+        }
+
+        Ok(TableWriteExecutionResult {
+            status: TableWriteExecutionStatus::Completed,
+            rows_written,
+            route_summary: format!(
+                "backend={:?}, access_method={:?}",
+                request.routed_plan.backend, request.routed_plan.selected_path.access_method
+            ),
+            guards: request.routed_plan.required_guards,
+        })
     }
 }
