@@ -154,6 +154,9 @@ must not list them under "supported", "production", or "ready":
 * Distributed cluster execution (Raft transport / remote execution placeholders).
 * PULSAR and QUASAR graph engines.
 * Full SQL parity (ADR-018 Phase 2/3 — Postgres parity).
+* PostgreSQL-style OLTP/HTAP parity: full MVCC transactions, FK/PK/unique/check enforcement,
+  native row/delta indexes, DataFusion snapshot-plus-delta reads, and distributed consistency gates
+  are tracked in TD-110 and are not part of v0.2.
 * External-table execution (Iceberg / Delta / Hudi as Proxima-owned hot authority).
 * Arrow Flight / gRPC service multiplexing as a customer-facing transport.
 * Trino / Spark compute adapters — _scaffolded_ (Spark JNI bridge per TD-097; Trino Flight per TD-098). Structural contract gates land in 2026-05-30 connector sprint (`tests/connectors_flight_contract.rs`); end-to-end wire impl deferred.

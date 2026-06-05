@@ -9,7 +9,7 @@ Scope: vector, document, graph, relational, observability, SKS/entity, event log
 
 == Decision
 
-ProximaDB's durable source of truth for vectors, documents, graph nodes, graph edges, relational rows, observability records, SKS entities, relationships, and event streams MUST converge on the unified record/relational storage model defined by `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`.
+ProximaDB's durable source of truth for vectors, documents, graph nodes, graph edges, relational rows, observability records, SKS entities, relationships, and event streams MUST converge on the unified record/relational storage model defined by `docs/12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc`.
 
 Modality services and APIs remain valid user-facing and planner-facing facades. This includes `VectorOperationsService`, `DocumentService`, graph services, observability services, SKS/entity APIs, event-log APIs, Cypher/PGQ surfaces, SQL extensions, and SDK helpers. They MUST NOT evolve into independent durable systems with separate transaction semantics, separate record envelopes, or separate persistence rules.
 
@@ -1449,3 +1449,4 @@ mandate as authority and adds layer-specific implementation detail.
 * SQL:2023 SQL/PGQ property graph queries
 * Jindal, Madden, Deshpande, Stonebraker: Vertexica
 * SQLgraph: relational-based property graph store
+nal-based property graph store

@@ -18,6 +18,12 @@ link:../../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] "Experimental i
 link:../../_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP Release
 Readiness Reconciliation — 2026-05-28].
 
+2026-06-04 refinement: this ADR tracks SQL/pgwire surface parity. PostgreSQL-style storage and
+transaction semantics require the TD-110 foundation first: xCatalog constraint metadata, WAL plus
+native row/delta commit, primary-key/unique/check/foreign-key enforcement, MVCC visibility,
+Volcano strong-freshness execution, DataFusion snapshot-plus-delta reads, and distributed
+consistency gates.
+
 == Context
 
 The pgwire surface (`src/network/postgres/`) is currently sufficient
@@ -70,11 +76,11 @@ phases can begin only when earlier-phase tests pass.**
 * **Phase 2: SQLite-parity.** Enough SQL surface that a simple
   ORM (SQLx, Diesel) can connect, run migrations, do typical CRUD.
   ~3–4 weeks.
-* **Phase 3: Postgres-parity.** Real PostgreSQL semantics — MVCC
-  transactions, full `pg_catalog`, CTEs, window functions, sequences,
-  foreign keys with referential actions. Sufficient for
-  SQLAlchemy / Django / Prisma / Hibernate to run real workloads
-  against ProximaDB. ~4–6 weeks.
+* **Phase 3: Postgres-parity.** Real PostgreSQL query/protocol semantics — full `pg_catalog`,
+  CTEs, window functions, sequences, and ORM-compatible metadata. MVCC transactions, foreign keys
+  with referential actions, and constraint enforcement depend on the TD-110 OLTP/HTAP storage
+  foundation and cannot be claimed from parser/protocol work alone. ~4–6 weeks for the SQL-surface
+  portion, plus the TD-110 storage work for true PostgreSQL-style OLTP claims.
 
 **Total to Postgres-parity: ~3 months of focused engineering** for
 one or two senior engineers. SQLite-parity alone is roughly one

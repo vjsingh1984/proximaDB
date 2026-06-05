@@ -62,7 +62,10 @@ SDKs only insofar as the field name passes deserialization; the server does not 
 * Full SQL parity (ADR-018 Phase 2/3).
 * External-table execution (Iceberg / Delta / Hudi as Proxima-owned hot authority).
 * Arrow Flight / gRPC multiplexing as a customer-facing transport.
-* Trino / Spark compute adapters.
+* Trino / Spark compute adapters, including Spark shard-aware partitioning, JVM DataSource V2
+  filter pushdown, and the Gradle/JUnit Spark JNI harness.
+* Collection-default freshness, recall-gate route enforcement, filtered-ANN recall SLA, and
+  object-economy benchmark/SLA claims.
 
 == Notable Changes Since v0.1
 

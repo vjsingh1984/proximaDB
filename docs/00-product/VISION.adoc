@@ -351,13 +351,16 @@ Regulatory compliance is built into the architecture, not bolted on:
 
 Clarity about boundaries is as important as clarity about capabilities.
 
-* **Not a general-purpose OLAP warehouse.** For petabyte-scale batch analytics across structured
-  data, use Snowflake, BigQuery, or Databricks. ProximaDB optimizes for multi-model context
-  assembly, not for replacing your data warehouse.
+* **Not a general-purpose OLAP warehouse in the current release.** For petabyte-scale batch
+  analytics across structured data, use Snowflake, BigQuery, or Databricks today. ProximaDB's
+  roadmap builds a Rust/DataFusion OLAP/MPP path over cataloged snapshots, but the current product
+  optimizes for multi-model context assembly and single-node developer workflows.
 
-* **Not a transactional RDBMS replacement for all workloads.** For general-purpose OLTP with
-  complex multi-table transactions, foreign keys, and stored procedures, use PostgreSQL. ProximaDB
-  handles document and vector transactions, not arbitrary relational schemas.
+* **Not a transactional RDBMS replacement for all workloads in the current release.** For
+  general-purpose OLTP with complex multi-table transactions, full foreign-key semantics, triggers,
+  and stored procedures, use PostgreSQL today. ProximaDB is explicitly designing PostgreSQL-style
+  OLTP/HTAP foundations around xCatalog constraints, WAL, native row/delta storage, Volcano, and
+  DataFusion snapshot reads; that work is tracked as TD-110 before any PostgreSQL-parity claim.
 
 * **Not a real-time ML training platform.** For distributed model training, gradient computation,
   and hyperparameter optimization, use specialized ML infrastructure (PyTorch, Ray, SageMaker).

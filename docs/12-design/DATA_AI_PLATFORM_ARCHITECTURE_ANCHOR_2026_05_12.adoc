@@ -56,8 +56,9 @@ ProximaDB should provide:
   model metadata, feature definitions, streams, branches, and connector state.
 * **One logical algebra**: SQL, Cypher/GQL, AQL, UQL, PromQL/LogQL, vector search, and agent
   memory APIs lower into the same logical operators from the multi-modal overhaul spec.
-* **Many execution engines**: native Rust, DataFusion, Spark, Trino, Ray, Flink, Kafka Streams,
-  Kinesis consumers, and future warehouse/lakehouse adapters.
+* **Many execution engines**: native Rust and DataFusion local/distributed as the primary
+  Proxima-owned routes; Spark, Trino, Ray, Flink, Kafka Streams, Kinesis consumers, and future
+  warehouse/lakehouse adapters as external/delegated integration routes.
 * **Many storage layouts**: hot row/record, hybrid PAX, columnar Parquet/Arrow, Avro row
   interchange, append-only event logs, graph topology, vector index segments, and external
   lakehouse table formats.
@@ -113,8 +114,8 @@ flowchart TB
         Algebra["Logical algebra\nProximaRecord + ProximaType"]
         Planner["Planner and router\ncost, policy, modality, branch, freshness"]
         Native["Native Rust runtime\nOLTP, vector, graph, events, embedded"]
-        DataFusion["DataFusion\nlocal/server OLAP"]
-        ExternalCompute["External compute\nSpark, Trino, Ray, Flink"]
+        DataFusion["DataFusion\nlocal/distributed OLAP + MPP"]
+        ExternalCompute["External adapter routes\nSpark, Trino, Ray, Flink"]
     end
 
     subgraph Storage["Storage and Format Plane"]
@@ -267,14 +268,16 @@ flowchart TB
     Optimize --> Route{"Route by workload shape"}
 
     Route -->|low-latency point/write/vector| Native["Native Rust runtime"]
-    Route -->|local scans/aggregates/Arrow| DataFusion["DataFusion"]
-    Route -->|large lakehouse/offline ML| Spark["Spark"]
-    Route -->|federated SQL/BI| Trino["Trino"]
-    Route -->|Python ML/AutoML/evals| Ray["Ray"]
-    Route -->|stateful streams| Flink["Flink"]
+    Route -->|local scans/aggregates/Arrow| DataFusion["DataFusionLocal"]
+    Route -->|large lakehouse/offline ML| DataFusionDist["DataFusionDistributed\nRust workers"]
+    Route -->|external Spark requested| Spark["Spark adapter"]
+    Route -->|federated SQL/BI| Trino["Trino adapter"]
+    Route -->|Python ML/AutoML/evals| Ray["Ray adapter"]
+    Route -->|stateful streams| Flink["Flink adapter"]
 
     Native --> Merge["Result merge and policy enforcement"]
     DataFusion --> Merge
+    DataFusionDist --> Merge
     Spark --> Merge
     Trino --> Merge
     Ray --> Merge
@@ -428,9 +431,9 @@ Design response:
 * xCatalog governs data and AI assets with the same policy system.
 * Feature tables, model versions, prompts, tools, agent traces, and external connections are
   catalog objects.
-* Spark is a compute target, not the center of the architecture.
-* Ray and DataFusion cover Python-native ML and embedded/local execution where Spark is too
-  heavy.
+* Spark is an external adapter target, not the center of the architecture.
+* DataFusion local/distributed is the primary Proxima-owned data-engineering route; Ray covers
+  Python-native ML and external distributed training where appropriate.
 
 === Snowflake and Polaris
 
@@ -640,9 +643,10 @@ Anchor trajectories:
   developer path before claiming warehouse-scale MPP. Local startup, pgwire compatibility,
   predictable DDL/DML, Arrow export, Python ergonomics, and clear `EXPLAIN` output should feel
   boring and reliable.
-* **HTAP/PAX as the native wedge**: use PAX row directories plus column stripes to show OLTP point
-  operations and OLAP scans over the same canonical records. This gives ProximaDB a native story
-  that is stronger than "just another Parquet reader" while still exporting to open formats.
+* **Tiered HTAP as the native wedge**: use WAL plus native row/delta state for PostgreSQL-style
+  freshness and constraints, PAX row-family blocks where mixed point/scan access is useful, and
+  Parquet/Iceberg/Arrow publications for OLAP. This gives ProximaDB a native story that is
+  stronger than "just another Parquet reader" while still exporting to open formats.
 * **Open lakehouse as interoperability, not abdication**: Iceberg/Delta/Hudi/Parquet/ORC/CSV are
   cataloged publications, imported snapshots, federated reads, or explicit external authorities.
   They should never silently replace ProximaDB's hot record/log/catalog authority for
@@ -663,7 +667,8 @@ Anchor trajectories:
 Default path by phase:
 
 * Phase 1 should prove semantic authority, pgwire/embedded adoption, DML correctness,
-  predicate-aware vector search, and local Arrow/DataFusion scans.
+  predicate-aware vector search, local Arrow/DataFusion scans, and the TD-110 seams for future
+  PostgreSQL-style constraint/isolation work.
 * Phase 2 should prove the same contracts survive multi-machine storage, connector sidecars,
   branch manifests, and distributed compute delegation.
 * Phase 3 should add warehouse inheritance only where catalog, policy, statistics, workload
@@ -887,9 +892,11 @@ Purpose: separate logical schema from physical layout.
 
 Required layouts:
 
-* **Record/row hot layout**: OLTP, agent memory, checkpoint, metadata, online features.
-* **Hybrid PAX layout**: mixed OLTP/OLAP local serving and selective scans.
-* **Columnar layout**: VIPER/Parquet/Arrow for analytics, offline ML, Spark/Trino/DataFusion.
+* **Record/row hot layout**: OLTP row/delta state, agent memory, checkpoint, metadata, online
+  features, and constraint-sensitive writes.
+* **Hybrid PAX layout**: optional mixed OLTP/OLAP local serving and selective scans.
+* **Columnar layout**: Parquet/Iceberg/Arrow snapshots for analytics, offline ML, and
+  DataFusion/Spark/Trino reads.
 * **Avro row interchange**: streaming and schema-evolution-friendly row payloads.
 * **Event log layout**: append-only streams for CDC, audit, agent replay, MLOps lineage.
 * **Graph topology layout**: CSR/COO adjacency and property projections.
@@ -953,8 +960,10 @@ Purpose: route work transparently across engines.
 
 Compute targets:
 
-* **Native Rust**: low-latency OLTP, vector serving, graph traversal, event append, embedded.
-* **DataFusion**: local and server-side vectorized SQL/Arrow/Parquet execution.
+* **Native Rust / Volcano**: low-latency OLTP, constraint-sensitive DML, vector serving, graph
+  traversal, event append, embedded.
+* **DataFusion**: local and server-side vectorized SQL/Arrow/Parquet execution over cataloged
+  snapshots and explicit delta-union routes.
 * **Spark**: large offline feature engineering, lakehouse reads/writes, training datasets.
 * **Trino**: federated SQL and BI across ProximaDB, warehouses, and lake tables.
 * **Ray**: Python-native distributed ML, feature processing, AutoML, batch inference, model
@@ -1083,7 +1092,7 @@ Scope:
 * xCatalog schema persistence for table, fields, JSONB paths, vector dimensions, engine/layout.
 * Storage engine selection via SQL options: `storage_engine`, `layout`, `table_format`.
 * Native Rust serving path for OLTP/vector lookups.
-* DataFusion local execution for scans, projection, filter, aggregate over Arrow/Parquet.
+* DataFusion execution (pseudo-distributed worker seam) for scans, projection, filter, aggregate over Parquet and Object Storage.
 * VIPER/Parquet import/export and Avro import/export for streaming-style records.
 * Arrow Flight export/import for feature/training datasets.
 * Python SDK DDL helpers for agentic and MLOps tables.
@@ -1113,8 +1122,7 @@ Scope:
 * Disaggregated storage on object store or shared filesystem.
 * Catalog service with HA metadata backend.
 * Log/manifest service for snapshots, branches, recovery, and replication.
-* Distributed query execution through DataFusion Ballista or equivalent, Spark adapter, and
-  Trino connector foundation.
+* Distributed query execution through Rust-native workers (e.g. DataFusion over object storage). Spark/Trino remain as supported external adapters, but are not the primary MPP strategy.
 * Kafka/Kinesis ingestion sidecars with cataloged offsets/watermarks.
 * Flink source/sink and table connector for stateful streaming pipelines.
 * Ray dataset and training adapter for distributed Python ML/AutoML.

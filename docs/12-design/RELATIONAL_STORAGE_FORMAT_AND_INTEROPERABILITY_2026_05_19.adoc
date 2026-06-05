@@ -20,11 +20,17 @@ system with xCatalog as the schema and capability authority. SQL/pgwire is a pro
 that model. It MUST NOT define a protocol-specific row envelope, table catalog, transaction model,
 or storage authority.
 
-The relational hot path should converge on a PAX row-family layout:
+The relational hot path should converge on a tiered HTAP layout, not a single physical format:
 
 * Layer 0: WAL / `CanonicalOperation::RecordUpsert` is the commit and replay authority.
 * Layer 1: `ProximaRecord` is the semantic row/document/node/edge/span/event authority.
-* Layer 2: PAX blocks and segments provide OLTP row-directory access plus OLAP column stripes.
+* Layer 2a: an OLTP row/delta tier provides low-latency point lookup, current-state reads,
+  MVCC visibility, and primary-key/unique/check/foreign-key enforcement before commit.
+* Layer 2b: PAX row-family blocks remain the internal HTAP candidate for row-directory access
+  plus column stripes where a mixed point-and-scan layout is required.
+* Layer 2c: Parquet/Iceberg/Arrow publications provide OLAP snapshots, open-format
+  interoperability, and DataFusion/MPP scan surfaces. They are not the only write-path authority
+  for PostgreSQL-style OLTP tables.
 * Layer 3: pgwire, Arrow Flight, Iceberg REST, REST/gRPC, SDKs, and external table adapters expose
   views over the same cataloged records.
 
@@ -38,13 +44,19 @@ Adopt the following shape for relational work:
 
 1. Build `proximadb-relational` behavior on canonical `ProximaRecord` records, xCatalog table
    schemas, and shared logical plans.
-2. Use PAX `Oltp`, `Pax`, and `Olap` block modes as the internal format family for relational
-   rows, HTAP tables, and analytical publications.
-3. Modernize SST/LSM segment metadata so updates, deletes, snapshots, and vector freshness use the
-   same MVCC/tombstone semantics as PAX.
-4. Reserve SQL-visible internal columns with the double-underscore `__proxima_*` prefix. Do not
+2. Use WAL plus an OLTP row/delta store as the latency-sensitive relational commit/read tier for
+   mutable PostgreSQL-style tables.
+3. Use **Parquet/Iceberg** over decoupled `object_store` as the OLAP base/publication format for
+   analytical snapshots, DataFusion/MPP scans, and external interoperability.
+4. Continue evaluating PAX row-family as an internal HTAP layout for mutable relational tables that
+   need both row-directory point access and column-stripe scans. Do not make PAX a hidden schema or
+   durability authority; xCatalog/WAL/`ProximaRecord` remain authoritative.
+5. Reserve specialized SST/HELIX/NOVA/VIPER/RAPTOR/SWIFT access paths for vector-heavy and
+   write-optimized projections unless they explicitly implement the shared relational metadata,
+   visibility, and constraint contracts.
+6. Reserve SQL-visible internal columns with the double-underscore `__proxima_*` prefix. Do not
    make generic names such as `_deleted` or `_version` canonical.
-5. Treat Parquet, CSV, Avro, ORC, JSON, XML, Arrow IPC, Iceberg, Delta, Hudi, Hive, Glue, Unity,
+7. Treat CSV, Avro, ORC, JSON, XML, Arrow IPC, Delta, Hudi, Hive, Glue, Unity,
    and Polaris as cataloged adapters, projections, or explicitly declared external authorities.
 
 == Comparison With PostgreSQL Storage
@@ -79,8 +91,9 @@ methods with freshness/rebuild rules.
 
 | Storage orientation
 | Row-first heap with separate indexes; columnar behavior comes from extensions or foreign tables.
-| PAX by default: a row directory for point operations and column stripes for vectorized OLAP scans.
-`Oltp` and `Olap` modes specialize the same block family.
+| Tiered HTAP: WAL plus OLTP row/delta and indexes for point operations, optional PAX row-family
+blocks for mixed point/scan workloads, and Parquet/Iceberg/Arrow snapshots for vectorized OLAP
+scans and open-format publication.
 
 | Catalog
 | PostgreSQL system catalogs are the SQL metadata authority.
@@ -102,6 +115,29 @@ The design intentionally borrows PostgreSQL's relational rigor: DDL, constraints
 foreign keys, indexes, snapshots, and SQL metadata must be real when enabled. It does not copy
 PostgreSQL's heap tuple format, system column names, or vacuum model as ProximaDB's internal
 authority.
+
+== PostgreSQL-Style OLTP Contract
+
+PostgreSQL-compatible latency-sensitive workloads need stronger write-path semantics than
+Parquet/Iceberg can provide directly. For mutable OLTP and HTAP tables:
+
+* primary-key, unique, not-null, check, and foreign-key metadata lives in xCatalog;
+* `DmlService`/`CatalogRow` validate values and compute constraint checks before `TableRecordStore`
+  commits a mutation;
+* primary-key and unique indexes must be current enough to reject duplicate commits;
+* foreign-key checks initially target same-table/same-partition or catalog-declared local
+  references. Cross-shard FKs, deferred constraints, and cascading actions require a transaction
+  coordinator and are post-MVP until explicitly implemented;
+* the native/Volcano route owns point DML, strong-freshness reads, row visibility, and constraint
+  enforcement;
+* DataFusion reads cataloged snapshots and, for fresh HTAP reads, an explicit base-plus-delta union
+  with a visible freshness watermark. DataFusion does not become the write authority for mutable
+  OLTP tables.
+
+For single-node MVP the critical guarantees are ACID/MVCC semantics, not distributed CAP tradeoffs.
+For distributed OLTP, transactional shards should prefer CP behavior for committed state; OLAP
+projections may be asynchronous or stale only when `freshness_sla` and `authority_mode` make that
+visible and route guards reject unsafe plans.
 
 == Internal Columns
 

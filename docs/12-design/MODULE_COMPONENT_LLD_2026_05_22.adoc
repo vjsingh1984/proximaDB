@@ -30,21 +30,22 @@ where a change belongs.
 ----
 flowchart TB
   Kernel["proximadb-kernel\nerrors, traits, base contracts"]
+  ObjectStore["proximadb-object-store\nobject_store crate wrapper"]
   DataModel["proximadb-data-model\ntyped shared model"]
   Proto["proximadb-proto\ngenerated wire artifacts"]
   Records["proximadb-records\nProximaRecord / ProximaValue"]
   Filters["proximadb-filter-expression\nnormalized predicates"]
   Catalog["proximadb-catalog\nxCatalog metadata and route knobs"]
-  StorageCommon["proximadb-storage-common\nengine contracts"]
-  BlockFormat["proximadb-block-format\nPAX/block layout"]
+  IcebergEngine["proximadb-iceberg-engine\nParquet/Iceberg OLAP publication"]
 
   Kernel --> DataModel
+  Kernel --> ObjectStore
   DataModel --> Records
   Proto --> Records
   Filters --> Catalog
   Records --> Catalog
-  Records --> StorageCommon
-  StorageCommon --> BlockFormat
+  ObjectStore --> IcebergEngine
+  Records --> IcebergEngine
 ----
 
 === Protocol To Execution
@@ -76,22 +77,23 @@ flowchart LR
 ----
 flowchart TB
   RecordStore["record store\ncanonical read/write bridge"]
-  WAL["WAL / current-state / manifest"]
-  Blocks["PAX/block format"]
-  Engines["src/storage engines\nSST / VIPER / NOVA / HELIX / RAPTOR / SWIFT"]
+  ObjectStore["proximadb-object-store\nobject storage API"]
+  IcebergEngine["proximadb-iceberg-engine\nParquet/Iceberg OLAP publication"]
+  VectorEngines["src/storage engines\nSST / VIPER / NOVA / HELIX / RAPTOR / SWIFT"]
   Vector["vector modality\nANN/index projections"]
   Document["document modality\nJSON/path projections"]
   Graph["graph modality\ntopology projections"]
   Observability["observability modality\nlogs/metrics/traces rollups"]
   Queue["queue modality\nmessage durability"]
 
-  RecordStore --> WAL
-  WAL --> Blocks
-  Blocks --> Engines
-  Engines --> Vector
-  Engines --> Document
-  Engines --> Graph
-  Engines --> Observability
+  RecordStore --> IcebergEngine
+  RecordStore --> VectorEngines
+  IcebergEngine --> ObjectStore
+  VectorEngines --> ObjectStore
+  VectorEngines --> Vector
+  IcebergEngine --> Document
+  IcebergEngine --> Graph
+  IcebergEngine --> Observability
   Queue --> RecordStore
 ----
 

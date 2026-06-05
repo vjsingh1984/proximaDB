@@ -339,22 +339,22 @@ These features represent strategic investments that expand ProximaDB's addressab
 | Graph engine (existing ORION/PULSAR/QUASAR)
 | 2 months
 
-| DuckDB Integration
-| As a data engineer, I want to run analytical queries on ProximaDB data using DuckDB's query engine.
-| DuckDB embedded as analytics adapter; zero-copy data sharing via Arrow IPC; SQL passthrough for OLAP queries; automatic routing of analytical queries to DuckDB engine
-| Arrow Flight (existing), DuckDB crate
-| 1 month
+| DataFusion / Arrow OLAP Execution
+| As a data engineer, I want to run analytical queries on ProximaDB data using the same cataloged schema as operational writes.
+| DataFusion local/distributed execution over Arrow/Parquet/Iceberg snapshots; snapshot-plus-delta reads when freshness allows; DuckDB remains an optional compatibility adapter rather than the primary OLAP engine.
+| xCatalog, Arrow/DataFusion integration, object-store publication tier
+| 1-2 months
 |===
 
 === Won't Have (Now)
 
 The following capabilities are explicitly out of scope for the foreseeable roadmap. They either conflict with ProximaDB's architecture, are better served by dedicated systems, or represent insufficient ROI for the engineering investment required.
 
-* *Full OLAP Engine* -- Use Snowflake, BigQuery, or ClickHouse for warehouse-scale analytics. ProximaDB's DuckDB integration (P2) provides a pragmatic bridge.
+* *Warehouse-Scale OLAP Replacement in v0.2* -- Use Snowflake, BigQuery, ClickHouse, or Databricks for warehouse-scale analytics today. ProximaDB's roadmap uses DataFusion plus Parquet/Iceberg publications for an owned OLAP/MPP path, but that is post-MVP.
 * *Blockchain / Distributed Ledger* -- Cryptographic hash chaining in the event sourcing engine provides tamper evidence without the overhead of consensus-based distributed ledgers.
 * *Real-Time ML Model Training* -- ProximaDB stores and serves data for ML; training belongs in dedicated frameworks (PyTorch, JAX). The integrated inference feature (P1) covers serving only.
 * *Message Queue Functionality* -- Use Kafka, Redpanda, or NATS for message brokering. ProximaDB's CDC and streaming subscriptions provide change feeds, not general-purpose messaging.
-* *General-Purpose RDBMS Replacement* -- ProximaDB supports SQL syntax for familiarity but does not aim to replace PostgreSQL for transactional OLTP workloads with complex joins, stored procedures, or triggers.
+* *General-Purpose RDBMS Replacement in v0.2* -- ProximaDB supports pgwire for the narrow SQL surface, but PostgreSQL-style OLTP with full MVCC transactions, FK/PK/unique/check enforcement, triggers, stored procedures, and cross-shard consistency is post-MVP. The storage/constraint foundation is tracked in TD-110.
 
 == Quality Requirements
 
@@ -593,7 +593,7 @@ graph TD
     K --> |"all engines"| J2
     L["Multi-Modal<br/>Embeddings"] --> |"model execution"| E
     M["openCypher Support"] --> |"graph engines"| M1["ORION / PULSAR / QUASAR"]
-    N["DuckDB Integration"] --> |"data sharing"| N1["Arrow Flight"]
+    N["DataFusion / Arrow OLAP"] --> |"snapshot reads"| N1["Parquet / Iceberg / Arrow"]
 
     subgraph "ibkrtrading Full Integration"
         direction TB
@@ -745,8 +745,8 @@ Theme: Production-ready with distributed consensus and security hardening.
 | Native Cypher parser for MATCH/WHERE/RETURN/CREATE/MERGE
 | Not started
 
-| DuckDB Integration
-| Embedded analytics adapter, zero-copy Arrow data sharing
+| DataFusion / Arrow OLAP
+| DataFusion-backed analytical execution over cataloged snapshots; DuckDB optional adapter
 | Not started
 
 | General Availability

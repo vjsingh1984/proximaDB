@@ -434,14 +434,19 @@ curl -X POST http://localhost:5678/api/v1/unified/federated \
 
 * Write path uses a unified WAL and memtables to support durability across models.
 * Storage formats are versioned and documented to allow multiple engines to read and write.
-* Tiered storage (object store + local cache + memory) supports HTAP and elastic scaling.
+* Tiered storage supports HTAP and elastic scaling: WAL plus native row/delta state for
+  strong-freshness OLTP, PAX/HTAP blocks where mixed point/scan access is useful, and
+  Parquet/Iceberg/Arrow publications for OLAP/open-format reads.
 
 === Compute Plane (Engines and Execution)
 
 * Vector, graph, document, and relational engines remain modular and optimized for their
   workloads.
 * A unified planner translates queries into a multi-stage execution plan across engines.
-* Runtime adapters support external compute engines (Trino, Spark, custom runtimes) when useful.
+* Native/Volcano execution owns latency-sensitive OLTP and constraint-sensitive plans; DataFusion
+  owns OLAP/MPP over cataloged snapshots and explicit delta-union routes.
+* Runtime adapters support external compute engines (Trino, Spark, custom runtimes) when useful,
+  without making them schema, policy, or write authorities.
 
 === Control Plane (Catalog and Governance)
 
@@ -489,6 +494,8 @@ curl -X POST http://localhost:5678/api/v1/unified/federated \
 
 * Serve transactional writes and analytical queries from the same data plane.
 * Run real-time filters on operational metadata and aggregate across time.
+* Keep PostgreSQL-style constraint semantics on the native row/delta path while exposing
+  snapshot-safe analytics through DataFusion.
 
 === Data Engineering and Model Building
 

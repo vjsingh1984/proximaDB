@@ -1,47 +1,38 @@
-= PAX Codec, Layout, And Compression LLD
+= Parquet Layout, Iceberg Statistics, And Compression LLD
 :toc:
 :toclevels: 4
 :sectnums:
 
 Status: Active implementation blueprint +
-Date: 2026-05-20 +
-Scope: `proximadb-codec`, compute `proximacodec`, PAX block stripes, vector layout ordering,
-graph topology projections, JSON/document structural stripes, codec profiling, xCatalog
-compression metadata, and EXPLAIN visibility.
+Date: 2026-06-04 +
+Scope: `proximadb-codec`, compute `proximacodec`, Parquet block encodings, Iceberg manifest statistics, vector layout ordering, graph topology projections, JSON/document structural columns, codec profiling, xCatalog compression metadata, and EXPLAIN visibility.
 
 == Purpose
 
-This document is the high-level and low-level design for reducing storage footprint and I/O by
-combining physical co-location, modality-aware codec selection, and lossless compression. It turns
-the codec/PAX/proximablocks review into a tracked implementation plan.
+This document is the high-level and low-level design for reducing storage footprint and I/O by combining physical co-location, modality-aware codec selection, and lossless compression over decoupled Object Storage. It turns the legacy PAX/proximablocks review into an implementation plan targeting **Parquet v2** and **Iceberg manifests**.
 
 Authoritative context:
 
 * `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
 * `docs/12-design/RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc`
 * `docs/12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc`
+* `docs/12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc`
 * `docs/12-design/adr/ADR-004-unified-explain-contract.adoc`
-* `docs/12-design/adr/ADR-010-pax-block-format.adoc`
-* `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`
 
-Key principle: PAX blocks, vector spatial layouts, graph CSR/COO, JSON path stripes, and ANN
-fragments are Layer 2 projections or access methods unless a separate ADR promotes a retained
-aggregate to canonical authority. They must be repairable from Layer 0/1 and must not introduce
-hidden durable semantics.
+Key principle: The architecture utilizes a dual-path storage strategy over decoupled Object Storage.
+1. **Data Warehouse/Relational Workloads:** The primary durable authority is Parquet managed via Iceberg manifests. Custom structures are shredded into standard Parquet columns (e.g., Delta Encoding, Dictionary Encoding).
+2. **Vector Search/ANN Workloads:** Specialized vector engines (SST, HELIX, NOVA) utilize the custom **PAX** block format for maximum high-performance spatial co-location and SIMD optimization.
+Both paths populate Iceberg manifests with statistics (min/max, null counts, bloom filters) to enable aggressive DataFusion predicate pushdown.
 
 == Non-Negotiable Invariants
 
 * `ProximaRecord` plus `ProximaType`/`ProximaValue` remains the semantic record authority.
-* PAX compression decisions never change visible values. The default storage path is lossless.
-* Dimensionality reduction may choose physical row order or index keys; it must not replace exact
-  vector payloads in authoritative storage.
-* Lossy quantization, PQ, sketches, and learned projections are allowed only as cataloged
-  projections with explicit `loss_policy`, freshness, rebuild source, and EXPLAIN metadata.
-* `proximadb-codec` is the canonical codec and codec-selection layer. Compute `proximacodec`
-  should provide runtime routing, SIMD/GPU dispatch, and compatibility wrappers only.
-* PAX readers must be able to skip blocks/stripes from metadata before decoding payload bytes.
-* Every automatic layout or codec decision must be explainable and must record rejected candidate
-  reasons when a cheaper or smaller codec is not selected.
+* Parquet encoding decisions never change visible values. The default storage path is lossless.
+* Dimensionality reduction may choose physical row order or index keys; it must not replace exact vector payloads in authoritative Parquet storage.
+* Lossy quantization, PQ, sketches, and learned projections are allowed only as cataloged projections with explicit `loss_policy`, freshness, rebuild source, and EXPLAIN metadata.
+* `proximadb-codec` should wrap or augment the standard `parquet` crate encoders where modality-specific logic (e.g. vector XOR) is required.
+* DataFusion readers must be able to skip row groups/pages from Iceberg/Parquet metadata before decoding payload bytes.
+* Every automatic layout or codec decision must be explainable and must record rejected candidate reasons.
 
 == Research Signals From Local Corpus
 
@@ -104,47 +95,40 @@ The following signals were found through `arxive search` in `../arxive` on 2026-
 |===
 | Area | Current shape | Gap | Target
 
-| PAX stripe encoding
-| `crates/storage/proximadb-block-format/src/writer.rs` writes raw f32 vectors, raw i64 values,
-  raw strings, and msgpack props.
-| ADR-010 says stripes are codec-selected, but writer/reader do not yet dispatch through
-  `proximadb-codec`.
-| PAX writer calls the canonical codec selector per stripe; reader decodes from scheme and parameter
-  metadata.
+| Storage Format
+| `crates/storage/proximadb-block-format/src/writer.rs` writes custom PAX.
+| Legacy format prevents out-of-the-box ecosystem integration for relational data.
+| Retain `proximadb-block-format` strictly for specialized Vector/ANN engines. Pivot Data Warehouse data to standard Parquet writers using the `parquet` crate.
 
-| PAX pruning metadata
+| Pruning metadata
 | Column metadata has min/max and bloom offsets, but stats and bloom population are partial.
-| Readers cannot reliably skip string/JSON/vector/graph stripes without payload decode.
-| Populate block stats, null counts, bloom/frequency sketches, distinct hints, and spatial/code
-  ranges during flush.
+| DataFusion cannot reliably skip row groups/pages without Iceberg-compatible metadata.
+| Populate Iceberg manifests and Parquet footers with stats, null counts, bloom/frequency sketches, distinct hints, and spatial/code ranges.
 
 | Codec selection
-| `proximadb-codec` has `SelectionContext` and data analysis; compute `proximacodec` has another
-  adaptive selector.
-| Context is too narrow and duplicated decisions will drift.
-| Move canonical selection into `proximadb-codec`; compute module becomes hardware/runtime routing.
+| Custom selectors in `proximadb-codec` and compute `proximacodec`.
+| Divergence from standard Parquet encodings (e.g. DELTA_BINARY_PACKED, DICTIONARY).
+| Move towards standard Parquet encodings where possible; reserve custom codecs for specialized modality columns only (e.g., base-XOR for vectors).
 
 | Vector layout
-| `proximablocks` contains grouped/transposed layouts, quantization-aware compaction, PCA/Z-order,
-  and adaptive curve code.
-| New PAX path does not consume those layout decisions.
-| Add a PAX layout planner that can reuse or migrate the best spatial-ordering concepts without
-  reviving older format authority.
+| Custom PAX logic for spatial ordering.
+| New Parquet path needs to preserve spatial clustering for I/O efficiency.
+| Add a layout planner that sorts rows by spatial clustering before writing to Parquet.
 
 | Graph topology
 | ORION CSR sorts targets but stores plain arrays.
 | Dense and skewed graphs waste I/O and memory when adjacency is not gap/reference compressed.
-| Add compressed CSR/CSC projections with vertex-ordering and degree-aware codecs.
+| Encode CSR/CSC into Parquet arrays/lists using standard Delta/Dictionary encodings.
 
 | JSON/document props
-| Props are stored as opaque msgpack blobs; auto-promotion exists as a mitigation direction.
-| PAX cannot prune or compress nested JSON by path/shape without full blob decode.
-| Add path dictionary, shape ID, and typed leaf stripes with exact msgpack fallback.
+| Props are stored as opaque msgpack blobs.
+| Parquet cannot prune or compress nested JSON without full blob decode.
+| Shred JSON into Parquet structural columns (structs/lists) with typed leaf columns.
 
 | Observability/profiling
 | Codec decisions are heuristic and benchmark coverage is not a layout-codec matrix.
 | No cataloged evidence loop for CPU/I/O tradeoffs.
-| Persist codec profiling summaries in xCatalog and surface decisions in EXPLAIN.
+| Persist encoding profiling summaries in xCatalog and surface decisions in EXPLAIN.
 |===
 
 == HLD: End-To-End Shape
@@ -153,7 +137,7 @@ The following signals were found through `arxive search` in `../arxive` on 2026-
 ----
 flowchart TB
   subgraph Authority["Layer 0/1: Canonical Authority"]
-    WAL["WAL / manifest"]
+    Manifests["Iceberg Manifests"]
     Records["ProximaRecord\nProximaType / ProximaValue"]
   end
 
@@ -166,33 +150,39 @@ flowchart TB
   subgraph Compaction["Layer 2 Build Path"]
     Profiler["Block profiler\ncolumn, vector, graph, JSON stats"]
     Layout["Layout planner\nrow order, clustering, graph order, JSON shapes"]
-    Selector["proximadb-codec\ncanonical codec selector"]
-    Writer["PAX block writer\nstripe encoder + metadata"]
+    Selector["Encoding selector\nStandard Parquet + Custom PAX"]
+    WriterParquet["Parquet writer\nRow groups + Iceberg stats"]
+    WriterPAX["PAX writer\nCustom Vector block formatting"]
   end
 
   subgraph Projections["Layer 2 Read Path"]
-    PAX["PAX blocks\nrow directory + stripes"]
-    Graph["Compressed CSR/CSC"]
-    Json["JSON path/shape stripes"]
-    Vector["Exact vector stripes\nspatial ordering + lossless deltas"]
+    Parquet["Parquet files\nObject Storage (Relational)"]
+    PAX["PAX blocks\nObject Storage (Vector/ANN)"]
+    Graph["Compressed CSR/CSC lists"]
+    Json["Shredded JSON struct/list columns"]
+    Vector["Spatially ordered vector columns"]
   end
 
   subgraph Runtime["Layer 3/4 Runtime"]
     Planner["Planner/router"]
-    Reader["PAX/projection readers"]
-    Compute["compute proximacodec\nSIMD/GPU dispatch"]
+    Reader["ObjectStoreIcebergReader\n(DataFusion / specialized engines)"]
+    Compute["DataFusion Execution / Vector SIMD"]
   end
 
-  WAL --> Records
+  Manifests --> Records
   Records --> Profiler
   Policy --> Profiler
   Profiler --> Layout
   Layout --> Selector
-  Selector --> Writer
-  Writer --> PAX
-  Writer --> Stats
+  Selector --> WriterParquet
+  Selector --> WriterPAX
+  WriterParquet --> Parquet
+  WriterPAX --> PAX
+  WriterParquet --> Stats
+  WriterPAX --> Stats
   Stats --> Policy
   Stats --> Explain
+  Parquet --> Reader
   PAX --> Reader
   Graph --> Reader
   Json --> Reader

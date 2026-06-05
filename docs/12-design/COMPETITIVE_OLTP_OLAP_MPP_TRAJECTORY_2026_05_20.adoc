@@ -54,8 +54,9 @@ than hidden per-engine tuning.
 | Trino/Presto and Spark
 | Connector split APIs, broad federation, large-scale batch execution, Arrow/Parquet/lakehouse
 interoperability
-| Treat external compute as delegated execution. Keep writes, policy, record identity, and catalog
-authority inside ProximaDB unless an asset is explicitly external-authoritative.
+| Treat external compute as delegated interoperability, not the primary Proxima-owned MPP route.
+Keep writes, policy, record identity, and catalog authority inside ProximaDB unless an asset is
+explicitly external-authoritative. Build the native MPP path around DataFusion/Rust workers first.
 
 | Redshift, BigQuery, Snowflake
 | Managed operations, storage/compute separation, elastic scheduling, SQL-first adoption,
@@ -71,9 +72,10 @@ authorities. Do not confuse their table logs with ProximaDB's canonical hot WAL/
 |===
 
 Therefore, ProximaDB should not frame success as "better compute over Parquet." The stronger
-trajectory is "semantic authority plus open compute": a product where xCatalog, canonical records,
-policy, freshness, lineage, and route selection make native storage, PAX, Arrow/DataFusion,
-Iceberg/Delta/Hudi, Spark, and Trino feel like one governed system.
+trajectory is "semantic authority plus Rust-native open compute": a product where xCatalog,
+canonical records, policy, freshness, lineage, and route selection make native storage, PAX,
+Arrow/DataFusion, Iceberg/Delta/Hudi, Spark, and Trino feel like one governed system while keeping
+Proxima-owned MPP execution in Rust by default.
 
 == Competitive Design Principles To Adopt
 
@@ -107,9 +109,8 @@ late materialization, vectorized operators, spill, and projection freshness meta
 
 | Spark
 | Fault-tolerant distributed batch execution over external/object storage
-| Large transforms benefit from external cluster managers and replayable stages.
-| Use Spark as delegated compute for large transforms and lakehouse interop. Do not make Spark the
-transactional owner of ProximaDB records.
+| Large transforms benefit from replayable stages.
+| **Course Correction:** Build Rust-native MPP (Spark-like distributed execution) using DataFusion, outcompeting Spark/Trino on efficiency while removing JVM overhead. Spark remains a supported external option, but the primary distributed execution is Rust-native.
 
 | Impala / Trino
 | Coordinator-worker SQL, connector split planning, pushdown contracts
@@ -152,8 +153,8 @@ inside protocol handlers or one-off engine options.
 | Controls whether projections must be updated inline, queued, or rebuilt from WAL/storage.
 
 | `compute_route`
-| `Native`, `DataFusionLocal`, `DataFusionDistributed`, `Spark`, `Trino`, `Ray`, `Flink`,
-`ExternalDelegated`
+| `Native`, `DataFusionLocal`, `DataFusionDistributed`, `PolarsLocal`, `Spark`, `Trino`, `Ray`,
+`Flink`, `ExternalDelegated`
 | Selects the execution engine while preserving ProximaDB ownership of catalog, policy, and commits.
 
 | `partitioning`
@@ -283,8 +284,8 @@ flowchart TB
 
   subgraph Compute["Execution engines"]
     Native["Native Rust\nOLTP, vector, graph,\nevents, embedded"]
-    DF["DataFusion\nArrow SQL, scans,\njoins, aggregates"]
-    External["External compute\nSpark, Trino, Ray, Flink"]
+    DF["DataFusion Local/Distributed\nprimary Arrow SQL, scans,\njoins, aggregates, MPP"]
+    External["External adapter routes\nSpark, Trino, Ray, Flink"]
   end
 
   subgraph Authority["Durable authority"]
@@ -331,8 +332,9 @@ Rules:
 authority modes.
 * Layer 3/4 protocol and compute surfaces never define record envelopes, type semantics, RLS,
 WAL/recovery, or catalog ownership.
-* External compute may execute scans/transforms, but Proxima-owned writes commit through
-`TableRecordStore` and canonical WAL.
+* DataFusion/Rust workers are the primary Proxima-owned OLAP/MPP execution route.
+* External compute may execute scans/transforms as delegated adapters, but Proxima-owned writes
+commit through `TableRecordStore` and canonical WAL.
 
 == HLD: Workload Route Map
 
@@ -344,8 +346,9 @@ flowchart LR
 
   Shape -->|point DML / lookup| OLTP["Native OLTP path\nrow/PAX directory,\nconstraints, MVCC"]
   Shape -->|selective scan / mixed| HTAP["HTAP path\nPAX pruning + native or DataFusion"]
-  Shape -->|large scan / join / aggregate| OLAP["OLAP path\nArrow batches + DataFusion"]
-  Shape -->|warehouse-scale transform| MPP["MPP delegated path\nSpark / Trino / Flink / Ray"]
+  Shape -->|large scan / join / aggregate| OLAP["OLAP path\nArrow batches + DataFusionLocal"]
+  Shape -->|warehouse-scale transform| MPP["Rust-native MPP path\nDataFusionDistributed / workers"]
+  Shape -->|external/federated engine requested| ExternalMPP["Delegated external path\nSpark / Trino / Flink / Ray"]
   Shape -->|vector search| Vector["ANN path\npredicate-aware HNSW/IVF/PQ"]
   Shape -->|graph traversal| Graph["Topology path\nedge records + CSR/COO projection"]
   Shape -->|document / observability| Modal["Modal projection path\nJSON, text, time, trace indexes"]
@@ -353,7 +356,8 @@ flowchart LR
   OLTP --> Commit["Canonical WAL + RecordStorage"]
   HTAP --> Commit
   OLAP --> Commit
-  MPP --> Guard{"Authority mode"}
+  MPP --> Commit
+  ExternalMPP --> Guard{"Authority mode"}
   Guard -->|Proxima-owned write| Commit
   Guard -->|external authoritative| ExternalCommit["External table protocol\nIceberg/Delta/Hudi commit"]
 
@@ -491,7 +495,7 @@ participant "xCatalog + stats" as Catalog
 participant "Policy guard" as Policy
 participant "Route selector" as Router
 participant "Native runtime" as Native
-participant "DataFusion runtime" as DF
+participant "DataFusion local/distributed runtime" as DF
 participant "External compute adapter" as External
 database "RecordStorage / PAX / projections" as Storage
 collections "Iceberg REST / Arrow Flight splits" as Splits
@@ -509,12 +513,12 @@ alt Native route
   Native -> Storage: point read, PAX scan, ANN, topology, JSON/time index
   Storage --> Native: ProximaRecord stream
   Native --> Facade: records / Arrow batches
-else DataFusion route
+else DataFusion local or distributed route
   Router -> DF: execute Arrow logical/physical plan
   DF -> Storage: RecordBatch source, PAX/columnar scan
   Storage --> DF: Arrow batches
   DF --> Facade: Arrow batches / rows
-else External MPP route
+else External delegated route
   Router -> External: create delegated plan with authority and policy guard
   External -> Splits: Iceberg REST metadata + Arrow Flight tickets
   Splits --> External: split streams
@@ -585,18 +589,17 @@ Deliverables:
 * DataFusion local scan, projection, filter, aggregate, join, and INSERT SELECT source reader;
 * projection freshness tracking and `EXPLAIN` output.
 
-=== Phase 3: Open split and MPP delegation
+=== Phase 3: Rust-Native MPP and Open Split Interoperability
 
-Goal: make the Trino, Impala, Spark, Snowflake, and BigQuery lessons interoperate without moving
-semantic authority out of ProximaDB.
+Goal: Build a Rust-native distributed execution engine (starting via DataFusion pseudo-distributed seam) while making Trino, Impala, Spark, Snowflake, and BigQuery lessons interoperate without moving semantic authority out of ProximaDB.
 
 Deliverables:
 
 * Iceberg REST metadata that exposes ProximaDB splits with Arrow Flight tickets;
 * split-level tenant/time/predicate pushdown metadata;
-* external compute adapters with explicit policy and authority guards;
+* Rust-native distributed worker nodes for Spark-like execution;
 * external-authoritative commit registration in xCatalog;
-* MPP smoke tests for Spark/Trino reads and Proxima-owned staged writes.
+* MPP smoke tests for native Rust distribution and Spark/Trino reads.
 
 === Phase 4: Autonomous optimization
 
@@ -668,8 +671,8 @@ repair source, and supported-surface status
 least one focused benchmark gate
 
 | New compute route
-| route appears in `compute_route`, has `ExecutionGuard`s, rejected-route reasons, and `EXPLAIN`
-metadata
+| route appears in `compute_route`, has `ExecutionGuard`s, rejected-route reasons, and
+`EXPLAIN`/`RoutedExecutionPlan` or read-side `RoutedReadPlan` metadata
 | route has policy-boundary enforcement, cost/freshness checks, failure behavior, and smoke tests
 against a Proxima-owned table
 
@@ -731,7 +734,8 @@ Generated code should follow these alignment checks before implementation detail
 
 == Refactors Not Worth Doing Now
 
-* Do not build a full Spark, Trino, or Snowflake replacement inside the root crate.
+* Do not clone Spark, Trino, or Snowflake wholesale inside the root crate; build the Rust MPP engine
+as cleanly separated DataFusion/Rust worker components.
 * Do not put ProximaDB's hot durable core inside PostgreSQL, DuckDB, or another external RDBMS.
 * Do not create separate durable systems for document, graph, observability, or vector semantics.
 * Do not split every storage engine into its own crate until the record/log/catalog contracts are

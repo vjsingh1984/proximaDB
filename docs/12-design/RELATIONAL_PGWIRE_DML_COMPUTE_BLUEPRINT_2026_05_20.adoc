@@ -25,14 +25,24 @@ Authoritative context:
 * `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`
 
 Key principle: pgwire, REST/gRPC, Arrow Flight, embedded APIs, document APIs, graph APIs, and vector
-APIs are facades over xCatalog plus canonical `ProximaRecord`/`ProximaValue` semantics. Legacy
-VectorOps can remain as a compatibility route, but it must not be the semantic owner of new
-relational DML.
+APIs are facades over xCatalog plus canonical `ProximaRecord`/`ProximaValue` semantics. The
+architecture is tiered:
+
+1. **PostgreSQL-style OLTP workloads:** Native/Volcano execution over WAL plus the OLTP row/delta
+   store. This path owns point DML, strong-freshness reads, MVCC visibility, and
+   primary-key/unique/check/foreign-key enforcement.
+2. **Relational warehouse/OLAP workloads:** DataFusion local/distributed execution over cataloged
+   Parquet/Iceberg/Arrow snapshots, with explicit base-plus-delta union when a query requires
+   fresher HTAP visibility than the last published snapshot.
+3. **Vector/ANN workloads:** Specialized high-performance engines (SST, HELIX, RAPTOR, SWIFT, NOVA,
+   VIPER) with shared identity/version/freshness metadata and no independent schema authority.
+
+All paths converge on xCatalog, canonical WAL/log semantics, and decoupled `object_store`
+persistence where applicable.
 
 Competitive trajectory principle: ProximaDB adopts OLTP correctness from PostgreSQL/Oracle,
 storage pushdown from Exadata/Netezza, projection/vectorization from Vertica/ClickHouse, MPP
-routing discipline from Teradata/Redshift, and open compute delegation from Spark/Trino without
-moving semantic authority out of xCatalog, canonical WAL, and `ProximaRecord`.
+routing discipline from Teradata/Redshift, and builds a **Rust-native distributed execution engine** (Spark-like) using DataFusion. The storage layer is fully decoupled over object storage, competing directly with Snowflake and Databricks.
 
 == Current Repository Shape
 
@@ -65,8 +75,10 @@ and source/target coercion.
 | Canonical DML write/read trait. `CatalogRoutingTableRecordStore` selects canonical or legacy
 route from xCatalog table metadata. `VectorOpsTableRecordStore` adapts to existing VectorOps for
 mutation, point lookup, and current-state scan compatibility.
-| Replace compatibility adapter for relational/PAX tables with direct WAL/table-record writer.
-Keep VectorOps route only for vector-specialized legacy tables during migration.
+| Mutable OLTP writes commit first through a native WAL/row-delta `TableRecordStore` path. Background
+promotion can publish Parquet/Iceberg snapshots through `ObjectStoreIcebergRecordStore` for OLAP
+tables. Vector-specialized tables can use `ObjectStoreVectorRecordStore` once the same identity,
+version, and freshness contracts are implemented.
 
 | Table write planner/router
 | `src/query/table_write_plan.rs`
@@ -86,8 +98,9 @@ open-table commit executors.
 | `src/datafusion/**`, future Polars/DuckDB adapters
 | DataFusion integration exists for scan/provider work and is the primary Rust SQL/Arrow substrate.
 Polars and DuckDB are optional compatibility/local transform paths.
-| DataFusion local/distributed selected by router. Polars/DuckDB remain adapters; never semantic
-authorities.
+| DataFusion becomes the primary OLAP/MPP execution engine via Rust-native worker nodes. Native/
+Volcano remains the primary PostgreSQL-style OLTP executor for latency-sensitive DML, point reads,
+and constraint-sensitive plans. Polars/DuckDB remain optional adapters.
 |===
 
 == HLD: End-To-End System Shape
@@ -120,19 +133,20 @@ flowchart TB
 
   subgraph Writes["Layer 1/0: Canonical Writes"]
     TableStore["TableRecordStore\ncanonical mutation boundary"]
-    Compat["VectorOpsTableRecordStore\ncompatibility adapter"]
-    VectorOps["VectorOps\nlegacy vector path"]
-    DirectWriter["Direct WAL/table-record writer\n(target)"]
-    WAL["WAL / manifest / snapshot commit"]
+    OltpWriter["DirectWalTableRecordStore\nOLTP row/delta"]
+    ColumnarWriter["ObjectStoreIcebergRecordStore\nOLAP base/publication"]
+    VectorWriter["ObjectStoreVectorRecordStore\n(Vector Search / ANN)"]
+    WAL["Canonical WAL / tx log"]
   end
 
   subgraph Physical["Layer 2: Physical Layouts and Projections"]
-    PAX["PAX / row-family / OLTP"]
-    Columnar["Columnar / OLAP / Parquet"]
-    LSM["Legacy SST / LSM"]
+    Delta["OLTP row/delta store\ncurrent state + indexes"]
+    Columnar["Parquet / Object Storage\nOLAP snapshots"]
+    OpenTables["Iceberg / Delta / Hudi\nOpen table publications"]
+    PAX["PAX / row-family\nHTAP block candidate"]
+    LSM["SST / HELIX / NOVA / VIPER\n(Vector Specialized Engines)"]
     ANN["ANN indexes"]
     JsonGraph["JSON, graph topology,\nobservability projections"]
-    OpenTables["Iceberg / Delta / Hudi\nexternal-authoritative modes"]
   end
 
   Pgwire --> SqlParser
@@ -140,7 +154,7 @@ flowchart TB
   RestGrpc --> DmlSvc
   ArrowFlight --> DmlSvc
   Embedded --> DmlSvc
-  VectorApi --> VectorOps
+  VectorApi --> DmlSvc
   DocGraph --> DmlSvc
 
   DmlSvc --> XCatalog
@@ -153,14 +167,16 @@ flowchart TB
   Router --> Executor
   Executor --> TableStore
 
-  TableStore --> DirectWriter
-  TableStore --> Compat
-  Compat --> VectorOps
-  DirectWriter --> WAL
-  VectorOps --> WAL
+  TableStore --> OltpWriter
+  OltpWriter --> WAL
+  WAL --> Delta
+  Delta --> ColumnarWriter
+  ColumnarWriter --> Columnar
+  ColumnarWriter --> OpenTables
+  TableStore --> VectorWriter
+  VectorWriter --> WAL
 
   WAL --> PAX
-  WAL --> Columnar
   WAL --> LSM
   WAL --> ANN
   WAL --> JsonGraph
@@ -185,8 +201,9 @@ participant "CatalogRow" as Row
 participant "TableRecordStore" as Store
 participant "VectorOpsTableRecordStore\n(compat route)" as Compat
 participant "VectorOps\n(legacy route)" as VectorOps
-participant "Direct WAL/table writer\n(target route)" as Direct
-database "WAL / manifest" as WAL
+participant "DirectWalTableRecordStore\n(OLTP row/delta writer)" as Direct
+participant "ObjectStoreIcebergRecordStore\n(OLAP publication writer)" as Columnar
+database "Canonical WAL / tx log" as WAL
 
 Client -> Pgwire: INSERT/UPSERT/UPDATE/DELETE
 Pgwire -> Parser: parse_dml(sql)
@@ -199,13 +216,15 @@ DML -> Row: to_mutation_record(kind)
 Row --> DML: ProximaRecord
 DML -> Store: write_mutations(schema, mutations)
 Store -> Catalog: inspect workload/storage specialization
-alt vector or legacy LSM/SST route during migration
+alt vector or legacy LSM/SST route during migration (deprecated)
   Store -> Compat: write_mutations
   Compat -> VectorOps: insert_records_with_tenant_context
   VectorOps -> WAL: legacy-compatible canonical write
-else relational/PAX/modern route target
+else native OLTP row/delta target with OLAP publication
   Store -> Direct: write_mutations
-  Direct -> WAL: RecordMutation / snapshot commit
+  Direct -> WAL: append canonical mutations
+  Direct -> Columnar: async promote eligible deltas
+  Columnar -> WAL: publish Parquet/Iceberg snapshot metadata
 end
 Store --> DML: TableRecordWriteResult
 DML --> Pgwire: DmlResult
@@ -218,9 +237,11 @@ Rules:
 * `DmlService` owns catalog-aware DML coordination.
 * `CatalogRow` owns relational validation and conversion into canonical records.
 * `TableRecordStore` owns mutation semantics below protocol facades.
-* `VectorOpsTableRecordStore` is only a compatibility bridge for legacy/vector-specialized tables.
-* The direct WAL/table-record writer is the required target for relational/PAX/OLTP/OLAP/HTAP
-  tables.
+* `VectorOpsTableRecordStore` is a deprecated compatibility bridge for legacy/vector-specialized tables.
+* Mutable PostgreSQL-style tables commit through the WAL/row-delta path first.
+* `ObjectStoreIcebergRecordStore` is an OLAP/open-format publication path, not the required target
+  for every operation. A table may be external-authoritative, but that authority must be explicit in
+  xCatalog and in `EXPLAIN`.
 
 === INSERT SELECT / INSERT OVERWRITE
 

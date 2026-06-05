@@ -15,12 +15,11 @@ ProximaDB should support notebook and PySpark-style procedural development witho
 authority into Python. The target experience is Python ergonomics with Rust execution:
 
 * users build plans procedurally in Python notebooks;
-* Python objects stay as facades over a lazy plan, similar to Spark DataFrames;
+* Python objects stay as facades over a lazy DataFusion `LogicalPlan`, similar to Spark DataFrames;
 * execution is pushed into the Rust engine through embedded PyO3/Arrow surfaces;
-* SQL and relational transforms can route through DataFusion when appropriate;
-* vector, document, graph, observability, and write paths stay Proxima-native;
-* a single-node pseudo-distributed mode proves coordinator/worker/shuffle architecture before real
-  multi-node cluster maturity is claimed.
+* All SQL, relational, and multi-modal transforms are routed through **DataFusion** running over decoupled object storage;
+* vector, document, graph, and observability paths utilize DataFusion User Defined Logical Nodes (UDLNs) wrapping Proxima-native operations;
+* a single-node pseudo-distributed mode using DataFusion workers proves the object-store coordination before real multi-node cluster maturity is claimed.
 
 Authoritative context:
 
@@ -273,38 +272,29 @@ flowchart TB
     Explain["RoutedReadPlan -> Unified EXPLAIN (ADR-004)"]
   end
 
-  subgraph Providers["Compute providers"]
-    NativeP["Native provider\ncore::search / scan_records_filtered"]
-    DFP["DataFusionLocalProvider\nSessionContext"]
-  end
-
-  subgraph DFexec["DataFusion execution"]
+  subgraph DFexec["DataFusion Execution (Universal)"]
     Lower["notebook_plan lowering\n-> LogicalPlanBuilder"]
     Table["ProximaDataFusionTable\n(predicate/projection pushdown)"]
     Scan["ProximaScanExec\nN partitions = SplitPlanner(FileSplits)"]
     VSearch["VectorSearchExec\n(UserDefinedLogicalNode leaf)"]
-    Reader["EmbeddedScanReader\n(SplitReader over cursor pages)"]
+    Reader["ObjectStoreIcebergReader\n(Parquet fetch via Tokio)"]
     Pool["DataFusion memory pool + spill"]
   end
 
-  subgraph Auth["Canonical authority"]
-    Splits["SplitSource.generate_splits\n(segment / cursor-range / whole-collection)"]
-    Store["storage engines + WAL + xCatalog"]
+  subgraph Auth["Object Storage Authority"]
+    Store["Object Store (S3/Local) + Iceberg Manifests"]
   end
 
   Session --> Frame --> Expr
   Frame --> PlanJson --> PyO3 --> Bridge --> Sched
   Sched --> Explain
-  Sched --> NativeP
-  Sched --> DFP
-  DFP --> Lower --> Table --> Scan --> Reader
+  Sched --> DFexec
+  Lower --> Table --> Scan --> Reader
   Lower --> VSearch
   Scan --> Pool
-  Splits --> Scan
   Reader --> Store
   VSearch --> Store
-  NativeP --> Store
-  Store -->|proxima_records_to_record_batch| CDI --> Frame
+  Store -->|parquet_to_arrow| CDI --> Frame
 ----
 
 == Plan Contract
@@ -472,10 +462,13 @@ Three-tier cascade, safe by construction:
 connector (`SparkInputPartition`) and the DataFusion scan (`ProximaScanExec` partitions) consume one
 split generator — no parallel split logic.
 
-Cursor-range correctness caveat: the WAL memtable has no time/order index (see
-`project_wal_memtable_no_time_index`), so tier-2 cursor-range splits can gap or double-count over
-*unflushed* data. Tier 2 is only valid over flushed/segment data or a pinned snapshot; live-memtable
-collections fall back to tier 3 (single split).
+Cursor-range correctness caveat: TD-099(3d) added a lazy, deduped,
+time-ordered in-memory scan index for the unflushed WAL/memtable path, so warm
+cursor seeks can be efficient. That does **not** by itself make parallel live
+cursor ranges safe under concurrent writes. Tier 2 is only valid over
+flushed/segment data, a pinned snapshot/branch, or a read epoch that freezes the
+split boundary for the query; otherwise live-memtable collections fall back to
+tier 3 (single split).
 
 == DataFusion Role
 
@@ -628,8 +621,9 @@ Trade-offs to state plainly (do not over-claim):
   role of the demoted coordinator.
 * No Spark RDD-style lineage / fault recovery. Mitigation: read fragments are idempotent and
   retryable; there is no speculative re-execution.
-* Cursor-range splits are unsafe over live (unflushed) memtable data (no time index) and fall back to
-  a single split there.
+* Cursor-range splits are unsafe over live (unflushed) memtable data without a pinned snapshot,
+  immutable segment inventory, or read epoch. TD-099(3d)'s scan index makes seeks efficient once
+  warm; it is not the split-boundary correctness guard.
 * DataFusion 51 / Arrow 57.1 / pyo3 0.25 are coupled across the C Data Interface — a real, ongoing
   upgrade tax.
 * The design guarantees the *execution boundary* (Rust owns scan/filter/kernels/join/agg/write/memory;
@@ -681,6 +675,8 @@ Deliverables:
 * Promote `viper_adapter` file discovery behind `SplitSource`; add `SplitType::CursorRange` +
   `FileSplit::new_cursor_range`.
 * Rewire `EmbeddedProximaDB::plan_partitions` onto `SplitSource` (unifies Spark + DataFusion).
+* Add a pinned snapshot/read-epoch guard before enabling cursor-range splits over live WAL/memtable
+  data; TD-099(3d)'s scan index is the seek primitive, not the correctness guard.
 
 Acceptance:
 
@@ -767,4 +763,3 @@ Acceptance:
   converter and split generator rather than forking them.
 * `docs/12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc` — the route knobs
   (`compute_route`, `workload_profile`, `partitioning`, `freshness_sla`) the EXPLAIN emits.
-
