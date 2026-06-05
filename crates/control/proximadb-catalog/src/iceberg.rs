@@ -731,6 +731,8 @@ impl Catalog for IcebergCatalog {
                 default_value: None,
                 comment: f.doc.clone(),
                 properties: HashMap::new(),
+                is_deleted: false,
+                original_id: None,
             })
             .collect();
 
@@ -889,6 +891,8 @@ impl Catalog for IcebergCatalog {
                 default_value: None,
                 comment: f.doc.clone(),
                 properties: HashMap::new(),
+                is_deleted: false,
+                original_id: None,
             })
             .collect();
 

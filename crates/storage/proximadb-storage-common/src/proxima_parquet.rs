@@ -139,7 +139,7 @@ mod tests {
             nullable,
             default_value: None,
             comment: None,
-            metadata: HashMap::new(),
+            properties: HashMap::new(),
             is_deleted: false,
             original_id: None,
         }
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn records_round_trip_through_parquet_bytes() {
         let dim = 3u32;
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "wh".to_string(),
             vec![
                 col(1, "name", ProximaType::String, true),
@@ -259,7 +259,7 @@ mod tests {
     /// Zero records still produces a readable Parquet file carrying the schema and no rows.
     #[test]
     fn empty_records_write_schema_only() {
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "empty".to_string(),
             vec![
                 col(1, "id", ProximaType::String, false),

@@ -146,8 +146,9 @@ pub enum MigrationStep {
     AddColumnWithDefault {
         /// Column ID
         column_id: i32,
-        /// Default value
-        default: DefaultValue,
+        /// Default value, in the canonical rendered (string) form stored on
+        /// [`ProximaColumn::default_value`] (ADR-024 Step 4).
+        default: String,
     },
     /// Rewrite data files with new schema
     RewriteDataFiles {
@@ -295,7 +296,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                 SchemaEvolutionOp::DropColumn { column_id } => {
                     // Dropping column breaks backward compatibility
                     validation.is_backward_compatible = false;
-                    if current_schema.primary_key.contains(column_id) {
+                    if current_schema.primary_key_ids().contains(column_id) {
                         validation
                             .errors
                             .push(format!("Cannot drop primary key column {}", column_id));
@@ -360,7 +361,10 @@ impl SchemaEvolution for DefaultSchemaEvolution {
         new_schema.version += 1;
         new_schema.parent_schema_id = Some(current_schema.schema_id.clone());
         new_schema.schema_id = uuid::Uuid::new_v4().to_string();
-        new_schema.created_at_ms = chrono::Utc::now().timestamp_millis();
+        // ADR-024 Step 4: the storage-plane schema creation time is now
+        // `created_at_ms_schema` (the unified struct's `created_at_ms` is the
+        // catalog table-creation timestamp, a distinct concept).
+        new_schema.created_at_ms_schema = chrono::Utc::now().timestamp_millis();
         new_schema.is_legacy_vector_record = false;
 
         for op in operations {
@@ -420,7 +424,9 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                 }
                 SchemaEvolutionOp::SetDefault { column_id, default } => {
                     if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
-                        col.default_value = Some(default.clone());
+                        // ADR-024 Step 4: the canonical column default is a
+                        // rendered string; render the evolution-op enum into it.
+                        col.default_value = Some(default.render());
                     }
                 }
                 SchemaEvolutionOp::DropDefault { column_id } => {
@@ -551,7 +557,7 @@ mod tests {
                 nullable: true,
                 default_value: None,
                 comment: None,
-                metadata: HashMap::new(),
+                properties: HashMap::new(),
                 is_deleted: false,
                 original_id: None,
             },
@@ -581,7 +587,7 @@ mod tests {
                 nullable: false,
                 default_value: None, // No default!
                 comment: None,
-                metadata: HashMap::new(),
+                properties: HashMap::new(),
                 is_deleted: false,
                 original_id: None,
             },

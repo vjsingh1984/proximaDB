@@ -128,8 +128,8 @@ pub use observability_rollups::{
     AggregationFunction, RollupConfig, RollupInterval, RollupManager, RollupView,
 };
 pub use proxima_schema::{
-    AvroStyleField, AvroStyleSchema, AvroStyleType, DefaultValue, ProximaColumn, ProximaSchema,
-    TimeUnit,
+    AutoGenerateType, AvroStyleField, AvroStyleSchema, AvroStyleType, DefaultValue, ProximaColumn,
+    ProximaSchema, ProximaSchemaAvroExt, TimeUnit,
 };
 pub use query_metrics::{QueryStatistics, StatisticsCollector};
 pub use smart_io_metrics::{FileIoMetrics, IoMetrics, IoMetricsSnapshot};

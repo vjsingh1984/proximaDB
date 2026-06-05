@@ -1053,6 +1053,8 @@ impl DdlService {
                 default_value: col.default_value,
                 comment: col.comment,
                 properties: col_properties,
+                is_deleted: false,
+                original_id: None,
             };
 
             if col.primary_key {

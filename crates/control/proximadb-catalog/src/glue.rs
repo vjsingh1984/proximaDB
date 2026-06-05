@@ -162,6 +162,8 @@ impl GlueCatalog {
             default_value: None,
             comment: col.comment().map(str::to_string),
             properties,
+            is_deleted: false,
+            original_id: None,
         }
     }
 

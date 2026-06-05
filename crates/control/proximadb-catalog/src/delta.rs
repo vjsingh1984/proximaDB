@@ -815,6 +815,8 @@ impl Catalog for DeltaCatalog {
                     default_value: None,
                     comment: f.metadata.get("comment").cloned(),
                     properties,
+                    is_deleted: false,
+                    original_id: None,
                 }
             })
             .collect();
@@ -1016,6 +1018,8 @@ impl Catalog for DeltaCatalog {
                     default_value: None,
                     comment: f.metadata.get("comment").cloned(),
                     properties,
+                    is_deleted: false,
+                    original_id: None,
                 }
             })
             .collect();

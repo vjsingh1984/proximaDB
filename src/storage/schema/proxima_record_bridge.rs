@@ -1134,6 +1134,10 @@ fn infer_proxima_type_from_value(value: &ProximaValue) -> ProximaType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // ADR-024 Step 4: Avro (de)serialization moved to an extension trait over
+    // the unified schema (the storage-plane `ProximaSchema` is now an alias for
+    // the catalog schema). Bring it into scope for the avro round-trip test.
+    use proximadb_storage_common::ProximaSchemaAvroExt;
 
     fn create_test_record(id: &str, dim: usize) -> ProximaRecord {
         let mut props = HashMap::new();

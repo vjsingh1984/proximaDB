@@ -1,81 +1,30 @@
-//! # ProximaSchema - Arrow-Native Schema Definition
+//! # ProximaSchema — alias for the canonical catalog schema (ADR-024 Step 4)
 //!
-//! Unified schema replacing VectorRecord for compute engine compatibility.
-//! Provides stable column IDs, schema evolution, and Arrow conversion.
+//! Historically this module defined two storage-plane schema structs —
+//! `ProximaSchema` and `ProximaColumn` — that ran in parallel with the
+//! catalog's durable `CatalogTableSchema`/`CatalogColumn`. ADR-024 Step 4
+//! MERGED them: the catalog structs are now the single durable authority and
+//! absorbed the storage-plane evolution fields (`is_deleted`, `original_id`,
+//! `schema_id`, `version`, `fingerprint`, …) plus the Arrow/fingerprint/lookup
+//! methods.
+//!
+//! `ProximaSchema` and `ProximaColumn` are therefore now **type aliases** for
+//! `CatalogTableSchema`/`CatalogColumn`, so the ~19 storage-plane consumers keep
+//! compiling unchanged. The Avro-style serialization surface (which references
+//! types that live in the storage layer and therefore cannot move into the
+//! control-plane catalog crate without inverting the dependency arrow) stays
+//! here, expressed as an extension trait ([`ProximaSchemaAvroExt`]) over the
+//! alias.
 
 use anyhow::{Context, Result, anyhow};
-use arrow_schema::{Field, Schema as ArrowSchema, TimeUnit as ArrowTimeUnit};
-use proximadb_data_model::{ProximaType, TimeUnit as DmTimeUnit, VectorElement as DmVectorElement};
+use proximadb_data_model::{ProximaType, VectorElement as DmVectorElement};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
-/// Unified schema for ProximaDB collections.
-///
-/// Replaces hardcoded VectorRecord with flexible Arrow-based schema
-/// supporting schema evolution and compute engine compatibility.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProximaSchema {
-    /// Schema identifier (UUID)
-    pub schema_id: String,
-
-    /// Schema version (monotonically increasing)
-    pub version: u32,
-
-    /// Parent schema ID (for inheritance tracking)
-    pub parent_schema_id: Option<String>,
-
-    /// Column definitions with stable IDs
-    pub columns: Vec<ProximaColumn>,
-
-    /// Primary key column IDs
-    pub primary_key: Vec<i32>,
-
-    /// Schema fingerprint for fast comparison (xxhash64-style)
-    pub fingerprint: u64,
-
-    /// Schema metadata (engine hints, statistics)
-    pub metadata: HashMap<String, String>,
-
-    /// Creation timestamp (millis since epoch)
-    pub created_at_ms: i64,
-
-    /// Flag indicating if this is the legacy VectorRecord schema
-    pub is_legacy_vector_record: bool,
-}
-
-/// Column definition with stable ID for schema evolution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProximaColumn {
-    /// Stable column ID (never changes, survives renames)
-    pub id: i32,
-
-    /// Column name
-    pub name: String,
-
-    /// Data type (canonical ProximaDB logical type, ADR-024)
-    pub data_type: proximadb_data_model::ProximaType,
-
-    /// Is nullable
-    pub nullable: bool,
-
-    /// Default value expression (SQL literal or function)
-    pub default_value: Option<DefaultValue>,
-
-    /// Column documentation
-    pub comment: Option<String>,
-
-    /// Column metadata (encoding hints, bloom filter config)
-    pub metadata: HashMap<String, String>,
-
-    /// Tombstone flag (soft delete for schema evolution)
-    pub is_deleted: bool,
-
-    /// Original field ID (for tracking renames)
-    pub original_id: Option<i32>,
-}
+/// ADR-024 Step 4: the storage-plane schema is now the canonical catalog
+/// schema. One struct, one durable authority.
+pub use proximadb_catalog::{CatalogColumn as ProximaColumn, CatalogTableSchema as ProximaSchema};
 
 /// Time unit for temporal types.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +36,10 @@ pub enum TimeUnit {
 }
 
 /// Default value for columns.
+///
+/// Retained as a storage-plane descriptor for schema-evolution operations
+/// (the canonical [`ProximaColumn::default_value`] is a rendered `String`; this
+/// enum is the producer side — see [`DefaultValue::render`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DefaultValue {
     /// Literal value (stored as JSON)
@@ -95,6 +48,28 @@ pub enum DefaultValue {
     Expression(String),
     /// Auto-generated (UUID, timestamp, sequence)
     AutoGenerate(AutoGenerateType),
+}
+
+impl DefaultValue {
+    /// Render to the canonical [`ProximaColumn::default_value`] string form.
+    ///
+    /// ADR-024 Step 4 reconciliation: the unified column stores a single
+    /// `Option<String>` default (the catalog's canonical SQL-literal form),
+    /// while schema-evolution ops still carry the richer [`DefaultValue`] enum.
+    /// This renders the enum to that string: literals/expressions pass through,
+    /// and auto-generators render to their canonical SQL keyword.
+    pub fn render(&self) -> String {
+        match self {
+            DefaultValue::Literal(s) | DefaultValue::Expression(s) => s.clone(),
+            DefaultValue::AutoGenerate(g) => match g {
+                AutoGenerateType::Uuid => "gen_random_uuid()".to_string(),
+                AutoGenerateType::CurrentTimestamp => "CURRENT_TIMESTAMP".to_string(),
+                AutoGenerateType::Sequence { start, increment } => {
+                    format!("SEQUENCE(start={start}, increment={increment})")
+                }
+            },
+        }
+    }
 }
 
 /// Auto-generate types for default values.
@@ -109,7 +84,7 @@ pub enum AutoGenerateType {
 // Avro-Style Schema Serialization
 // ============================================================================
 
-/// Avro-style schema representation for ProximaSchema.
+/// Avro-style schema representation for [`ProximaSchema`].
 ///
 /// Enables schema serialization compatible with schema registries
 /// and provides stable schema fingerprinting.
@@ -176,259 +151,30 @@ pub enum AvroStyleType {
     },
 }
 
-impl ProximaSchema {
-    /// Create legacy VectorRecord schema (v0) for backward compatibility.
-    pub fn vector_record_schema(dimension: u32) -> Self {
-        let columns = vec![
-            ProximaColumn {
-                id: 1,
-                name: "id".to_string(),
-                data_type: ProximaType::String,
-                nullable: false,
-                default_value: None,
-                comment: Some("Vector record ID".to_string()),
-                metadata: HashMap::new(),
-                is_deleted: false,
-                original_id: None,
-            },
-            ProximaColumn {
-                id: 2,
-                name: "vector".to_string(),
-                data_type: ProximaType::DenseVector {
-                    element: DmVectorElement::Float32,
-                    dim: dimension as usize,
-                },
-                nullable: false,
-                default_value: None,
-                comment: Some("Embedding vector".to_string()),
-                metadata: HashMap::new(),
-                is_deleted: false,
-                original_id: None,
-            },
-            ProximaColumn {
-                id: 3,
-                name: "metadata".to_string(),
-                data_type: ProximaType::Json,
-                nullable: true,
-                default_value: None,
-                comment: Some("JSON metadata".to_string()),
-                metadata: HashMap::new(),
-                is_deleted: false,
-                original_id: None,
-            },
-            ProximaColumn {
-                id: 4,
-                name: "timestamp".to_string(),
-                data_type: ProximaType::Timestamp(DmTimeUnit::Millisecond),
-                nullable: false,
-                default_value: Some(DefaultValue::AutoGenerate(
-                    AutoGenerateType::CurrentTimestamp,
-                )),
-                comment: Some("Record timestamp".to_string()),
-                metadata: HashMap::new(),
-                is_deleted: false,
-                original_id: None,
-            },
-            ProximaColumn {
-                id: 5,
-                name: "version".to_string(),
-                data_type: ProximaType::Int64,
-                nullable: true,
-                default_value: Some(DefaultValue::Literal("1".to_string())),
-                comment: Some("MVCC version".to_string()),
-                metadata: HashMap::new(),
-                is_deleted: false,
-                original_id: None,
-            },
-        ];
+/// Avro-style (de)serialization for the unified [`ProximaSchema`].
+///
+/// Ported from the deleted inherent `ProximaSchema`/`ProximaColumn` Avro
+/// methods. Lives in the storage crate (not the catalog crate) because the
+/// `AvroStyle*` carriers are a storage-plane concern; catalog (control) must
+/// not depend on storage.
+pub trait ProximaSchemaAvroExt: Sized {
+    /// Serialize to the Avro-style schema representation.
+    fn to_avro_style(&self) -> AvroStyleSchema;
+    /// Serialize to a pretty Avro-style JSON string.
+    fn to_avro_json(&self) -> Result<String>;
+    /// Deserialize from an Avro-style schema representation.
+    fn from_avro_style(avro: &AvroStyleSchema) -> Result<Self>;
+    /// Deserialize from an Avro-style JSON string.
+    fn from_avro_json(json: &str) -> Result<Self>;
+}
 
-        Self {
-            schema_id: "vector_record_v0".to_string(),
-            version: 0,
-            parent_schema_id: None,
-            columns: columns.clone(),
-            primary_key: vec![1], // id column
-            fingerprint: Self::compute_fingerprint_for_columns(&columns),
-            metadata: HashMap::from([("legacy".to_string(), "true".to_string())]),
-            created_at_ms: 0,
-            is_legacy_vector_record: true,
-        }
-    }
-
-    /// Create a new schema with custom columns.
-    pub fn new(schema_id: String, columns: Vec<ProximaColumn>, primary_key: Vec<i32>) -> Self {
-        let fingerprint = Self::compute_fingerprint_for_columns(&columns);
-        let now_ms = chrono::Utc::now().timestamp_millis();
-
-        Self {
-            schema_id,
-            version: 1,
-            parent_schema_id: None,
-            columns,
-            primary_key,
-            fingerprint,
-            metadata: HashMap::new(),
-            created_at_ms: now_ms,
-            is_legacy_vector_record: false,
-        }
-    }
-
-    /// Create standard vector schema with custom metadata columns.
-    pub fn with_metadata_columns(
-        schema_id: String,
-        dimension: u32,
-        metadata_fields: Vec<(String, ProximaType)>,
-    ) -> Self {
-        let mut columns = vec![
-            ProximaColumn {
-                id: 1,
-                name: "id".to_string(),
-                data_type: ProximaType::String,
-                nullable: false,
-                default_value: None,
-                comment: None,
-                metadata: HashMap::new(),
-                is_deleted: false,
-                original_id: None,
-            },
-            ProximaColumn {
-                id: 2,
-                name: "vector".to_string(),
-                data_type: ProximaType::DenseVector {
-                    element: DmVectorElement::Float32,
-                    dim: dimension as usize,
-                },
-                nullable: false,
-                default_value: None,
-                comment: None,
-                metadata: HashMap::new(),
-                is_deleted: false,
-                original_id: None,
-            },
-            ProximaColumn {
-                id: 3,
-                name: "timestamp".to_string(),
-                data_type: ProximaType::Timestamp(DmTimeUnit::Millisecond),
-                nullable: false,
-                default_value: Some(DefaultValue::AutoGenerate(
-                    AutoGenerateType::CurrentTimestamp,
-                )),
-                comment: None,
-                metadata: HashMap::new(),
-                is_deleted: false,
-                original_id: None,
-            },
-        ];
-
-        // Add custom metadata columns
-        for (next_id, (name, dtype)) in (4..).zip(metadata_fields) {
-            columns.push(ProximaColumn {
-                id: next_id,
-                name,
-                data_type: dtype,
-                nullable: true,
-                default_value: None,
-                comment: None,
-                metadata: HashMap::new(),
-                is_deleted: false,
-                original_id: None,
-            });
-        }
-
-        Self::new(schema_id, columns, vec![1])
-    }
-
-    /// Convert to Arrow Schema.
-    pub fn to_arrow_schema(&self) -> Arc<ArrowSchema> {
-        let fields: Vec<Field> = self
-            .columns
-            .iter()
-            .filter(|c| !c.is_deleted)
-            .map(|col| col.to_arrow_field())
-            .collect();
-        Arc::new(ArrowSchema::new(fields))
-    }
-
-    /// Create from Arrow Schema with auto-generated column IDs.
-    pub fn from_arrow_schema(schema: &ArrowSchema, schema_id: String) -> Self {
-        let columns: Vec<ProximaColumn> = schema
-            .fields()
-            .iter()
-            .enumerate()
-            .map(|(idx, field)| ProximaColumn::from_arrow_field(field, (idx + 1) as i32))
-            .collect();
-
-        let fingerprint = Self::compute_fingerprint_for_columns(&columns);
-
-        Self {
-            schema_id,
-            version: 1,
-            parent_schema_id: None,
-            columns,
-            primary_key: vec![],
-            fingerprint,
-            metadata: HashMap::new(),
-            created_at_ms: chrono::Utc::now().timestamp_millis(),
-            is_legacy_vector_record: false,
-        }
-    }
-
-    /// Compute schema fingerprint using hash.
-    pub fn compute_fingerprint_for_columns(columns: &[ProximaColumn]) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-
-        let mut hasher = DefaultHasher::new();
-        for col in columns {
-            if !col.is_deleted {
-                col.id.hash(&mut hasher);
-                col.name.hash(&mut hasher);
-                // Hash type representation
-                format!("{:?}", col.data_type).hash(&mut hasher);
-                col.nullable.hash(&mut hasher);
-            }
-        }
-        hasher.finish()
-    }
-
-    /// Get column by ID.
-    pub fn column_by_id(&self, id: i32) -> Option<&ProximaColumn> {
-        self.columns.iter().find(|c| c.id == id && !c.is_deleted)
-    }
-
-    /// Get column by name.
-    pub fn column_by_name(&self, name: &str) -> Option<&ProximaColumn> {
-        self.columns
-            .iter()
-            .find(|c| c.name == name && !c.is_deleted)
-    }
-
-    /// Get next available column ID.
-    pub fn next_column_id(&self) -> i32 {
-        self.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1
-    }
-
-    /// Get active column count (excluding deleted).
-    pub fn active_column_count(&self) -> usize {
-        self.columns.iter().filter(|c| !c.is_deleted).count()
-    }
-
-    /// Get vector dimension if this schema has a vector column.
-    pub fn vector_dimension(&self) -> Option<u32> {
-        for col in &self.columns {
-            if let ProximaType::DenseVector { dim, .. } = &col.data_type {
-                return Some(*dim as u32);
-            }
-        }
-        None
-    }
-
-    /// Serialize to Avro-style schema format.
-    pub fn to_avro_style(&self) -> AvroStyleSchema {
+impl ProximaSchemaAvroExt for ProximaSchema {
+    fn to_avro_style(&self) -> AvroStyleSchema {
         let fields: Vec<AvroStyleField> = self
             .columns
             .iter()
             .filter(|c| !c.is_deleted)
-            .map(|col| col.to_avro_field())
+            .map(column_to_avro_field)
             .collect();
 
         AvroStyleSchema {
@@ -437,108 +183,61 @@ impl ProximaSchema {
             name: self.schema_id.clone(),
             fields,
             aliases: None,
-            metadata: self.metadata.clone(),
+            metadata: self.properties.clone(),
         }
     }
 
-    /// Deserialize from Avro-style schema format.
-    pub fn from_avro_style(avro: &AvroStyleSchema) -> Result<Self> {
-        let columns: Vec<ProximaColumn> = avro
-            .fields
-            .iter()
-            .enumerate()
-            .map(|(idx, field)| field.to_proxima_column((idx + 1) as i32))
-            .collect::<Result<Vec<_>>>()?;
-
-        let fingerprint = Self::compute_fingerprint_for_columns(&columns);
-        let now_ms = chrono::Utc::now().timestamp_millis();
-
-        Ok(Self {
-            schema_id: avro.name.clone(),
-            version: 1,
-            parent_schema_id: None,
-            columns,
-            primary_key: vec![1], // Default to first column
-            fingerprint,
-            metadata: avro.metadata.clone(),
-            created_at_ms: now_ms,
-            is_legacy_vector_record: false,
-        })
-    }
-
-    /// Serialize to JSON string.
-    pub fn to_avro_json(&self) -> Result<String> {
+    fn to_avro_json(&self) -> Result<String> {
         serde_json::to_string_pretty(&self.to_avro_style())
             .context("Failed to serialize schema to Avro-style JSON")
     }
 
-    /// Deserialize from JSON string.
-    pub fn from_avro_json(json: &str) -> Result<Self> {
+    fn from_avro_style(avro: &AvroStyleSchema) -> Result<Self> {
+        let columns: Vec<ProximaColumn> = avro
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| avro_field_to_column(field, (idx + 1) as i32))
+            .collect::<Result<Vec<_>>>()?;
+
+        // Default the primary key to the first column (the original behavior:
+        // the storage-side `from_avro_style` defaulted the PK to the first
+        // column). Resolve it through the first column's actual id so the
+        // by-name `primary_key` lands on a real column.
+        let first_id = columns.first().map(|c| c.id);
+        let mut schema =
+            ProximaSchema::from_columns(avro.name.clone(), columns, first_id.into_iter().collect());
+        schema.properties = avro.metadata.clone();
+        Ok(schema)
+    }
+
+    fn from_avro_json(json: &str) -> Result<Self> {
         let avro: AvroStyleSchema =
             serde_json::from_str(json).context("Failed to parse Avro-style JSON")?;
         Self::from_avro_style(&avro)
     }
 }
 
-impl ProximaColumn {
-    /// Convert to Arrow Field.
-    pub fn to_arrow_field(&self) -> Field {
-        let arrow_type = self.data_type.to_arrow_type();
-        let mut field = Field::new(&self.name, arrow_type, self.nullable);
+/// Convert one [`ProximaColumn`] to its Avro-style field.
+fn column_to_avro_field(col: &ProximaColumn) -> AvroStyleField {
+    let field_type = proxima_type_to_avro_type(&col.data_type, col.nullable);
 
-        // Add column ID and comment as metadata
-        let mut meta = HashMap::new();
-        meta.insert("proxima_column_id".to_string(), self.id.to_string());
-        if let Some(ref comment) = self.comment {
-            meta.insert("comment".to_string(), comment.clone());
-        }
-        field = field.with_metadata(meta);
-
-        field
-    }
-
-    /// Create from Arrow Field.
-    pub fn from_arrow_field(field: &Field, id: i32) -> Self {
-        Self {
-            id,
-            name: field.name().clone(),
-            data_type: ProximaType::from_arrow_type(field.data_type()),
-            nullable: field.is_nullable(),
-            default_value: None,
-            comment: field.metadata().get("comment").cloned(),
-            metadata: HashMap::new(),
-            is_deleted: false,
-            original_id: None,
-        }
-    }
-
-    /// Convert to Avro-style field.
-    fn to_avro_field(&self) -> AvroStyleField {
-        let field_type = proxima_type_to_avro_type(&self.data_type, self.nullable);
-
-        AvroStyleField {
-            name: self.name.clone(),
-            field_type,
-            default: self.default_value.as_ref().map(|d| match d {
-                DefaultValue::Literal(s) => {
-                    serde_json::from_str(s).unwrap_or_else(|_| JsonValue::String(s.clone()))
-                }
-                DefaultValue::Expression(s) => JsonValue::String(s.clone()),
-                DefaultValue::AutoGenerate(_) => JsonValue::Null,
-            }),
-            doc: self.comment.clone(),
-            column_id: Some(self.id),
-        }
+    AvroStyleField {
+        name: col.name.clone(),
+        field_type,
+        // The canonical column default is a rendered string. Try to interpret
+        // it as JSON (matching the old `Literal` JSON round-trip); fall back to
+        // a JSON string.
+        default: col
+            .default_value
+            .as_ref()
+            .map(|s| serde_json::from_str(s).unwrap_or_else(|_| JsonValue::String(s.clone()))),
+        doc: col.comment.clone(),
+        column_id: Some(col.id),
     }
 }
 
 /// Convert a canonical [`ProximaType`] to an Avro-style type descriptor.
-///
-/// Free function (ADR-024): the Arrow projection now lives canonically on
-/// [`ProximaType::to_arrow_type`]; only this Avro projection remains local to
-/// the storage schema descriptor. Logical types without a distinct Avro carrier
-/// fall back to their nearest representation (the logical type stays
-/// authoritative on the column itself).
 fn proxima_type_to_avro_type(ty: &ProximaType, nullable: bool) -> AvroStyleType {
     let base_type = match ty {
         ProximaType::Boolean => AvroStyleType::Simple("boolean".to_string()),
@@ -622,125 +321,119 @@ fn proxima_type_to_avro_type(ty: &ProximaType, nullable: bool) -> AvroStyleType 
     }
 }
 
-impl AvroStyleField {
-    /// Convert to ProximaColumn.
-    fn to_proxima_column(&self, default_id: i32) -> Result<ProximaColumn> {
-        let (data_type, nullable) = self.field_type.to_proxima_type()?;
+/// Convert an Avro-style field to a [`ProximaColumn`].
+fn avro_field_to_column(field: &AvroStyleField, default_id: i32) -> Result<ProximaColumn> {
+    let (data_type, nullable) = avro_type_to_proxima_type(&field.field_type)?;
 
-        Ok(ProximaColumn {
-            id: self.column_id.unwrap_or(default_id),
-            name: self.name.clone(),
-            data_type,
-            nullable,
-            default_value: self
-                .default
-                .as_ref()
-                .map(|v| DefaultValue::Literal(v.to_string())),
-            comment: self.doc.clone(),
-            metadata: HashMap::new(),
-            is_deleted: false,
-            original_id: None,
-        })
-    }
+    Ok(ProximaColumn {
+        id: field.column_id.unwrap_or(default_id),
+        name: field.name.clone(),
+        data_type,
+        nullable,
+        // Canonical default is the rendered string form.
+        default_value: field.default.as_ref().map(|v| v.to_string()),
+        comment: field.doc.clone(),
+        properties: HashMap::new(),
+        is_deleted: false,
+        original_id: None,
+    })
 }
 
-impl AvroStyleType {
-    /// Convert to the canonical [`ProximaType`].
-    fn to_proxima_type(&self) -> Result<(ProximaType, bool)> {
-        match self {
-            AvroStyleType::Simple(t) => {
-                let dtype = match t.as_str() {
-                    "null" => ProximaType::String,
-                    "boolean" => ProximaType::Boolean,
-                    "int" => ProximaType::Int32,
-                    "long" => ProximaType::Int64,
-                    "float" => ProximaType::Float32,
-                    "double" => ProximaType::Float64,
-                    "bytes" => ProximaType::Binary,
-                    "string" => ProximaType::String,
-                    _ => ProximaType::String,
-                };
-                Ok((dtype, false))
+/// Convert an Avro-style type to the canonical [`ProximaType`].
+fn avro_type_to_proxima_type(ty: &AvroStyleType) -> Result<(ProximaType, bool)> {
+    match ty {
+        AvroStyleType::Simple(t) => {
+            let dtype = match t.as_str() {
+                "null" => ProximaType::String,
+                "boolean" => ProximaType::Boolean,
+                "int" => ProximaType::Int32,
+                "long" => ProximaType::Int64,
+                "float" => ProximaType::Float32,
+                "double" => ProximaType::Float64,
+                "bytes" => ProximaType::Binary,
+                "string" => ProximaType::String,
+                _ => ProximaType::String,
+            };
+            Ok((dtype, false))
+        }
+        AvroStyleType::Union(types) => {
+            let nullable = types.contains(&"null".to_string());
+            let non_null: Vec<_> = types.iter().filter(|t| *t != "null").collect();
+            if let Some(t) = non_null.first() {
+                let (dtype, _) = avro_type_to_proxima_type(&AvroStyleType::Simple((*t).clone()))?;
+                Ok((dtype, nullable))
+            } else {
+                Ok((ProximaType::String, true))
             }
-            AvroStyleType::Union(types) => {
-                let nullable = types.contains(&"null".to_string());
-                let non_null: Vec<_> = types.iter().filter(|t| *t != "null").collect();
-                if let Some(t) = non_null.first() {
-                    let (dtype, _) = AvroStyleType::Simple((*t).clone()).to_proxima_type()?;
-                    Ok((dtype, nullable))
-                } else {
-                    Ok((ProximaType::String, true))
+        }
+        AvroStyleType::Complex {
+            type_name,
+            items,
+            values,
+            dimension,
+            precision,
+            scale,
+        } => {
+            let dtype = match type_name.as_str() {
+                "array" => {
+                    let element = items
+                        .as_ref()
+                        .map(|i| avro_type_to_proxima_type(i).map(|(t, _)| t))
+                        .transpose()?
+                        .ok_or_else(|| anyhow!("Array type missing items specification"))?;
+                    ProximaType::Array(Box::new(element))
                 }
-            }
-            AvroStyleType::Complex {
-                type_name,
-                items,
-                values,
-                dimension,
-                precision,
-                scale,
-            } => {
-                let dtype = match type_name.as_str() {
-                    "array" => {
-                        let element = items
-                            .as_ref()
-                            .map(|i| i.to_proxima_type().map(|(t, _)| t))
-                            .transpose()?
-                            .ok_or_else(|| anyhow!("Array type missing items specification"))?;
-                        ProximaType::Array(Box::new(element))
+                "map" => {
+                    let value = values
+                        .as_ref()
+                        .map(|v| avro_type_to_proxima_type(v).map(|(t, _)| t))
+                        .transpose()?
+                        .ok_or_else(|| anyhow!("Map type missing values specification"))?;
+                    ProximaType::Map {
+                        key: Box::new(ProximaType::String),
+                        value: Box::new(value),
                     }
-                    "map" => {
-                        let value = values
-                            .as_ref()
-                            .map(|v| v.to_proxima_type().map(|(t, _)| t))
-                            .transpose()?
-                            .ok_or_else(|| anyhow!("Map type missing values specification"))?;
-                        ProximaType::Map {
-                            key: Box::new(ProximaType::String),
-                            value: Box::new(value),
+                }
+                "fixed" => {
+                    if let Some(dim) = dimension {
+                        ProximaType::DenseVector {
+                            element: DmVectorElement::Float32,
+                            dim: *dim as usize,
                         }
+                    } else {
+                        ProximaType::Binary
                     }
-                    "fixed" => {
-                        if let Some(dim) = dimension {
-                            ProximaType::DenseVector {
-                                element: DmVectorElement::Float32,
-                                dim: *dim as usize,
-                            }
-                        } else {
-                            ProximaType::Binary
-                        }
-                    }
-                    "bytes" if precision.is_some() => ProximaType::Decimal {
-                        precision: precision
-                            .ok_or_else(|| anyhow!("Decimal type missing precision"))?,
-                        scale: scale.ok_or_else(|| anyhow!("Decimal type missing scale"))? as u8,
-                    },
-                    _ => ProximaType::String,
-                };
-                Ok((dtype, false))
-            }
+                }
+                "bytes" if precision.is_some() => ProximaType::Decimal {
+                    precision: precision
+                        .ok_or_else(|| anyhow!("Decimal type missing precision"))?,
+                    scale: scale.ok_or_else(|| anyhow!("Decimal type missing scale"))? as u8,
+                },
+                _ => ProximaType::String,
+            };
+            Ok((dtype, false))
         }
     }
 }
 
 impl TimeUnit {
     /// Convert to Arrow TimeUnit.
-    pub fn to_arrow_time_unit(&self) -> ArrowTimeUnit {
+    pub fn to_arrow_time_unit(&self) -> arrow_schema::TimeUnit {
         match self {
-            TimeUnit::Second => ArrowTimeUnit::Second,
-            TimeUnit::Millisecond => ArrowTimeUnit::Millisecond,
-            TimeUnit::Microsecond => ArrowTimeUnit::Microsecond,
-            TimeUnit::Nanosecond => ArrowTimeUnit::Nanosecond,
+            TimeUnit::Second => arrow_schema::TimeUnit::Second,
+            TimeUnit::Millisecond => arrow_schema::TimeUnit::Millisecond,
+            TimeUnit::Microsecond => arrow_schema::TimeUnit::Microsecond,
+            TimeUnit::Nanosecond => arrow_schema::TimeUnit::Nanosecond,
         }
     }
 
     /// Convert from Arrow TimeUnit.
-    pub fn from_arrow(unit: ArrowTimeUnit) -> Self {
+    pub fn from_arrow(unit: arrow_schema::TimeUnit) -> Self {
         match unit {
-            ArrowTimeUnit::Second => TimeUnit::Second,
-            ArrowTimeUnit::Millisecond => TimeUnit::Millisecond,
-            ArrowTimeUnit::Microsecond => TimeUnit::Microsecond,
-            ArrowTimeUnit::Nanosecond => TimeUnit::Nanosecond,
+            arrow_schema::TimeUnit::Second => TimeUnit::Second,
+            arrow_schema::TimeUnit::Millisecond => TimeUnit::Millisecond,
+            arrow_schema::TimeUnit::Microsecond => TimeUnit::Microsecond,
+            arrow_schema::TimeUnit::Nanosecond => TimeUnit::Nanosecond,
         }
     }
 }
@@ -748,7 +441,8 @@ impl TimeUnit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_schema::DataType as ArrowDataType;
+    use arrow_schema::{DataType as ArrowDataType, TimeUnit as ArrowTimeUnit};
+    use proximadb_data_model::TimeUnit as DmTimeUnit;
 
     #[test]
     fn test_vector_record_schema() {
@@ -765,7 +459,6 @@ mod tests {
         let arrow_schema = schema.to_arrow_schema();
         assert_eq!(arrow_schema.fields().len(), 5);
 
-        // Round-trip test
         let recovered = ProximaSchema::from_arrow_schema(&arrow_schema, "test".to_string());
         assert_eq!(recovered.active_column_count(), 5);
     }
@@ -805,13 +498,13 @@ mod tests {
             nullable: true,
             default_value: None,
             comment: None,
-            metadata: HashMap::new(),
+            properties: HashMap::new(),
             is_deleted: true,
             original_id: Some(4),
         });
 
         assert!(!schema.is_legacy_vector_record);
-        assert_eq!(schema.primary_key, vec![1]);
+        assert_eq!(schema.primary_key_ids(), vec![1]);
         assert_eq!(schema.vector_dimension(), Some(384));
         assert_eq!(schema.active_column_count(), 5);
         assert_eq!(schema.next_column_id(), 100);
@@ -828,7 +521,6 @@ mod tests {
     #[test]
     fn proxima_type_arrow_mapping_covers_primitives_complex_vectors_and_fallbacks() {
         // Canonical mapping lives on `ProximaType::to_arrow_type` (ADR-024).
-        // `ProximaColumn::to_arrow_field` routes through it; assert via that.
         let cases = vec![
             (ProximaType::Boolean, ArrowDataType::Boolean),
             (ProximaType::Int8, ArrowDataType::Int8),
@@ -859,7 +551,6 @@ mod tests {
                 ProximaType::TimestampTz(DmTimeUnit::Microsecond),
                 ArrowDataType::Timestamp(ArrowTimeUnit::Microsecond, Some("UTC".into())),
             ),
-            // Canonical change (ADR-024): UUID is a 16-byte identifier, not Utf8.
             (ProximaType::Uuid, ArrowDataType::FixedSizeBinary(16)),
             (ProximaType::Json, ArrowDataType::Utf8),
             (
@@ -952,9 +643,9 @@ mod tests {
                 name: "id".to_string(),
                 data_type: ProximaType::String,
                 nullable: false,
-                default_value: Some(DefaultValue::Literal("\"p1\"".to_string())),
+                default_value: Some("\"p1\"".to_string()),
                 comment: Some("primary id".to_string()),
-                metadata: HashMap::from([("encoding".to_string(), "plain".to_string())]),
+                properties: HashMap::from([("encoding".to_string(), "plain".to_string())]),
                 is_deleted: false,
                 original_id: None,
             },
@@ -963,9 +654,9 @@ mod tests {
                 name: "tags".to_string(),
                 data_type: ProximaType::Array(Box::new(ProximaType::String)),
                 nullable: true,
-                default_value: Some(DefaultValue::Expression("array[]".to_string())),
+                default_value: Some("array[]".to_string()),
                 comment: None,
-                metadata: HashMap::new(),
+                properties: HashMap::new(),
                 is_deleted: false,
                 original_id: None,
             },
@@ -977,9 +668,9 @@ mod tests {
                     dim: 4,
                 },
                 nullable: false,
-                default_value: Some(DefaultValue::AutoGenerate(AutoGenerateType::Uuid)),
+                default_value: None,
                 comment: None,
-                metadata: HashMap::new(),
+                properties: HashMap::new(),
                 is_deleted: false,
                 original_id: None,
             },
@@ -993,14 +684,15 @@ mod tests {
                 nullable: false,
                 default_value: None,
                 comment: None,
-                metadata: HashMap::new(),
+                properties: HashMap::new(),
                 is_deleted: false,
                 original_id: None,
             },
         ];
-        let mut schema = ProximaSchema::new("catalog.products".to_string(), columns, vec![10]);
+        let mut schema =
+            ProximaSchema::from_columns("catalog.products".to_string(), columns, vec![10]);
         schema
-            .metadata
+            .properties
             .insert("owner".to_string(), "catalog".to_string());
 
         let avro = schema.to_avro_style();
@@ -1009,13 +701,14 @@ mod tests {
         assert_eq!(avro.fields.len(), 4);
         assert_eq!(avro.fields[0].default, Some(serde_json::json!("p1")));
         assert_eq!(avro.fields[1].default, Some(serde_json::json!("array[]")));
-        assert_eq!(avro.fields[2].default, Some(JsonValue::Null));
         assert_eq!(avro.metadata.get("owner"), Some(&"catalog".to_string()));
 
         let json = schema.to_avro_json().unwrap();
         let from_json = ProximaSchema::from_avro_json(&json).unwrap();
         assert_eq!(from_json.schema_id, "catalog.products");
-        assert_eq!(from_json.primary_key, vec![1]);
+        // PK defaults to the first column; the avro fields carry their original
+        // column ids (10..13), so the first column id is 10.
+        assert_eq!(from_json.primary_key_ids(), vec![10]);
         assert_eq!(from_json.active_column_count(), 4);
         assert!(matches!(
             from_json.column_by_name("tags").unwrap().data_type,
@@ -1062,8 +755,7 @@ mod tests {
             scale: None,
         };
         assert!(
-            missing_map_values
-                .to_proxima_type()
+            avro_type_to_proxima_type(&missing_map_values)
                 .unwrap_err()
                 .to_string()
                 .contains("missing values")
@@ -1078,23 +770,18 @@ mod tests {
             scale: None,
         };
         assert!(
-            decimal_missing_scale
-                .to_proxima_type()
+            avro_type_to_proxima_type(&decimal_missing_scale)
                 .unwrap_err()
                 .to_string()
                 .contains("missing scale")
         );
 
         assert_eq!(
-            AvroStyleType::Union(vec!["null".to_string()])
-                .to_proxima_type()
-                .unwrap(),
+            avro_type_to_proxima_type(&AvroStyleType::Union(vec!["null".to_string()])).unwrap(),
             (ProximaType::String, true)
         );
         assert_eq!(
-            AvroStyleType::Simple("unknown".to_string())
-                .to_proxima_type()
-                .unwrap(),
+            avro_type_to_proxima_type(&AvroStyleType::Simple("unknown".to_string())).unwrap(),
             (ProximaType::String, false)
         );
     }

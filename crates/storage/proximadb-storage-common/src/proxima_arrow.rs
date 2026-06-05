@@ -355,7 +355,7 @@ pub fn infer_proxima_schema(records: &[ProximaRecord]) -> ProximaSchema {
             nullable: true,
             default_value: None,
             comment: None,
-            metadata: HashMap::new(),
+            properties: HashMap::new(),
             is_deleted: false,
             original_id: None,
         });
@@ -381,7 +381,7 @@ pub fn infer_proxima_schema(records: &[ProximaRecord]) -> ProximaSchema {
         );
     }
 
-    ProximaSchema::new("inferred".to_string(), columns, Vec::new())
+    ProximaSchema::from_columns("inferred".to_string(), columns, Vec::new())
 }
 
 /// Render a 16-byte UUID/ULID as the canonical hyphenated hex form.
@@ -517,7 +517,7 @@ mod tests {
             nullable,
             default_value: None,
             comment: None,
-            metadata: HashMap::new(),
+            properties: HashMap::new(),
             is_deleted: false,
             original_id: None,
         }
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn typed_columns_with_null_masking() {
         // Schema: name:Utf8, age:Int64, score:Float64, active:Boolean.
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "test".to_string(),
             vec![
                 col(1, "name", ProximaType::String, true),
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn vector_column_encodes_fp32_le_and_nulls() {
         let dim = 3u32;
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "vec".to_string(),
             vec![
                 col(1, "id", ProximaType::String, false),
@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn vector_dimension_mismatch_is_error() {
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "vec".to_string(),
             vec![col(
                 1,
@@ -684,7 +684,7 @@ mod tests {
     #[test]
     fn integer_widening_coercion() {
         // Column is Int64 but the prop is an Int32 — widening must succeed, not null out.
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "coerce".to_string(),
             vec![col(1, "n", ProximaType::Int64, true)],
             vec![],
@@ -781,7 +781,7 @@ mod tests {
     /// trips through `FixedSizeBinary`; an absent embedding decodes to none).
     #[test]
     fn record_batch_reverse_round_trips_scalars_and_vector() {
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "rt".to_string(),
             vec![
                 col(1, "name", ProximaType::String, true),

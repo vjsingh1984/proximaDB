@@ -238,8 +238,19 @@ pub struct CatalogColumn {
     pub default_value: Option<String>,
     /// Column comment
     pub comment: Option<String>,
-    /// Column metadata/properties
+    /// Column metadata/properties (canonical metadata map — ADR-024 Step 4
+    /// absorbed the storage-side `ProximaColumn.metadata` into this field).
     pub properties: HashMap<String, String>,
+
+    // === ADR-024 Step 4: absorbed from storage-side `ProximaColumn` ===
+    /// Tombstone flag (soft delete for schema evolution). Additive; legacy
+    /// persisted catalogs (without this field) deserialize as `false`.
+    #[serde(default)]
+    pub is_deleted: bool,
+    /// Original field ID (for tracking renames). Additive; legacy persisted
+    /// catalogs (without this field) deserialize as `None`.
+    #[serde(default)]
+    pub original_id: Option<i32>,
 }
 
 impl CatalogColumn {
@@ -253,6 +264,8 @@ impl CatalogColumn {
             default_value: None,
             comment: None,
             properties: HashMap::new(),
+            is_deleted: false,
+            original_id: None,
         }
     }
 
@@ -272,6 +285,48 @@ impl CatalogColumn {
     pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
         self.comment = Some(comment.into());
         self
+    }
+
+    /// True when this column is active (not tombstoned). Ported from the
+    /// storage-side `ProximaColumn` (ADR-024 Step 4).
+    pub fn is_active(&self) -> bool {
+        !self.is_deleted
+    }
+
+    /// Convert to an Arrow [`Field`]. Uses the canonical storage-plane Arrow
+    /// projection ([`ProximaType::to_arrow_type`]) — matching the storage-side
+    /// `ProximaColumn::to_arrow_field` this absorbed (ADR-024 Step 4), where a
+    /// dense vector is a fixed-width `FixedSizeBinary` carrier. This is the
+    /// projection the data-plane converter (`proxima_arrow`) writes against, so
+    /// schema and data agree. (The dimensionless-catalog [`catalog_arrow_type`]
+    /// projection remains available for catalog-only Arrow exports.) The stable
+    /// column id and comment are carried in the field metadata.
+    pub fn to_arrow_field(&self) -> arrow_schema::Field {
+        let arrow_type = self.data_type.to_arrow_type();
+        let mut field = arrow_schema::Field::new(&self.name, arrow_type, self.nullable);
+        let mut meta = HashMap::new();
+        meta.insert("proxima_column_id".to_string(), self.id.to_string());
+        if let Some(ref comment) = self.comment {
+            meta.insert("comment".to_string(), comment.clone());
+        }
+        field = field.with_metadata(meta);
+        field
+    }
+
+    /// Create a column from an Arrow [`Field`] with an explicit stable id.
+    /// Ported from the storage-side `ProximaColumn::from_arrow_field`.
+    pub fn from_arrow_field(field: &arrow_schema::Field, id: i32) -> Self {
+        Self {
+            id,
+            name: field.name().clone(),
+            data_type: ProximaType::from_arrow_type(field.data_type()),
+            nullable: field.is_nullable(),
+            default_value: None,
+            comment: field.metadata().get("comment").cloned(),
+            properties: HashMap::new(),
+            is_deleted: false,
+            original_id: None,
+        }
     }
 }
 
@@ -459,6 +514,29 @@ pub struct CatalogTableSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precision_migration_state: Option<embedding_precision_policy::PrecisionMigrationState>,
 
+    // === ADR-024 Step 4: absorbed from storage-side `ProximaSchema` ===
+    // The Arrow-native storage schema evolution fields. All additive
+    // `#[serde(default)]` so catalogs persisted before the merge still load.
+    /// Storage-plane schema identifier (UUID). Default `""` for catalogs that
+    /// never carried a storage-side schema id.
+    #[serde(default)]
+    pub schema_id: String,
+    /// Storage-plane schema version (monotonically increasing).
+    #[serde(default)]
+    pub version: u32,
+    /// Parent schema ID (for inheritance tracking).
+    #[serde(default)]
+    pub parent_schema_id: Option<String>,
+    /// Schema fingerprint for fast comparison (xxhash64-style).
+    #[serde(default)]
+    pub fingerprint: u64,
+    /// Creation timestamp (millis since epoch) of the storage-plane schema.
+    #[serde(default)]
+    pub created_at_ms_schema: i64,
+    /// Flag indicating if this is the legacy VectorRecord schema.
+    #[serde(default)]
+    pub is_legacy_vector_record: bool,
+
     /// Schema version
     pub schema_version: i32,
     /// Table properties
@@ -505,6 +583,13 @@ impl Default for CatalogTableSchema {
             allowed_embedding_precisions: Vec::new(),
             embedding_recall_slo: embedding_precision_policy::RecallSlo::lld_defaults(),
             precision_migration_state: None,
+            // ADR-024 Step 4: storage-plane schema evolution defaults.
+            schema_id: String::new(),
+            version: 0,
+            parent_schema_id: None,
+            fingerprint: 0,
+            created_at_ms_schema: 0,
+            is_legacy_vector_record: false,
             schema_version: 1,
             properties: HashMap::new(),
             location: None,
@@ -615,6 +700,222 @@ impl CatalogTableSchema {
     pub fn with_primary_pod(mut self, primary: Option<CatalogPrimaryPod>) -> Self {
         self.primary_pod = primary;
         self
+    }
+
+    // === ADR-024 Step 4: storage-plane (ProximaSchema) constructors/helpers ===
+    //
+    // These were inherent methods on the storage-side `ProximaSchema`, ported
+    // verbatim onto the unified `CatalogTableSchema` so the ~19 storage-plane
+    // consumers (proxima_arrow, proxima_parquet, schema evolution, the Arrow
+    // bridge, the DataFusion adapters, …) keep compiling against the alias.
+    //
+    // Note on primary keys: the storage-side schema kept the primary key as a
+    // `Vec<i32>` of *column ids*, while the catalog keeps it as a `Vec<String>`
+    // of *column names* (the canonical form). `from_columns` accepts ids and
+    // resolves them to names; `primary_key_ids` is the inverse by-id helper.
+
+    /// Millis since epoch (no `chrono` dependency in this crate).
+    fn now_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    }
+
+    /// Construct a storage-plane schema from explicit columns and a primary key
+    /// given by *column id* (the storage-side `ProximaSchema::new` signature).
+    /// The ids are resolved to the canonical by-name `primary_key`.
+    pub fn from_columns(
+        schema_id: impl Into<String>,
+        columns: Vec<CatalogColumn>,
+        primary_key_ids: Vec<i32>,
+    ) -> Self {
+        let fingerprint = Self::compute_fingerprint_for_columns(&columns);
+        let primary_key = primary_key_ids
+            .iter()
+            .filter_map(|id| columns.iter().find(|c| c.id == *id).map(|c| c.name.clone()))
+            .collect();
+        Self {
+            schema_id: schema_id.into(),
+            version: 1,
+            columns,
+            primary_key,
+            fingerprint,
+            created_at_ms_schema: Self::now_ms(),
+            is_legacy_vector_record: false,
+            ..Default::default()
+        }
+    }
+
+    /// Create the legacy VectorRecord schema (v0) for backward compatibility.
+    pub fn vector_record_schema(dimension: u32) -> Self {
+        let columns = vec![
+            CatalogColumn {
+                comment: Some("Vector record ID".to_string()),
+                ..CatalogColumn::new(1, "id", ProximaType::String).nullable(false)
+            },
+            CatalogColumn {
+                comment: Some("Embedding vector".to_string()),
+                ..CatalogColumn::new(
+                    2,
+                    "vector",
+                    ProximaType::DenseVector {
+                        element: VectorElement::Float32,
+                        dim: dimension as usize,
+                    },
+                )
+                .nullable(false)
+            },
+            CatalogColumn {
+                comment: Some("JSON metadata".to_string()),
+                ..CatalogColumn::new(3, "metadata", ProximaType::Json)
+            },
+            CatalogColumn {
+                comment: Some("Record timestamp".to_string()),
+                default_value: Some("CURRENT_TIMESTAMP".to_string()),
+                ..CatalogColumn::new(
+                    4,
+                    "timestamp",
+                    ProximaType::Timestamp(TimeUnit::Millisecond),
+                )
+                .nullable(false)
+            },
+            CatalogColumn {
+                comment: Some("MVCC version".to_string()),
+                default_value: Some("1".to_string()),
+                ..CatalogColumn::new(5, "version", ProximaType::Int64)
+            },
+        ];
+
+        let fingerprint = Self::compute_fingerprint_for_columns(&columns);
+        Self {
+            schema_id: "vector_record_v0".to_string(),
+            version: 0,
+            columns,
+            primary_key: vec!["id".to_string()],
+            fingerprint,
+            properties: HashMap::from([("legacy".to_string(), "true".to_string())]),
+            created_at_ms_schema: 0,
+            is_legacy_vector_record: true,
+            ..Default::default()
+        }
+    }
+
+    /// Create a standard vector schema with custom metadata columns.
+    pub fn with_metadata_columns(
+        schema_id: impl Into<String>,
+        dimension: u32,
+        metadata_fields: Vec<(String, ProximaType)>,
+    ) -> Self {
+        let mut columns = vec![
+            CatalogColumn::new(1, "id", ProximaType::String).nullable(false),
+            CatalogColumn::new(
+                2,
+                "vector",
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: dimension as usize,
+                },
+            )
+            .nullable(false),
+            CatalogColumn {
+                default_value: Some("CURRENT_TIMESTAMP".to_string()),
+                ..CatalogColumn::new(
+                    3,
+                    "timestamp",
+                    ProximaType::Timestamp(TimeUnit::Millisecond),
+                )
+                .nullable(false)
+            },
+        ];
+
+        for (next_id, (name, dtype)) in (4..).zip(metadata_fields) {
+            columns.push(CatalogColumn::new(next_id, name, dtype));
+        }
+
+        Self::from_columns(schema_id, columns, vec![1])
+    }
+
+    /// Convert to an Arrow [`Schema`](arrow_schema::Schema), skipping tombstoned
+    /// columns. Uses the catalog Arrow projection per column.
+    pub fn to_arrow_schema(&self) -> std::sync::Arc<arrow_schema::Schema> {
+        let fields: Vec<arrow_schema::Field> = self
+            .columns
+            .iter()
+            .filter(|c| !c.is_deleted)
+            .map(|col| col.to_arrow_field())
+            .collect();
+        std::sync::Arc::new(arrow_schema::Schema::new(fields))
+    }
+
+    /// Create from an Arrow [`Schema`](arrow_schema::Schema) with auto-generated
+    /// stable column ids.
+    pub fn from_arrow_schema(schema: &arrow_schema::Schema, schema_id: impl Into<String>) -> Self {
+        let columns: Vec<CatalogColumn> = schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| CatalogColumn::from_arrow_field(field, (idx + 1) as i32))
+            .collect();
+        Self::from_columns(schema_id, columns, Vec::new())
+    }
+
+    /// Compute the schema fingerprint over the active (non-tombstoned) columns.
+    pub fn compute_fingerprint_for_columns(columns: &[CatalogColumn]) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        for col in columns {
+            if !col.is_deleted {
+                col.id.hash(&mut hasher);
+                col.name.hash(&mut hasher);
+                format!("{:?}", col.data_type).hash(&mut hasher);
+                col.nullable.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    /// Active column by stable id (skips tombstoned columns).
+    pub fn column_by_id(&self, id: i32) -> Option<&CatalogColumn> {
+        self.columns.iter().find(|c| c.id == id && !c.is_deleted)
+    }
+
+    /// Active column by name (skips tombstoned columns).
+    pub fn column_by_name(&self, name: &str) -> Option<&CatalogColumn> {
+        self.columns
+            .iter()
+            .find(|c| c.name == name && !c.is_deleted)
+    }
+
+    /// Next free column id.
+    pub fn next_column_id(&self) -> i32 {
+        self.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1
+    }
+
+    /// Count of active (non-tombstoned) columns.
+    pub fn active_column_count(&self) -> usize {
+        self.columns.iter().filter(|c| !c.is_deleted).count()
+    }
+
+    /// Dimension of the first dense-vector column, if any.
+    pub fn vector_dimension(&self) -> Option<u32> {
+        for col in &self.columns {
+            if let ProximaType::DenseVector { dim, .. } = &col.data_type {
+                return Some(*dim as u32);
+            }
+        }
+        None
+    }
+
+    /// By-id view of the primary key, resolving the canonical by-name
+    /// `primary_key` back to column ids (the storage-side representation).
+    pub fn primary_key_ids(&self) -> Vec<i32> {
+        self.primary_key
+            .iter()
+            .filter_map(|name| self.columns.iter().find(|c| &c.name == name).map(|c| c.id))
+            .collect()
     }
 }
 
@@ -3265,6 +3566,93 @@ mod tests {
             schema.canonical_embedding_precision,
             proximadb_records::EmbeddingScalarType::Fp32
         );
+    }
+
+    // === ADR-024 Step 4: storage-side ProximaSchema absorbed into CatalogTableSchema ===
+
+    /// DURABLE compat: a `CatalogTableSchema` persisted BEFORE the ADR-024
+    /// Step-4 merge (i.e. without the absorbed storage-plane evolution fields
+    /// `schema_id`/`version`/`parent_schema_id`/`fingerprint`/
+    /// `created_at_ms_schema`/`is_legacy_vector_record`, and with columns that
+    /// lack `is_deleted`/`original_id`) MUST still deserialize, with the new
+    /// fields defaulting.
+    #[test]
+    fn catalog_table_schema_serde_back_compat_with_pre_merge_json() {
+        let pre_merge_json = serde_json::json!({
+            "name": "pre_merge_collection",
+            "columns": [
+                {
+                    "id": 1,
+                    "name": "id",
+                    "data_type": "Int64",
+                    "nullable": false,
+                    "default_value": null,
+                    "comment": null,
+                    "properties": {}
+                    // NOTE: no is_deleted / original_id
+                }
+            ],
+            "primary_key": ["id"],
+            "indexes": [],
+            "schema_version": 1,
+            "properties": {},
+            "location": null,
+            "created_at_ms": 1700000000000_i64,
+            "updated_at_ms": 1700000000000_i64
+            // NOTE: no schema_id / version / parent_schema_id / fingerprint /
+            // created_at_ms_schema / is_legacy_vector_record
+        });
+
+        let schema: CatalogTableSchema = serde_json::from_value(pre_merge_json).unwrap();
+        assert_eq!(schema.name, "pre_merge_collection");
+        // Absorbed schema-level fields default.
+        assert_eq!(schema.schema_id, "");
+        assert_eq!(schema.version, 0);
+        assert!(schema.parent_schema_id.is_none());
+        assert_eq!(schema.fingerprint, 0);
+        assert_eq!(schema.created_at_ms_schema, 0);
+        assert!(!schema.is_legacy_vector_record);
+        // Absorbed column-level fields default.
+        assert_eq!(schema.columns.len(), 1);
+        assert!(!schema.columns[0].is_deleted);
+        assert!(schema.columns[0].original_id.is_none());
+        // Ported helper still works against the deserialized schema.
+        assert!(schema.column_by_name("id").is_some());
+        assert_eq!(schema.primary_key_ids(), vec![1]);
+    }
+
+    /// The ported storage-plane constructors/helpers behave like the original
+    /// `ProximaSchema` they replaced: legacy vector schema, by-id/by-name
+    /// column lookup, tombstone-aware active count, and id<->name primary-key
+    /// resolution.
+    #[test]
+    fn catalog_table_schema_storage_plane_helpers() {
+        let schema = CatalogTableSchema::vector_record_schema(1536);
+        assert!(schema.is_legacy_vector_record);
+        assert_eq!(schema.version, 0);
+        assert_eq!(schema.active_column_count(), 5);
+        assert_eq!(schema.vector_dimension(), Some(1536));
+        assert_eq!(schema.primary_key, vec!["id".to_string()]);
+        assert_eq!(schema.primary_key_ids(), vec![1]);
+
+        // from_columns resolves primary-key ids to names.
+        let built = CatalogTableSchema::from_columns(
+            "custom",
+            vec![
+                CatalogColumn::new(1, "pk", ProximaType::Int64).nullable(false),
+                CatalogColumn::new(2, "val", ProximaType::String),
+            ],
+            vec![1],
+        );
+        assert_eq!(built.primary_key, vec!["pk".to_string()]);
+        assert!(built.column_by_id(2).is_some());
+
+        // fingerprint is stable for identical column sets, differs for distinct.
+        let a = CatalogTableSchema::vector_record_schema(512);
+        let b = CatalogTableSchema::vector_record_schema(512);
+        let c = CatalogTableSchema::vector_record_schema(1024);
+        assert_eq!(a.fingerprint, b.fingerprint);
+        assert_ne!(a.fingerprint, c.fingerprint);
     }
 
     #[test]

@@ -7465,6 +7465,7 @@ dependencies = [
  "parking_lot",
  "parquet",
  "proximadb-block-format",
+ "proximadb-catalog",
  "proximadb-compression-types",
  "proximadb-data-model",
  "proximadb-kernel",

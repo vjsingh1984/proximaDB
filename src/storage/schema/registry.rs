@@ -143,7 +143,9 @@ impl SchemaRegistry for InMemorySchemaRegistry {
                         schema_id: s.schema_id.clone(),
                         version: s.version,
                         fingerprint: s.fingerprint,
-                        created_at_ms: s.created_at_ms,
+                        // ADR-024 Step 4: the schema-version creation time is the
+                        // absorbed storage-plane field `created_at_ms_schema`.
+                        created_at_ms: s.created_at_ms_schema,
                         is_current: s.version == max_version,
                         column_count: s.columns.iter().filter(|c| !c.is_deleted).count(),
                     })

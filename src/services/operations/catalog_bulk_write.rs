@@ -415,6 +415,8 @@ impl CatalogBulkWriteService {
                 default_value: None,
                 comment: field.metadata().get("comment").cloned(),
                 properties,
+                is_deleted: false,
+                original_id: None,
             };
 
             schema = schema.with_column(column);

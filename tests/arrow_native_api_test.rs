@@ -31,7 +31,7 @@ mod schema_tests {
             nullable,
             default_value: None,
             comment: None,
-            metadata: HashMap::new(),
+            properties: HashMap::new(),
             is_deleted: false,
             original_id: None,
         }
@@ -39,7 +39,7 @@ mod schema_tests {
 
     #[test]
     fn test_proxima_schema_creation() {
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "test_schema".to_string(),
             vec![
                 make_column(0, "id", ProximaType::String, false),
@@ -65,7 +65,7 @@ mod schema_tests {
 
     #[test]
     fn test_proxima_schema_to_arrow() {
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "arrow_test".to_string(),
             vec![
                 make_column(0, "id", ProximaType::String, false),
@@ -82,13 +82,13 @@ mod schema_tests {
 
     #[test]
     fn test_schema_fingerprint_consistency() {
-        let schema1 = ProximaSchema::new(
+        let schema1 = ProximaSchema::from_columns(
             "fingerprint_test".to_string(),
             vec![make_column(0, "field1", ProximaType::String, false)],
             vec![0],
         );
 
-        let schema2 = ProximaSchema::new(
+        let schema2 = ProximaSchema::from_columns(
             "fingerprint_test".to_string(),
             vec![make_column(0, "field1", ProximaType::String, false)],
             vec![0],
@@ -279,7 +279,7 @@ mod spark_tests {
             nullable: false,
             default_value: None,
             comment: None,
-            metadata: HashMap::new(),
+            properties: HashMap::new(),
             is_deleted: false,
             original_id: None,
         }
@@ -311,7 +311,7 @@ mod spark_tests {
 
     #[test]
     fn test_spark_scan_builder() {
-        let proxima_schema = Arc::new(ProximaSchema::new(
+        let proxima_schema = Arc::new(ProximaSchema::from_columns(
             "test".to_string(),
             vec![
                 make_column(0, "id", ProximaType::String),

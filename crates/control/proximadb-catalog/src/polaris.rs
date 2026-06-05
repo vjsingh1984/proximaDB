@@ -331,6 +331,8 @@ impl PolarisCatalog {
             default_value: None,
             comment: field.doc.clone(),
             properties,
+            is_deleted: false,
+            original_id: None,
         }
     }
 

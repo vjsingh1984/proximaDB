@@ -198,6 +198,8 @@ impl UnityCatalog {
             default_value: None,
             comment: col.comment.clone(),
             properties,
+            is_deleted: false,
+            original_id: None,
         }
     }
 
