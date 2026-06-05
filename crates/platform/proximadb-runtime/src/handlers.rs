@@ -317,6 +317,16 @@ impl ApiHandlersPort for UnifiedHandlers {
             })
             .unwrap_or_default();
 
+        let column_types: Vec<String> = json_result
+            .get("column_types")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let rows: Vec<SqlRow> = records
             .iter()
             .map(|record| {
@@ -352,7 +362,7 @@ impl ApiHandlersPort for UnifiedHandlers {
             rows_returned,
             execution_time_ms: start.elapsed().as_millis() as u64,
             columns,
-            column_types: vec![],
+            column_types,
         })
     }
 }

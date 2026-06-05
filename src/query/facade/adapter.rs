@@ -83,6 +83,14 @@ pub struct QueryFacadeAdapter {
     validator: PlanValidator,
     /// Enable/disable plan validation (default: enabled)
     validation_enabled: bool,
+    /// Optional DmlService for EXPLAIN `<DML>` routing on the SQL port path.
+    ///
+    /// When wired (production, via `SharedServices`), `execute_sql` reproduces
+    /// the ROOT handler's `EXPLAIN [ANALYZE] <INSERT|UPDATE|DELETE>` behavior by
+    /// dispatching to the DmlService write-plan explainer. `None` => EXPLAIN
+    /// degrades gracefully through the facade (parity with ROOT when its
+    /// DmlService is unset). Part of TD-104 / seam S1 (single SQL authority).
+    dml_service: Option<Arc<crate::services::dml::DmlService>>,
 }
 
 impl QueryFacadeAdapter {
@@ -94,6 +102,7 @@ impl QueryFacadeAdapter {
             facade,
             validator,
             validation_enabled: true,
+            dml_service: None,
         }
     }
 
@@ -107,7 +116,19 @@ impl QueryFacadeAdapter {
             facade,
             validator,
             validation_enabled: false,
+            dml_service: None,
         }
+    }
+
+    /// Attach a `DmlService` so the SQL port path can route `EXPLAIN <DML>`
+    /// through the write-plan explainer (parity with the ROOT handler).
+    ///
+    /// Consumes and returns `self` for builder-style construction in
+    /// `SharedServices`. Without this, EXPLAIN `<DML>` degrades through the
+    /// facade exactly as ROOT does when its DmlService is unwired.
+    pub fn with_dml_service(mut self, dml_service: Arc<crate::services::dml::DmlService>) -> Self {
+        self.dml_service = Some(dml_service);
+        self
     }
 
     /// Enable plan validation
@@ -675,13 +696,51 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
     ) -> anyhow::Result<serde_json::Value> {
         use crate::query::QueryResultData;
 
+        // EXPLAIN [ANALYZE] <DML> routing — parity with the ROOT handler's
+        // execute_sql_v1. Detected via the shared sql_frontend parser; routed
+        // through the DmlService write-plan explainer when one is wired.
+        // (TD-104 / seam S1: make this adapter the single SQL authority.)
+        if let Some((is_analyze, inner_query)) =
+            crate::query::sql_frontend::parse_explain_kind(query.trim())
+            && let Some(dml_svc) = self.dml_service.as_ref()
+        {
+            let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+            match parser.parse_dml(inner_query) {
+                Ok(Some(statement)) => {
+                    let explanation = if is_analyze {
+                        dml_svc.explain_analyze_table_write(statement).await
+                    } else {
+                        dml_svc.explain_table_write(statement).await
+                    }
+                    .map_err(|e| anyhow!("EXPLAIN failed: {}", e))?;
+                    let plan_json = serde_json::to_string_pretty(&explanation)
+                        .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
+                    return Ok(serde_json::json!({
+                        "columns": ["QUERY PLAN"],
+                        "column_types": ["jsonb"],
+                        "records": [{ "QUERY PLAN": plan_json }],
+                    }));
+                }
+                Ok(None) => return Err(anyhow!("Invalid EXPLAIN statement")),
+                Err(e) => return Err(anyhow!("EXPLAIN parse error: {}", e)),
+            }
+            // DmlService not wired: fall through to the facade so EXPLAIN
+            // degrades gracefully (matches ROOT when its DmlService is unset).
+        }
+
         let query_result = self.sql_query(&query).await?;
 
-        let rows: Vec<serde_json::Value> = match query_result.data {
+        let records: Vec<serde_json::Value> = match query_result.data {
             QueryResultData::Rows(rows) => rows,
             QueryResultData::VectorResults(matches) => matches
                 .into_iter()
-                .map(|m| serde_json::json!({"id": m.record.oid, "score": m.score, "rank": m.rank}))
+                .map(|m| {
+                    serde_json::json!({
+                        "id": m.record.oid,
+                        "score": m.score,
+                        "metadata": m.record.props,
+                    })
+                })
                 .collect(),
             QueryResultData::Empty => vec![],
             QueryResultData::Graph(g) => g
@@ -691,13 +750,115 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
                 .collect(),
         };
 
-        Ok(serde_json::json!({"rows": rows}))
+        Ok(shape_sql_records(records))
+    }
+}
+
+/// Assemble the SQL port-path response envelope that the runtime handler's
+/// `execute_sql_v1` parses: `{ "columns", "column_types", "records" }`.
+///
+/// Columns and their coarse types are derived from the first record's object
+/// keys, mirroring the ROOT handler's `convert_query_result_to_sql_response`
+/// so the port path shapes an identical `ExecuteSqlResponse`. This is the
+/// contract that was previously broken — the adapter emitted `{ "rows": … }`,
+/// which the runtime handler does not read (TD-104 / seam S1).
+fn shape_sql_records(records: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut columns: Vec<String> = Vec::new();
+    let mut column_types: Vec<String> = Vec::new();
+    if let Some(serde_json::Value::Object(map)) = records.first() {
+        for (k, v) in map {
+            columns.push(k.clone());
+            column_types.push(infer_json_type(v));
+        }
+    }
+
+    serde_json::json!({
+        "columns": columns,
+        "column_types": column_types,
+        "records": records,
+    })
+}
+
+/// Infer a coarse SQL type label for a JSON value (column-type metadata).
+///
+/// Mirrors the ROOT handler's `infer_json_type` so the SQL port path reports
+/// the same `column_types` as the legacy direct-conversion path.
+fn infer_json_type(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Bool(_) => "BOOLEAN".to_string(),
+        serde_json::Value::Number(n) => {
+            if n.is_i64() || n.is_u64() {
+                "INTEGER".to_string()
+            } else {
+                "FLOAT".to_string()
+            }
+        }
+        serde_json::Value::String(_) => "TEXT".to_string(),
+        serde_json::Value::Array(arr) => match arr.first() {
+            Some(first) => format!("ARRAY<{}>", infer_json_type(first)),
+            None => "ARRAY".to_string(),
+        },
+        serde_json::Value::Object(_) => "JSON".to_string(),
     }
 }
 
 // ================================================================================
 // TESTS
 // ================================================================================
+
+#[cfg(test)]
+mod sql_envelope_tests {
+    use super::{infer_json_type, shape_sql_records};
+
+    #[test]
+    fn shape_emits_columns_types_and_records_keys() {
+        // The runtime handler reads `columns`/`column_types`/`records` — NOT the
+        // old `rows` key. This guards the contract that was previously broken.
+        let records = vec![serde_json::json!({"id": 7, "name": "alice", "score": 0.5})];
+        let env = shape_sql_records(records.clone());
+
+        let cols: Vec<String> = env["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        // serde_json::Map preserves insertion order? It is BTreeMap by default →
+        // keys are sorted. Assert as a set to stay order-agnostic.
+        assert_eq!(cols.len(), 3);
+        assert!(cols.contains(&"id".to_string()));
+        assert!(cols.contains(&"name".to_string()));
+        assert!(cols.contains(&"score".to_string()));
+
+        assert_eq!(env["column_types"].as_array().unwrap().len(), 3);
+        assert_eq!(env["records"].as_array().unwrap().len(), 1);
+        assert!(env.get("rows").is_none(), "must not emit legacy `rows` key");
+    }
+
+    #[test]
+    fn shape_empty_records_yields_empty_columns() {
+        let env = shape_sql_records(vec![]);
+        assert_eq!(env["columns"].as_array().unwrap().len(), 0);
+        assert_eq!(env["column_types"].as_array().unwrap().len(), 0);
+        assert_eq!(env["records"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn infer_json_type_matches_root_vocabulary() {
+        assert_eq!(infer_json_type(&serde_json::Value::Null), "NULL");
+        assert_eq!(infer_json_type(&serde_json::json!(true)), "BOOLEAN");
+        assert_eq!(infer_json_type(&serde_json::json!(42)), "INTEGER");
+        assert_eq!(infer_json_type(&serde_json::json!(1.5)), "FLOAT");
+        assert_eq!(infer_json_type(&serde_json::json!("x")), "TEXT");
+        assert_eq!(
+            infer_json_type(&serde_json::json!([1, 2])),
+            "ARRAY<INTEGER>"
+        );
+        assert_eq!(infer_json_type(&serde_json::json!([])), "ARRAY");
+        assert_eq!(infer_json_type(&serde_json::json!({"a": 1})), "JSON");
+    }
+}
 
 #[cfg(test)]
 mod tests {

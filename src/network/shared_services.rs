@@ -73,6 +73,11 @@ pub struct SharedServices {
     /// Unified query facade - single entry point for all query types
     /// Consolidates vector search, SQL, and graph query paths
     pub query_facade: Arc<UnifiedQueryFacade>,
+    /// Shared SQL/query adapter over `query_facade`, carrying the `DmlService`
+    /// so every consumer (runtime handler, pgwire, embedded) gets EXPLAIN
+    /// `<DML>` routing on the port path. Built once in `new`; handed out by
+    /// `query_adapter()` (TD-104 / seam S1: single SQL authority).
+    pub query_adapter: Arc<QueryFacadeAdapter>,
     /// Optional cluster orchestration port (Phase 9.12 / Task #72).
     ///
     /// Production bootstrap currently passes `None` for single-node
@@ -1506,19 +1511,28 @@ impl SharedServices {
             "✅ SharedServices: UnifiedQueryFacade created with 7 strategies (vector, graph, document, observability, columnar, distributed, sql)"
         );
 
-        // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing
-        // This enables SQL queries to flow through the facade when unified-facade-routing feature is enabled
-        let query_adapter = Arc::new(QueryFacadeAdapter::new(query_facade.clone()));
-        request_handlers.set_query_adapter(query_adapter.clone());
-        debug!("✅ SharedServices::new - QueryFacadeAdapter wired to UnifiedHandlers");
-
-        // Wire DmlService to UnifiedHandlers for gRPC EXPLAIN routing.
-        // EXPLAIN INSERT … SELECT queries arriving on the ExecuteSql RPC are detected in
-        // execute_sql_v1 and dispatched here instead of the legacy SQL frontend.
+        // Build the DmlService first so it can be shared by both the ROOT handler
+        // (legacy EXPLAIN routing) and the QueryFacadeAdapter (port-path EXPLAIN
+        // routing). EXPLAIN INSERT … SELECT queries arriving on the ExecuteSql RPC
+        // are detected in execute_sql_v1 / the adapter and dispatched here instead
+        // of the legacy SQL frontend.
         let dml_service_for_grpc = Arc::new(DmlService::new(
             catalog_manager.clone(),
             vector_operations_service.clone(),
         ));
+
+        // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing.
+        // This enables SQL queries to flow through the facade when the
+        // unified-facade-routing feature is enabled. The adapter carries the
+        // DmlService so the port path (runtime handler → adapter.execute_sql)
+        // reproduces ROOT's EXPLAIN `<DML>` routing (TD-104 / seam S1).
+        let query_adapter = Arc::new(
+            QueryFacadeAdapter::new(query_facade.clone())
+                .with_dml_service(dml_service_for_grpc.clone()),
+        );
+        request_handlers.set_query_adapter(query_adapter.clone());
+        debug!("✅ SharedServices::new - QueryFacadeAdapter wired to UnifiedHandlers");
+
         request_handlers.set_dml_service(dml_service_for_grpc);
         debug!("✅ SharedServices::new - DmlService wired to UnifiedHandlers for EXPLAIN routing");
 
@@ -1728,6 +1742,7 @@ impl SharedServices {
                 metrics_collector,
                 metrics_updater: Some(metrics_updater.clone()),
                 query_facade,
+                query_adapter: query_adapter.clone(),
                 api_handlers: runtime_api_handlers,
                 // Task #72: ClusterPort wiring slot. Defaults to None for
                 // single-node bootstrap; populate via builder when [distributed]
@@ -1867,7 +1882,10 @@ impl SharedServices {
     /// The adapter provides protocol-agnostic methods that convert proto types
     /// to/from QueryRequest/QueryResult, enabling query routing.
     pub fn query_adapter(&self) -> Arc<QueryFacadeAdapter> {
-        Arc::new(QueryFacadeAdapter::new(self.query_facade.clone()))
+        // Return the shared, DmlService-wired adapter built in `new` so the
+        // port path (runtime handler / pgwire / embedded) reproduces ROOT's
+        // EXPLAIN `<DML>` routing rather than a fresh DmlService-less adapter.
+        self.query_adapter.clone()
     }
 
     /// Recover vectors from write buffer after StorageEngine has started
