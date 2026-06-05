@@ -69,15 +69,15 @@ invariant: edge-divergence is a cleanup; core-divergence is a defect.
 | Keep proto v1 for the *wire* only. Migrate internal usage to canonical types one handler file at a time. Edge adapters (parse → convert) stay; internal mirrors go.
 | TD-106
 
-| S4 Scattered configs
-| Canonical config crate is `crates/foundation/proximadb-config`, but CDC (`src/cdc/`, ~8 structs) and cluster (`src/cluster/`, ~9 structs) define their own config types outside it.
-| Move domain config structs into `proximadb-config` as domain modules; re-export from original locations to avoid churn at call sites. Verify no semantic specialization is lost (some are legitimately engine-specific).
-| TD-107
+| S4 Scattered configs — RESOLVED (2026-06-05)
+| RESOLVED at the right seam. Cluster configs fully converged into `proximadb-config/src/cluster_config.rs` (Consensus/Routing/Shard/Partition/ClusterReplication/NodeRegistry/MetadataService/DistributedOps/ConnectionPool/Cluster), re-exported from `src/cluster/*.rs` (8 sites); the only local one, `CachedPartitionConfig`, is a non-serializable in-memory cache and stays. CDC: `src/cdc/config.rs` re-exports the canonical `proximadb_config` CDC surface; the structs left in `src/cdc/` are connector-specific (Kafka/Webhook/Postgres/MySql/Mongo, `experimental-cdc-connectors`-gated) or subscription-runtime — legitimate specialization the seam says to preserve; moving them would add cross-module entanglement for ~zero benefit.
+| Done: app-level CDC + cluster config in `proximadb-config`, re-exported; domain/connector/runtime specialization stays local; build green.
+| TD-107 (Resolved)
 
-| S6 Residual catalog re-export shims
-| All 8 catalog backends moved to `crates/control/proximadb-catalog`; several `src/catalog/*.rs` files remain as pure re-export shims.
-| Delete the pure re-export-only files and repoint importers at the crate. Keep any file that still adds a transitional integration shell (budget guard, tier glue) — verify file-by-file before deleting.
-| TD-108
+| S6 Residual catalog re-export shims — RESOLVED (2026-06-05)
+| RESOLVED: no pure re-export shim remains under `src/catalog/`. The local `types` shim (`pub use proximadb_catalog::*`) was deleted; `src/catalog/mod.rs` is the module root (re-exports the canonical `proximadb_catalog` surface + carries real submodules), and every other `src/catalog/*.rs` is a real implementation module. Build green.
+| Done: shims removed; importers use the crate via the module root; files with real glue retained.
+| TD-108 (Resolved)
 
 | S7 Scattered `ProximaRecord`↔Arrow/Parquet converters
 | Three lossy forward converters predate a canonical home: `src/connectors/spark.rs::proxima_records_to_record_batch` (id + `List<Float32>` vector only — props dropped), `src/storage/formats/arrow_conversion.rs` (legacy `VectorRecord`-based), `src/network/arrow_ipc/codec.rs::vector_records_to_batch` (collapses all props into one `StructArray`). Separately, every Parquet helper (`columnar_io::write_parquet`, `file_export::read_parquet_file`, `open/iceberg.rs`) is FileSystem-**path**-based — no in-memory `RecordBatch`↔`Bytes` layer existed for the object-store base tier.

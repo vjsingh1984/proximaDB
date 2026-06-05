@@ -1384,19 +1384,19 @@ physical layouts.
 | Consolidate CDC/cluster configs into proximadb-config (seam S4)
 | P3
 | LOW
-| Open — convergence
-| CONVERGENCE_AUDIT S4. CDC (`src/cdc/`, ~8 structs) and cluster (`src/cluster/`, ~9 structs) define config types outside the canonical `crates/foundation/proximadb-config`. Move them into domain modules there; re-export from original locations to avoid call-site churn. Preserve any legitimate engine-specific specialization.
-| 1 sprint
-| Acceptance: (1) CDC + cluster config structs defined in `proximadb-config`. (2) Original paths re-export. (3) No behavior change; build green.
+| Resolved — at-the-right-seam (2026-06-05)
+| CONVERGENCE_AUDIT S4. RESOLVED after audit: the convergence is already at the correct seam; remaining residue is legitimate engine-specific specialization the audit explicitly says to preserve. (1) CLUSTER configs fully converged: `crates/foundation/proximadb-config/src/cluster_config.rs` houses Consensus/Routing/Shard/Partition/ClusterReplication/NodeRegistry/MetadataService/DistributedOps/ConnectionPool/Cluster configs; `src/cluster/*.rs` re-export them (8 sites). The only local cluster struct, `CachedPartitionConfig` (routing.rs), is an in-memory cache wrapper (holds `Instant`, non-serializable) — must stay. (2) CDC: `src/cdc/config.rs` re-exports the canonical `proximadb_config` CDC surface (CdcConfig/SourceConfig/SinkConfig/CaptureConfig/SnapshotConfig/…). The structs remaining in `src/cdc/` are connector-specific (Kafka/Webhook/Postgres/MySql/Mongo + their Table/Collection configs — `experimental-cdc-connectors`-gated) or subscription-runtime (OutboundConfig/SubscriptionConfig/RouteConfig/ExactlyOnceConfig/EmbeddingConfig) — legitimate specialization, not app-config. Moving them would violate the reuse-first/no-cross-module-entanglement rule for ~zero benefit. (BufferConfig/CdcSinkRetryConfig are tiny sink-local helpers, intentionally left.)
+| done
+| Acceptance MET: (1) canonical app-level CDC + cluster config in `proximadb-config`. (2) original paths re-export. (3) no behavior change; build green. Residual src/cdc structs are by-design domain specialization.
 
 | TD-108
 | Delete residual catalog re-export shims (seam S6)
 | P3
 | LOW
-| Open — convergence
-| CONVERGENCE_AUDIT S6. All 8 catalog backends live in `crates/control/proximadb-catalog`; several `src/catalog/*.rs` files remain as pure re-export shims. Delete the re-export-only files and repoint importers; keep any file that still adds transitional integration glue (budget guard, tier). Verify file-by-file before deleting.
-| 1 week
-| Acceptance: (1) Pure re-export shims removed; importers point at the crate. (2) Files with real glue retained. (3) Build green.
+| Resolved (2026-06-05)
+| CONVERGENCE_AUDIT S6. RESOLVED: verified no pure re-export shim remains under `src/catalog/` — every `src/catalog/*.rs` is a real implementation module (0 `pub use` except `mod.rs`, which is the module root, not a deletable shim). The local `types` shim (`pub use proximadb_catalog::*`) was already deleted (see `src/catalog/mod.rs` comment "TD-108: the local `types` shim ... was deleted"); `mod.rs` re-exports the canonical `proximadb_catalog` surface as the module root + carries real submodules (partition_pruning, iceberg_rest_service, tenant_tier, tier_*, budget_guard, corpus_version, …). Build green at HEAD.
+| done
+| Acceptance MET: (1) pure re-export shims removed; importers use the crate (via the `mod.rs` root). (2) files with real glue retained. (3) build green.
 
 | TD-110
 | OLTP/OLAP HTAP storage and PostgreSQL constraint semantics
