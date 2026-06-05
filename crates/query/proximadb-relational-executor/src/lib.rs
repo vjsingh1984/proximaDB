@@ -116,6 +116,9 @@ impl Default for ExecutionContext {
 pub struct NodeMetric {
     /// Operator keyword (matches the planner's `explain_physical` line order).
     pub label: String,
+    /// Number of DIRECT child operators. With the pre-order ordering this lets a
+    /// consumer reconstruct the tree (and derive self-time = inclusive − children).
+    pub arity: usize,
     /// Rows this operator emitted.
     pub rows: u64,
     /// Wall-clock nanoseconds spent in this operator's `next_row`, INCLUSIVE of
@@ -137,10 +140,11 @@ impl ExecMetrics {
     }
 
     /// Register an operator and return its pre-order id (its slot index).
-    fn alloc(&self, label: &str) -> usize {
+    fn alloc(&self, label: &str, arity: usize) -> usize {
         let mut nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
         nodes.push(NodeMetric {
             label: label.to_string(),
+            arity,
             rows: 0,
             elapsed_ns: 0,
         });
@@ -161,6 +165,35 @@ impl ExecMetrics {
     pub fn snapshot(&self) -> Vec<NodeMetric> {
         self.nodes.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
+}
+
+/// Self (exclusive) time per operator = inclusive − sum of direct children's
+/// inclusive time. Reconstructs the tree from the pre-order `metrics` + each node's
+/// [`NodeMetric::arity`] (a node's `arity` subtrees follow it in pre-order), so the
+/// result is index-aligned with `metrics` (and with `explain_physical`'s lines).
+/// `saturating_sub` guards against sub-nanosecond timing noise. This is the headline
+/// "which operator is actually slow" — children's time is attributed to them, not the
+/// parent. Returns inclusive time unchanged for malformed input (no panic).
+pub fn self_times(metrics: &[NodeMetric]) -> Vec<u128> {
+    let mut out: Vec<u128> = metrics.iter().map(|m| m.elapsed_ns).collect();
+    // Returns the index just past the subtree rooted at `pos`.
+    fn walk(metrics: &[NodeMetric], pos: usize, out: &mut [u128]) -> usize {
+        let mut child = pos + 1;
+        let mut children_ns = 0u128;
+        for _ in 0..metrics[pos].arity {
+            if child >= metrics.len() {
+                break; // malformed arity → leave inclusive time, don't index OOB
+            }
+            children_ns += metrics[child].elapsed_ns;
+            child = walk(metrics, child, out);
+        }
+        out[pos] = metrics[pos].elapsed_ns.saturating_sub(children_ns);
+        child
+    }
+    if !metrics.is_empty() {
+        walk(metrics, 0, &mut out);
+    }
+    out
 }
 
 /// Source for relational readers. The executor calls
@@ -211,7 +244,7 @@ pub fn build_executor<F: ReaderFactory>(
     let metric = ctx
         .metrics
         .as_ref()
-        .map(|m| (m.clone(), m.alloc(plan_label(&plan))));
+        .map(|m| (m.clone(), m.alloc(plan_label(&plan), plan_arity(&plan))));
     let node: Box<dyn ExecNode> = match plan {
         PhysicalPlan::Scan {
             table,
@@ -322,6 +355,23 @@ fn plan_label(plan: &PhysicalPlan) -> &'static str {
         PhysicalPlan::Distinct { .. } => "Distinct",
         PhysicalPlan::Union { .. } => "Union",
         PhysicalPlan::Values { .. } => "Values",
+    }
+}
+
+/// Number of direct child operators — must match `plan_label`'s recursion (and
+/// `explain_physical`'s child order) so the pre-order metric vector reconstructs
+/// the same tree.
+fn plan_arity(plan: &PhysicalPlan) -> usize {
+    match plan {
+        PhysicalPlan::Scan { .. } | PhysicalPlan::Values { .. } => 0,
+        PhysicalPlan::Filter { .. }
+        | PhysicalPlan::Project { .. }
+        | PhysicalPlan::Aggregate { .. }
+        | PhysicalPlan::Sort { .. }
+        | PhysicalPlan::Limit { .. }
+        | PhysicalPlan::Distinct { .. } => 1,
+        PhysicalPlan::Join { .. } => 2,
+        PhysicalPlan::Union { inputs, .. } => inputs.len(),
     }
 }
 
@@ -2613,6 +2663,38 @@ mod tests {
         );
     }
 
+    fn nm(label: &str, arity: usize, elapsed_ns: u128) -> NodeMetric {
+        NodeMetric {
+            label: label.into(),
+            arity,
+            rows: 0,
+            elapsed_ns,
+        }
+    }
+
+    #[test]
+    fn self_times_subtracts_direct_children() {
+        // Filter(100, incl) over Join(90) over Scan(30), Scan(20):
+        //   self(Filter) = 100 - 90 = 10
+        //   self(Join)   = 90 - (30 + 20) = 40
+        //   self(Scan*)  = leaves unchanged
+        let metrics = vec![
+            nm("Filter", 1, 100),
+            nm("Join", 2, 90),
+            nm("Scan", 0, 30),
+            nm("Scan", 0, 20),
+        ];
+        assert_eq!(self_times(&metrics), vec![10, 40, 30, 20]);
+    }
+
+    #[test]
+    fn self_times_saturates_on_noise_and_tolerates_empty() {
+        // Child inclusive > parent inclusive (timing noise) → self saturates to 0.
+        let noisy = vec![nm("Filter", 1, 5), nm("Scan", 0, 9)];
+        assert_eq!(self_times(&noisy), vec![0, 9]);
+        assert_eq!(self_times(&[]), Vec::<u128>::new());
+    }
+
     #[tokio::test]
     async fn metered_exec_aligns_metrics_pre_order_with_plan() {
         // Filter(Join(Scan users, Scan orders)) → pre-order labels must be
@@ -2640,6 +2722,12 @@ mod tests {
             labels,
             ["Filter", "Join", "Scan", "Scan"],
             "metrics align pre-order with the plan tree"
+        );
+        let arities: Vec<usize> = nodes.iter().map(|n| n.arity).collect();
+        assert_eq!(
+            arities,
+            [1, 2, 0, 0],
+            "arity lets the tree be reconstructed from the pre-order vector"
         );
         assert_eq!(
             nodes[0].rows as usize,
