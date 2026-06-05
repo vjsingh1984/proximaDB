@@ -247,13 +247,39 @@ fn lower_select(
     let mut plan = scan;
     let mut scope = scope;
 
-    // 2) WHERE
+    // 2) WHERE — lift uncorrelated IN / EXISTS / NOT EXISTS subqueries that appear
+    //    as top-level AND-conjuncts into Semi/Anti joins; the remaining conjuncts
+    //    become a Filter. A subquery that can't be lifted (correlated, NOT IN,
+    //    multi-column, or nested under OR/NOT) stays in the filter predicate, where
+    //    `lower_expr` rejects it — so the whole query falls through to the legacy
+    //    path rather than silently mis-evaluating.
     if let Some(where_expr) = &select.selection {
-        let predicate = lower_expr(where_expr, &scope)?;
-        plan = LogicalNode::Filter {
-            input: Box::new(plan),
-            predicate,
-        };
+        let mut filter_conjuncts: Vec<&SqlExpr> = Vec::new();
+        for conj in flatten_sql_and(where_expr) {
+            match lower_subquery_join_parts(conj, &scope, catalog)? {
+                Some((kind, on, right)) => {
+                    // Semi/Anti emit the LEFT schema only, so `scope` is unchanged.
+                    plan = LogicalNode::Join {
+                        left: Box::new(plan),
+                        right: Box::new(right),
+                        kind,
+                        on,
+                        strategy: JoinStrategy::Auto,
+                    };
+                }
+                None => filter_conjuncts.push(conj),
+            }
+        }
+        if let Some((first, rest)) = filter_conjuncts.split_first() {
+            let mut predicate = lower_expr(first, &scope)?;
+            for conj in rest {
+                predicate = Expr::bin(BinaryOp::And, predicate, lower_expr(conj, &scope)?);
+            }
+            plan = LogicalNode::Filter {
+                input: Box::new(plan),
+                predicate,
+            };
+        }
     }
 
     // 3) GROUP BY + aggregates (split projection into group_by
@@ -345,6 +371,91 @@ fn lower_select(
     let _ = scope; // ORDER BY is applied at the Query layer.
 
     Ok(plan)
+}
+
+/// Flatten a WHERE expression into its top-level `AND` conjuncts (descending through
+/// parenthesised `Nested` wrappers). Disjunctions / other operators are returned whole
+/// — only conjuncts at the AND-top-level are individually liftable into Semi/Anti joins.
+fn flatten_sql_and(expr: &SqlExpr) -> Vec<&SqlExpr> {
+    fn rec<'a>(e: &'a SqlExpr, out: &mut Vec<&'a SqlExpr>) {
+        match e {
+            SqlExpr::BinaryOp {
+                left,
+                op: BinaryOperator::And,
+                right,
+            } => {
+                rec(left, out);
+                rec(right, out);
+            }
+            SqlExpr::Nested(inner) => rec(inner, out),
+            other => out.push(other),
+        }
+    }
+    let mut out = Vec::new();
+    rec(expr, &mut out);
+    out
+}
+
+/// If `conj` is a liftable uncorrelated subquery predicate, lower it to the parts of a
+/// Semi/Anti join `(kind, on, right_plan)` to wrap the current plan. Returns `Ok(None)`
+/// when `conj` is not a liftable subquery (a normal predicate, `NOT IN`, a multi-column
+/// `IN`, or a subquery that fails to lower in isolation — i.e. correlated/unsupported);
+/// the caller then leaves it in the `Filter` predicate (where `lower_expr` decides).
+///
+/// Uncorrelated is enforced for free: `lower_query` builds the subquery's scope from its
+/// OWN `FROM` only, so a reference to an outer column fails to resolve → `Err` → not
+/// lifted. Supported: `expr IN (single-column SELECT)` → Semi; `EXISTS` → Semi;
+/// `NOT EXISTS` → Anti. (`scope` resolves the outer operand of `IN`.)
+fn lower_subquery_join_parts(
+    conj: &SqlExpr,
+    scope: &Scope,
+    catalog: &dyn CatalogLookup,
+) -> Result<Option<(JoinKind, Option<Expr>, LogicalNode)>, FrontendError> {
+    match conj {
+        SqlExpr::InSubquery {
+            expr,
+            subquery,
+            negated: false,
+        } => {
+            // Lower the subquery in isolation; correlated/unsupported → decline (None).
+            let Ok(sub) = lower_query(subquery, catalog) else {
+                return Ok(None);
+            };
+            let sub_schema = sub.output_schema();
+            // `x IN (subquery)` requires exactly one output column.
+            let [sub_col] = sub_schema.columns.as_slice() else {
+                return Ok(None);
+            };
+            let outer = lower_expr(expr, scope)?;
+            // The subquery's lone column sits at `outer_width` in the combined
+            // left++right row the executor evaluates `on` against (Scope::concat
+            // offsets right ordinals by the left width).
+            let sub_ref = ColumnRef {
+                name: sub_col.name.clone(),
+                ordinal: scope.columns.len(),
+                ty: sub_col.ty.clone(),
+                nullable: sub_col.nullable,
+            };
+            let on = Expr::bin(BinaryOp::Eq, outer, Expr::column(sub_ref));
+            Ok(Some((JoinKind::Semi, Some(on), sub)))
+        }
+        SqlExpr::Exists { subquery, negated } => {
+            let Ok(sub) = lower_query(subquery, catalog) else {
+                return Ok(None);
+            };
+            // EXISTS has no join key (any matching row qualifies); the planner routes
+            // the keyless Semi/Anti join to NestedLoop.
+            let kind = if *negated {
+                JoinKind::Anti
+            } else {
+                JoinKind::Semi
+            };
+            Ok(Some((kind, None, sub)))
+        }
+        // NOT IN (negated InSubquery) is deferred (three-valued-NULL semantics);
+        // everything else is a normal predicate handled by the Filter.
+        _ => Ok(None),
+    }
 }
 
 fn projection_contains_aggregate(item: &SelectItem) -> bool {
@@ -1276,6 +1387,125 @@ mod tests {
         lower_sql(sql, &catalog()).unwrap_or_else(|e| panic!("lower failed: {e:?}"))
     }
 
+    // --- Semi/Anti via uncorrelated IN / EXISTS / NOT EXISTS subqueries --------
+
+    /// Strip the outer `Project` to reach the join/filter the WHERE produced.
+    fn under_project(plan: LogicalNode) -> LogicalNode {
+        match plan {
+            LogicalNode::Project { input, .. } => *input,
+            other => other,
+        }
+    }
+
+    #[test]
+    fn in_subquery_lowers_to_semi_join_with_equi_on() {
+        // users.id(0) IN (SELECT uid FROM orders) → Semi join, ON id = orders.uid.
+        // The subquery's lone column sits at ordinal 3 (users width = 3).
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE id IN (SELECT uid FROM orders)",
+        ));
+        match plan {
+            LogicalNode::Join {
+                kind: JoinKind::Semi,
+                on: Some(Expr::BinaryOp { left, op, right }),
+                ..
+            } => {
+                assert_eq!(op, BinaryOp::Eq);
+                assert!(matches!(*left, Expr::Column(c) if c.ordinal == 0));
+                assert!(matches!(*right, Expr::Column(c) if c.ordinal == 3));
+            }
+            other => panic!("expected Semi join with equi ON, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exists_lowers_to_keyless_semi_join() {
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE EXISTS (SELECT oid FROM orders)",
+        ));
+        assert!(
+            matches!(
+                plan,
+                LogicalNode::Join {
+                    kind: JoinKind::Semi,
+                    on: None,
+                    ..
+                }
+            ),
+            "EXISTS → keyless Semi join: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn not_exists_lowers_to_keyless_anti_join() {
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE NOT EXISTS (SELECT oid FROM orders)",
+        ));
+        assert!(
+            matches!(
+                plan,
+                LogicalNode::Join {
+                    kind: JoinKind::Anti,
+                    on: None,
+                    ..
+                }
+            ),
+            "NOT EXISTS → keyless Anti join: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn where_subquery_and_plain_predicate_compose() {
+        // `age > 25 AND id IN (subquery)` → Filter(age>25) over Semi join.
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE age > 25 AND id IN (SELECT uid FROM orders)",
+        ));
+        match plan {
+            LogicalNode::Filter { input, predicate } => {
+                assert!(matches!(predicate, Expr::BinaryOp { op: BinaryOp::Gt, .. }));
+                assert!(matches!(
+                    *input,
+                    LogicalNode::Join {
+                        kind: JoinKind::Semi,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected Filter over Semi join, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn not_in_subquery_is_declined() {
+        // NOT IN is deferred (three-valued NULL semantics) → falls through to the
+        // Filter path where lower_expr rejects the subquery.
+        assert!(lower_sql(
+            "SELECT name FROM users WHERE id NOT IN (SELECT uid FROM orders)",
+            &catalog()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn correlated_subquery_is_declined() {
+        // The subquery references the outer table (users.age) → fails to lower in
+        // isolation → not lifted → rejected (correlated subqueries unsupported).
+        assert!(lower_sql(
+            "SELECT name FROM users WHERE id IN (SELECT uid FROM orders WHERE total = users.age)",
+            &catalog()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn multi_column_in_subquery_is_declined() {
+        assert!(lower_sql(
+            "SELECT name FROM users WHERE id IN (SELECT oid, uid FROM orders)",
+            &catalog()
+        )
+        .is_err());
+    }
+
     #[test]
     fn select_all_from_table() {
         let plan = lower("SELECT * FROM users");
@@ -1536,9 +1766,13 @@ mod tests {
     }
 
     #[test]
-    fn subquery_in_where_is_rejected() {
+    fn subquery_under_or_is_rejected() {
+        // Only TOP-LEVEL AND-conjuncts lift into Semi/Anti joins. A subquery under
+        // OR isn't a standalone conjunct → not lifted → lower_expr rejects it (a
+        // disjunctive membership test can't be expressed as a filtering join), so
+        // the query falls through to the legacy path.
         let err = lower_sql(
-            "SELECT id FROM users WHERE id IN (SELECT uid FROM orders)",
+            "SELECT id FROM users WHERE age > 1 OR id IN (SELECT uid FROM orders)",
             &catalog(),
         )
         .unwrap_err();

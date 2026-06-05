@@ -490,6 +490,35 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "simple SELECT EXPLAIN is route-only (no physical_plan): {plan}"
     );
 
+    // (3j) Semi join via uncorrelated IN-subquery: emp whose dept_id is in the set
+    // of 'eng' dept ids (eng = id 1) → ann, bob (dept_id 1). The subquery lowers to
+    // a Semi join (membership filter) — output is the emp (left) schema only.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename FROM {emp} WHERE dept_id IN (SELECT id FROM {dept} WHERE dname = 'eng')"
+        ))
+        .await
+        .expect("SELECT IN-subquery (semi join)");
+    assert_eq!(
+        col_set(&rows, "ename"),
+        set(&["ann", "bob"]),
+        "IN-subquery → Semi join membership filter"
+    );
+
+    // (3k) Anti join via NOT EXISTS over an empty subquery: the subquery (dname that
+    // doesn't exist) is empty, so the Anti join keeps every emp row.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename FROM {emp} WHERE NOT EXISTS (SELECT id FROM {dept} WHERE dname = 'nope')"
+        ))
+        .await
+        .expect("SELECT NOT EXISTS (anti join)");
+    assert_eq!(
+        col_set(&rows, "ename"),
+        set(&["ann", "bob", "cas", "dan"]),
+        "NOT EXISTS over empty subquery → Anti join keeps all rows"
+    );
+
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
     // (the gate keeps it on the hardened legacy path, not PATH B).
     let rows = client

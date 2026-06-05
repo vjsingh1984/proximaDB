@@ -1299,8 +1299,31 @@ fn set_expr_engages(body: &SetExpr) -> bool {
                 .projection
                 .iter()
                 .any(|item| select_item_has_aggregate(item));
-            has_join || has_group_by || select.having.is_some() || has_aggregate
+            // A WHERE subquery (IN/EXISTS) lowers to a Semi/Anti join — a shape the
+            // legacy single-table path can't serve — so engage PATH B. If it turns out
+            // unliftable (correlated/NOT IN), lowering declines and the caller falls
+            // through to legacy anyway, so engaging on ANY subquery is safe.
+            let has_where_subquery = select.selection.as_ref().is_some_and(where_has_subquery);
+            has_join
+                || has_group_by
+                || select.having.is_some()
+                || has_aggregate
+                || has_where_subquery
         }
+        _ => false,
+    }
+}
+
+/// True if a WHERE expression contains a subquery (`IN (…)`, `EXISTS`, or a scalar
+/// subquery) anywhere in its tree — used by the engagement gate to route subquery
+/// predicates onto the relational (Semi/Anti) path.
+fn where_has_subquery(expr: &SqlExpr) -> bool {
+    match expr {
+        SqlExpr::InSubquery { .. } | SqlExpr::Exists { .. } | SqlExpr::Subquery(_) => true,
+        SqlExpr::BinaryOp { left, right, .. } => {
+            where_has_subquery(left) || where_has_subquery(right)
+        }
+        SqlExpr::UnaryOp { expr, .. } | SqlExpr::Nested(expr) => where_has_subquery(expr),
         _ => false,
     }
 }
@@ -1353,11 +1376,37 @@ fn collect_from_set_expr(body: &SetExpr, out: &mut Vec<String>) {
             for twj in &select.from {
                 collect_from_table_with_joins(twj, out);
             }
+            // Also descend into WHERE subqueries (IN/EXISTS lower to Semi/Anti joins
+            // whose right side scans the subquery's tables) so those tables get
+            // prepared in the snapshot — otherwise the subquery fails to lower and
+            // the query silently falls through to the legacy path.
+            if let Some(where_expr) = &select.selection {
+                collect_subquery_tables_in_expr(where_expr, out);
+            }
         }
         SetExpr::Query(q) => collect_table_names(q, out),
         SetExpr::SetOperation { left, right, .. } => {
             collect_from_set_expr(left, out);
             collect_from_set_expr(right, out);
+        }
+        _ => {}
+    }
+}
+
+/// Collect table names referenced by subqueries inside a WHERE expression
+/// (`IN (…)`, `EXISTS`, scalar subqueries), recursing through boolean structure.
+fn collect_subquery_tables_in_expr(expr: &SqlExpr, out: &mut Vec<String>) {
+    match expr {
+        SqlExpr::InSubquery { subquery, .. } | SqlExpr::Exists { subquery, .. } => {
+            collect_table_names(subquery, out);
+        }
+        SqlExpr::Subquery(q) => collect_table_names(q, out),
+        SqlExpr::BinaryOp { left, right, .. } => {
+            collect_subquery_tables_in_expr(left, out);
+            collect_subquery_tables_in_expr(right, out);
+        }
+        SqlExpr::UnaryOp { expr, .. } | SqlExpr::Nested(expr) => {
+            collect_subquery_tables_in_expr(expr, out);
         }
         _ => {}
     }
@@ -1486,6 +1535,13 @@ mod tests {
         ));
         assert!(gate("SELECT id FROM a UNION SELECT id FROM b"));
         assert!(gate("SELECT SUM(qty) AS s FROM inv"));
+        // WHERE subqueries (IN/EXISTS) lower to Semi/Anti joins → engage PATH B,
+        // even on a single FROM table (incl. when ANDed with a plain predicate).
+        assert!(gate("SELECT id FROM inv WHERE id IN (SELECT id FROM dept)"));
+        assert!(gate("SELECT id FROM inv WHERE EXISTS (SELECT id FROM dept)"));
+        assert!(gate(
+            "SELECT id FROM inv WHERE qty > 5 AND id IN (SELECT id FROM dept)"
+        ));
     }
 
     #[test]
@@ -1512,6 +1568,25 @@ mod tests {
         let mut names = Vec::new();
         collect_table_names(query, &mut names);
         let keys: Vec<String> = names.iter().map(|n| normalize_table_key(n)).collect();
+        assert!(keys.contains(&"emp".to_string()), "got {keys:?}");
+        assert!(keys.contains(&"dept".to_string()), "got {keys:?}");
+    }
+
+    #[test]
+    fn collect_table_names_descends_into_where_subqueries() {
+        let statements = Parser::parse_sql(
+            &GenericDialect {},
+            "SELECT ename FROM emp WHERE dept_id IN (SELECT id FROM dept WHERE dname = 'eng')",
+        )
+        .expect("parse");
+        let [Statement::Query(query)] = statements.as_slice() else {
+            panic!("expected query");
+        };
+        let mut names = Vec::new();
+        collect_table_names(query, &mut names);
+        let keys: Vec<String> = names.iter().map(|n| normalize_table_key(n)).collect();
+        // Both the outer table AND the subquery table must be collected so the
+        // snapshot prepares `dept` (else the Semi-join subquery can't lower).
         assert!(keys.contains(&"emp".to_string()), "got {keys:?}");
         assert!(keys.contains(&"dept".to_string()), "got {keys:?}");
     }
