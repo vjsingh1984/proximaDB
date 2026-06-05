@@ -22,7 +22,7 @@ use tracing::{debug, error, info, warn};
 use super::session::Session;
 use super::translator::QueryTranslator;
 use super::types::{FieldDescription, PgType};
-use crate::catalog::{CatalogDataType, CatalogManager};
+use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::network::arrow_ipc::ArrowProtoCodec;
 use crate::observability::ObservabilityService;
@@ -37,6 +37,7 @@ use crate::services::dml::{
 };
 use crate::services::{DdlService, DmlService, TableWalAppender};
 use crate::storage::document::DocumentService;
+use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
 use proximadb_records::RecordStorage;
 
@@ -217,25 +218,26 @@ fn pg_type_for_catalog_column(column_type: &str) -> PgType {
     }
 }
 
-fn pg_type_for_catalog_data_type(data_type: CatalogDataType) -> PgType {
+fn pg_type_for_catalog_data_type(data_type: &ProximaType) -> PgType {
     match data_type {
-        CatalogDataType::Boolean => PgType::Bool,
-        CatalogDataType::Int8 => PgType::Int2,
-        CatalogDataType::Int16 => PgType::Int2,
-        CatalogDataType::Int32 => PgType::Int4,
-        CatalogDataType::Int64 => PgType::Int8,
-        CatalogDataType::Float32 => PgType::Float4,
-        CatalogDataType::Float64 => PgType::Float8,
-        CatalogDataType::Binary => PgType::Bytea,
-        CatalogDataType::Date => PgType::Date,
-        CatalogDataType::Timestamp => PgType::Timestamp,
-        CatalogDataType::TimestampTz => PgType::Timestamptz,
-        CatalogDataType::Json => PgType::Jsonb,
-        CatalogDataType::Uuid => PgType::Uuid,
-        CatalogDataType::Vector | CatalogDataType::SparseVector | CatalogDataType::BinaryVector => {
-            PgType::Vector
-        }
-        CatalogDataType::String | CatalogDataType::Time | CatalogDataType::Decimal => PgType::Text,
+        ProximaType::Boolean => PgType::Bool,
+        ProximaType::Int8 => PgType::Int2,
+        ProximaType::Int16 => PgType::Int2,
+        ProximaType::Int32 => PgType::Int4,
+        ProximaType::Int64 => PgType::Int8,
+        ProximaType::Float32 => PgType::Float4,
+        ProximaType::Float64 => PgType::Float8,
+        ProximaType::Binary => PgType::Bytea,
+        ProximaType::Date => PgType::Date,
+        ProximaType::Timestamp(_) => PgType::Timestamp,
+        ProximaType::TimestampTz(_) => PgType::Timestamptz,
+        ProximaType::Json => PgType::Jsonb,
+        ProximaType::Uuid => PgType::Uuid,
+        ProximaType::DenseVector { .. }
+        | ProximaType::SparseVector { .. }
+        | ProximaType::BinaryVector { .. } => PgType::Vector,
+        // String / Time / Decimal and any richer ProximaType variant → text.
+        _ => PgType::Text,
     }
 }
 
@@ -2350,7 +2352,7 @@ impl PostgresProtocol {
             .map(|column| {
                 FieldDescription::new(
                     &column.name,
-                    pg_type_for_catalog_data_type(column.data_type),
+                    pg_type_for_catalog_data_type(&column.data_type),
                 )
             })
             .collect::<Vec<_>>();
@@ -4495,7 +4497,7 @@ impl PostgresProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema};
+    use crate::catalog::{CatalogColumn, CatalogTableSchema};
     use crate::query::multimodal_router;
     use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
@@ -5064,10 +5066,17 @@ mod tests {
             ..Default::default()
         };
         let schema = CatalogTableSchema::new("customers")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int32))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
-            .with_column(CatalogColumn::new(3, "balance", CatalogDataType::Decimal))
-            .with_column(CatalogColumn::new(4, "active", CatalogDataType::Boolean))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int32))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
+            .with_column(CatalogColumn::new(
+                3,
+                "balance",
+                ProximaType::Decimal {
+                    precision: 38,
+                    scale: 10,
+                },
+            ))
+            .with_column(CatalogColumn::new(4, "active", ProximaType::Boolean))
             .with_primary_key(vec!["id".to_string()]);
         let predicates = vec![
             SelectPredicate {
@@ -5116,9 +5125,9 @@ mod tests {
             ..Default::default()
         };
         let schema = CatalogTableSchema::new("customers")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int32))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
-            .with_column(CatalogColumn::new(3, "notes", CatalogDataType::String))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int32))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
+            .with_column(CatalogColumn::new(3, "notes", ProximaType::String))
             .with_primary_key(vec!["id".to_string()]);
         let predicates = vec![
             SelectPredicate {
@@ -5150,8 +5159,8 @@ mod tests {
     #[test]
     fn test_record_matches_not_in_rejects_excluded_values() {
         let schema = CatalogTableSchema::new("orders")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int32))
-            .with_column(CatalogColumn::new(2, "status", CatalogDataType::String))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int32))
+            .with_column(CatalogColumn::new(2, "status", ProximaType::String))
             .with_primary_key(vec!["id".to_string()]);
 
         // Record with id=5 should be rejected by NOT IN (1, 2, 5) predicate.
@@ -5195,8 +5204,8 @@ mod tests {
     #[test]
     fn test_record_matches_is_not_null_accepts_present_field_rejects_absent() {
         let schema = CatalogTableSchema::new("users")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String))
-            .with_column(CatalogColumn::new(2, "email", CatalogDataType::String))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String))
+            .with_column(CatalogColumn::new(2, "email", ProximaType::String))
             .with_primary_key(vec!["id".to_string()]);
 
         let predicates = vec![SelectPredicate {

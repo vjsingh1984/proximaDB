@@ -8,7 +8,7 @@
 //! - `Catalog` — the core async trait every catalog backend implements
 //! - All `Catalog*` types used in trait method signatures
 
-use arrow_schema::DataType as ArrowDataType;
+use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -223,8 +223,15 @@ pub struct CatalogColumn {
     pub id: i32,
     /// Column name
     pub name: String,
-    /// Data type
-    pub data_type: CatalogDataType,
+    /// Data type (canonical logical type — ADR-024).
+    ///
+    /// Serializes in the [`proximadb_data_model::ProximaType`] form, but
+    /// deserializes from BOTH the new form AND the legacy `CatalogDataType`
+    /// form (bare unit-string tags like `"Int64"`/`"Decimal"`/`"Vector"`) so
+    /// catalogs persisted before ADR-024 keep loading. See
+    /// [`deserialize_data_type_compat`].
+    #[serde(deserialize_with = "deserialize_data_type_compat")]
+    pub data_type: ProximaType,
     /// Is nullable
     pub nullable: bool,
     /// Default value (SQL expression)
@@ -237,7 +244,7 @@ pub struct CatalogColumn {
 
 impl CatalogColumn {
     /// Create a new column
-    pub fn new(id: i32, name: impl Into<String>, data_type: CatalogDataType) -> Self {
+    pub fn new(id: i32, name: impl Into<String>, data_type: ProximaType) -> Self {
         Self {
             id,
             name: name.into(),
@@ -268,192 +275,92 @@ impl CatalogColumn {
     }
 }
 
-/// Data types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CatalogDataType {
-    /// Boolean true/false value
-    Boolean,
-    /// 8-bit signed integer
-    Int8,
-    /// 16-bit signed integer
-    Int16,
-    /// 32-bit signed integer
-    Int32,
-    /// 64-bit signed integer
-    Int64,
-    /// 32-bit IEEE 754 floating-point number
-    Float32,
-    /// 64-bit IEEE 754 floating-point number
-    Float64,
-    /// UTF-8 encoded string
-    String,
-    /// Arbitrary binary data
-    Binary,
-    /// Calendar date (no time component)
-    Date,
-    /// Time of day (no date component)
-    Time,
-    /// Timestamp without timezone
-    Timestamp,
-    /// Timestamp with timezone
-    TimestampTz,
-    /// Exact decimal numeric value
-    Decimal,
-    /// Universally unique identifier (UUID v4)
-    Uuid,
-    /// JSON document stored as text
-    Json,
-    /// Fixed-size array of floats for vector embeddings
-    Vector,
-    /// Sparse vector (map of index to value)
-    SparseVector,
-    /// Binary vector (packed bits)
-    BinaryVector,
+/// Map a legacy `CatalogDataType` bare-string tag to its canonical
+/// [`ProximaType`] (ADR-024). This is the SAME mapping the deleted
+/// `CatalogDataType::to_proxima_type` used; dimensionless vectors keep
+/// `dim: 0` (the real dimension lives in column properties / collection
+/// config). Returns `None` for tags that are not a legacy unit variant
+/// (the caller then falls back to the canonical `ProximaType` form).
+fn legacy_catalog_data_type_tag(tag: &str) -> Option<ProximaType> {
+    let ty = match tag {
+        "Boolean" => ProximaType::Boolean,
+        "Int8" => ProximaType::Int8,
+        "Int16" => ProximaType::Int16,
+        "Int32" => ProximaType::Int32,
+        "Int64" => ProximaType::Int64,
+        "Float32" => ProximaType::Float32,
+        "Float64" => ProximaType::Float64,
+        "String" => ProximaType::String,
+        "Binary" => ProximaType::Binary,
+        "Date" => ProximaType::Date,
+        "Time" => ProximaType::Time(TimeUnit::Nanosecond),
+        "Timestamp" => ProximaType::Timestamp(TimeUnit::Nanosecond),
+        "TimestampTz" => ProximaType::TimestampTz(TimeUnit::Nanosecond),
+        "Decimal" => ProximaType::Decimal {
+            precision: 38,
+            scale: 10,
+        },
+        "Uuid" => ProximaType::Uuid,
+        "Json" => ProximaType::Json,
+        "Vector" => ProximaType::DenseVector {
+            element: VectorElement::Float32,
+            dim: 0,
+        },
+        "SparseVector" => ProximaType::SparseVector {
+            element: VectorElement::Float32,
+        },
+        "BinaryVector" => ProximaType::BinaryVector { dim: 0 },
+        _ => return None,
+    };
+    Some(ty)
 }
 
-impl CatalogDataType {
-    /// Convert to proto DataType value
-    pub fn to_proto_i32(&self) -> i32 {
-        match self {
-            CatalogDataType::Boolean => 1,
-            CatalogDataType::Int8 => 2,
-            CatalogDataType::Int16 => 3,
-            CatalogDataType::Int32 => 4,
-            CatalogDataType::Int64 => 5,
-            CatalogDataType::Float32 => 6,
-            CatalogDataType::Float64 => 7,
-            CatalogDataType::String => 8,
-            CatalogDataType::Binary => 9,
-            CatalogDataType::Date => 10,
-            CatalogDataType::Time => 11,
-            CatalogDataType::Timestamp => 12,
-            CatalogDataType::TimestampTz => 13,
-            CatalogDataType::Decimal => 14,
-            CatalogDataType::Uuid => 15,
-            CatalogDataType::Json => 16,
-            CatalogDataType::Vector => 20,
-            CatalogDataType::SparseVector => 21,
-            CatalogDataType::BinaryVector => 22,
-        }
+/// Deserialize [`CatalogColumn::data_type`] accepting BOTH the canonical
+/// [`ProximaType`] form (current) AND the legacy `CatalogDataType` form
+/// (pre-ADR-024 persisted catalogs). The legacy form encodes every variant as
+/// a bare string tag (`"Int64"`, `"Decimal"`, `"Vector"`, …); the canonical
+/// form encodes unit variants as bare strings too but struct variants as
+/// objects (`{"Decimal":{"precision":38,"scale":10}}`,
+/// `{"DenseVector":{...}}`). We therefore: (1) deserialize into an untyped
+/// `serde_json::Value`; (2) if it is a bare string that names a legacy unit
+/// variant, map it via [`legacy_catalog_data_type_tag`]; (3) otherwise parse it
+/// as a canonical [`ProximaType`].
+fn deserialize_data_type_compat<'de, D>(deserializer: D) -> Result<ProximaType, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if let serde_json::Value::String(tag) = &value
+        && let Some(ty) = legacy_catalog_data_type_tag(tag)
+    {
+        return Ok(ty);
     }
-
-    /// Create from proto DataType value
-    pub fn from_proto_i32(value: i32) -> Self {
-        match value {
-            1 => CatalogDataType::Boolean,
-            2 => CatalogDataType::Int8,
-            3 => CatalogDataType::Int16,
-            4 => CatalogDataType::Int32,
-            5 => CatalogDataType::Int64,
-            6 => CatalogDataType::Float32,
-            7 => CatalogDataType::Float64,
-            8 => CatalogDataType::String,
-            9 => CatalogDataType::Binary,
-            10 => CatalogDataType::Date,
-            11 => CatalogDataType::Time,
-            12 => CatalogDataType::Timestamp,
-            13 => CatalogDataType::TimestampTz,
-            14 => CatalogDataType::Decimal,
-            15 => CatalogDataType::Uuid,
-            16 => CatalogDataType::Json,
-            20 => CatalogDataType::Vector,
-            21 => CatalogDataType::SparseVector,
-            22 => CatalogDataType::BinaryVector,
-            _ => CatalogDataType::String,
-        }
-    }
-
-    /// Convert to Arrow DataType
-    pub fn to_arrow_datatype(&self) -> ArrowDataType {
-        match self {
-            CatalogDataType::Boolean => ArrowDataType::Boolean,
-            CatalogDataType::Int8 => ArrowDataType::Int8,
-            CatalogDataType::Int16 => ArrowDataType::Int16,
-            CatalogDataType::Int32 => ArrowDataType::Int32,
-            CatalogDataType::Int64 => ArrowDataType::Int64,
-            CatalogDataType::Float32 => ArrowDataType::Float32,
-            CatalogDataType::Float64 => ArrowDataType::Float64,
-            CatalogDataType::String => ArrowDataType::Utf8,
-            CatalogDataType::Binary => ArrowDataType::Binary,
-            CatalogDataType::Date => ArrowDataType::Date32,
-            CatalogDataType::Time => ArrowDataType::Time64(arrow_schema::TimeUnit::Nanosecond),
-            CatalogDataType::Timestamp => {
-                ArrowDataType::Timestamp(arrow_schema::TimeUnit::Nanosecond, None)
-            }
-            CatalogDataType::TimestampTz => {
-                ArrowDataType::Timestamp(arrow_schema::TimeUnit::Nanosecond, Some("UTC".into()))
-            }
-            CatalogDataType::Decimal => ArrowDataType::Decimal128(38, 10),
-            CatalogDataType::Uuid => ArrowDataType::Utf8, // UUID as string
-            CatalogDataType::Json => ArrowDataType::Utf8, // JSON as string
-            CatalogDataType::Vector => ArrowDataType::List(
-                Box::new(arrow_schema::Field::new(
-                    "item",
-                    ArrowDataType::Float32,
-                    true,
-                ))
-                .into(),
-            ),
-            CatalogDataType::SparseVector => ArrowDataType::Map(
-                Box::new(arrow_schema::Field::new(
-                    "entries",
-                    ArrowDataType::Struct(
-                        vec![
-                            arrow_schema::Field::new("key", ArrowDataType::Int32, false),
-                            arrow_schema::Field::new("value", ArrowDataType::Float32, false),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                ))
-                .into(),
-                false,
-            ),
-            CatalogDataType::BinaryVector => ArrowDataType::Binary, // Packed bits as binary
-        }
-    }
+    serde_json::from_value(value).map_err(D::Error::custom)
 }
 
-impl CatalogDataType {
-    /// Convert to the canonical [`proximadb_data_model::ProximaType`].
-    ///
-    /// This is the single bridge between the catalog layer and the wire type
-    /// system (spec §4). Call site example:
-    /// ```ignore
-    /// let pt = CatalogDataType::Decimal.to_proxima_type();
-    /// let oid = pt.pgwire_oid(); // 1700
-    /// ```
-    pub fn to_proxima_type(&self) -> proximadb_data_model::ProximaType {
-        use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
-        match self {
-            CatalogDataType::Boolean => ProximaType::Boolean,
-            CatalogDataType::Int8 => ProximaType::Int8,
-            CatalogDataType::Int16 => ProximaType::Int16,
-            CatalogDataType::Int32 => ProximaType::Int32,
-            CatalogDataType::Int64 => ProximaType::Int64,
-            CatalogDataType::Float32 => ProximaType::Float32,
-            CatalogDataType::Float64 => ProximaType::Float64,
-            CatalogDataType::String => ProximaType::String,
-            CatalogDataType::Binary => ProximaType::Binary,
-            CatalogDataType::Date => ProximaType::Date,
-            CatalogDataType::Time => ProximaType::Time(TimeUnit::Nanosecond),
-            CatalogDataType::Timestamp => ProximaType::Timestamp(TimeUnit::Nanosecond),
-            CatalogDataType::TimestampTz => ProximaType::TimestampTz(TimeUnit::Nanosecond),
-            CatalogDataType::Decimal => ProximaType::Decimal {
-                precision: 38,
-                scale: 10,
-            },
-            CatalogDataType::Uuid => ProximaType::Uuid,
-            CatalogDataType::Json => ProximaType::Json,
-            CatalogDataType::Vector => ProximaType::DenseVector {
-                element: VectorElement::Float32,
-                dim: 0,
-            },
-            CatalogDataType::SparseVector => ProximaType::SparseVector {
-                element: VectorElement::Float32,
-            },
-            CatalogDataType::BinaryVector => ProximaType::BinaryVector { dim: 0 },
-        }
+/// Arrow projection for a **catalog** column type (ADR-024 Step 3).
+///
+/// The catalog stores vectors dimensionlessly (`DenseVector`/`BinaryVector` with
+/// `dim: 0` — the real dimension lives in column properties / collection config)
+/// and represents UUIDs logically. This preserves the catalog's historical Arrow
+/// carriers for those types — variable-length `List<Float32>` for dense vectors,
+/// `Binary` for packed binary vectors, `Utf8` for UUID — rather than the
+/// storage-plane fixed-width layout from [`ProximaType::to_arrow_type`], which
+/// would emit a zero-length `FixedSizeBinary(0)` for a dimensionless catalog
+/// vector. All other types delegate to the canonical [`ProximaType::to_arrow_type`]
+/// (matching the deleted `CatalogDataType::to_arrow_datatype` for those).
+pub fn catalog_arrow_type(ty: &ProximaType) -> arrow_schema::DataType {
+    use arrow_schema::{DataType, Field};
+    match ty {
+        ProximaType::DenseVector { .. } => DataType::List(std::sync::Arc::new(Field::new(
+            "item",
+            DataType::Float32,
+            true,
+        ))),
+        ProximaType::BinaryVector { .. } => DataType::Binary,
+        ProximaType::Uuid => DataType::Utf8,
+        other => other.to_arrow_type(),
     }
 }
 
@@ -1902,9 +1809,9 @@ pub struct PropsAutoPromotionPolicy {
     pub max_promoted_columns: u32,
     /// When promotion candidates are evaluated.
     pub evaluation_cadence: PropsEvaluationCadence,
-    /// `CatalogDataType` variants eligible for promotion. Keys whose observed
+    /// [`ProximaType`] variants eligible for promotion. Keys whose observed
     /// values do not match an eligible type are retained in the msgpack blob.
-    pub eligible_types: Vec<CatalogDataType>,
+    pub eligible_types: Vec<ProximaType>,
     /// Keys that have already been promoted, mapping props key → `props__<key>` column name.
     /// Written by `SchemaChange::PromotePropsKey` and read by the compaction writer
     /// to know which msgpack keys to route into typed columns.
@@ -1921,11 +1828,11 @@ impl Default for PropsAutoPromotionPolicy {
             max_promoted_columns: 32,
             evaluation_cadence: PropsEvaluationCadence::Compaction,
             eligible_types: vec![
-                CatalogDataType::String,
-                CatalogDataType::Int64,
-                CatalogDataType::Float64,
-                CatalogDataType::Boolean,
-                CatalogDataType::TimestampTz,
+                ProximaType::String,
+                ProximaType::Int64,
+                ProximaType::Float64,
+                ProximaType::Boolean,
+                ProximaType::TimestampTz(TimeUnit::Nanosecond),
             ],
             promoted_keys: HashMap::new(),
         }
@@ -2314,7 +2221,7 @@ pub enum SchemaChange {
         /// Name of the new column
         name: String,
         /// Data type of the new column
-        data_type: CatalogDataType,
+        data_type: ProximaType,
         /// Whether the column accepts NULL values
         nullable: bool,
         /// Optional SQL expression used as the column default
@@ -2341,7 +2248,7 @@ pub enum SchemaChange {
         /// Name of the column whose type should change
         name: String,
         /// New data type (must be compatible with the existing type)
-        new_type: CatalogDataType,
+        new_type: ProximaType,
     },
     /// Update column comment
     UpdateComment {
@@ -2401,7 +2308,7 @@ pub enum SchemaChange {
         /// The key inside the `props` msgpack blob to promote.
         key: String,
         /// Target catalog data type for the promoted column.
-        column_type: CatalogDataType,
+        column_type: ProximaType,
         /// Optional human-readable description for the new column.
         comment: Option<String>,
     },
@@ -2564,7 +2471,7 @@ mod tests {
 
     #[test]
     fn test_column_builder() {
-        let col = CatalogColumn::new(1, "id", CatalogDataType::Int64)
+        let col = CatalogColumn::new(1, "id", ProximaType::Int64)
             .nullable(false)
             .with_comment("Primary key");
 
@@ -2576,8 +2483,8 @@ mod tests {
     #[test]
     fn test_table_schema_builder() {
         let schema = CatalogTableSchema::new("users")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
             .with_primary_key(vec!["id".into()]);
 
         assert_eq!(schema.name, "users");
@@ -2592,103 +2499,113 @@ mod tests {
 
     #[test]
     fn test_data_type_roundtrip() {
+        // Proto-i32 round-trips now live on the canonical type.
         let types = vec![
-            CatalogDataType::Boolean,
-            CatalogDataType::Int64,
-            CatalogDataType::Float64,
-            CatalogDataType::String,
-            CatalogDataType::Vector,
+            ProximaType::Boolean,
+            ProximaType::Int64,
+            ProximaType::Float64,
+            ProximaType::String,
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0,
+            },
         ];
 
         for dt in types {
             let proto = dt.to_proto_i32();
-            let back = CatalogDataType::from_proto_i32(proto);
+            let back = ProximaType::from_proto_i32(proto).expect("known code");
             assert_eq!(dt, back);
         }
     }
 
+    /// DURABLE catalog-format compatibility: a `CatalogColumn` persisted in the
+    /// legacy `CatalogDataType` form (bare unit-string tags) MUST still
+    /// deserialize, mapping onto the canonical [`ProximaType`].
     #[test]
-    fn catalog_data_type_proto_and_arrow_mappings_cover_all_variants() {
-        let all = [
-            (CatalogDataType::Boolean, 1),
-            (CatalogDataType::Int8, 2),
-            (CatalogDataType::Int16, 3),
-            (CatalogDataType::Int32, 4),
-            (CatalogDataType::Int64, 5),
-            (CatalogDataType::Float32, 6),
-            (CatalogDataType::Float64, 7),
-            (CatalogDataType::String, 8),
-            (CatalogDataType::Binary, 9),
-            (CatalogDataType::Date, 10),
-            (CatalogDataType::Time, 11),
-            (CatalogDataType::Timestamp, 12),
-            (CatalogDataType::TimestampTz, 13),
-            (CatalogDataType::Decimal, 14),
-            (CatalogDataType::Uuid, 15),
-            (CatalogDataType::Json, 16),
-            (CatalogDataType::Vector, 20),
-            (CatalogDataType::SparseVector, 21),
-            (CatalogDataType::BinaryVector, 22),
-        ];
+    fn catalog_column_deserializes_legacy_catalog_data_type_form() {
+        // Legacy JSON: data_type as a bare string (the old CatalogDataType
+        // unit-variant encoding), including the tags that DIFFER from the
+        // canonical ProximaType encoding (Decimal/Vector/TimestampTz are
+        // struct variants in ProximaType but bare strings in the legacy form).
+        let legacy = r#"[
+                {"id": 1, "name": "id", "data_type": "Int64", "nullable": false,
+                 "default_value": null, "comment": null, "properties": {}},
+                {"id": 2, "name": "balance", "data_type": "Decimal", "nullable": true,
+                 "default_value": null, "comment": null, "properties": {}},
+                {"id": 3, "name": "embedding", "data_type": "Vector", "nullable": true,
+                 "default_value": null, "comment": null, "properties": {}},
+                {"id": 4, "name": "created", "data_type": "TimestampTz", "nullable": true,
+                 "default_value": null, "comment": null, "properties": {}},
+                {"id": 5, "name": "tags", "data_type": "SparseVector", "nullable": true,
+                 "default_value": null, "comment": null, "properties": {}},
+                {"id": 6, "name": "bits", "data_type": "BinaryVector", "nullable": true,
+                 "default_value": null, "comment": null, "properties": {}},
+                {"id": 7, "name": "label", "data_type": "String", "nullable": true,
+                 "default_value": null, "comment": null, "properties": {}}
+            ]"#;
 
-        for (data_type, proto_id) in all {
-            assert_eq!(data_type.to_proto_i32(), proto_id);
-            assert_eq!(CatalogDataType::from_proto_i32(proto_id), data_type);
-            let _ = data_type.to_arrow_datatype();
-        }
+        let columns: Vec<CatalogColumn> =
+            serde_json::from_str(legacy).expect("legacy catalog columns must deserialize");
+        let by_name = |n: &str| {
+            columns
+                .iter()
+                .find(|c| c.name == n)
+                .unwrap()
+                .data_type
+                .clone()
+        };
+        assert_eq!(by_name("id"), ProximaType::Int64);
         assert_eq!(
-            CatalogDataType::from_proto_i32(999),
-            CatalogDataType::String
+            by_name("balance"),
+            ProximaType::Decimal {
+                precision: 38,
+                scale: 10
+            }
         );
+        assert_eq!(
+            by_name("embedding"),
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0
+            }
+        );
+        assert_eq!(
+            by_name("created"),
+            ProximaType::TimestampTz(TimeUnit::Nanosecond)
+        );
+        assert_eq!(
+            by_name("tags"),
+            ProximaType::SparseVector {
+                element: VectorElement::Float32
+            }
+        );
+        assert_eq!(by_name("bits"), ProximaType::BinaryVector { dim: 0 });
+        assert_eq!(by_name("label"), ProximaType::String);
+    }
 
-        assert_eq!(
-            CatalogDataType::Boolean.to_arrow_datatype(),
-            ArrowDataType::Boolean
+    /// The NEW canonical [`ProximaType`] form (struct variants as objects) must
+    /// also deserialize, and a serialize → deserialize round-trip must hold.
+    #[test]
+    fn catalog_column_round_trips_canonical_proxima_type_form() {
+        let col = CatalogColumn::new(
+            2,
+            "balance",
+            ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
         );
+        let json = serde_json::to_string(&col).unwrap();
+        // Struct variant must serialize in the canonical object form.
+        assert!(json.contains("\"Decimal\":{"), "got: {json}");
+        let back: CatalogColumn = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            CatalogDataType::Int8.to_arrow_datatype(),
-            ArrowDataType::Int8
+            back.data_type,
+            ProximaType::Decimal {
+                precision: 38,
+                scale: 10
+            }
         );
-        assert_eq!(
-            CatalogDataType::Int16.to_arrow_datatype(),
-            ArrowDataType::Int16
-        );
-        assert_eq!(
-            CatalogDataType::Int32.to_arrow_datatype(),
-            ArrowDataType::Int32
-        );
-        assert_eq!(
-            CatalogDataType::Int64.to_arrow_datatype(),
-            ArrowDataType::Int64
-        );
-        assert_eq!(
-            CatalogDataType::Float32.to_arrow_datatype(),
-            ArrowDataType::Float32
-        );
-        assert_eq!(
-            CatalogDataType::Float64.to_arrow_datatype(),
-            ArrowDataType::Float64
-        );
-        assert_eq!(
-            CatalogDataType::String.to_arrow_datatype(),
-            ArrowDataType::Utf8
-        );
-        assert_eq!(
-            CatalogDataType::Binary.to_arrow_datatype(),
-            ArrowDataType::Binary
-        );
-        assert_eq!(
-            CatalogDataType::Date.to_arrow_datatype(),
-            ArrowDataType::Date32
-        );
-        assert!(matches!(
-            CatalogDataType::Vector.to_arrow_datatype(),
-            ArrowDataType::List(_)
-        ));
-        assert!(matches!(
-            CatalogDataType::SparseVector.to_arrow_datatype(),
-            ArrowDataType::Map(_, false)
-        ));
     }
 
     #[test]
@@ -2965,7 +2882,7 @@ mod tests {
         assert!(
             document_policy
                 .eligible_types
-                .contains(&CatalogDataType::TimestampTz)
+                .contains(&ProximaType::TimestampTz(TimeUnit::Nanosecond))
         );
 
         let observability = ObservabilityCompressionHint::default();
@@ -3024,61 +2941,43 @@ mod tests {
         assert_eq!(unhealthy.error.as_deref(), Some("down"));
     }
 
-    // ----- Phase A: catalog → ProximaType bridge tests -----
+    // ----- ADR-024: catalog data_type is now canonical ProximaType -----
 
     #[test]
-    fn test_catalog_to_proxima_type_lossless() {
+    fn test_catalog_column_data_type_is_canonical_proxima_type() {
+        // The legacy CatalogDataType → ProximaType bridge is gone; the column's
+        // data_type IS already a ProximaType. Exercise the canonical surface.
         let all = [
-            CatalogDataType::Boolean,
-            CatalogDataType::Int8,
-            CatalogDataType::Int16,
-            CatalogDataType::Int32,
-            CatalogDataType::Int64,
-            CatalogDataType::Float32,
-            CatalogDataType::Float64,
-            CatalogDataType::String,
-            CatalogDataType::Binary,
-            CatalogDataType::Date,
-            CatalogDataType::Time,
-            CatalogDataType::Timestamp,
-            CatalogDataType::TimestampTz,
-            CatalogDataType::Decimal,
-            CatalogDataType::Uuid,
-            CatalogDataType::Json,
-            CatalogDataType::Vector,
-            CatalogDataType::SparseVector,
-            CatalogDataType::BinaryVector,
+            ProximaType::Boolean,
+            ProximaType::Int64,
+            ProximaType::Float64,
+            ProximaType::String,
+            ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
+            ProximaType::TimestampTz(TimeUnit::Nanosecond),
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0,
+            },
         ];
-        for dt in &all {
-            let pt = dt.to_proxima_type();
-            // Every variant must map — no panics, no unhandled cases
-            let _ = format!("{:?}", pt);
+        for ty in &all {
+            // Every variant projects to Arrow + pgwire with no panic.
+            let _ = ty.to_arrow_type();
+            let _ = ty.pgwire_oid();
         }
     }
 
     #[test]
-    fn test_catalog_decimal_maps_to_proxima_decimal() {
-        use proximadb_data_model::ProximaType;
-        let pt = CatalogDataType::Decimal.to_proxima_type();
-        assert!(matches!(
-            pt,
-            ProximaType::Decimal {
-                precision: 38,
-                scale: 10
-            }
-        ));
-    }
-
-    #[test]
     fn test_catalog_timestamptz_pgwire_oid() {
-        // Through the bridge: CatalogDataType → ProximaType → pgwire OID
-        let oid = CatalogDataType::TimestampTz.to_proxima_type().pgwire_oid();
+        let oid = ProximaType::TimestampTz(TimeUnit::Nanosecond).pgwire_oid();
         assert_eq!(oid, 1184, "TimestampTz OID must be 1184");
     }
 
     #[test]
     fn test_catalog_uuid_pgwire_oid() {
-        let oid = CatalogDataType::Uuid.to_proxima_type().pgwire_oid();
+        let oid = ProximaType::Uuid.pgwire_oid();
         assert_eq!(oid, 2950, "UUID OID must be 2950");
     }
 

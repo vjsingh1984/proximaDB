@@ -26,7 +26,8 @@ use axum::{
     extract::{Path, State},
     routing::{get, post},
 };
-use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogNamespace, CatalogTableSchema};
+use proximadb_catalog::{CatalogColumn, CatalogNamespace, CatalogTableSchema};
+use proximadb_data_model::ProximaType;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -492,7 +493,7 @@ fn convert_table_schema_to_proto(schema: CatalogTableSchema) -> TableSchema {
             .map(|col| crate::proto::proximadb_v1::ColumnDefinition {
                 id: col.id,
                 name: col.name.clone(),
-                data_type: convert_data_type_to_proto(col.data_type),
+                data_type: convert_data_type_to_proto(&col.data_type),
                 nullable: col.nullable,
                 default_value: col.default_value.unwrap_or_default(),
                 comment: col.comment.unwrap_or_default(),
@@ -518,52 +519,62 @@ fn convert_table_schema_to_proto(schema: CatalogTableSchema) -> TableSchema {
     }
 }
 
-/// Convert proto data type to ProximaDB data type
-fn convert_data_type(proto_type: crate::proto::proximadb_v1::DataType) -> CatalogDataType {
+/// Convert proto data type to the canonical [`ProximaType`] (ADR-024).
+///
+/// The proto `DataType` enum is matched by variant; dimensionless vectors keep
+/// `dim: 0` (the real dimension lives in column properties / collection config).
+fn convert_data_type(proto_type: crate::proto::proximadb_v1::DataType) -> ProximaType {
     use crate::proto::proximadb_v1::DataType;
+    use proximadb_data_model::{TimeUnit, VectorElement};
     match proto_type {
-        DataType::Boolean => CatalogDataType::Boolean,
-        DataType::Int8 => CatalogDataType::Int8,
-        DataType::Int16 => CatalogDataType::Int16,
-        DataType::Int32 => CatalogDataType::Int32,
-        DataType::Int64 => CatalogDataType::Int64,
-        DataType::Float32 => CatalogDataType::Float32,
-        DataType::Float64 => CatalogDataType::Float64,
-        DataType::Decimal => CatalogDataType::Decimal,
-        DataType::String => CatalogDataType::String,
-        DataType::Binary => CatalogDataType::Binary,
-        DataType::Date => CatalogDataType::Date,
-        DataType::Time => CatalogDataType::Time,
-        DataType::Timestamp => CatalogDataType::Timestamp,
-        DataType::Timestamptz => CatalogDataType::TimestampTz,
-        DataType::Uuid => CatalogDataType::Uuid,
-        DataType::Json => CatalogDataType::Json,
-        DataType::Vector => CatalogDataType::Vector,
-        _ => CatalogDataType::String, // Default fallback
+        DataType::Boolean => ProximaType::Boolean,
+        DataType::Int8 => ProximaType::Int8,
+        DataType::Int16 => ProximaType::Int16,
+        DataType::Int32 => ProximaType::Int32,
+        DataType::Int64 => ProximaType::Int64,
+        DataType::Float32 => ProximaType::Float32,
+        DataType::Float64 => ProximaType::Float64,
+        DataType::Decimal => ProximaType::Decimal {
+            precision: 38,
+            scale: 10,
+        },
+        DataType::String => ProximaType::String,
+        DataType::Binary => ProximaType::Binary,
+        DataType::Date => ProximaType::Date,
+        DataType::Time => ProximaType::Time(TimeUnit::Nanosecond),
+        DataType::Timestamp => ProximaType::Timestamp(TimeUnit::Nanosecond),
+        DataType::Timestamptz => ProximaType::TimestampTz(TimeUnit::Nanosecond),
+        DataType::Uuid => ProximaType::Uuid,
+        DataType::Json => ProximaType::Json,
+        DataType::Vector => ProximaType::DenseVector {
+            element: VectorElement::Float32,
+            dim: 0,
+        },
+        _ => ProximaType::String, // Default fallback
     }
 }
 
-/// Convert ProximaDB data type to proto data type
-fn convert_data_type_to_proto(data_type: CatalogDataType) -> crate::proto::proximadb_v1::DataType {
+/// Convert the canonical [`ProximaType`] to proto data type (ADR-024).
+fn convert_data_type_to_proto(data_type: &ProximaType) -> crate::proto::proximadb_v1::DataType {
     use crate::proto::proximadb_v1::DataType;
     match data_type {
-        CatalogDataType::Boolean => DataType::Boolean,
-        CatalogDataType::Int8 => DataType::Int8,
-        CatalogDataType::Int16 => DataType::Int16,
-        CatalogDataType::Int32 => DataType::Int32,
-        CatalogDataType::Int64 => DataType::Int64,
-        CatalogDataType::Float32 => DataType::Float32,
-        CatalogDataType::Float64 => DataType::Float64,
-        CatalogDataType::Decimal => DataType::Decimal,
-        CatalogDataType::String => DataType::String,
-        CatalogDataType::Binary => DataType::Binary,
-        CatalogDataType::Date => DataType::Date,
-        CatalogDataType::Time => DataType::Time,
-        CatalogDataType::Timestamp => DataType::Timestamp,
-        CatalogDataType::TimestampTz => DataType::Timestamptz,
-        CatalogDataType::Uuid => DataType::Uuid,
-        CatalogDataType::Json => DataType::Json,
-        CatalogDataType::Vector => DataType::Vector,
+        ProximaType::Boolean => DataType::Boolean,
+        ProximaType::Int8 => DataType::Int8,
+        ProximaType::Int16 => DataType::Int16,
+        ProximaType::Int32 => DataType::Int32,
+        ProximaType::Int64 => DataType::Int64,
+        ProximaType::Float32 => DataType::Float32,
+        ProximaType::Float64 => DataType::Float64,
+        ProximaType::Decimal { .. } => DataType::Decimal,
+        ProximaType::String => DataType::String,
+        ProximaType::Binary => DataType::Binary,
+        ProximaType::Date => DataType::Date,
+        ProximaType::Time(_) => DataType::Time,
+        ProximaType::Timestamp(_) => DataType::Timestamp,
+        ProximaType::TimestampTz(_) => DataType::Timestamptz,
+        ProximaType::Uuid => DataType::Uuid,
+        ProximaType::Json => DataType::Json,
+        ProximaType::DenseVector { .. } => DataType::Vector,
         _ => DataType::String, // Default fallback
     }
 }

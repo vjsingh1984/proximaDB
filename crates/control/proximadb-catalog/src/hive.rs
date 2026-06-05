@@ -51,10 +51,12 @@ use tracing::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::cache::CatalogCache;
+use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+
 use crate::schema::{apply_evolution, validate_schema};
 use crate::{
-    Catalog, CatalogColumn, CatalogDataType, CatalogHealth, CatalogIndex, CatalogNamespace,
-    CatalogSchemaEvolution, CatalogTableSchema, CatalogTableStatistics, TableIdentifier,
+    Catalog, CatalogColumn, CatalogHealth, CatalogIndex, CatalogNamespace, CatalogSchemaEvolution,
+    CatalogTableSchema, CatalogTableStatistics, TableIdentifier,
 };
 
 /// Plain Rust configuration for the Hive Metastore catalog.
@@ -127,7 +129,7 @@ struct MockTable {
 struct MockColumn {
     id: i32,
     name: String,
-    data_type: CatalogDataType,
+    data_type: ProximaType,
     nullable: bool,
     comment: Option<String>,
 }
@@ -180,56 +182,64 @@ impl HiveCatalog {
         Ok(catalog)
     }
 
-    /// Convert Hive type string to CatalogDataType
-    fn _hive_type_to_data_type(hive_type: &str) -> CatalogDataType {
+    /// Convert Hive type string to canonical [`ProximaType`].
+    fn _hive_type_to_data_type(hive_type: &str) -> ProximaType {
         let lower = hive_type.to_lowercase();
         match lower.as_str() {
-            "boolean" => CatalogDataType::Boolean,
-            "tinyint" => CatalogDataType::Int8,
-            "smallint" => CatalogDataType::Int16,
-            "int" => CatalogDataType::Int32,
-            "bigint" => CatalogDataType::Int64,
-            "float" => CatalogDataType::Float32,
-            "double" => CatalogDataType::Float64,
-            "string" | "varchar" | "char" => CatalogDataType::String,
-            "binary" => CatalogDataType::Binary,
-            "date" => CatalogDataType::Date,
-            "timestamp" => CatalogDataType::Timestamp,
-            "decimal" => CatalogDataType::Decimal,
+            "boolean" => ProximaType::Boolean,
+            "tinyint" => ProximaType::Int8,
+            "smallint" => ProximaType::Int16,
+            "int" => ProximaType::Int32,
+            "bigint" => ProximaType::Int64,
+            "float" => ProximaType::Float32,
+            "double" => ProximaType::Float64,
+            "string" | "varchar" | "char" => ProximaType::String,
+            "binary" => ProximaType::Binary,
+            "date" => ProximaType::Date,
+            "timestamp" => ProximaType::Timestamp(TimeUnit::Nanosecond),
+            "decimal" => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
             t if t.starts_with("array<float>") || t.starts_with("array<double>") => {
-                CatalogDataType::Vector
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0,
+                }
             }
-            t if t.starts_with("map<") => CatalogDataType::Json,
-            t if t.starts_with("struct<") => CatalogDataType::Json,
-            t if t.starts_with("array<") => CatalogDataType::Json,
-            _ => CatalogDataType::String,
+            t if t.starts_with("map<") => ProximaType::Json,
+            t if t.starts_with("struct<") => ProximaType::Json,
+            t if t.starts_with("array<") => ProximaType::Json,
+            _ => ProximaType::String,
         }
     }
 
-    /// Convert CatalogDataType to Hive type string
+    /// Convert canonical [`ProximaType`] to Hive type string
     fn _data_type_to_hive_type(
-        data_type: CatalogDataType,
+        data_type: &ProximaType,
         _properties: &HashMap<String, String>,
     ) -> String {
         match data_type {
-            CatalogDataType::Boolean => "boolean".to_string(),
-            CatalogDataType::Int8 => "tinyint".to_string(),
-            CatalogDataType::Int16 => "smallint".to_string(),
-            CatalogDataType::Int32 => "int".to_string(),
-            CatalogDataType::Int64 => "bigint".to_string(),
-            CatalogDataType::Float32 => "float".to_string(),
-            CatalogDataType::Float64 => "double".to_string(),
-            CatalogDataType::String => "string".to_string(),
-            CatalogDataType::Binary => "binary".to_string(),
-            CatalogDataType::Date => "date".to_string(),
-            CatalogDataType::Timestamp | CatalogDataType::TimestampTz => "timestamp".to_string(),
-            CatalogDataType::Decimal => "decimal(38,18)".to_string(),
-            CatalogDataType::Json => "string".to_string(),
-            CatalogDataType::Time => "string".to_string(),
-            CatalogDataType::Uuid => "string".to_string(),
-            CatalogDataType::Vector => "array<float>".to_string(),
-            CatalogDataType::SparseVector => "map<int,float>".to_string(),
-            CatalogDataType::BinaryVector => "binary".to_string(),
+            ProximaType::Boolean => "boolean".to_string(),
+            ProximaType::Int8 => "tinyint".to_string(),
+            ProximaType::Int16 => "smallint".to_string(),
+            ProximaType::Int32 => "int".to_string(),
+            ProximaType::Int64 => "bigint".to_string(),
+            ProximaType::Float32 => "float".to_string(),
+            ProximaType::Float64 => "double".to_string(),
+            ProximaType::String => "string".to_string(),
+            ProximaType::Binary => "binary".to_string(),
+            ProximaType::Date => "date".to_string(),
+            ProximaType::Timestamp(_) | ProximaType::TimestampTz(_) => "timestamp".to_string(),
+            ProximaType::Decimal { .. } => "decimal(38,18)".to_string(),
+            ProximaType::Json => "string".to_string(),
+            ProximaType::Time(_) => "string".to_string(),
+            ProximaType::Uuid => "string".to_string(),
+            ProximaType::DenseVector { .. } => "array<float>".to_string(),
+            ProximaType::SparseVector { .. } => "map<int,float>".to_string(),
+            ProximaType::BinaryVector { .. } => "binary".to_string(),
+            // Richer ProximaType variants without a Hive mapping → string.
+            _ => "string".to_string(),
         }
     }
 
@@ -442,7 +452,7 @@ impl Catalog for HiveCatalog {
             .map(|col| MockColumn {
                 id: col.id,
                 name: col.name.clone(),
-                data_type: col.data_type,
+                data_type: col.data_type.clone(),
                 nullable: col.nullable,
                 comment: col.comment.clone(),
             })
@@ -518,7 +528,7 @@ impl Catalog for HiveCatalog {
             .columns
             .iter()
             .map(|col| {
-                let mut catalog_col = CatalogColumn::new(col.id, &col.name, col.data_type);
+                let mut catalog_col = CatalogColumn::new(col.id, &col.name, col.data_type.clone());
                 catalog_col.nullable = col.nullable;
                 catalog_col.comment = col.comment.clone();
                 catalog_col
@@ -599,7 +609,7 @@ impl Catalog for HiveCatalog {
             .map(|col| MockColumn {
                 id: col.id,
                 name: col.name.clone(),
-                data_type: col.data_type,
+                data_type: col.data_type.clone(),
                 nullable: col.nullable,
                 comment: col.comment.clone(),
             })
@@ -715,15 +725,18 @@ mod tests {
     fn test_hive_type_conversion() {
         assert_eq!(
             HiveCatalog::_hive_type_to_data_type("bigint"),
-            CatalogDataType::Int64
+            ProximaType::Int64
         );
         assert_eq!(
             HiveCatalog::_hive_type_to_data_type("string"),
-            CatalogDataType::String
+            ProximaType::String
         );
         assert_eq!(
             HiveCatalog::_hive_type_to_data_type("array<float>"),
-            CatalogDataType::Vector
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0
+            }
         );
     }
 
@@ -731,15 +744,21 @@ mod tests {
     fn test_data_type_to_hive() {
         let props = HashMap::new();
         assert_eq!(
-            HiveCatalog::_data_type_to_hive_type(CatalogDataType::Int64, &props),
+            HiveCatalog::_data_type_to_hive_type(&ProximaType::Int64, &props),
             "bigint"
         );
         assert_eq!(
-            HiveCatalog::_data_type_to_hive_type(CatalogDataType::String, &props),
+            HiveCatalog::_data_type_to_hive_type(&ProximaType::String, &props),
             "string"
         );
         assert_eq!(
-            HiveCatalog::_data_type_to_hive_type(CatalogDataType::Vector, &props),
+            HiveCatalog::_data_type_to_hive_type(
+                &ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0
+                },
+                &props
+            ),
             "array<float>"
         );
     }

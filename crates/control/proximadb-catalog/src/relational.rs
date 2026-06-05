@@ -7,11 +7,11 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
-use proximadb_data_model::ProximaValue;
+use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use serde::{Deserialize, Serialize};
 
-use crate::{CatalogColumn, CatalogDataType, CatalogTableSchema, ColumnConstraint};
+use crate::{CatalogColumn, CatalogTableSchema, ColumnConstraint};
 
 /// Schema enforcement mode for table writes and external/schema-on-read scans.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -414,7 +414,7 @@ impl CatalogRow {
         for column in schema
             .columns
             .iter()
-            .filter(|column| matches!(column.data_type, CatalogDataType::Vector))
+            .filter(|column| matches!(column.data_type, ProximaType::DenseVector { .. }))
         {
             let Some(value) = self.values.get(&column.name) else {
                 continue;
@@ -491,7 +491,7 @@ fn validate_column_value(
         ));
     }
 
-    if !matches_catalog_type(value, column.data_type) {
+    if !matches_catalog_type(value, &column.data_type) {
         return Err(anyhow!(
             "Column '{}' in table '{}' expects {:?}, got {}",
             column.name,
@@ -695,54 +695,59 @@ fn compare_equality<T: PartialEq>(
     }
 }
 
-fn matches_catalog_type(value: &ProximaValue, data_type: CatalogDataType) -> bool {
+fn matches_catalog_type(value: &ProximaValue, data_type: &ProximaType) -> bool {
     match data_type {
-        CatalogDataType::Boolean => matches!(value, ProximaValue::Boolean(_)),
-        CatalogDataType::Int8 => matches!(value, ProximaValue::Int8(_)),
-        CatalogDataType::Int16 => matches!(value, ProximaValue::Int8(_) | ProximaValue::Int16(_)),
-        CatalogDataType::Int32 => matches!(
+        ProximaType::Boolean => matches!(value, ProximaValue::Boolean(_)),
+        ProximaType::Int8 => matches!(value, ProximaValue::Int8(_)),
+        ProximaType::Int16 => matches!(value, ProximaValue::Int8(_) | ProximaValue::Int16(_)),
+        ProximaType::Int32 => matches!(
             value,
             ProximaValue::Int8(_) | ProximaValue::Int16(_) | ProximaValue::Int32(_)
         ),
-        CatalogDataType::Int64 => matches!(
+        ProximaType::Int64 => matches!(
             value,
             ProximaValue::Int8(_)
                 | ProximaValue::Int16(_)
                 | ProximaValue::Int32(_)
                 | ProximaValue::Int64(_)
         ),
-        CatalogDataType::Float32 => {
+        ProximaType::Float32 => {
             matches!(value, ProximaValue::Float16(_) | ProximaValue::Float32(_))
         }
-        CatalogDataType::Float64 => matches!(
+        ProximaType::Float64 => matches!(
             value,
             ProximaValue::Float16(_) | ProximaValue::Float32(_) | ProximaValue::Float64(_)
         ),
-        CatalogDataType::String => {
+        ProximaType::String => {
             matches!(value, ProximaValue::String(_) | ProximaValue::Symbol(_))
         }
-        CatalogDataType::Binary => matches!(value, ProximaValue::Binary(_)),
-        CatalogDataType::Date => matches!(value, ProximaValue::Date(_)),
-        CatalogDataType::Time => matches!(value, ProximaValue::Time(_, _)),
-        CatalogDataType::Timestamp => matches!(value, ProximaValue::Timestamp(_, _)),
-        CatalogDataType::TimestampTz => matches!(value, ProximaValue::TimestampTz(_, _)),
-        CatalogDataType::Decimal => matches!(value, ProximaValue::Decimal(_)),
-        CatalogDataType::Uuid => matches!(value, ProximaValue::Uuid(_) | ProximaValue::String(_)),
-        CatalogDataType::Json => matches!(
+        ProximaType::Binary => matches!(value, ProximaValue::Binary(_)),
+        ProximaType::Date => matches!(value, ProximaValue::Date(_)),
+        ProximaType::Time(_) => matches!(value, ProximaValue::Time(_, _)),
+        ProximaType::Timestamp(_) => matches!(value, ProximaValue::Timestamp(_, _)),
+        ProximaType::TimestampTz(_) => matches!(value, ProximaValue::TimestampTz(_, _)),
+        ProximaType::Decimal { .. } => matches!(value, ProximaValue::Decimal(_)),
+        ProximaType::Uuid => matches!(value, ProximaValue::Uuid(_) | ProximaValue::String(_)),
+        ProximaType::Json => matches!(
             value,
             ProximaValue::Json(_)
                 | ProximaValue::Jsonb(_)
                 | ProximaValue::Map(_)
                 | ProximaValue::Struct(_)
         ),
-        CatalogDataType::Vector => matches!(value, ProximaValue::DenseVector(_)),
-        CatalogDataType::SparseVector => matches!(value, ProximaValue::SparseVector { .. }),
-        CatalogDataType::BinaryVector => {
+        ProximaType::DenseVector { .. } => matches!(value, ProximaValue::DenseVector(_)),
+        ProximaType::SparseVector { .. } => matches!(value, ProximaValue::SparseVector { .. }),
+        ProximaType::BinaryVector { .. } => {
             matches!(
                 value,
                 ProximaValue::BinaryVector(_) | ProximaValue::Binary(_)
             )
         }
+        // Richer ProximaType variants without a catalog-column type-check rule
+        // (unsigned ints, Float16, Symbol, Jsonb, Array, Map, Struct, Interval,
+        // Duration, ULID, geo, Null) are accepted permissively here; relational
+        // tables only construct the subset above.
+        _ => true,
     }
 }
 
@@ -822,10 +827,17 @@ mod tests {
 
     fn users_schema() -> CatalogTableSchema {
         CatalogTableSchema::new("users")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "email", CatalogDataType::String).nullable(false))
-            .with_column(CatalogColumn::new(3, "profile", CatalogDataType::Json))
-            .with_column(CatalogColumn::new(4, "embedding", CatalogDataType::Vector))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "email", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(3, "profile", ProximaType::Json))
+            .with_column(CatalogColumn::new(
+                4,
+                "embedding",
+                ProximaType::DenseVector {
+                    element: proximadb_data_model::VectorElement::Float32,
+                    dim: 0,
+                },
+            ))
             .with_relational_capabilities(RelationalCapabilities {
                 primary_key: vec!["id".to_string()],
                 ..Default::default()
@@ -1027,8 +1039,8 @@ mod tests {
 
     fn orders_schema_with_check(expression: &str) -> CatalogTableSchema {
         CatalogTableSchema::new("orders")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "amount", CatalogDataType::Float64))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "amount", ProximaType::Float64))
             .with_relational_capabilities(RelationalCapabilities {
                 primary_key: vec!["id".to_string()],
                 constraints: vec![ColumnConstraint::Check {
@@ -1091,8 +1103,8 @@ mod tests {
 
     fn users_schema_with_unique_email() -> CatalogTableSchema {
         CatalogTableSchema::new("users")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "email", CatalogDataType::String))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "email", ProximaType::String))
             .with_relational_capabilities(RelationalCapabilities {
                 primary_key: vec!["id".to_string()],
                 unique_indexes: vec![
@@ -1138,8 +1150,8 @@ mod tests {
 
     fn orders_schema_with_foreign_key() -> CatalogTableSchema {
         CatalogTableSchema::new("orders")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "customer_id", CatalogDataType::Int64))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "customer_id", ProximaType::Int64))
             .with_relational_capabilities(RelationalCapabilities {
                 primary_key: vec!["id".to_string()],
                 constraints: vec![ColumnConstraint::ForeignKey {

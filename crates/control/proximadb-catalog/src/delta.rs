@@ -59,10 +59,12 @@ use tracing::{debug, info, warn};
 
 use crate::cache::CatalogCache;
 use crate::schema::{apply_evolution, validate_schema};
+use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+
 use crate::{
-    Catalog, CatalogColumn, CatalogDataType, CatalogHealth, CatalogIndex, CatalogNamespace,
-    CatalogPartitionSpec, CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema,
-    CatalogTableStatistics, LakehouseExtension, TableFormat, TableIdentifier,
+    Catalog, CatalogColumn, CatalogHealth, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
+    CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
+    LakehouseExtension, TableFormat, TableIdentifier,
 };
 
 /// Delta Lake catalog configuration
@@ -355,56 +357,64 @@ impl DeltaCatalog {
         Ok(())
     }
 
-    /// Convert Spark SQL type to CatalogDataType
-    fn spark_type_to_data_type(spark_type: &str) -> CatalogDataType {
+    /// Convert Spark SQL type to canonical [`ProximaType`].
+    fn spark_type_to_data_type(spark_type: &str) -> ProximaType {
         let lower = spark_type.to_lowercase();
         match lower.as_str() {
-            "boolean" => CatalogDataType::Boolean,
-            "byte" | "tinyint" => CatalogDataType::Int8,
-            "short" | "smallint" => CatalogDataType::Int16,
-            "int" | "integer" => CatalogDataType::Int32,
-            "long" | "bigint" => CatalogDataType::Int64,
-            "float" | "real" => CatalogDataType::Float32,
-            "double" => CatalogDataType::Float64,
-            "string" => CatalogDataType::String,
-            "binary" => CatalogDataType::Binary,
-            "date" => CatalogDataType::Date,
-            "timestamp" | "timestamp_ntz" => CatalogDataType::Timestamp,
-            t if t.starts_with("decimal") => CatalogDataType::Decimal,
+            "boolean" => ProximaType::Boolean,
+            "byte" | "tinyint" => ProximaType::Int8,
+            "short" | "smallint" => ProximaType::Int16,
+            "int" | "integer" => ProximaType::Int32,
+            "long" | "bigint" => ProximaType::Int64,
+            "float" | "real" => ProximaType::Float32,
+            "double" => ProximaType::Float64,
+            "string" => ProximaType::String,
+            "binary" => ProximaType::Binary,
+            "date" => ProximaType::Date,
+            "timestamp" | "timestamp_ntz" => ProximaType::Timestamp(TimeUnit::Nanosecond),
+            t if t.starts_with("decimal") => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
             t if t.starts_with("array<float>") || t.starts_with("array<double>") => {
-                CatalogDataType::Vector
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0,
+                }
             }
-            t if t.starts_with("array<") => CatalogDataType::Json,
-            t if t.starts_with("map<") => CatalogDataType::Json,
-            t if t.starts_with("struct<") => CatalogDataType::Json,
-            _ => CatalogDataType::String,
+            t if t.starts_with("array<") => ProximaType::Json,
+            t if t.starts_with("map<") => ProximaType::Json,
+            t if t.starts_with("struct<") => ProximaType::Json,
+            _ => ProximaType::String,
         }
     }
 
-    /// Convert CatalogDataType to Spark SQL type
+    /// Convert canonical [`ProximaType`] to Spark SQL type
     fn data_type_to_spark_type(
-        data_type: &CatalogDataType,
+        data_type: &ProximaType,
         _properties: &HashMap<String, String>,
     ) -> String {
         match data_type {
-            CatalogDataType::Boolean => "boolean".to_string(),
-            CatalogDataType::Int8 => "byte".to_string(),
-            CatalogDataType::Int16 => "short".to_string(),
-            CatalogDataType::Int32 => "integer".to_string(),
-            CatalogDataType::Int64 => "long".to_string(),
-            CatalogDataType::Float32 => "float".to_string(),
-            CatalogDataType::Float64 => "double".to_string(),
-            CatalogDataType::String => "string".to_string(),
-            CatalogDataType::Binary => "binary".to_string(),
-            CatalogDataType::Date => "date".to_string(),
-            CatalogDataType::Time => "string".to_string(), // Delta doesn't have TIME type
-            CatalogDataType::Timestamp | CatalogDataType::TimestampTz => "timestamp".to_string(),
-            CatalogDataType::Uuid => "string".to_string(),
-            CatalogDataType::Decimal => "decimal(38,18)".to_string(),
-            CatalogDataType::Json => "string".to_string(),
-            CatalogDataType::Vector => "array<float>".to_string(),
-            CatalogDataType::SparseVector => "map<integer,float>".to_string(),
-            CatalogDataType::BinaryVector => "binary".to_string(),
+            ProximaType::Boolean => "boolean".to_string(),
+            ProximaType::Int8 => "byte".to_string(),
+            ProximaType::Int16 => "short".to_string(),
+            ProximaType::Int32 => "integer".to_string(),
+            ProximaType::Int64 => "long".to_string(),
+            ProximaType::Float32 => "float".to_string(),
+            ProximaType::Float64 => "double".to_string(),
+            ProximaType::String => "string".to_string(),
+            ProximaType::Binary => "binary".to_string(),
+            ProximaType::Date => "date".to_string(),
+            ProximaType::Time(_) => "string".to_string(), // Delta doesn't have TIME type
+            ProximaType::Timestamp(_) | ProximaType::TimestampTz(_) => "timestamp".to_string(),
+            ProximaType::Uuid => "string".to_string(),
+            ProximaType::Decimal { .. } => "decimal(38,18)".to_string(),
+            ProximaType::Json => "string".to_string(),
+            ProximaType::DenseVector { .. } => "array<float>".to_string(),
+            ProximaType::SparseVector { .. } => "map<integer,float>".to_string(),
+            ProximaType::BinaryVector { .. } => "binary".to_string(),
+            // Richer ProximaType variants without a Spark/Delta mapping → string.
+            _ => "string".to_string(),
         }
     }
 
@@ -649,7 +659,7 @@ impl Catalog for DeltaCatalog {
             .iter()
             .map(|col| {
                 let mut metadata = col.properties.clone();
-                if col.data_type == CatalogDataType::Vector {
+                if matches!(col.data_type, ProximaType::DenseVector { .. }) {
                     if let Some(dim) = col.properties.get("dimension") {
                         metadata.insert("delta.proximadb.dimension".to_string(), dim.clone());
                     }
@@ -889,7 +899,7 @@ impl Catalog for DeltaCatalog {
             .iter()
             .map(|col| {
                 let mut metadata = col.properties.clone();
-                if col.data_type == CatalogDataType::Vector {
+                if matches!(col.data_type, ProximaType::DenseVector { .. }) {
                     if let Some(dim) = col.properties.get("dimension") {
                         metadata.insert("delta.proximadb.dimension".to_string(), dim.clone());
                     }
@@ -1260,23 +1270,26 @@ mod tests {
     fn test_spark_type_conversion() {
         assert_eq!(
             DeltaCatalog::spark_type_to_data_type("long"),
-            CatalogDataType::Int64
+            ProximaType::Int64
         );
         assert_eq!(
             DeltaCatalog::spark_type_to_data_type("string"),
-            CatalogDataType::String
+            ProximaType::String
         );
         assert_eq!(
             DeltaCatalog::spark_type_to_data_type("array<float>"),
-            CatalogDataType::Vector
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0
+            }
         );
         assert_eq!(
             DeltaCatalog::spark_type_to_data_type("integer"),
-            CatalogDataType::Int32
+            ProximaType::Int32
         );
         assert_eq!(
             DeltaCatalog::spark_type_to_data_type("boolean"),
-            CatalogDataType::Boolean
+            ProximaType::Boolean
         );
     }
 
@@ -1284,19 +1297,25 @@ mod tests {
     fn test_data_type_to_spark() {
         let props = HashMap::new();
         assert_eq!(
-            DeltaCatalog::data_type_to_spark_type(&CatalogDataType::Int64, &props),
+            DeltaCatalog::data_type_to_spark_type(&ProximaType::Int64, &props),
             "long"
         );
         assert_eq!(
-            DeltaCatalog::data_type_to_spark_type(&CatalogDataType::String, &props),
+            DeltaCatalog::data_type_to_spark_type(&ProximaType::String, &props),
             "string"
         );
         assert_eq!(
-            DeltaCatalog::data_type_to_spark_type(&CatalogDataType::Vector, &props),
+            DeltaCatalog::data_type_to_spark_type(
+                &ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0
+                },
+                &props
+            ),
             "array<float>"
         );
         assert_eq!(
-            DeltaCatalog::data_type_to_spark_type(&CatalogDataType::Boolean, &props),
+            DeltaCatalog::data_type_to_spark_type(&ProximaType::Boolean, &props),
             "boolean"
         );
     }
@@ -1306,7 +1325,13 @@ mod tests {
         let mut props = HashMap::new();
         props.insert("dimension".to_string(), "768".to_string());
 
-        let spark_type = DeltaCatalog::data_type_to_spark_type(&CatalogDataType::Vector, &props);
+        let spark_type = DeltaCatalog::data_type_to_spark_type(
+            &ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0,
+            },
+            &props,
+        );
         assert_eq!(spark_type, "array<float>");
     }
 
@@ -1384,19 +1409,22 @@ mod tests {
     fn test_complex_spark_types() {
         assert_eq!(
             DeltaCatalog::spark_type_to_data_type("decimal(10,2)"),
-            CatalogDataType::Decimal
+            ProximaType::Decimal {
+                precision: 38,
+                scale: 10
+            }
         );
         assert_eq!(
             DeltaCatalog::spark_type_to_data_type("array<string>"),
-            CatalogDataType::Json
+            ProximaType::Json
         );
         assert_eq!(
             DeltaCatalog::spark_type_to_data_type("map<string,int>"),
-            CatalogDataType::Json
+            ProximaType::Json
         );
         assert_eq!(
             DeltaCatalog::spark_type_to_data_type("struct<name:string,age:int>"),
-            CatalogDataType::Json
+            ProximaType::Json
         );
     }
 
@@ -1498,8 +1526,8 @@ mod tests {
 
         // Create table
         let schema = CatalogTableSchema::new("users")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String));
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String));
 
         let identifier = TableIdentifier::new(vec!["mydb".to_string()], "users".to_string());
 

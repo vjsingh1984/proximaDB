@@ -4359,11 +4359,12 @@ impl EmbeddedProximaDB {
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
-        let Some(vector_column) = schema
-            .columns
-            .iter()
-            .find(|column| matches!(column.data_type, crate::catalog::CatalogDataType::Vector))
-        else {
+        let Some(vector_column) = schema.columns.iter().find(|column| {
+            matches!(
+                column.data_type,
+                proximadb_data_model::ProximaType::DenseVector { .. }
+            )
+        }) else {
             return Ok(());
         };
         let dimension = vector_column

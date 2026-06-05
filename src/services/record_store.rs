@@ -993,7 +993,12 @@ fn projection_directives_for_schema(schema: &CatalogTableSchema) -> Vec<Projecti
         CatalogStorageSpecialization::VectorAnn => schema
             .columns
             .iter()
-            .filter(|column| matches!(column.data_type, proximadb_catalog::CatalogDataType::Vector))
+            .filter(|column| {
+                matches!(
+                    column.data_type,
+                    proximadb_data_model::ProximaType::DenseVector { .. }
+                )
+            })
             .map(|column| ProjectionDirective::HnswIndex {
                 collection_id: schema.name.clone(),
                 embedding_field: column.name.clone(),
@@ -1106,8 +1111,9 @@ mod tests {
     use arrow_array::RecordBatch;
     use arrow_schema::Schema as ArrowSchema;
     use futures::stream::BoxStream;
-    use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogStorageLayout};
+    use proximadb_catalog::{CatalogColumn, CatalogStorageLayout};
     use proximadb_data_model::ProximaValue;
+    use proximadb_data_model::{ProximaType, VectorElement};
     use proximadb_kernel::error::StorageError;
     use proximadb_records::{EmbeddingCell, EmbeddingValues, RecordScan, RecordStore};
     use proximadb_storage_common::object_store_bridge::{
@@ -1467,8 +1473,8 @@ mod tests {
         let wal = Arc::new(RecordingWalAppender::default());
         let store = DirectWalTableRecordStore::new(storage.clone(), wal.clone());
         let schema = CatalogTableSchema::new("orders")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
-            .with_column(CatalogColumn::new(2, "amount", CatalogDataType::Float64))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "amount", ProximaType::Float64))
             .with_storage_specialization(CatalogStorageSpecialization::PaxRowFamily);
         let record = ProximaRecord {
             oid: "o1".to_string(),
@@ -1825,8 +1831,15 @@ mod tests {
         let wal = Arc::new(RecordingWalAppender::default());
         let store = DirectWalTableRecordStore::new(storage.clone(), wal.clone());
         let schema = CatalogTableSchema::new("products")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
-            .with_column(CatalogColumn::new(2, "embedding", CatalogDataType::Vector))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(
+                2,
+                "embedding",
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0,
+                },
+            ))
             .with_storage_specialization(CatalogStorageSpecialization::PaxRowFamily);
 
         let record = ProximaRecord {
@@ -2061,8 +2074,8 @@ mod tests {
             Arc::new(IcebergObjectStoreBridge::from_url("memory://").unwrap());
         let store = ObjectStoreIcebergRecordStore::new(bridge);
         let mut schema = CatalogTableSchema::new("orders")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
-            .with_column(CatalogColumn::new(2, "amount", CatalogDataType::Int64));
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "amount", ProximaType::Int64));
         schema.primary_key = vec!["id".to_string()];
 
         let mut r0 = props_record(
@@ -2253,8 +2266,8 @@ mod tests {
     #[test]
     fn reconstruct_oid_matches_catalog_canonical_composite_key() {
         let mut schema = CatalogTableSchema::new("orders")
-            .with_column(CatalogColumn::new(1, "region", CatalogDataType::String).nullable(false))
-            .with_column(CatalogColumn::new(2, "id", CatalogDataType::Int64).nullable(false));
+            .with_column(CatalogColumn::new(1, "region", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "id", ProximaType::Int64).nullable(false));
         schema.primary_key = vec!["region".to_string(), "id".to_string()];
 
         let mut props = HashMap::new();

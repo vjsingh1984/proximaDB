@@ -503,9 +503,10 @@ mod tests {
     use crate::query::unified::ast::DataModel;
     use crate::query::unified::uql::{DataSource, SelectStatement, UQLStatement};
     use proximadb_catalog::{
-        CatalogColumn, CatalogDataType, CatalogPhysicalFormat, CatalogProjection,
-        CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind, CatalogTableSchema,
+        CatalogColumn, CatalogPhysicalFormat, CatalogProjection, CatalogProjectionKind,
+        CatalogStorageLayout, CatalogStorageLayoutKind, CatalogTableSchema,
     };
+    use proximadb_data_model::ProximaType;
 
     #[test]
     fn test_create_router() {
@@ -623,7 +624,7 @@ mod tests {
 
         let table_id = TableIdentifier::new(vec!["default".to_string()], "vectors".to_string());
         let mut schema = CatalogTableSchema::new("vectors")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String).nullable(false))
             .with_projection(CatalogProjection::rebuildable(
                 "vectors_hnsw",
                 CatalogProjectionKind::VectorAnn,

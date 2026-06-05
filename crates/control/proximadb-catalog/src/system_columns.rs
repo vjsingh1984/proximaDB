@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::CatalogDataType;
+use proximadb_data_model::ProximaType;
 
 /// Reserved prefix for SQL-visible internal columns.
 pub const SYSTEM_COLUMN_PREFIX: &str = "__proxima_";
@@ -50,7 +50,7 @@ pub enum SystemColumnId {
 pub struct SystemColumn {
     pub id: SystemColumnId,
     pub name: &'static str,
-    pub data_type: CatalogDataType,
+    pub data_type: ProximaType,
     pub nullable: bool,
     /// Canonical source field or derived metadata path.
     pub source: &'static str,
@@ -88,84 +88,84 @@ pub fn system_columns() -> Vec<SystemColumn> {
         SystemColumn {
             id: SystemColumnId::Oid,
             name: OID,
-            data_type: CatalogDataType::String,
+            data_type: ProximaType::String,
             nullable: false,
             source: "ProximaRecord.oid",
         },
         SystemColumn {
             id: SystemColumnId::TenantId,
             name: TENANT_ID,
-            data_type: CatalogDataType::String,
+            data_type: ProximaType::String,
             nullable: false,
             source: "ProximaRecord.tenant_id",
         },
         SystemColumn {
             id: SystemColumnId::RecordVersion,
             name: RECORD_VERSION,
-            data_type: CatalogDataType::Int64,
+            data_type: ProximaType::Int64,
             nullable: false,
             source: "ProximaRecord.record_version",
         },
         SystemColumn {
             id: SystemColumnId::CreatedAtNs,
             name: CREATED_AT_NS,
-            data_type: CatalogDataType::Int64,
+            data_type: ProximaType::Int64,
             nullable: false,
             source: "ProximaRecord.created_at_ns",
         },
         SystemColumn {
             id: SystemColumnId::UpdatedAtNs,
             name: UPDATED_AT_NS,
-            data_type: CatalogDataType::Int64,
+            data_type: ProximaType::Int64,
             nullable: false,
             source: "ProximaRecord.updated_at_ns",
         },
         SystemColumn {
             id: SystemColumnId::ValidFromNs,
             name: VALID_FROM_NS,
-            data_type: CatalogDataType::Int64,
+            data_type: ProximaType::Int64,
             nullable: true,
             source: "ProximaRecord.valid_from_ns",
         },
         SystemColumn {
             id: SystemColumnId::ValidToNs,
             name: VALID_TO_NS,
-            data_type: CatalogDataType::Int64,
+            data_type: ProximaType::Int64,
             nullable: true,
             source: "ProximaRecord.valid_to_ns",
         },
         SystemColumn {
             id: SystemColumnId::Actor,
             name: ACTOR,
-            data_type: CatalogDataType::String,
+            data_type: ProximaType::String,
             nullable: true,
             source: "ProximaRecord.actor",
         },
         SystemColumn {
             id: SystemColumnId::Origin,
             name: ORIGIN,
-            data_type: CatalogDataType::String,
+            data_type: ProximaType::String,
             nullable: true,
             source: "ProximaRecord.origin",
         },
         SystemColumn {
             id: SystemColumnId::Deleted,
             name: DELETED,
-            data_type: CatalogDataType::Boolean,
+            data_type: ProximaType::Boolean,
             nullable: false,
             source: "derived tombstone/visibility state",
         },
         SystemColumn {
             id: SystemColumnId::BranchId,
             name: BRANCH_ID,
-            data_type: CatalogDataType::String,
+            data_type: ProximaType::String,
             nullable: true,
             source: "branch/snapshot metadata",
         },
         SystemColumn {
             id: SystemColumnId::SchemaVersion,
             name: SCHEMA_VERSION,
-            data_type: CatalogDataType::Int32,
+            data_type: ProximaType::Int32,
             nullable: false,
             source: "xCatalog schema_version",
         },
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(columns.len(), 12);
         assert_eq!(columns[0].id, SystemColumnId::Oid);
         assert_eq!(columns[0].name, OID);
-        assert_eq!(columns[0].data_type, CatalogDataType::String);
+        assert_eq!(columns[0].data_type, ProximaType::String);
         assert!(!columns[0].nullable);
         assert_eq!(columns[0].source, "ProximaRecord.oid");
 
@@ -234,14 +234,14 @@ mod tests {
             .iter()
             .find(|column| column.id == SystemColumnId::Deleted)
             .unwrap();
-        assert_eq!(deleted.data_type, CatalogDataType::Boolean);
+        assert_eq!(deleted.data_type, ProximaType::Boolean);
         assert_eq!(deleted.source, "derived tombstone/visibility state");
 
         let schema_version = columns
             .iter()
             .find(|column| column.id == SystemColumnId::SchemaVersion)
             .unwrap();
-        assert_eq!(schema_version.data_type, CatalogDataType::Int32);
+        assert_eq!(schema_version.data_type, ProximaType::Int32);
         assert_eq!(schema_version.source, "xCatalog schema_version");
 
         let serialized = serde_json::to_string(&SystemColumnId::RecordVersion).unwrap();

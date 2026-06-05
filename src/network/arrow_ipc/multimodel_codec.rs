@@ -171,7 +171,7 @@ pub fn relational_schema(column_names: &[String], column_types: &[String]) -> Ar
 /// Build an Arrow schema directly from xCatalog table metadata.
 ///
 /// This is the canonical relational Arrow path: SQL, REST/gRPC, embedded, and
-/// Arrow Flight should agree on xCatalog `CatalogDataType` and nullability
+/// Arrow Flight should agree on the xCatalog `ProximaType` and nullability
 /// instead of maintaining separate string-based type maps.
 pub fn relational_schema_from_catalog(table_schema: &CatalogTableSchema) -> Arc<Schema> {
     let fields: Vec<Field> = table_schema
@@ -180,7 +180,7 @@ pub fn relational_schema_from_catalog(table_schema: &CatalogTableSchema) -> Arc<
         .map(|column| {
             Field::new(
                 column.name.clone(),
-                column.data_type.to_arrow_datatype(),
+                proximadb_catalog::catalog_arrow_type(&column.data_type),
                 column.nullable,
             )
         })
@@ -314,16 +314,24 @@ mod tests {
 
     #[test]
     fn test_relational_schema_from_catalog_uses_catalog_types_and_nullability() {
-        use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema};
+        use proximadb_catalog::{CatalogColumn, CatalogTableSchema};
+        use proximadb_data_model::ProximaType;
 
         let table = CatalogTableSchema::new("events")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "payload", CatalogDataType::Json))
-            .with_column(CatalogColumn::new(3, "embedding", CatalogDataType::Vector))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "payload", ProximaType::Json))
+            .with_column(CatalogColumn::new(
+                3,
+                "embedding",
+                ProximaType::DenseVector {
+                    element: proximadb_data_model::VectorElement::Float32,
+                    dim: 0,
+                },
+            ))
             .with_column(CatalogColumn::new(
                 4,
                 "created_at",
-                CatalogDataType::TimestampTz,
+                ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
             ));
 
         let schema = relational_schema_from_catalog(&table);

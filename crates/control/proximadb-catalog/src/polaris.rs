@@ -18,10 +18,12 @@ use tracing::{debug, info, warn};
 
 use crate::cache::CatalogCache;
 use crate::schema::{apply_evolution, validate_schema};
+use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+
 use crate::{
-    Catalog, CatalogColumn, CatalogDataType, CatalogHealth, CatalogIndex, CatalogNamespace,
-    CatalogPartitionSpec, CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema,
-    CatalogTableStatistics, LakehouseExtension, TableFormat, TableIdentifier,
+    Catalog, CatalogColumn, CatalogHealth, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
+    CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
+    LakehouseExtension, TableFormat, TableIdentifier,
 };
 
 /// Plain Rust configuration for the Apache Polaris (Iceberg REST) catalog.
@@ -332,27 +334,30 @@ impl PolarisCatalog {
         }
     }
 
-    /// Parse Iceberg type to CatalogDataType and properties
+    /// Parse Iceberg type to canonical [`ProximaType`] and properties
     fn parse_iceberg_type(
         type_value: &serde_json::Value,
-    ) -> (CatalogDataType, HashMap<String, String>) {
+    ) -> (ProximaType, HashMap<String, String>) {
         let mut properties = HashMap::new();
 
         let data_type = match type_value {
             serde_json::Value::String(s) => match s.as_str() {
-                "boolean" => CatalogDataType::Boolean,
-                "int" | "integer" => CatalogDataType::Int32,
-                "long" => CatalogDataType::Int64,
-                "float" => CatalogDataType::Float32,
-                "double" => CatalogDataType::Float64,
-                "string" => CatalogDataType::String,
-                "binary" => CatalogDataType::Binary,
-                "date" => CatalogDataType::Date,
-                "timestamp" | "timestamptz" => CatalogDataType::Timestamp,
-                "uuid" => CatalogDataType::Uuid,
-                t if t.starts_with("decimal") => CatalogDataType::Decimal,
-                t if t.starts_with("fixed") => CatalogDataType::Binary,
-                _ => CatalogDataType::String,
+                "boolean" => ProximaType::Boolean,
+                "int" | "integer" => ProximaType::Int32,
+                "long" => ProximaType::Int64,
+                "float" => ProximaType::Float32,
+                "double" => ProximaType::Float64,
+                "string" => ProximaType::String,
+                "binary" => ProximaType::Binary,
+                "date" => ProximaType::Date,
+                "timestamp" | "timestamptz" => ProximaType::Timestamp(TimeUnit::Nanosecond),
+                "uuid" => ProximaType::Uuid,
+                t if t.starts_with("decimal") => ProximaType::Decimal {
+                    precision: 38,
+                    scale: 10,
+                },
+                t if t.starts_with("fixed") => ProximaType::Binary,
+                _ => ProximaType::String,
             },
             serde_json::Value::Object(obj) => {
                 let type_name = obj.get("type").and_then(|v| v.as_str()).unwrap_or("struct");
@@ -366,46 +371,52 @@ impl PolarisCatalog {
                                 if let Some(length) = obj.get("length").and_then(|v| v.as_i64()) {
                                     properties.insert("dimension".to_string(), length.to_string());
                                 }
-                                return (CatalogDataType::Vector, properties);
+                                return (
+                                    ProximaType::DenseVector {
+                                        element: VectorElement::Float32,
+                                        dim: 0,
+                                    },
+                                    properties,
+                                );
                             }
                         }
-                        CatalogDataType::Json
+                        ProximaType::Json
                     }
-                    "map" => CatalogDataType::Json,
-                    "struct" => CatalogDataType::Json,
-                    _ => CatalogDataType::String,
+                    "map" => ProximaType::Json,
+                    "struct" => ProximaType::Json,
+                    _ => ProximaType::String,
                 }
             }
-            _ => CatalogDataType::String,
+            _ => ProximaType::String,
         };
 
         (data_type, properties)
     }
 
-    /// Convert CatalogDataType to Iceberg type
+    /// Convert canonical [`ProximaType`] to Iceberg type
     fn data_type_to_iceberg(
-        data_type: &CatalogDataType,
+        data_type: &ProximaType,
         properties: &HashMap<String, String>,
     ) -> serde_json::Value {
         match data_type {
-            CatalogDataType::Boolean => serde_json::json!("boolean"),
-            CatalogDataType::Int8 | CatalogDataType::Int16 | CatalogDataType::Int32 => {
+            ProximaType::Boolean => serde_json::json!("boolean"),
+            ProximaType::Int8 | ProximaType::Int16 | ProximaType::Int32 => {
                 serde_json::json!("int")
             }
-            CatalogDataType::Int64 => serde_json::json!("long"),
-            CatalogDataType::Float32 => serde_json::json!("float"),
-            CatalogDataType::Float64 => serde_json::json!("double"),
-            CatalogDataType::String => serde_json::json!("string"),
-            CatalogDataType::Binary | CatalogDataType::BinaryVector => serde_json::json!("binary"),
-            CatalogDataType::Date => serde_json::json!("date"),
-            CatalogDataType::Time => serde_json::json!("time"),
-            CatalogDataType::Timestamp | CatalogDataType::TimestampTz => {
+            ProximaType::Int64 => serde_json::json!("long"),
+            ProximaType::Float32 => serde_json::json!("float"),
+            ProximaType::Float64 => serde_json::json!("double"),
+            ProximaType::String => serde_json::json!("string"),
+            ProximaType::Binary | ProximaType::BinaryVector { .. } => serde_json::json!("binary"),
+            ProximaType::Date => serde_json::json!("date"),
+            ProximaType::Time(_) => serde_json::json!("time"),
+            ProximaType::Timestamp(_) | ProximaType::TimestampTz(_) => {
                 serde_json::json!("timestamptz")
             }
-            CatalogDataType::Uuid => serde_json::json!("uuid"),
-            CatalogDataType::Decimal => serde_json::json!("decimal(38,18)"),
-            CatalogDataType::Json => serde_json::json!("string"),
-            CatalogDataType::Vector => {
+            ProximaType::Uuid => serde_json::json!("uuid"),
+            ProximaType::Decimal { .. } => serde_json::json!("decimal(38,18)"),
+            ProximaType::Json => serde_json::json!("string"),
+            ProximaType::DenseVector { .. } => {
                 let dim = properties
                     .get("dimension")
                     .and_then(|d| d.parse::<i64>().ok())
@@ -417,11 +428,13 @@ impl PolarisCatalog {
                     "length": dim
                 })
             }
-            CatalogDataType::SparseVector => serde_json::json!({
+            ProximaType::SparseVector { .. } => serde_json::json!({
                 "type": "map",
                 "key": "int",
                 "value": "float"
             }),
+            // Richer ProximaType variants without a dedicated Iceberg mapping → string.
+            _ => serde_json::json!("string"),
         }
     }
 
@@ -1190,32 +1203,32 @@ mod tests {
     #[test]
     fn test_iceberg_type_conversion() {
         let (dt, _) = PolarisCatalog::parse_iceberg_type(&serde_json::json!("long"));
-        assert!(matches!(dt, CatalogDataType::Int64));
+        assert!(matches!(dt, ProximaType::Int64));
 
         let (dt, _) = PolarisCatalog::parse_iceberg_type(&serde_json::json!("string"));
-        assert!(matches!(dt, CatalogDataType::String));
+        assert!(matches!(dt, ProximaType::String));
 
         let (dt, _) = PolarisCatalog::parse_iceberg_type(&serde_json::json!("boolean"));
-        assert!(matches!(dt, CatalogDataType::Boolean));
+        assert!(matches!(dt, ProximaType::Boolean));
 
         let (dt, _) = PolarisCatalog::parse_iceberg_type(&serde_json::json!("float"));
-        assert!(matches!(dt, CatalogDataType::Float32));
+        assert!(matches!(dt, ProximaType::Float32));
 
         let (dt, _) = PolarisCatalog::parse_iceberg_type(&serde_json::json!("double"));
-        assert!(matches!(dt, CatalogDataType::Float64));
+        assert!(matches!(dt, ProximaType::Float64));
     }
 
     #[test]
     fn test_data_type_to_iceberg() {
         let props = HashMap::new();
 
-        let iceberg_type = PolarisCatalog::data_type_to_iceberg(&CatalogDataType::Int64, &props);
+        let iceberg_type = PolarisCatalog::data_type_to_iceberg(&ProximaType::Int64, &props);
         assert_eq!(iceberg_type, serde_json::json!("long"));
 
-        let iceberg_type = PolarisCatalog::data_type_to_iceberg(&CatalogDataType::String, &props);
+        let iceberg_type = PolarisCatalog::data_type_to_iceberg(&ProximaType::String, &props);
         assert_eq!(iceberg_type, serde_json::json!("string"));
 
-        let iceberg_type = PolarisCatalog::data_type_to_iceberg(&CatalogDataType::Boolean, &props);
+        let iceberg_type = PolarisCatalog::data_type_to_iceberg(&ProximaType::Boolean, &props);
         assert_eq!(iceberg_type, serde_json::json!("boolean"));
     }
 
@@ -1224,8 +1237,13 @@ mod tests {
         let mut vec_props = HashMap::new();
         vec_props.insert("dimension".to_string(), "768".to_string());
 
-        let iceberg_type =
-            PolarisCatalog::data_type_to_iceberg(&CatalogDataType::Vector, &vec_props);
+        let iceberg_type = PolarisCatalog::data_type_to_iceberg(
+            &ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0,
+            },
+            &vec_props,
+        );
         assert!(iceberg_type.get("type").is_some());
         assert_eq!(iceberg_type.get("type").unwrap(), "list");
         assert_eq!(iceberg_type.get("element").unwrap(), "float");
@@ -1244,7 +1262,7 @@ mod tests {
 
         let column = PolarisCatalog::iceberg_field_to_column(&field);
         assert_eq!(column.name, "test_col");
-        assert!(matches!(column.data_type, CatalogDataType::String));
+        assert!(matches!(column.data_type, ProximaType::String));
         assert!(!column.nullable);
         assert_eq!(column.comment, Some("Test column".to_string()));
     }
@@ -1257,7 +1275,7 @@ mod tests {
             "element": "string"
         });
         let (dt, _) = PolarisCatalog::parse_iceberg_type(&list_type);
-        assert!(matches!(dt, CatalogDataType::Json));
+        assert!(matches!(dt, ProximaType::Json));
 
         // Test vector type (list of floats with length)
         let vector_type = serde_json::json!({
@@ -1266,7 +1284,7 @@ mod tests {
             "length": 512
         });
         let (dt, props) = PolarisCatalog::parse_iceberg_type(&vector_type);
-        assert!(matches!(dt, CatalogDataType::Vector));
+        assert!(matches!(dt, ProximaType::DenseVector { .. }));
         assert_eq!(props.get("dimension"), Some(&"512".to_string()));
 
         // Test map type
@@ -1276,7 +1294,7 @@ mod tests {
             "value": "int"
         });
         let (dt, _) = PolarisCatalog::parse_iceberg_type(&map_type);
-        assert!(matches!(dt, CatalogDataType::Json));
+        assert!(matches!(dt, ProximaType::Json));
 
         // Test struct type
         let struct_type = serde_json::json!({
@@ -1284,6 +1302,6 @@ mod tests {
             "fields": []
         });
         let (dt, _) = PolarisCatalog::parse_iceberg_type(&struct_type);
-        assert!(matches!(dt, CatalogDataType::Json));
+        assert!(matches!(dt, ProximaType::Json));
     }
 }

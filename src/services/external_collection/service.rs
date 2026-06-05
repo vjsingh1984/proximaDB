@@ -14,9 +14,10 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
 use proximadb_catalog::{
-    CatalogColumn, CatalogDataType, CatalogProjection, CatalogProjectionKind, CatalogStorageLayout,
+    CatalogColumn, CatalogProjection, CatalogProjectionKind, CatalogStorageLayout,
     CatalogTableSchema, ProjectionFreshnessState,
 };
+use proximadb_data_model::ProximaType;
 
 use proximadb_records::ProximaRecord;
 
@@ -137,16 +138,19 @@ impl ExternalCollectionService {
         // A `Vector` catalog column must declare its `dimension` property
         // (enforced by `validate_storage_contract`); `CatalogColumn` exposes the
         // property map directly (no builder method).
-        let mut vector_col = CatalogColumn::new(1, &spec.vector_column, CatalogDataType::Vector);
+        let mut vector_col = CatalogColumn::new(
+            1,
+            &spec.vector_column,
+            ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0,
+            },
+        );
         vector_col
             .properties
             .insert("dimension".to_string(), spec.dimension.to_string());
         let mut schema = CatalogTableSchema::new(spec.name.clone())
-            .with_column(CatalogColumn::new(
-                0,
-                &spec.id_column,
-                CatalogDataType::String,
-            ))
+            .with_column(CatalogColumn::new(0, &spec.id_column, ProximaType::String))
             .with_column(vector_col)
             .with_projection(projection);
         // `CatalogTableSchema::default()` seeds one `InternalCanonical` layout;

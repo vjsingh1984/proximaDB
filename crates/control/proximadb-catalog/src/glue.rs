@@ -60,9 +60,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::cache::CatalogCache;
 use crate::schema::{apply_evolution, validate_schema};
+use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+
 use crate::{
-    Catalog, CatalogColumn, CatalogDataType, CatalogHealth, CatalogIndex, CatalogNamespace,
-    CatalogSchemaEvolution, CatalogTableSchema, CatalogTableStatistics, TableIdentifier,
+    Catalog, CatalogColumn, CatalogHealth, CatalogIndex, CatalogNamespace, CatalogSchemaEvolution,
+    CatalogTableSchema, CatalogTableStatistics, TableIdentifier,
 };
 
 /// Plain Rust configuration for the AWS Glue Data Catalog.
@@ -163,46 +165,52 @@ impl GlueCatalog {
         }
     }
 
-    /// Convert Glue type string to CatalogDataType
-    fn glue_type_to_data_type(glue_type: &str) -> CatalogDataType {
+    /// Convert Glue type string to canonical [`ProximaType`].
+    fn glue_type_to_data_type(glue_type: &str) -> ProximaType {
         let lower = glue_type.to_lowercase();
         match lower.as_str() {
-            "boolean" | "bool" => CatalogDataType::Boolean,
-            "int" | "integer" => CatalogDataType::Int32,
-            "bigint" | "long" => CatalogDataType::Int64,
-            "float" | "real" => CatalogDataType::Float32,
-            "double" => CatalogDataType::Float64,
-            "string" | "varchar" | "char" => CatalogDataType::String,
-            "binary" | "bytes" => CatalogDataType::Binary,
-            "date" => CatalogDataType::Date,
-            "timestamp" => CatalogDataType::Timestamp,
-            "decimal" => CatalogDataType::Decimal,
+            "boolean" | "bool" => ProximaType::Boolean,
+            "int" | "integer" => ProximaType::Int32,
+            "bigint" | "long" => ProximaType::Int64,
+            "float" | "real" => ProximaType::Float32,
+            "double" => ProximaType::Float64,
+            "string" | "varchar" | "char" => ProximaType::String,
+            "binary" | "bytes" => ProximaType::Binary,
+            "date" => ProximaType::Date,
+            "timestamp" => ProximaType::Timestamp(TimeUnit::Nanosecond),
+            "decimal" => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
             t if t.starts_with("array<float>") || t.starts_with("vector") => {
-                CatalogDataType::Vector
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0,
+                }
             }
-            _ => CatalogDataType::String, // Default fallback
+            _ => ProximaType::String, // Default fallback
         }
     }
 
-    /// Convert CatalogDataType to Glue type string
+    /// Convert canonical [`ProximaType`] to Glue type string
     fn data_type_to_glue_type(
-        data_type: &CatalogDataType,
+        data_type: &ProximaType,
         properties: &HashMap<String, String>,
     ) -> String {
         match data_type {
-            CatalogDataType::Boolean => "boolean".to_string(),
-            CatalogDataType::Int32 => "int".to_string(),
-            CatalogDataType::Int64 => "bigint".to_string(),
-            CatalogDataType::Float32 => "float".to_string(),
-            CatalogDataType::Float64 => "double".to_string(),
-            CatalogDataType::String => "string".to_string(),
-            CatalogDataType::Binary => "binary".to_string(),
-            CatalogDataType::Date => "date".to_string(),
-            CatalogDataType::Timestamp => "timestamp".to_string(),
-            CatalogDataType::TimestampTz => "timestamp".to_string(),
-            CatalogDataType::Decimal => "decimal(38,18)".to_string(),
-            CatalogDataType::Json => "string".to_string(), // Glue doesn't have native JSON
-            CatalogDataType::Vector => {
+            ProximaType::Boolean => "boolean".to_string(),
+            ProximaType::Int32 => "int".to_string(),
+            ProximaType::Int64 => "bigint".to_string(),
+            ProximaType::Float32 => "float".to_string(),
+            ProximaType::Float64 => "double".to_string(),
+            ProximaType::String => "string".to_string(),
+            ProximaType::Binary => "binary".to_string(),
+            ProximaType::Date => "date".to_string(),
+            ProximaType::Timestamp(_) => "timestamp".to_string(),
+            ProximaType::TimestampTz(_) => "timestamp".to_string(),
+            ProximaType::Decimal { .. } => "decimal(38,18)".to_string(),
+            ProximaType::Json => "string".to_string(), // Glue doesn't have native JSON
+            ProximaType::DenseVector { .. } => {
                 // Store as array<float> with dimension in comment
                 let dim = properties
                     .get("dimension")
@@ -210,10 +218,10 @@ impl GlueCatalog {
                     .unwrap_or("0");
                 format!("array<float>({})", dim)
             }
-            CatalogDataType::SparseVector => "map<int,float>".to_string(),
-            CatalogDataType::BinaryVector => "binary".to_string(),
-            CatalogDataType::Uuid => "string".to_string(),
-            // Remaining CatalogDataType variants Glue lacks first-class types for; fall back to string.
+            ProximaType::SparseVector { .. } => "map<int,float>".to_string(),
+            ProximaType::BinaryVector { .. } => "binary".to_string(),
+            ProximaType::Uuid => "string".to_string(),
+            // Remaining ProximaType variants Glue lacks first-class types for; fall back to string.
             _ => "string".to_string(),
         }
     }
@@ -522,7 +530,7 @@ impl Catalog for GlueCatalog {
             for col in &schema.columns {
                 let glue_type = Self::data_type_to_glue_type(&col.data_type, &col.properties);
 
-                let comment = if col.data_type == CatalogDataType::Vector {
+                let comment = if matches!(col.data_type, ProximaType::DenseVector { .. }) {
                     Self::vector_column_comment(&col.properties)
                 } else {
                     col.comment.clone().unwrap_or_default()
@@ -768,7 +776,7 @@ impl Catalog for GlueCatalog {
             for col in &new_schema.columns {
                 let glue_type = Self::data_type_to_glue_type(&col.data_type, &col.properties);
 
-                let comment = if col.data_type == CatalogDataType::Vector {
+                let comment = if matches!(col.data_type, ProximaType::DenseVector { .. }) {
                     Self::vector_column_comment(&col.properties)
                 } else {
                     col.comment.clone().unwrap_or_default()
@@ -964,15 +972,18 @@ mod tests {
     fn test_glue_type_conversion() {
         assert_eq!(
             GlueCatalog::glue_type_to_data_type("bigint"),
-            CatalogDataType::Int64
+            ProximaType::Int64
         );
         assert_eq!(
             GlueCatalog::glue_type_to_data_type("string"),
-            CatalogDataType::String
+            ProximaType::String
         );
         assert_eq!(
             GlueCatalog::glue_type_to_data_type("array<float>"),
-            CatalogDataType::Vector
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0
+            }
         );
     }
 
@@ -980,18 +991,24 @@ mod tests {
     fn test_data_type_to_glue() {
         let props = HashMap::new();
         assert_eq!(
-            GlueCatalog::data_type_to_glue_type(&CatalogDataType::Int64, &props),
+            GlueCatalog::data_type_to_glue_type(&ProximaType::Int64, &props),
             "bigint"
         );
         assert_eq!(
-            GlueCatalog::data_type_to_glue_type(&CatalogDataType::String, &props),
+            GlueCatalog::data_type_to_glue_type(&ProximaType::String, &props),
             "string"
         );
 
         let mut vec_props = HashMap::new();
         vec_props.insert("dimension".to_string(), "768".to_string());
         assert_eq!(
-            GlueCatalog::data_type_to_glue_type(&CatalogDataType::Vector, &vec_props),
+            GlueCatalog::data_type_to_glue_type(
+                &ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0
+                },
+                &vec_props
+            ),
             "array<float>(768)"
         );
     }

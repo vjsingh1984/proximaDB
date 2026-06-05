@@ -65,7 +65,8 @@
 
 use std::sync::Arc;
 
-use proximadb_catalog::{CatalogColumn, CatalogDataType};
+use proximadb_catalog::CatalogColumn;
+use proximadb_data_model::ProximaType;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -307,25 +308,27 @@ impl ColumnRow {
     /// Create from a catalog object and column
     pub fn from_column(obj: &CatalogObject, col: &CatalogColumn) -> Self {
         let data_type = match col.data_type {
-            CatalogDataType::Boolean => "boolean",
-            CatalogDataType::Int8 => "smallint",
-            CatalogDataType::Int16 => "smallint",
-            CatalogDataType::Int32 => "integer",
-            CatalogDataType::Int64 => "bigint",
-            CatalogDataType::Float32 => "real",
-            CatalogDataType::Float64 => "double precision",
-            CatalogDataType::String => "text",
-            CatalogDataType::Binary => "bytea",
-            CatalogDataType::Date => "date",
-            CatalogDataType::Time => "time without time zone",
-            CatalogDataType::Timestamp => "timestamp without time zone",
-            CatalogDataType::TimestampTz => "timestamp with time zone",
-            CatalogDataType::Decimal => "numeric",
-            CatalogDataType::Uuid => "uuid",
-            CatalogDataType::Json => "jsonb",
-            CatalogDataType::Vector => "vector",
-            CatalogDataType::SparseVector => "sparsevec",
-            CatalogDataType::BinaryVector => "bit",
+            ProximaType::Boolean => "boolean",
+            ProximaType::Int8 => "smallint",
+            ProximaType::Int16 => "smallint",
+            ProximaType::Int32 => "integer",
+            ProximaType::Int64 => "bigint",
+            ProximaType::Float32 => "real",
+            ProximaType::Float64 => "double precision",
+            ProximaType::String => "text",
+            ProximaType::Binary => "bytea",
+            ProximaType::Date => "date",
+            ProximaType::Time(_) => "time without time zone",
+            ProximaType::Timestamp(_) => "timestamp without time zone",
+            ProximaType::TimestampTz(_) => "timestamp with time zone",
+            ProximaType::Decimal { .. } => "numeric",
+            ProximaType::Uuid => "uuid",
+            ProximaType::Json => "jsonb",
+            ProximaType::DenseVector { .. } => "vector",
+            ProximaType::SparseVector { .. } => "sparsevec",
+            ProximaType::BinaryVector { .. } => "bit",
+            // Richer ProximaType variants surface as text in information_schema.
+            _ => "text",
         };
 
         Self {

@@ -11,12 +11,12 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use proximadb_catalog::{
-    CatalogColumn, CatalogDataType, CatalogStorageLayout, CatalogTableSchema,
-    CatalogTableStatistics,
+    CatalogColumn, CatalogStorageLayout, CatalogTableSchema, CatalogTableStatistics,
     relational::{
         CatalogRow, RelationalMutationKind, RelationalRecordOptions, RelationalWriteProfile,
     },
 };
+use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode, RecordStorage};
 use tracing::{debug, info, warn};
@@ -1448,7 +1448,9 @@ impl DmlService {
         }
         if matches!(
             column.data_type,
-            CatalogDataType::Vector | CatalogDataType::SparseVector | CatalogDataType::BinaryVector
+            ProximaType::DenseVector { .. }
+                | ProximaType::SparseVector { .. }
+                | ProximaType::BinaryVector { .. }
         ) && let Some(embedding) = record.embeddings.first()
         {
             return Ok(ProximaValue::DenseVector(embedding.values.to_fp32_owned()));
@@ -1478,7 +1480,7 @@ impl DmlService {
         let value = Self::record_column_value_for_predicate(record, &predicate.column, primary_key);
         match &predicate.condition {
             RelationalSelectPredicateCondition::Comparison { operator, literal } => {
-                Self::compare_catalog_value(&value, literal, *operator, predicate.column.data_type)
+                Self::compare_catalog_value(&value, literal, *operator, &predicate.column.data_type)
             }
             RelationalSelectPredicateCondition::In { literals, negated } => {
                 let matches = literals.iter().any(|literal| {
@@ -1486,7 +1488,7 @@ impl DmlService {
                         &value,
                         literal,
                         RelationalSelectPredicateOperator::Equal,
-                        predicate.column.data_type,
+                        &predicate.column.data_type,
                     )
                 });
                 if *negated { !matches } else { matches }
@@ -1596,21 +1598,21 @@ impl DmlService {
         value: &str,
         literal: &str,
         operator: RelationalSelectPredicateOperator,
-        data_type: CatalogDataType,
+        data_type: &ProximaType,
     ) -> bool {
         match data_type {
-            CatalogDataType::Boolean => {
+            ProximaType::Boolean => {
                 let left = Self::normalize_bool_literal(value);
                 let right = Self::normalize_bool_literal(literal);
                 Self::compare_ordered_values(left, right, operator)
             }
-            CatalogDataType::Int8
-            | CatalogDataType::Int16
-            | CatalogDataType::Int32
-            | CatalogDataType::Int64
-            | CatalogDataType::Float32
-            | CatalogDataType::Float64
-            | CatalogDataType::Decimal => {
+            ProximaType::Int8
+            | ProximaType::Int16
+            | ProximaType::Int32
+            | ProximaType::Int64
+            | ProximaType::Float32
+            | ProximaType::Float64
+            | ProximaType::Decimal { .. } => {
                 let Ok(left) = value.parse::<f64>() else {
                     return false;
                 };
@@ -2546,25 +2548,25 @@ impl DmlService {
             return Ok(ProximaValue::String(key_value.to_string()));
         };
 
-        match column.data_type {
-            CatalogDataType::Int8 => key_value
+        match &column.data_type {
+            ProximaType::Int8 => key_value
                 .parse::<i8>()
                 .map(ProximaValue::Int8)
                 .map_err(|e| anyhow!("Invalid primary key value '{}': {}", key_value, e)),
-            CatalogDataType::Int16 => key_value
+            ProximaType::Int16 => key_value
                 .parse::<i16>()
                 .map(ProximaValue::Int16)
                 .map_err(|e| anyhow!("Invalid primary key value '{}': {}", key_value, e)),
-            CatalogDataType::Int32 => key_value
+            ProximaType::Int32 => key_value
                 .parse::<i32>()
                 .map(ProximaValue::Int32)
                 .map_err(|e| anyhow!("Invalid primary key value '{}': {}", key_value, e)),
-            CatalogDataType::Int64 => key_value
+            ProximaType::Int64 => key_value
                 .parse::<i64>()
                 .map(ProximaValue::Int64)
                 .map_err(|e| anyhow!("Invalid primary key value '{}': {}", key_value, e)),
-            CatalogDataType::Uuid => Ok(ProximaValue::String(key_value.to_string())),
-            CatalogDataType::String => Ok(ProximaValue::String(key_value.to_string())),
+            ProximaType::Uuid => Ok(ProximaValue::String(key_value.to_string())),
+            ProximaType::String => Ok(ProximaValue::String(key_value.to_string())),
             other => Err(anyhow!(
                 "Primary key column '{}' with type {:?} is not supported for DELETE key extraction",
                 column_name,
@@ -2730,7 +2732,7 @@ impl DmlService {
                 continue;
             }
 
-            if matches!(column.data_type, CatalogDataType::Vector) {
+            if matches!(column.data_type, ProximaType::DenseVector { .. }) {
                 if existing.vector.is_empty() && column.nullable {
                     row_values.insert(column.name.clone(), ProximaValue::Null);
                 } else {
@@ -2746,8 +2748,8 @@ impl DmlService {
                 if let Some(timestamp_ms) = existing.timestamp {
                     row_values.insert(
                         column.name.clone(),
-                        match column.data_type {
-                            CatalogDataType::TimestampTz => ProximaValue::TimestampTz(
+                        match &column.data_type {
+                            ProximaType::TimestampTz(_) => ProximaValue::TimestampTz(
                                 timestamp_ms,
                                 proximadb_data_model::TimeUnit::Millisecond,
                             ),
@@ -3228,59 +3230,59 @@ impl DmlService {
             return self.literal_to_proxima_value(val);
         };
 
-        match column.data_type {
-            CatalogDataType::Boolean => match val {
+        match &column.data_type {
+            ProximaType::Boolean => match val {
                 SqlValueLiteral::Boolean(value) => Ok(ProximaValue::Boolean(*value)),
                 SqlValueLiteral::Null if column.nullable => Ok(ProximaValue::Null),
                 _ => Err(anyhow!("Column '{}' expects boolean", column_name)),
             },
-            CatalogDataType::Int8 => {
+            ProximaType::Int8 => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
                 self.literal_to_i64(val)
                     .map(|v| ProximaValue::Int8(v as i8))
             }
-            CatalogDataType::Int16 => {
+            ProximaType::Int16 => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
                 self.literal_to_i64(val)
                     .map(|v| ProximaValue::Int16(v as i16))
             }
-            CatalogDataType::Int32 => {
+            ProximaType::Int32 => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
                 self.literal_to_i64(val)
                     .map(|v| ProximaValue::Int32(v as i32))
             }
-            CatalogDataType::Int64 => {
+            ProximaType::Int64 => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
                 self.literal_to_i64(val).map(ProximaValue::Int64)
             }
-            CatalogDataType::Float32 => {
+            ProximaType::Float32 => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
                 self.literal_to_f64(val)
                     .map(|v| ProximaValue::Float32(v as f32))
             }
-            CatalogDataType::Float64 => {
+            ProximaType::Float64 => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
                 self.literal_to_f64(val).map(ProximaValue::Float64)
             }
-            CatalogDataType::String | CatalogDataType::Uuid => {
+            ProximaType::String | ProximaType::Uuid => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
                 self.literal_to_string(val).map(ProximaValue::String)
             }
-            CatalogDataType::Json => {
+            ProximaType::Json => {
                 let json = match val {
                     SqlValueLiteral::Json(value) => value.clone(),
                     SqlValueLiteral::String(value) => serde_json::from_str(value).map_err(|e| {
@@ -3295,26 +3297,26 @@ impl DmlService {
                     Ok(ProximaValue::Json(json))
                 }
             }
-            CatalogDataType::Vector => {
+            ProximaType::DenseVector { .. } => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     Ok(ProximaValue::Null)
                 } else {
                     self.literal_to_vector(val).map(ProximaValue::DenseVector)
                 }
             }
-            CatalogDataType::Binary | CatalogDataType::BinaryVector => match val {
+            ProximaType::Binary | ProximaType::BinaryVector { .. } => match val {
                 SqlValueLiteral::Binary(value) => Ok(ProximaValue::Binary(value.clone())),
                 SqlValueLiteral::Null if column.nullable => Ok(ProximaValue::Null),
                 _ => Err(anyhow!("Column '{}' expects binary", column_name)),
             },
-            CatalogDataType::Date => {
+            ProximaType::Date => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
                 self.literal_to_i64(val)
                     .map(|value| ProximaValue::Date(value as i32))
             }
-            CatalogDataType::Time => {
+            ProximaType::Time(_) => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
@@ -3322,7 +3324,7 @@ impl DmlService {
                     ProximaValue::Time(value, proximadb_data_model::TimeUnit::Millisecond)
                 })
             }
-            CatalogDataType::Timestamp => self.literal_to_timestamp(val).map(|value| {
+            ProximaType::Timestamp(_) => self.literal_to_timestamp(val).map(|value| {
                 value
                     .map(|timestamp| {
                         ProximaValue::Timestamp(
@@ -3332,7 +3334,7 @@ impl DmlService {
                     })
                     .unwrap_or(ProximaValue::Null)
             }),
-            CatalogDataType::TimestampTz => self.literal_to_timestamp(val).map(|value| {
+            ProximaType::TimestampTz(_) => self.literal_to_timestamp(val).map(|value| {
                 value
                     .map(|timestamp| {
                         ProximaValue::TimestampTz(
@@ -3342,15 +3344,24 @@ impl DmlService {
                     })
                     .unwrap_or(ProximaValue::Null)
             }),
-            CatalogDataType::Decimal => {
+            ProximaType::Decimal { .. } => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
                 self.literal_to_string(val).map(ProximaValue::Decimal)
             }
-            CatalogDataType::SparseVector => Err(anyhow!(
+            ProximaType::SparseVector { .. } => Err(anyhow!(
                 "Sparse vector DML literal lowering is not implemented for column '{}'",
                 column_name
+            )),
+            // Richer ProximaType variants (unsigned ints, Float16, Symbol,
+            // Jsonb, Array, Map, Struct, Interval, Duration, ULID, geo, Null)
+            // are not produced by the SQL/catalog type surface; reject DML
+            // literal lowering for them rather than silently coercing.
+            other => Err(anyhow!(
+                "Column '{}' has type {:?} which is not supported for DML literal lowering",
+                column_name,
+                other
             )),
         }
     }
@@ -3494,14 +3505,12 @@ mod tests {
 
     fn update_test_schema() -> CatalogTableSchema {
         CatalogTableSchema::new("agent_store")
+            .with_column(CatalogColumn::new(1, "record_id", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String).nullable(false))
             .with_column(
-                CatalogColumn::new(1, "record_id", CatalogDataType::String).nullable(false),
+                CatalogColumn::new(3, "payload", ProximaType::Json).with_default("'{}'::jsonb"),
             )
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String).nullable(false))
-            .with_column(
-                CatalogColumn::new(3, "payload", CatalogDataType::Json).with_default("'{}'::jsonb"),
-            )
-            .with_column(CatalogColumn::new(4, "notes", CatalogDataType::String))
+            .with_column(CatalogColumn::new(4, "notes", ProximaType::String))
             .with_primary_key(vec!["record_id".to_string()])
     }
 
@@ -3528,10 +3537,17 @@ mod tests {
     #[test]
     fn test_project_select_rows_uses_catalog_primary_key_props_and_vectors() {
         let schema = CatalogTableSchema::new("items")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int32))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
-            .with_column(CatalogColumn::new(3, "active", CatalogDataType::Boolean))
-            .with_column(CatalogColumn::new(4, "embedding", CatalogDataType::Vector))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int32))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
+            .with_column(CatalogColumn::new(3, "active", ProximaType::Boolean))
+            .with_column(CatalogColumn::new(
+                4,
+                "embedding",
+                ProximaType::DenseVector {
+                    element: proximadb_data_model::VectorElement::Float32,
+                    dim: 0,
+                },
+            ))
             .with_primary_key(vec!["id".to_string()]);
         let selected_columns = schema.columns.clone();
         let record = ProximaRecord {
@@ -3569,8 +3585,8 @@ mod tests {
     #[test]
     fn test_select_route_metadata_carries_catalog_read_route() {
         let mut schema = CatalogTableSchema::new("items")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int32))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int32))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
             .with_primary_key(vec!["id".to_string()])
             .with_workload_profile(CatalogWorkloadProfile::Oltp)
             .with_storage_specialization(CatalogStorageSpecialization::PaxOltp);
@@ -3846,8 +3862,8 @@ mod tests {
         ddl.execute(statement).await.expect("execute ddl");
 
         let mut facts_schema = CatalogTableSchema::new("facts")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
-            .with_column(CatalogColumn::new(2, "payload", CatalogDataType::Json))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "payload", ProximaType::Json))
             .with_workload_profile(CatalogWorkloadProfile::Olap)
             .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics)
             .with_projection(

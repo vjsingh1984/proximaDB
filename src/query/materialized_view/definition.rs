@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use arrow_schema::{DataType as ArrowDataType, Field};
 use chrono::{DateTime, Utc};
-use proximadb_catalog::{CatalogColumn, CatalogDataType};
+use proximadb_catalog::CatalogColumn;
+use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -139,24 +140,32 @@ impl ColumnDef {
     /// Convert to catalog column
     pub fn to_catalog_column(&self, id: i32) -> CatalogColumn {
         let data_type = match self.data_type.to_lowercase().as_str() {
-            "boolean" | "bool" => CatalogDataType::Boolean,
-            "int8" | "tinyint" => CatalogDataType::Int8,
-            "int16" | "smallint" => CatalogDataType::Int16,
-            "int32" | "int" | "integer" => CatalogDataType::Int32,
-            "int64" | "bigint" => CatalogDataType::Int64,
-            "float32" | "float" | "real" => CatalogDataType::Float32,
-            "float64" | "double" => CatalogDataType::Float64,
-            "string" | "text" | "varchar" => CatalogDataType::String,
-            "binary" | "blob" => CatalogDataType::Binary,
-            "date" => CatalogDataType::Date,
-            "time" => CatalogDataType::Time,
-            "timestamp" => CatalogDataType::Timestamp,
-            "timestamptz" | "timestamp with time zone" => CatalogDataType::TimestampTz,
-            "decimal" | "numeric" => CatalogDataType::Decimal,
-            "uuid" => CatalogDataType::Uuid,
-            "json" | "jsonb" => CatalogDataType::Json,
-            "vector" => CatalogDataType::Vector,
-            _ => CatalogDataType::String,
+            "boolean" | "bool" => ProximaType::Boolean,
+            "int8" | "tinyint" => ProximaType::Int8,
+            "int16" | "smallint" => ProximaType::Int16,
+            "int32" | "int" | "integer" => ProximaType::Int32,
+            "int64" | "bigint" => ProximaType::Int64,
+            "float32" | "float" | "real" => ProximaType::Float32,
+            "float64" | "double" => ProximaType::Float64,
+            "string" | "text" | "varchar" => ProximaType::String,
+            "binary" | "blob" => ProximaType::Binary,
+            "date" => ProximaType::Date,
+            "time" => ProximaType::Time(TimeUnit::Nanosecond),
+            "timestamp" => ProximaType::Timestamp(TimeUnit::Nanosecond),
+            "timestamptz" | "timestamp with time zone" => {
+                ProximaType::TimestampTz(TimeUnit::Nanosecond)
+            }
+            "decimal" | "numeric" => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
+            "uuid" => ProximaType::Uuid,
+            "json" | "jsonb" => ProximaType::Json,
+            "vector" => ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0,
+            },
+            _ => ProximaType::String,
         };
 
         let mut col = CatalogColumn::new(id, &self.name, data_type).nullable(self.nullable);
@@ -827,7 +836,7 @@ mod tests {
 
         let catalog_col = col.to_catalog_column(1);
         assert_eq!(catalog_col.name, "name");
-        assert_eq!(catalog_col.data_type, CatalogDataType::String);
+        assert_eq!(catalog_col.data_type, ProximaType::String);
         assert!(catalog_col.nullable);
     }
 

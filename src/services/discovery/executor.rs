@@ -167,7 +167,8 @@ mod tests {
     use super::*;
     use crate::catalog::CatalogManager;
     use crate::services::discovery::job::DiscoveryJobKind;
-    use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema, TableIdentifier};
+    use proximadb_catalog::{CatalogColumn, CatalogTableSchema, TableIdentifier};
+    use proximadb_data_model::ProximaType;
 
     async fn wired(
         collection: &str,
@@ -201,7 +202,7 @@ mod tests {
                 CatalogTableSchema::new(collection.to_string()).with_column(CatalogColumn::new(
                     0,
                     "oid",
-                    CatalogDataType::String,
+                    ProximaType::String,
                 )),
             )
             .await

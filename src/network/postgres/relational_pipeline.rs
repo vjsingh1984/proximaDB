@@ -746,7 +746,7 @@ impl PreparedTable {
         let columns: Vec<ColumnInfo> = catalog_schema
             .columns
             .iter()
-            .map(|c| ColumnInfo::new(c.name.clone(), c.data_type.to_proxima_type(), c.nullable))
+            .map(|c| ColumnInfo::new(c.name.clone(), c.data_type.clone(), c.nullable))
             .collect();
         // Single-column PK only: advertise its ordinal so the planner can pick
         // ScanAccess::PkLookup; composite/no-PK advertise nothing → full scan.

@@ -242,7 +242,8 @@ impl SnapshotPublishCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema, TableIdentifier};
+    use proximadb_catalog::{CatalogColumn, CatalogTableSchema, TableIdentifier};
+    use proximadb_data_model::ProximaType;
 
     async fn coordinator_with_table(collection: &str) -> SnapshotPublishCoordinator {
         let tmp = std::env::temp_dir().join(format!(
@@ -272,7 +273,7 @@ mod tests {
                 CatalogTableSchema::new(collection.to_string()).with_column(CatalogColumn::new(
                     0,
                     "oid",
-                    CatalogDataType::String,
+                    ProximaType::String,
                 )),
             )
             .await

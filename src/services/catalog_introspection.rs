@@ -3,9 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::catalog::{
-    CatalogDataType, CatalogIndexType, CatalogManager, CatalogTableSchema, TableIdentifier,
-};
+use crate::catalog::{CatalogIndexType, CatalogManager, CatalogTableSchema, TableIdentifier};
+use proximadb_data_model::ProximaType;
 
 /// Tabular catalog metadata for SQL-compatible introspection surfaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -339,7 +338,7 @@ impl CatalogIntrospectionService {
                     table_id.name.clone(),
                     column.name.clone(),
                     column.id.to_string(),
-                    catalog_type_name(column.data_type, &column.properties).to_string(),
+                    catalog_type_name(&column.data_type, &column.properties).to_string(),
                     if column.nullable { "YES" } else { "NO" }.to_string(),
                     column.default_value.clone().unwrap_or_default(),
                     column
@@ -561,7 +560,7 @@ impl CatalogIntrospectionService {
                 continue;
             }
             for column in &schema.columns {
-                let (data_type, column_size) = jdbc_type_and_size(column.data_type);
+                let (data_type, column_size) = jdbc_type_and_size(&column.data_type);
                 rows.push(vec![
                     String::new(),
                     namespace_name(&table_id),
@@ -632,7 +631,7 @@ impl CatalogIntrospectionService {
             for column in &schema.columns {
                 rows.push(vec![
                     column.name.clone(),
-                    postgres_format_type(column.data_type, &column.properties).to_string(),
+                    postgres_format_type(&column.data_type, &column.properties).to_string(),
                     column.default_value.clone().unwrap_or_default(),
                     (!column.nullable).to_string(),
                     table_id.name.clone(),
@@ -892,11 +891,13 @@ fn infer_schema_kind(schema: &CatalogTableSchema) -> &'static str {
     let has_json = schema
         .columns
         .iter()
-        .any(|column| matches!(column.data_type, CatalogDataType::Json));
+        .any(|column| matches!(column.data_type, ProximaType::Json));
     let has_vector = schema.columns.iter().any(|column| {
         matches!(
             column.data_type,
-            CatalogDataType::Vector | CatalogDataType::SparseVector | CatalogDataType::BinaryVector
+            ProximaType::DenseVector { .. }
+                | ProximaType::SparseVector { .. }
+                | ProximaType::BinaryVector { .. }
         )
     });
 
@@ -909,85 +910,89 @@ fn infer_schema_kind(schema: &CatalogTableSchema) -> &'static str {
 }
 
 fn catalog_type_name(
-    data_type: CatalogDataType,
+    data_type: &ProximaType,
     properties: &std::collections::HashMap<String, String>,
 ) -> &'static str {
     match data_type {
-        CatalogDataType::Boolean => "boolean",
-        CatalogDataType::Int8 => "int8",
-        CatalogDataType::Int16 => "int16",
-        CatalogDataType::Int32 => "int32",
-        CatalogDataType::Int64 => "int64",
-        CatalogDataType::Float32 => "float32",
-        CatalogDataType::Float64 => "float64",
-        CatalogDataType::String => "text",
-        CatalogDataType::Binary => "bytea",
-        CatalogDataType::Date => "date",
-        CatalogDataType::Time => "time",
-        CatalogDataType::Timestamp => "timestamp",
-        CatalogDataType::TimestampTz => "timestamptz",
-        CatalogDataType::Decimal => "decimal",
-        CatalogDataType::Uuid => "uuid",
-        CatalogDataType::Json => match properties.get("json_encoding").map(String::as_str) {
+        ProximaType::Boolean => "boolean",
+        ProximaType::Int8 => "int8",
+        ProximaType::Int16 => "int16",
+        ProximaType::Int32 => "int32",
+        ProximaType::Int64 => "int64",
+        ProximaType::Float32 => "float32",
+        ProximaType::Float64 => "float64",
+        ProximaType::String => "text",
+        ProximaType::Binary => "bytea",
+        ProximaType::Date => "date",
+        ProximaType::Time(_) => "time",
+        ProximaType::Timestamp(_) => "timestamp",
+        ProximaType::TimestampTz(_) => "timestamptz",
+        ProximaType::Decimal { .. } => "decimal",
+        ProximaType::Uuid => "uuid",
+        ProximaType::Json => match properties.get("json_encoding").map(String::as_str) {
             Some("jsonb") => "jsonb",
             _ => "json",
         },
-        CatalogDataType::Vector => "vector",
-        CatalogDataType::SparseVector => "sparse_vector",
-        CatalogDataType::BinaryVector => "binary_vector",
+        ProximaType::DenseVector { .. } => "vector",
+        ProximaType::SparseVector { .. } => "sparse_vector",
+        ProximaType::BinaryVector { .. } => "binary_vector",
+        _ => "text",
     }
 }
 
 fn postgres_format_type(
-    data_type: CatalogDataType,
+    data_type: &ProximaType,
     properties: &std::collections::HashMap<String, String>,
 ) -> &'static str {
     match data_type {
-        CatalogDataType::Boolean => "boolean",
-        CatalogDataType::Int8 => "smallint",
-        CatalogDataType::Int16 => "smallint",
-        CatalogDataType::Int32 => "integer",
-        CatalogDataType::Int64 => "bigint",
-        CatalogDataType::Float32 => "real",
-        CatalogDataType::Float64 => "double precision",
-        CatalogDataType::String => "character varying",
-        CatalogDataType::Binary => "bytea",
-        CatalogDataType::Date => "date",
-        CatalogDataType::Time => "time without time zone",
-        CatalogDataType::Timestamp => "timestamp without time zone",
-        CatalogDataType::TimestampTz => "timestamp with time zone",
-        CatalogDataType::Decimal => "numeric",
-        CatalogDataType::Uuid => "uuid",
-        CatalogDataType::Json => match properties.get("json_encoding").map(String::as_str) {
+        ProximaType::Boolean => "boolean",
+        ProximaType::Int8 => "smallint",
+        ProximaType::Int16 => "smallint",
+        ProximaType::Int32 => "integer",
+        ProximaType::Int64 => "bigint",
+        ProximaType::Float32 => "real",
+        ProximaType::Float64 => "double precision",
+        ProximaType::String => "character varying",
+        ProximaType::Binary => "bytea",
+        ProximaType::Date => "date",
+        ProximaType::Time(_) => "time without time zone",
+        ProximaType::Timestamp(_) => "timestamp without time zone",
+        ProximaType::TimestampTz(_) => "timestamp with time zone",
+        ProximaType::Decimal { .. } => "numeric",
+        ProximaType::Uuid => "uuid",
+        ProximaType::Json => match properties.get("json_encoding").map(String::as_str) {
             Some("jsonb") => "jsonb",
             _ => "json",
         },
-        CatalogDataType::Vector => "vector",
-        CatalogDataType::SparseVector => "sparse_vector",
-        CatalogDataType::BinaryVector => "binary_vector",
+        ProximaType::DenseVector { .. } => "vector",
+        ProximaType::SparseVector { .. } => "sparse_vector",
+        ProximaType::BinaryVector { .. } => "binary_vector",
+        _ => "character varying",
     }
 }
 
-fn jdbc_type_and_size(data_type: CatalogDataType) -> (i32, i32) {
+fn jdbc_type_and_size(data_type: &ProximaType) -> (i32, i32) {
     match data_type {
-        CatalogDataType::Boolean => (16, 1),
-        CatalogDataType::Int8 => (-6, 3),
-        CatalogDataType::Int16 => (5, 5),
-        CatalogDataType::Int32 => (4, 10),
-        CatalogDataType::Int64 => (-5, 19),
-        CatalogDataType::Float32 => (6, 24),
-        CatalogDataType::Float64 => (8, 53),
-        CatalogDataType::String => (12, 255),
-        CatalogDataType::Binary => (-2, 255),
-        CatalogDataType::Date => (91, 13),
-        CatalogDataType::Time => (92, 15),
-        CatalogDataType::Timestamp | CatalogDataType::TimestampTz => (93, 29),
-        CatalogDataType::Decimal => (3, 38),
-        CatalogDataType::Uuid => (1111, 36),
-        CatalogDataType::Json => (1111, 0),
-        CatalogDataType::Vector | CatalogDataType::SparseVector | CatalogDataType::BinaryVector => {
-            (1111, 0)
-        }
+        ProximaType::Boolean => (16, 1),
+        ProximaType::Int8 => (-6, 3),
+        ProximaType::Int16 => (5, 5),
+        ProximaType::Int32 => (4, 10),
+        ProximaType::Int64 => (-5, 19),
+        ProximaType::Float32 => (6, 24),
+        ProximaType::Float64 => (8, 53),
+        ProximaType::String => (12, 255),
+        ProximaType::Binary => (-2, 255),
+        ProximaType::Date => (91, 13),
+        ProximaType::Time(_) => (92, 15),
+        ProximaType::Timestamp(_) | ProximaType::TimestampTz(_) => (93, 29),
+        ProximaType::Decimal { .. } => (3, 38),
+        ProximaType::Uuid => (1111, 36),
+        ProximaType::Json => (1111, 0),
+        ProximaType::DenseVector { .. }
+        | ProximaType::SparseVector { .. }
+        | ProximaType::BinaryVector { .. } => (1111, 0),
+        // Richer ProximaType variants → OTHER JDBC type, text-ish size.
+        _ => (1111, 0),
     }
 }
 

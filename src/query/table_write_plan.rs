@@ -1734,10 +1734,11 @@ mod tests {
     use super::*;
     use crate::services::{DEFAULT_BULK_BYTES_THRESHOLD, DEFAULT_BULK_ROW_THRESHOLD};
     use proximadb_catalog::{
-        CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogProjection,
-        CatalogProjectionKind, CatalogStorageLayout, CatalogStorageSpecialization,
-        ProjectionFreshnessState, RelationalCapabilities,
+        CatalogColumn, CatalogIndex, CatalogIndexType, CatalogProjection, CatalogProjectionKind,
+        CatalogStorageLayout, CatalogStorageSpecialization, ProjectionFreshnessState,
+        RelationalCapabilities,
     };
+    use proximadb_data_model::ProximaType;
 
     #[test]
     fn routes_oltp_pax_append_to_native() {
@@ -1848,7 +1849,7 @@ mod tests {
     #[test]
     fn dml_write_planner_rejects_unknown_target_column() {
         let schema = CatalogTableSchema::new("orders")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false));
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String).nullable(false));
         let plan =
             CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT id FROM staging");
 

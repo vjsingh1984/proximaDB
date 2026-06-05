@@ -935,7 +935,7 @@ mod tests {
         let schema = crate::CatalogTableSchema::new(table).with_column(crate::CatalogColumn::new(
             1,
             "id",
-            crate::CatalogDataType::Int64,
+            proximadb_data_model::ProximaType::Int64,
         ));
         cat.create_table(&id, schema).await.expect("create table");
         id

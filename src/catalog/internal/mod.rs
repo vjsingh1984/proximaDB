@@ -263,7 +263,13 @@ impl ObjectSchema {
         let fields: Vec<ArrowField> = self
             .columns
             .iter()
-            .map(|col| ArrowField::new(&col.name, col.data_type.to_arrow_datatype(), col.nullable))
+            .map(|col| {
+                ArrowField::new(
+                    &col.name,
+                    proximadb_catalog::catalog_arrow_type(&col.data_type),
+                    col.nullable,
+                )
+            })
             .collect();
         Ok(ArrowSchema::new(fields))
     }
@@ -780,7 +786,7 @@ impl CatalogObject {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_catalog::CatalogDataType;
+    use proximadb_data_model::ProximaType;
 
     #[test]
     fn test_object_type_display() {
@@ -817,7 +823,7 @@ mod tests {
     #[test]
     fn test_catalog_object_with_schema() {
         let schema = ObjectSchema {
-            columns: vec![CatalogColumn::new(1, "id", CatalogDataType::Int64)],
+            columns: vec![CatalogColumn::new(1, "id", ProximaType::Int64)],
             primary_key: vec!["id".to_string()],
             ..Default::default()
         };
@@ -837,7 +843,7 @@ mod tests {
     #[test]
     fn test_schema_update_with_history() {
         let schema1 = ObjectSchema {
-            columns: vec![CatalogColumn::new(1, "id", CatalogDataType::Int64)],
+            columns: vec![CatalogColumn::new(1, "id", ProximaType::Int64)],
             ..Default::default()
         };
 
@@ -851,8 +857,8 @@ mod tests {
 
         let schema2 = ObjectSchema {
             columns: vec![
-                CatalogColumn::new(1, "id", CatalogDataType::Int64),
-                CatalogColumn::new(2, "name", CatalogDataType::String),
+                CatalogColumn::new(1, "id", ProximaType::Int64),
+                CatalogColumn::new(2, "name", ProximaType::String),
             ],
             ..Default::default()
         };

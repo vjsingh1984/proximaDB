@@ -10,9 +10,11 @@ use std::collections::HashSet;
 
 use anyhow::{Result, anyhow};
 
+use proximadb_data_model::ProximaType;
+
 use crate::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution,
-    CatalogTableSchema, ColumnConstraint, SchemaChange, system_columns,
+    CatalogColumn, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution, CatalogTableSchema,
+    ColumnConstraint, SchemaChange, system_columns,
 };
 
 /// Validate a schema for internal consistency.
@@ -60,9 +62,10 @@ pub fn validate_schema(schema: &CatalogTableSchema) -> Result<()> {
     }
 
     for col in &schema.columns {
-        if (col.data_type == CatalogDataType::Vector
-            || col.data_type == CatalogDataType::SparseVector)
-            && !col.properties.contains_key("dimension")
+        if matches!(
+            col.data_type,
+            ProximaType::DenseVector { .. } | ProximaType::SparseVector { .. }
+        ) && !col.properties.contains_key("dimension")
         {
             return Err(anyhow!(
                 "Vector column '{}' must have 'dimension' property",
@@ -141,7 +144,7 @@ pub fn apply_evolution(
                 if new_schema.columns.iter().any(|c| &c.name == name) {
                     return Err(anyhow!("Column '{}' already exists", name));
                 }
-                let mut col = CatalogColumn::new(next_id, name, *data_type);
+                let mut col = CatalogColumn::new(next_id, name, data_type.clone());
                 next_id += 1;
                 col.nullable = *nullable;
                 col.default_value = default_value.clone();
@@ -198,7 +201,7 @@ pub fn apply_evolution(
                     .iter_mut()
                     .find(|c| &c.name == name)
                     .ok_or_else(|| anyhow!("Column '{}' not found", name))?;
-                if !is_compatible_type_change(col.data_type, *new_type) {
+                if !is_compatible_type_change(&col.data_type, new_type) {
                     return Err(anyhow!(
                         "Cannot change column '{}' from {:?} to {:?}",
                         name,
@@ -206,7 +209,7 @@ pub fn apply_evolution(
                         new_type
                     ));
                 }
-                col.data_type = *new_type;
+                col.data_type = new_type.clone();
             }
             SchemaChange::UpdateComment { name, comment } => {
                 let col = new_schema
@@ -371,7 +374,7 @@ pub fn apply_evolution(
                     .max()
                     .unwrap_or(99)
                     + 1;
-                let mut col = CatalogColumn::new(promoted_id, &col_name, *column_type);
+                let mut col = CatalogColumn::new(promoted_id, &col_name, column_type.clone());
                 col.nullable = true;
                 col.comment = comment.clone();
                 col.properties
@@ -406,46 +409,50 @@ pub fn apply_evolution(
 }
 
 /// Returns true when widening `from` → `to` is lossless.
-pub fn is_compatible_type_change(from: CatalogDataType, to: CatalogDataType) -> bool {
+pub fn is_compatible_type_change(from: &ProximaType, to: &ProximaType) -> bool {
     if from == to {
         return true;
     }
     matches!(
         (from, to),
-        (CatalogDataType::Int32, CatalogDataType::Int64)
-            | (CatalogDataType::Int32, CatalogDataType::Float64)
-            | (CatalogDataType::Int64, CatalogDataType::Float64)
-            | (CatalogDataType::Float32, CatalogDataType::Float64)
-            | (CatalogDataType::Int8, CatalogDataType::Int16)
-            | (CatalogDataType::Int8, CatalogDataType::Int32)
-            | (CatalogDataType::Int8, CatalogDataType::Int64)
-            | (CatalogDataType::Int16, CatalogDataType::Int32)
-            | (CatalogDataType::Int16, CatalogDataType::Int64)
+        (ProximaType::Int32, ProximaType::Int64)
+            | (ProximaType::Int32, ProximaType::Float64)
+            | (ProximaType::Int64, ProximaType::Float64)
+            | (ProximaType::Float32, ProximaType::Float64)
+            | (ProximaType::Int8, ProximaType::Int16)
+            | (ProximaType::Int8, ProximaType::Int32)
+            | (ProximaType::Int8, ProximaType::Int64)
+            | (ProximaType::Int16, ProximaType::Int32)
+            | (ProximaType::Int16, ProximaType::Int64)
     )
 }
 
 /// Returns the SQL type name for a catalog data type.
-pub fn sql_type_name(data_type: CatalogDataType) -> &'static str {
+pub fn sql_type_name(data_type: &ProximaType) -> &'static str {
     match data_type {
-        CatalogDataType::Boolean => "BOOLEAN",
-        CatalogDataType::Int8 => "TINYINT",
-        CatalogDataType::Int16 => "SMALLINT",
-        CatalogDataType::Int32 => "INTEGER",
-        CatalogDataType::Int64 => "BIGINT",
-        CatalogDataType::Float32 => "REAL",
-        CatalogDataType::Float64 => "DOUBLE PRECISION",
-        CatalogDataType::String => "TEXT",
-        CatalogDataType::Binary => "BYTEA",
-        CatalogDataType::Date => "DATE",
-        CatalogDataType::Timestamp => "TIMESTAMP",
-        CatalogDataType::TimestampTz => "TIMESTAMP WITH TIME ZONE",
-        CatalogDataType::Time => "TIME",
-        CatalogDataType::Uuid => "UUID",
-        CatalogDataType::Json => "JSONB",
-        CatalogDataType::Decimal => "DECIMAL",
-        CatalogDataType::Vector => "VECTOR",
-        CatalogDataType::SparseVector => "SPARSE_VECTOR",
-        CatalogDataType::BinaryVector => "BINARY_VECTOR",
+        ProximaType::Boolean => "BOOLEAN",
+        ProximaType::Int8 => "TINYINT",
+        ProximaType::Int16 => "SMALLINT",
+        ProximaType::Int32 => "INTEGER",
+        ProximaType::Int64 => "BIGINT",
+        ProximaType::Float32 => "REAL",
+        ProximaType::Float64 => "DOUBLE PRECISION",
+        ProximaType::String => "TEXT",
+        ProximaType::Binary => "BYTEA",
+        ProximaType::Date => "DATE",
+        ProximaType::Timestamp(_) => "TIMESTAMP",
+        ProximaType::TimestampTz(_) => "TIMESTAMP WITH TIME ZONE",
+        ProximaType::Time(_) => "TIME",
+        ProximaType::Uuid => "UUID",
+        ProximaType::Json => "JSONB",
+        ProximaType::Decimal { .. } => "DECIMAL",
+        ProximaType::DenseVector { .. } => "VECTOR",
+        ProximaType::SparseVector { .. } => "SPARSE_VECTOR",
+        ProximaType::BinaryVector { .. } => "BINARY_VECTOR",
+        // Richer ProximaType variants without a dedicated catalog SQL name
+        // (unsigned ints, Float16, Symbol, Jsonb, Array, Map, Struct,
+        // Interval, Duration, ULID, geo, Null) fall back to TEXT.
+        _ => "TEXT",
     }
 }
 
@@ -453,14 +460,23 @@ pub fn sql_type_name(data_type: CatalogDataType) -> &'static str {
 mod tests {
     use super::*;
     use crate::{
-        CatalogColumn, CatalogDataType, CatalogPhysicalFormat, CatalogProjection,
-        CatalogStorageLayout, CatalogTableSchema,
+        CatalogColumn, CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout,
+        CatalogTableSchema,
     };
+    use proximadb_data_model::{TimeUnit, VectorElement};
+
+    /// Dimensionless dense vector placeholder (real dim lives in column props).
+    fn vector_type() -> ProximaType {
+        ProximaType::DenseVector {
+            element: VectorElement::Float32,
+            dim: 0,
+        }
+    }
 
     fn base_schema() -> CatalogTableSchema {
         CatalogTableSchema::new("t")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
     }
 
     #[test]
@@ -474,7 +490,7 @@ mod tests {
         let schema = base_schema().with_column(CatalogColumn::new(
             3,
             "__proxima_deleted",
-            CatalogDataType::Boolean,
+            ProximaType::Boolean,
         ));
         let err = validate_schema(&schema).expect_err("reserved column should fail");
         assert!(err.to_string().contains("reserved"));
@@ -503,7 +519,7 @@ mod tests {
         let evolution = CatalogSchemaEvolution {
             changes: vec![SchemaChange::AddColumn {
                 name: "age".to_string(),
-                data_type: CatalogDataType::Int32,
+                data_type: ProximaType::Int32,
                 nullable: true,
                 default_value: None,
                 comment: None,
@@ -518,16 +534,16 @@ mod tests {
     #[test]
     fn type_widening_compatible() {
         assert!(is_compatible_type_change(
-            CatalogDataType::Int32,
-            CatalogDataType::Int64
+            &ProximaType::Int32,
+            &ProximaType::Int64
         ));
         assert!(is_compatible_type_change(
-            CatalogDataType::Float32,
-            CatalogDataType::Float64
+            &ProximaType::Float32,
+            &ProximaType::Float64
         ));
         assert!(!is_compatible_type_change(
-            CatalogDataType::String,
-            CatalogDataType::Int64
+            &ProximaType::String,
+            &ProximaType::Int64
         ));
     }
 
@@ -542,11 +558,8 @@ mod tests {
                 .contains("at least one column")
         );
 
-        let empty_column_name = CatalogTableSchema::new("t").with_column(CatalogColumn::new(
-            1,
-            "",
-            CatalogDataType::Int64,
-        ));
+        let empty_column_name =
+            CatalogTableSchema::new("t").with_column(CatalogColumn::new(1, "", ProximaType::Int64));
         assert!(
             validate_schema(&empty_column_name)
                 .unwrap_err()
@@ -554,8 +567,7 @@ mod tests {
                 .contains("Column name cannot be empty")
         );
 
-        let duplicate =
-            base_schema().with_column(CatalogColumn::new(3, "id", CatalogDataType::Int64));
+        let duplicate = base_schema().with_column(CatalogColumn::new(3, "id", ProximaType::Int64));
         assert!(
             validate_schema(&duplicate)
                 .unwrap_err()
@@ -584,7 +596,7 @@ mod tests {
         );
 
         let vector_missing_dimension =
-            base_schema().with_column(CatalogColumn::new(3, "embedding", CatalogDataType::Vector));
+            base_schema().with_column(CatalogColumn::new(3, "embedding", vector_type()));
         assert!(
             validate_schema(&vector_missing_dimension)
                 .unwrap_err()
@@ -592,7 +604,7 @@ mod tests {
                 .contains("dimension")
         );
 
-        let mut vector_col = CatalogColumn::new(3, "embedding", CatalogDataType::Vector);
+        let mut vector_col = CatalogColumn::new(3, "embedding", vector_type());
         vector_col
             .properties
             .insert("dimension".to_string(), "384".to_string());
@@ -654,7 +666,7 @@ mod tests {
                 changes: vec![
                     SchemaChange::AddColumn {
                         name: "age".to_string(),
-                        data_type: CatalogDataType::Int32,
+                        data_type: ProximaType::Int32,
                         nullable: true,
                         default_value: Some("0".to_string()),
                         comment: Some("Age".to_string()),
@@ -687,7 +699,7 @@ mod tests {
                     },
                     SchemaChange::ChangeType {
                         name: "age".to_string(),
-                        new_type: CatalogDataType::Int64,
+                        new_type: ProximaType::Int64,
                     },
                 ],
             },
@@ -700,7 +712,7 @@ mod tests {
             .iter()
             .find(|col| col.name == "age")
             .unwrap();
-        assert_eq!(age.data_type, CatalogDataType::Int64);
+        assert_eq!(age.data_type, ProximaType::Int64);
         assert!(age.nullable);
         assert_eq!(age.default_value, None);
         assert_eq!(age.comment.as_deref(), Some("Years"));
@@ -721,7 +733,7 @@ mod tests {
         for change in [
             SchemaChange::AddColumn {
                 name: "id".to_string(),
-                data_type: CatalogDataType::Int64,
+                data_type: ProximaType::Int64,
                 nullable: false,
                 default_value: None,
                 comment: None,
@@ -736,7 +748,7 @@ mod tests {
             },
             SchemaChange::ChangeType {
                 name: "name".to_string(),
-                new_type: CatalogDataType::Binary,
+                new_type: ProximaType::Binary,
             },
             SchemaChange::MoveColumn {
                 name: "name".to_string(),
@@ -786,7 +798,7 @@ mod tests {
                     },
                     SchemaChange::PromotePropsKey {
                         key: "status".to_string(),
-                        column_type: CatalogDataType::String,
+                        column_type: ProximaType::String,
                         comment: Some("Promoted status".to_string()),
                     },
                     SchemaChange::SetTableOption {
@@ -857,7 +869,7 @@ mod tests {
             },
             SchemaChange::PromotePropsKey {
                 key: "status".to_string(),
-                column_type: CatalogDataType::String,
+                column_type: ProximaType::String,
                 comment: None,
             },
         ] {
@@ -876,54 +888,68 @@ mod tests {
     #[test]
     fn sql_type_names_cover_every_catalog_type() {
         let names = [
-            (CatalogDataType::Boolean, "BOOLEAN"),
-            (CatalogDataType::Int8, "TINYINT"),
-            (CatalogDataType::Int16, "SMALLINT"),
-            (CatalogDataType::Int32, "INTEGER"),
-            (CatalogDataType::Int64, "BIGINT"),
-            (CatalogDataType::Float32, "REAL"),
-            (CatalogDataType::Float64, "DOUBLE PRECISION"),
-            (CatalogDataType::String, "TEXT"),
-            (CatalogDataType::Binary, "BYTEA"),
-            (CatalogDataType::Date, "DATE"),
-            (CatalogDataType::Timestamp, "TIMESTAMP"),
-            (CatalogDataType::TimestampTz, "TIMESTAMP WITH TIME ZONE"),
-            (CatalogDataType::Time, "TIME"),
-            (CatalogDataType::Uuid, "UUID"),
-            (CatalogDataType::Json, "JSONB"),
-            (CatalogDataType::Decimal, "DECIMAL"),
-            (CatalogDataType::Vector, "VECTOR"),
-            (CatalogDataType::SparseVector, "SPARSE_VECTOR"),
-            (CatalogDataType::BinaryVector, "BINARY_VECTOR"),
+            (ProximaType::Boolean, "BOOLEAN"),
+            (ProximaType::Int8, "TINYINT"),
+            (ProximaType::Int16, "SMALLINT"),
+            (ProximaType::Int32, "INTEGER"),
+            (ProximaType::Int64, "BIGINT"),
+            (ProximaType::Float32, "REAL"),
+            (ProximaType::Float64, "DOUBLE PRECISION"),
+            (ProximaType::String, "TEXT"),
+            (ProximaType::Binary, "BYTEA"),
+            (ProximaType::Date, "DATE"),
+            (ProximaType::Timestamp(TimeUnit::Nanosecond), "TIMESTAMP"),
+            (
+                ProximaType::TimestampTz(TimeUnit::Nanosecond),
+                "TIMESTAMP WITH TIME ZONE",
+            ),
+            (ProximaType::Time(TimeUnit::Nanosecond), "TIME"),
+            (ProximaType::Uuid, "UUID"),
+            (ProximaType::Json, "JSONB"),
+            (
+                ProximaType::Decimal {
+                    precision: 38,
+                    scale: 10,
+                },
+                "DECIMAL",
+            ),
+            (vector_type(), "VECTOR"),
+            (
+                ProximaType::SparseVector {
+                    element: VectorElement::Float32,
+                },
+                "SPARSE_VECTOR",
+            ),
+            (ProximaType::BinaryVector { dim: 0 }, "BINARY_VECTOR"),
         ];
 
         for (data_type, expected) in names {
-            assert_eq!(sql_type_name(data_type), expected);
+            assert_eq!(sql_type_name(&data_type), expected);
         }
 
         assert!(is_compatible_type_change(
-            CatalogDataType::Int8,
-            CatalogDataType::Int16
+            &ProximaType::Int8,
+            &ProximaType::Int16
         ));
         assert!(is_compatible_type_change(
-            CatalogDataType::Int8,
-            CatalogDataType::Int32
+            &ProximaType::Int8,
+            &ProximaType::Int32
         ));
         assert!(is_compatible_type_change(
-            CatalogDataType::Int8,
-            CatalogDataType::Int64
+            &ProximaType::Int8,
+            &ProximaType::Int64
         ));
         assert!(is_compatible_type_change(
-            CatalogDataType::Int16,
-            CatalogDataType::Int32
+            &ProximaType::Int16,
+            &ProximaType::Int32
         ));
         assert!(is_compatible_type_change(
-            CatalogDataType::Int16,
-            CatalogDataType::Int64
+            &ProximaType::Int16,
+            &ProximaType::Int64
         ));
         assert!(is_compatible_type_change(
-            CatalogDataType::Int64,
-            CatalogDataType::Float64
+            &ProximaType::Int64,
+            &ProximaType::Float64
         ));
     }
 }

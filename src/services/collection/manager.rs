@@ -71,9 +71,9 @@ use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
 use crate::catalog::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogManager,
-    CatalogPhysicalFormat, CatalogProjection, CatalogProjectionKind, CatalogStorageLayout,
-    CatalogStorageLayoutKind, CatalogTableSchema, ProjectionFreshness, TableIdentifier,
+    CatalogColumn, CatalogIndex, CatalogIndexType, CatalogManager, CatalogPhysicalFormat,
+    CatalogProjection, CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind,
+    CatalogTableSchema, ProjectionFreshness, TableIdentifier,
 };
 use crate::core::config::StorageConfig;
 use crate::proto::proximadb_v1::{
@@ -82,6 +82,7 @@ use crate::proto::proximadb_v1::{
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::InternalCollectionProvider;
+use proximadb_data_model::ProximaType;
 use proximadb_storage_common::storage_path::StoragePath;
 
 // Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
@@ -2203,7 +2204,7 @@ impl CollectionService {
                 });
                 FilterableColumnSpec {
                     name: column.name.clone(),
-                    data_type: Self::filterable_data_type(column.data_type),
+                    data_type: Self::filterable_data_type(&column.data_type),
                     indexed,
                     supports_range,
                     estimated_cardinality: None,
@@ -2282,25 +2283,32 @@ impl CollectionService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
         let identifier = Self::collection_table_identifier(config);
-        let mut embedding_column = CatalogColumn::new(20, "embedding", CatalogDataType::Vector);
+        let mut embedding_column = CatalogColumn::new(
+            20,
+            "embedding",
+            ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0,
+            },
+        );
         embedding_column
             .properties
             .insert("dimension".to_string(), config.dimension.to_string());
 
         let mut schema = CatalogTableSchema::new(identifier.name.clone())
-            .with_column(CatalogColumn::new(0, "oid", CatalogDataType::String).nullable(false))
-            .with_column(CatalogColumn::new(1, "tenant_id", CatalogDataType::String))
+            .with_column(CatalogColumn::new(0, "oid", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(1, "tenant_id", ProximaType::String))
             .with_column(CatalogColumn::new(
                 2,
                 "created_at_ns",
-                CatalogDataType::TimestampTz,
+                ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
             ))
             .with_column(CatalogColumn::new(
                 3,
                 "updated_at_ns",
-                CatalogDataType::TimestampTz,
+                ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
             ))
-            .with_column(CatalogColumn::new(8, "props", CatalogDataType::Json))
+            .with_column(CatalogColumn::new(8, "props", ProximaType::Json))
             .with_column(embedding_column)
             .with_primary_key(vec!["oid".to_string()]);
 
@@ -2453,21 +2461,29 @@ impl CollectionService {
         Ok(schema)
     }
 
-    fn catalog_data_type(data_type: i32) -> CatalogDataType {
+    fn catalog_data_type(data_type: i32) -> ProximaType {
+        use proximadb_data_model::TimeUnit;
         match FilterableDataType::try_from(data_type).ok() {
-            Some(FilterableDataType::FilterableInteger) => CatalogDataType::Int64,
-            Some(FilterableDataType::FilterableFloat) => CatalogDataType::Float64,
-            Some(FilterableDataType::FilterableBoolean) => CatalogDataType::Boolean,
-            Some(FilterableDataType::FilterableDatetime) => CatalogDataType::Timestamp,
-            Some(FilterableDataType::FilterableDecimal) => CatalogDataType::Decimal,
-            Some(FilterableDataType::FilterableTimestampTz) => CatalogDataType::TimestampTz,
-            Some(FilterableDataType::FilterableDate) => CatalogDataType::Date,
-            Some(FilterableDataType::FilterableTime) => CatalogDataType::Time,
-            Some(FilterableDataType::FilterableUuid) => CatalogDataType::Uuid,
-            Some(FilterableDataType::FilterableBinary) => CatalogDataType::Binary,
+            Some(FilterableDataType::FilterableInteger) => ProximaType::Int64,
+            Some(FilterableDataType::FilterableFloat) => ProximaType::Float64,
+            Some(FilterableDataType::FilterableBoolean) => ProximaType::Boolean,
+            Some(FilterableDataType::FilterableDatetime) => {
+                ProximaType::Timestamp(TimeUnit::Nanosecond)
+            }
+            Some(FilterableDataType::FilterableDecimal) => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
+            Some(FilterableDataType::FilterableTimestampTz) => {
+                ProximaType::TimestampTz(TimeUnit::Nanosecond)
+            }
+            Some(FilterableDataType::FilterableDate) => ProximaType::Date,
+            Some(FilterableDataType::FilterableTime) => ProximaType::Time(TimeUnit::Nanosecond),
+            Some(FilterableDataType::FilterableUuid) => ProximaType::Uuid,
+            Some(FilterableDataType::FilterableBinary) => ProximaType::Binary,
             Some(FilterableDataType::FilterableJson)
-            | Some(FilterableDataType::FilterableMapStringAny) => CatalogDataType::Json,
-            _ => CatalogDataType::String,
+            | Some(FilterableDataType::FilterableMapStringAny) => ProximaType::Json,
+            _ => ProximaType::String,
         }
     }
 
@@ -2480,24 +2496,23 @@ impl CollectionService {
         }
     }
 
-    fn filterable_data_type(data_type: CatalogDataType) -> i32 {
+    fn filterable_data_type(data_type: &ProximaType) -> i32 {
         match data_type {
-            CatalogDataType::Int8
-            | CatalogDataType::Int16
-            | CatalogDataType::Int32
-            | CatalogDataType::Int64 => FilterableDataType::FilterableInteger as i32,
-            CatalogDataType::Float32 | CatalogDataType::Float64 => {
+            ProximaType::Int8 | ProximaType::Int16 | ProximaType::Int32 | ProximaType::Int64 => {
+                FilterableDataType::FilterableInteger as i32
+            }
+            ProximaType::Float32 | ProximaType::Float64 => {
                 FilterableDataType::FilterableFloat as i32
             }
-            CatalogDataType::Boolean => FilterableDataType::FilterableBoolean as i32,
-            CatalogDataType::Timestamp => FilterableDataType::FilterableDatetime as i32,
-            CatalogDataType::TimestampTz => FilterableDataType::FilterableTimestampTz as i32,
-            CatalogDataType::Decimal => FilterableDataType::FilterableDecimal as i32,
-            CatalogDataType::Date => FilterableDataType::FilterableDate as i32,
-            CatalogDataType::Time => FilterableDataType::FilterableTime as i32,
-            CatalogDataType::Uuid => FilterableDataType::FilterableUuid as i32,
-            CatalogDataType::Binary => FilterableDataType::FilterableBinary as i32,
-            CatalogDataType::Json => FilterableDataType::FilterableJson as i32,
+            ProximaType::Boolean => FilterableDataType::FilterableBoolean as i32,
+            ProximaType::Timestamp(_) => FilterableDataType::FilterableDatetime as i32,
+            ProximaType::TimestampTz(_) => FilterableDataType::FilterableTimestampTz as i32,
+            ProximaType::Decimal { .. } => FilterableDataType::FilterableDecimal as i32,
+            ProximaType::Date => FilterableDataType::FilterableDate as i32,
+            ProximaType::Time(_) => FilterableDataType::FilterableTime as i32,
+            ProximaType::Uuid => FilterableDataType::FilterableUuid as i32,
+            ProximaType::Binary => FilterableDataType::FilterableBinary as i32,
+            ProximaType::Json => FilterableDataType::FilterableJson as i32,
             _ => FilterableDataType::FilterableString as i32,
         }
     }

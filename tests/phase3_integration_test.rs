@@ -1472,8 +1472,7 @@ mod catalog_tests {
 mod delta_catalog_tests {
     use super::*;
     use proximadb::catalog::{
-        Catalog, CatalogColumn, CatalogDataType, CatalogManager, CatalogTableSchema,
-        TableIdentifier,
+        Catalog, CatalogColumn, CatalogManager, CatalogTableSchema, TableIdentifier,
     };
 
     fn temp_catalog_dir(name: &str) -> std::path::PathBuf {
@@ -1547,8 +1546,16 @@ mod delta_catalog_tests {
             .unwrap();
 
         let schema = CatalogTableSchema::new("test_table")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String));
+            .with_column(CatalogColumn::new(
+                1,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(CatalogColumn::new(
+                2,
+                "name",
+                proximadb_data_model::ProximaType::String,
+            ));
 
         let identifier =
             TableIdentifier::new(vec!["deltadb".to_string()], "test_table".to_string());

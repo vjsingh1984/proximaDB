@@ -1082,9 +1082,10 @@ mod tests {
 
     use crate::catalog::CatalogManager;
     use proximadb_catalog::{
-        CatalogColumn, CatalogDataType, CatalogPrimaryPod, CatalogPrimaryPodReason,
-        CatalogTableSchema, TableIdentifier,
+        CatalogColumn, CatalogPrimaryPod, CatalogPrimaryPodReason, CatalogTableSchema,
+        TableIdentifier,
     };
+    use proximadb_data_model::ProximaType;
 
     async fn manager_with_seeded_table(
         tmp: &TempDir,
@@ -1104,7 +1105,7 @@ mod tests {
         let schema = CatalogTableSchema::new(collection).with_column(CatalogColumn::new(
             1,
             "id",
-            CatalogDataType::Int64,
+            ProximaType::Int64,
         ));
         cat.create_table(&id, schema).await.unwrap();
         if let Some(cp) = primary {

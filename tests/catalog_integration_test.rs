@@ -242,9 +242,9 @@ mod catalog_manager_tests {
 mod iceberg_catalog_tests {
     use super::*;
     use proximadb::catalog::{
-        Catalog, CatalogColumn, CatalogDataType, CatalogManager, CatalogPartitionField,
-        CatalogPartitionSpec, CatalogSortField, CatalogSortOrder, CatalogTableSchema, NullOrder,
-        PartitionTransform, SortDirection, TableIdentifier,
+        Catalog, CatalogColumn, CatalogManager, CatalogPartitionField, CatalogPartitionSpec,
+        CatalogSortField, CatalogSortOrder, CatalogTableSchema, NullOrder, PartitionTransform,
+        SortDirection, TableIdentifier,
     };
 
     #[tokio::test]
@@ -308,9 +308,20 @@ mod iceberg_catalog_tests {
 
         // Create table schema
         let schema = CatalogTableSchema::new("users")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
-            .with_column(CatalogColumn::new(3, "email", CatalogDataType::String));
+            .with_column(
+                CatalogColumn::new(1, "id", proximadb_data_model::ProximaType::Int64)
+                    .nullable(false),
+            )
+            .with_column(CatalogColumn::new(
+                2,
+                "name",
+                proximadb_data_model::ProximaType::String,
+            ))
+            .with_column(CatalogColumn::new(
+                3,
+                "email",
+                proximadb_data_model::ProximaType::String,
+            ));
 
         let identifier = TableIdentifier::new(vec!["mydb".to_string()], "users".to_string());
 
@@ -351,9 +362,21 @@ mod iceberg_catalog_tests {
             .unwrap();
 
         let schema = CatalogTableSchema::new("events")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64))
-            .with_column(CatalogColumn::new(2, "event_date", CatalogDataType::Date))
-            .with_column(CatalogColumn::new(3, "event_type", CatalogDataType::String));
+            .with_column(CatalogColumn::new(
+                1,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(CatalogColumn::new(
+                2,
+                "event_date",
+                proximadb_data_model::ProximaType::Date,
+            ))
+            .with_column(CatalogColumn::new(
+                3,
+                "event_type",
+                proximadb_data_model::ProximaType::String,
+            ));
 
         let identifier = TableIdentifier::new(vec!["partdb".to_string()], "events".to_string());
         catalog.create_table(&identifier, schema).await.unwrap();
@@ -404,13 +427,23 @@ mod iceberg_catalog_tests {
             .unwrap();
 
         let schema = CatalogTableSchema::new("sorted_data")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64))
+            .with_column(CatalogColumn::new(
+                1,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
             .with_column(CatalogColumn::new(
                 2,
                 "timestamp",
-                CatalogDataType::Timestamp,
+                proximadb_data_model::ProximaType::Timestamp(
+                    proximadb_data_model::TimeUnit::Nanosecond,
+                ),
             ))
-            .with_column(CatalogColumn::new(3, "value", CatalogDataType::Float64));
+            .with_column(CatalogColumn::new(
+                3,
+                "value",
+                proximadb_data_model::ProximaType::Float64,
+            ));
 
         let identifier =
             TableIdentifier::new(vec!["sortdb".to_string()], "sorted_data".to_string());
@@ -460,8 +493,16 @@ mod iceberg_catalog_tests {
             .unwrap();
 
         let schema = CatalogTableSchema::new("evolving_table")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String));
+            .with_column(CatalogColumn::new(
+                1,
+                "id",
+                proximadb_data_model::ProximaType::Int64,
+            ))
+            .with_column(CatalogColumn::new(
+                2,
+                "name",
+                proximadb_data_model::ProximaType::String,
+            ));
 
         let identifier =
             TableIdentifier::new(vec!["evodb".to_string()], "evolving_table".to_string());
@@ -509,8 +550,7 @@ mod iceberg_catalog_tests {
 mod delta_catalog_tests {
     use super::*;
     use proximadb::catalog::{
-        Catalog, CatalogColumn, CatalogDataType, CatalogManager, CatalogTableSchema,
-        TableIdentifier,
+        Catalog, CatalogColumn, CatalogManager, CatalogTableSchema, TableIdentifier,
     };
 
     #[tokio::test]
@@ -591,12 +631,21 @@ mod delta_catalog_tests {
 
         // Create table
         let schema = CatalogTableSchema::new("delta_users")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
+            .with_column(
+                CatalogColumn::new(1, "id", proximadb_data_model::ProximaType::Int64)
+                    .nullable(false),
+            )
+            .with_column(CatalogColumn::new(
+                2,
+                "name",
+                proximadb_data_model::ProximaType::String,
+            ))
             .with_column(CatalogColumn::new(
                 3,
                 "created_at",
-                CatalogDataType::Timestamp,
+                proximadb_data_model::ProximaType::Timestamp(
+                    proximadb_data_model::TimeUnit::Nanosecond,
+                ),
             ));
 
         let identifier =
@@ -643,11 +692,22 @@ mod delta_catalog_tests {
         let mut vec_props = HashMap::new();
         vec_props.insert("dimension".to_string(), "768".to_string());
 
-        let mut vec_col = CatalogColumn::new(2, "embedding", CatalogDataType::Vector);
+        let mut vec_col = CatalogColumn::new(
+            2,
+            "embedding",
+            proximadb_data_model::ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0,
+            },
+        );
         vec_col.properties = vec_props;
 
         let schema = CatalogTableSchema::new("embeddings")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String))
+            .with_column(CatalogColumn::new(
+                1,
+                "id",
+                proximadb_data_model::ProximaType::String,
+            ))
             .with_column(vec_col);
 
         let identifier = TableIdentifier::new(vec!["vecdb".to_string()], "embeddings".to_string());
@@ -662,7 +722,10 @@ mod delta_catalog_tests {
             .iter()
             .find(|c| c.name == "embedding")
             .unwrap();
-        assert!(matches!(vec_column.data_type, CatalogDataType::Vector));
+        assert!(matches!(
+            vec_column.data_type,
+            proximadb_data_model::ProximaType::DenseVector { .. }
+        ));
 
         cleanup_dir(&temp_dir).await;
     }
@@ -686,7 +749,7 @@ mod delta_catalog_tests {
         let schema = CatalogTableSchema::new("versioned").with_column(CatalogColumn::new(
             1,
             "id",
-            CatalogDataType::Int64,
+            proximadb_data_model::ProximaType::Int64,
         ));
 
         let identifier = TableIdentifier::new(vec!["histdb".to_string()], "versioned".to_string());
@@ -728,8 +791,7 @@ mod delta_catalog_tests {
 mod native_catalog_tests {
     use super::*;
     use proximadb::catalog::{
-        Catalog, CatalogColumn, CatalogDataType, CatalogManager, CatalogTableSchema,
-        TableIdentifier,
+        Catalog, CatalogColumn, CatalogManager, CatalogTableSchema, TableIdentifier,
     };
 
     #[tokio::test]
@@ -755,9 +817,20 @@ mod native_catalog_tests {
 
         // Create table
         let schema = CatalogTableSchema::new("products")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
-            .with_column(CatalogColumn::new(3, "price", CatalogDataType::Float64));
+            .with_column(
+                CatalogColumn::new(1, "id", proximadb_data_model::ProximaType::Int64)
+                    .nullable(false),
+            )
+            .with_column(CatalogColumn::new(
+                2,
+                "name",
+                proximadb_data_model::ProximaType::String,
+            ))
+            .with_column(CatalogColumn::new(
+                3,
+                "price",
+                proximadb_data_model::ProximaType::Float64,
+            ));
 
         let identifier = TableIdentifier::new(vec!["testdb".to_string()], "products".to_string());
         catalog.create_table(&identifier, schema).await.unwrap();

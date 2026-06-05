@@ -653,9 +653,10 @@ mod tests {
     mod reexport_surface_guard {
         // Contract types (were `crate::catalog::types::*`).
         use crate::catalog::{
-            CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogProjection,
-            CatalogTableSchema, TableIdentifier,
+            CatalogColumn, CatalogIndex, CatalogIndexType, CatalogProjection, CatalogTableSchema,
+            TableIdentifier,
         };
+        use proximadb_data_model::ProximaType;
         // Cache surface (was `crate::catalog::cache::CatalogCache`).
         use crate::catalog::CatalogCache;
         // Local trait re-exported explicitly to win over `proximadb_catalog::Catalog`.
@@ -666,7 +667,7 @@ mod tests {
             _id: TableIdentifier,
             _schema: CatalogTableSchema,
             _col: CatalogColumn,
-            _dt: CatalogDataType,
+            _dt: ProximaType,
             _idx: CatalogIndex,
             _idxt: CatalogIndexType,
             _proj: CatalogProjection,
@@ -1333,11 +1334,18 @@ mod tests {
 
         let schema = types::CatalogTableSchema::new("vectors")
             .with_column(
-                types::CatalogColumn::new(1, "id", types::CatalogDataType::String).nullable(false),
+                types::CatalogColumn::new(1, "id", proximadb_data_model::ProximaType::String)
+                    .nullable(false),
             )
             .with_column({
-                let mut col =
-                    types::CatalogColumn::new(2, "embedding", types::CatalogDataType::Vector);
+                let mut col = types::CatalogColumn::new(
+                    2,
+                    "embedding",
+                    proximadb_data_model::ProximaType::DenseVector {
+                        element: proximadb_data_model::VectorElement::Float32,
+                        dim: 0,
+                    },
+                );
                 col.properties
                     .insert("dimension".to_string(), "768".to_string());
                 col
@@ -1345,7 +1353,7 @@ mod tests {
             .with_column(types::CatalogColumn::new(
                 3,
                 "category",
-                types::CatalogDataType::String,
+                proximadb_data_model::ProximaType::String,
             ))
             .with_primary_key(vec!["id".to_string()]);
 
@@ -1411,26 +1419,34 @@ mod tests {
 
         let schema = types::CatalogTableSchema::new("products")
             .with_column(
-                types::CatalogColumn::new(1, "product_id", types::CatalogDataType::Uuid)
+                types::CatalogColumn::new(1, "product_id", proximadb_data_model::ProximaType::Uuid)
                     .nullable(false)
                     .with_comment("Primary key UUID"),
             )
             .with_column(
-                types::CatalogColumn::new(2, "name", types::CatalogDataType::String)
+                types::CatalogColumn::new(2, "name", proximadb_data_model::ProximaType::String)
                     .nullable(false),
             )
             .with_column(
-                types::CatalogColumn::new(3, "price", types::CatalogDataType::Float64)
+                types::CatalogColumn::new(3, "price", proximadb_data_model::ProximaType::Float64)
                     .with_default("0.0"),
             )
             .with_column(types::CatalogColumn::new(
                 4,
                 "created_at",
-                types::CatalogDataType::TimestampTz,
+                proximadb_data_model::ProximaType::TimestampTz(
+                    proximadb_data_model::TimeUnit::Nanosecond,
+                ),
             ))
             .with_column({
-                let mut col =
-                    types::CatalogColumn::new(5, "embedding", types::CatalogDataType::Vector);
+                let mut col = types::CatalogColumn::new(
+                    5,
+                    "embedding",
+                    proximadb_data_model::ProximaType::DenseVector {
+                        element: proximadb_data_model::VectorElement::Float32,
+                        dim: 0,
+                    },
+                );
                 col.properties
                     .insert("dimension".to_string(), "768".to_string());
                 col
@@ -1464,7 +1480,7 @@ mod tests {
             .find(|c| c.name == "product_id")
             .expect("product_id column should exist");
         assert!(!id_col.nullable);
-        assert_eq!(id_col.data_type, types::CatalogDataType::Uuid);
+        assert_eq!(id_col.data_type, proximadb_data_model::ProximaType::Uuid);
         assert_eq!(id_col.comment.as_deref(), Some("Primary key UUID"));
 
         let price_col = retrieved
@@ -1472,7 +1488,10 @@ mod tests {
             .iter()
             .find(|c| c.name == "price")
             .expect("price column should exist");
-        assert_eq!(price_col.data_type, types::CatalogDataType::Float64);
+        assert_eq!(
+            price_col.data_type,
+            proximadb_data_model::ProximaType::Float64
+        );
         assert_eq!(price_col.default_value.as_deref(), Some("0.0"));
         assert!(price_col.nullable); // Default is true
 
@@ -1481,7 +1500,13 @@ mod tests {
             .iter()
             .find(|c| c.name == "embedding")
             .expect("embedding column should exist");
-        assert_eq!(embed_col.data_type, types::CatalogDataType::Vector);
+        assert_eq!(
+            embed_col.data_type,
+            proximadb_data_model::ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0,
+            }
+        );
 
         // Verify primary key
         assert_eq!(retrieved.primary_key, vec!["product_id"]);

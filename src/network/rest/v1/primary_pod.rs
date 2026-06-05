@@ -535,7 +535,8 @@ mod tests {
     // in parallel without colliding on disk or on global state.
 
     use crate::catalog::CatalogManager;
-    use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema};
+    use proximadb_catalog::{CatalogColumn, CatalogTableSchema};
+    use proximadb_data_model::ProximaType;
 
     async fn manager_with_native_catalog(tmp: &tempfile::TempDir) -> CatalogManager {
         let mgr = CatalogManager::new();
@@ -559,7 +560,7 @@ mod tests {
         let schema = CatalogTableSchema::new(collection_id).with_column(CatalogColumn::new(
             1,
             "id",
-            CatalogDataType::Int64,
+            ProximaType::Int64,
         ));
         catalog
             .create_table(&id, schema)

@@ -12,12 +12,13 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use proximadb_catalog::{
-    CatalogAuthorityMode, CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType,
-    CatalogPhysicalFormat, CatalogProjection, CatalogProjectionKind, CatalogSchemaEvolution,
-    CatalogStorageLayout, CatalogStorageLayoutKind, CatalogStorageSpecialization,
-    CatalogTableSchema, CatalogWorkloadProfile, ColumnConstraint, ProjectionFreshness,
-    RelationalCapabilities, SchemaChange,
+    CatalogAuthorityMode, CatalogColumn, CatalogIndex, CatalogIndexType, CatalogPhysicalFormat,
+    CatalogProjection, CatalogProjectionKind, CatalogSchemaEvolution, CatalogStorageLayout,
+    CatalogStorageLayoutKind, CatalogStorageSpecialization, CatalogTableSchema,
+    CatalogWorkloadProfile, ColumnConstraint, ProjectionFreshness, RelationalCapabilities,
+    SchemaChange,
 };
+use proximadb_data_model::ProximaType;
 use tracing::info;
 
 use crate::catalog::CatalogManager;
@@ -1036,12 +1037,12 @@ impl DdlService {
 
         for (idx, col) in columns.into_iter().enumerate() {
             let (data_type, col_properties) = self.sql_to_catalog_type(&col.data_type)?;
-            has_json |= matches!(data_type, CatalogDataType::Json);
+            has_json |= matches!(data_type, ProximaType::Json);
             has_vector |= matches!(
                 data_type,
-                CatalogDataType::Vector
-                    | CatalogDataType::SparseVector
-                    | CatalogDataType::BinaryVector
+                ProximaType::DenseVector { .. }
+                    | ProximaType::SparseVector { .. }
+                    | ProximaType::BinaryVector { .. }
             );
 
             let catalog_col = CatalogColumn {
@@ -1211,54 +1212,67 @@ impl DdlService {
     fn sql_to_catalog_type(
         &self,
         sql_type: &SqlDataType,
-    ) -> Result<(CatalogDataType, HashMap<String, String>)> {
+    ) -> Result<(ProximaType, HashMap<String, String>)> {
+        use proximadb_data_model::{TimeUnit, VectorElement};
         let mut properties = HashMap::new();
 
         let catalog_type = match sql_type {
-            SqlDataType::Boolean => CatalogDataType::Boolean,
-            SqlDataType::TinyInt => CatalogDataType::Int8,
-            SqlDataType::SmallInt => CatalogDataType::Int16,
-            SqlDataType::Int => CatalogDataType::Int32,
-            SqlDataType::BigInt => CatalogDataType::Int64,
-            SqlDataType::Float => CatalogDataType::Float32,
-            SqlDataType::Double => CatalogDataType::Float64,
+            SqlDataType::Boolean => ProximaType::Boolean,
+            SqlDataType::TinyInt => ProximaType::Int8,
+            SqlDataType::SmallInt => ProximaType::Int16,
+            SqlDataType::Int => ProximaType::Int32,
+            SqlDataType::BigInt => ProximaType::Int64,
+            SqlDataType::Float => ProximaType::Float32,
+            SqlDataType::Double => ProximaType::Float64,
             SqlDataType::Decimal { precision, scale } => {
                 properties.insert("precision".to_string(), precision.to_string());
                 properties.insert("scale".to_string(), scale.to_string());
-                CatalogDataType::Decimal
+                // Placeholder precision/scale; the authoritative values live in
+                // column properties (matching the legacy CatalogDataType::Decimal
+                // dimensionless mapping).
+                ProximaType::Decimal {
+                    precision: 38,
+                    scale: 10,
+                }
             }
             SqlDataType::Varchar { max_length } => {
                 if let Some(len) = max_length {
                     properties.insert("max_length".to_string(), len.to_string());
                 }
-                CatalogDataType::String
+                ProximaType::String
             }
-            SqlDataType::Text => CatalogDataType::String,
-            SqlDataType::Binary | SqlDataType::Blob => CatalogDataType::Binary,
-            SqlDataType::Date => CatalogDataType::Date,
-            SqlDataType::Time => CatalogDataType::Time,
-            SqlDataType::Timestamp => CatalogDataType::Timestamp,
-            SqlDataType::TimestampTz => CatalogDataType::TimestampTz,
-            SqlDataType::Uuid => CatalogDataType::Uuid,
+            SqlDataType::Text => ProximaType::String,
+            SqlDataType::Binary | SqlDataType::Blob => ProximaType::Binary,
+            SqlDataType::Date => ProximaType::Date,
+            SqlDataType::Time => ProximaType::Time(TimeUnit::Nanosecond),
+            SqlDataType::Timestamp => ProximaType::Timestamp(TimeUnit::Nanosecond),
+            SqlDataType::TimestampTz => ProximaType::TimestampTz(TimeUnit::Nanosecond),
+            SqlDataType::Uuid => ProximaType::Uuid,
             SqlDataType::Json => {
                 properties.insert("json_encoding".to_string(), "json".to_string());
-                CatalogDataType::Json
+                ProximaType::Json
             }
             SqlDataType::Jsonb => {
                 properties.insert("json_encoding".to_string(), "jsonb".to_string());
-                CatalogDataType::Json
+                ProximaType::Json
             }
             SqlDataType::Vector { dimension } => {
                 properties.insert("dimension".to_string(), dimension.to_string());
-                CatalogDataType::Vector
+                // Dimensionless placeholder; real dimension lives in properties.
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0,
+                }
             }
             SqlDataType::SparseVector { dimension } => {
                 properties.insert("dimension".to_string(), dimension.to_string());
-                CatalogDataType::SparseVector
+                ProximaType::SparseVector {
+                    element: VectorElement::Float32,
+                }
             }
             SqlDataType::BinaryVector { dimension } => {
                 properties.insert("dimension".to_string(), dimension.to_string());
-                CatalogDataType::BinaryVector
+                ProximaType::BinaryVector { dim: 0 }
             }
         };
 
@@ -1927,7 +1941,7 @@ mod tests {
             let (catalog_type, props) = service
                 .sql_to_catalog_type(&sql_type)
                 .expect("mapping json/jsonb should succeed");
-            assert_eq!(catalog_type, CatalogDataType::Json);
+            assert_eq!(catalog_type, ProximaType::Json);
             assert_eq!(props.len(), 1, "json/jsonb should preserve encoding");
         }
     }
@@ -2021,7 +2035,7 @@ mod tests {
             .iter()
             .find(|column| column.name == "payload")
             .expect("payload column");
-        assert_eq!(payload.data_type, CatalogDataType::Json);
+        assert_eq!(payload.data_type, ProximaType::Json);
         assert_eq!(
             payload.properties.get("json_encoding").map(String::as_str),
             Some("jsonb")
@@ -2032,7 +2046,13 @@ mod tests {
             .iter()
             .find(|column| column.name == "embedding")
             .expect("embedding column");
-        assert_eq!(embedding.data_type, CatalogDataType::Vector);
+        assert_eq!(
+            embedding.data_type,
+            ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0
+            }
+        );
         assert_eq!(
             embedding.properties.get("dimension").map(String::as_str),
             Some("384")

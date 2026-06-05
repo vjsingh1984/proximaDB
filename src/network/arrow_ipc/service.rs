@@ -2673,7 +2673,8 @@ mod tests {
     };
     use crate::services::operations::OperationMetrics;
     use arrow_schema::DataType;
-    use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema};
+    use proximadb_catalog::{CatalogColumn, CatalogTableSchema};
+    use proximadb_data_model::ProximaType;
 
     #[test]
     fn test_batch_result_app_metadata_uses_rich_shape() {
@@ -2741,13 +2742,20 @@ mod tests {
             .await;
 
         let table_id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
-        let mut embedding = CatalogColumn::new(3, "embedding", CatalogDataType::Vector);
+        let mut embedding = CatalogColumn::new(
+            3,
+            "embedding",
+            ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0,
+            },
+        );
         embedding
             .properties
             .insert("dimension".to_string(), "3".to_string());
         let table_schema = CatalogTableSchema::new("events")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "payload", CatalogDataType::Json))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "payload", ProximaType::Json))
             .with_column(embedding);
         catalog.create_table(&table_id, table_schema).await.unwrap();
 
@@ -2787,8 +2795,8 @@ mod tests {
 
         let table_id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
         let table_schema = CatalogTableSchema::new("events")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
-            .with_column(CatalogColumn::new(2, "payload", CatalogDataType::String));
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "payload", ProximaType::String));
         catalog.create_table(&table_id, table_schema).await.unwrap();
 
         let schema = Arc::new(Schema::new(vec![

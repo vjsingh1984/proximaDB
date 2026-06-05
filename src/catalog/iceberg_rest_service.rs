@@ -35,7 +35,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::catalog::{CatalogDataType, CatalogManager, CatalogTableSchema, TableIdentifier};
+use crate::catalog::{CatalogManager, CatalogTableSchema, TableIdentifier};
+use proximadb_data_model::ProximaType;
 
 // ============================================================================
 // Iceberg REST API types — serialized exactly per spec
@@ -887,7 +888,7 @@ impl IcebergRestService {
         for col in &schema.columns {
             if matches!(
                 col.data_type,
-                CatalogDataType::Vector | CatalogDataType::SparseVector
+                ProximaType::DenseVector { .. } | ProximaType::SparseVector { .. }
             ) {
                 let prefix = format!("proximadb.index.{}", col.name);
                 properties.insert(format!("{}.type", prefix), "hnsw".to_string());
@@ -1025,64 +1026,75 @@ impl IcebergRestService {
 // Type conversion helpers
 // ============================================================================
 
-/// Map a `CatalogDataType` to an Iceberg primitive or complex type string.
-fn catalog_type_to_iceberg(dt: &CatalogDataType, field_id_base: i32) -> IcebergFieldType {
+/// Map a [`ProximaType`] to an Iceberg primitive or complex type string.
+fn catalog_type_to_iceberg(dt: &ProximaType, field_id_base: i32) -> IcebergFieldType {
     match dt {
-        CatalogDataType::Boolean => IcebergFieldType::Primitive("boolean".to_string()),
-        CatalogDataType::Int8 | CatalogDataType::Int16 | CatalogDataType::Int32 => {
+        ProximaType::Boolean => IcebergFieldType::Primitive("boolean".to_string()),
+        ProximaType::Int8 | ProximaType::Int16 | ProximaType::Int32 => {
             IcebergFieldType::Primitive("int".to_string())
         }
-        CatalogDataType::Int64 => IcebergFieldType::Primitive("long".to_string()),
-        CatalogDataType::Float32 => IcebergFieldType::Primitive("float".to_string()),
-        CatalogDataType::Float64 => IcebergFieldType::Primitive("double".to_string()),
-        CatalogDataType::Decimal => IcebergFieldType::Primitive("decimal(38,18)".to_string()),
-        CatalogDataType::String => IcebergFieldType::Primitive("string".to_string()),
-        CatalogDataType::Binary => IcebergFieldType::Primitive("binary".to_string()),
-        CatalogDataType::Date => IcebergFieldType::Primitive("date".to_string()),
-        CatalogDataType::Time => IcebergFieldType::Primitive("time".to_string()),
-        CatalogDataType::Timestamp => IcebergFieldType::Primitive("timestamp".to_string()),
-        CatalogDataType::TimestampTz => IcebergFieldType::Primitive("timestamptz".to_string()),
-        CatalogDataType::Uuid => IcebergFieldType::Primitive("uuid".to_string()),
-        CatalogDataType::Json => IcebergFieldType::Primitive("string".to_string()),
+        ProximaType::Int64 => IcebergFieldType::Primitive("long".to_string()),
+        ProximaType::Float32 => IcebergFieldType::Primitive("float".to_string()),
+        ProximaType::Float64 => IcebergFieldType::Primitive("double".to_string()),
+        ProximaType::Decimal { .. } => IcebergFieldType::Primitive("decimal(38,18)".to_string()),
+        ProximaType::String => IcebergFieldType::Primitive("string".to_string()),
+        ProximaType::Binary => IcebergFieldType::Primitive("binary".to_string()),
+        ProximaType::Date => IcebergFieldType::Primitive("date".to_string()),
+        ProximaType::Time(_) => IcebergFieldType::Primitive("time".to_string()),
+        ProximaType::Timestamp(_) => IcebergFieldType::Primitive("timestamp".to_string()),
+        ProximaType::TimestampTz(_) => IcebergFieldType::Primitive("timestamptz".to_string()),
+        ProximaType::Uuid => IcebergFieldType::Primitive("uuid".to_string()),
+        ProximaType::Json => IcebergFieldType::Primitive("string".to_string()),
         // Vector → list<float>
-        CatalogDataType::Vector | CatalogDataType::SparseVector => IcebergFieldType::List {
-            type_: "list".to_string(),
-            element_id: field_id_base + 1000,
-            element: Box::new(IcebergFieldType::Primitive("float".to_string())),
-            element_required: true,
-        },
+        ProximaType::DenseVector { .. } | ProximaType::SparseVector { .. } => {
+            IcebergFieldType::List {
+                type_: "list".to_string(),
+                element_id: field_id_base + 1000,
+                element: Box::new(IcebergFieldType::Primitive("float".to_string())),
+                element_required: true,
+            }
+        }
         // Binary vector → binary
-        CatalogDataType::BinaryVector => IcebergFieldType::Primitive("binary".to_string()),
+        ProximaType::BinaryVector { .. } => IcebergFieldType::Primitive("binary".to_string()),
+        // Richer ProximaType variants without a dedicated Iceberg mapping → string.
+        _ => IcebergFieldType::Primitive("string".to_string()),
     }
 }
 
-/// Map an Iceberg field type to a `CatalogDataType`.
-fn iceberg_type_to_catalog(ft: &IcebergFieldType) -> CatalogDataType {
+/// Map an Iceberg field type to the canonical [`ProximaType`].
+fn iceberg_type_to_catalog(ft: &IcebergFieldType) -> ProximaType {
+    use proximadb_data_model::{TimeUnit, VectorElement};
     match ft {
         IcebergFieldType::Primitive(s) => match s.as_str() {
-            "boolean" => CatalogDataType::Boolean,
-            "int" => CatalogDataType::Int32,
-            "long" => CatalogDataType::Int64,
-            "float" => CatalogDataType::Float32,
-            "double" => CatalogDataType::Float64,
-            "date" => CatalogDataType::Date,
-            "time" => CatalogDataType::Time,
-            "timestamp" => CatalogDataType::Timestamp,
-            "timestamptz" => CatalogDataType::TimestampTz,
-            "uuid" => CatalogDataType::Uuid,
-            "binary" => CatalogDataType::Binary,
-            s if s.starts_with("decimal") => CatalogDataType::Decimal,
-            s if s.starts_with("fixed") => CatalogDataType::Binary,
-            _ => CatalogDataType::String,
+            "boolean" => ProximaType::Boolean,
+            "int" => ProximaType::Int32,
+            "long" => ProximaType::Int64,
+            "float" => ProximaType::Float32,
+            "double" => ProximaType::Float64,
+            "date" => ProximaType::Date,
+            "time" => ProximaType::Time(TimeUnit::Nanosecond),
+            "timestamp" => ProximaType::Timestamp(TimeUnit::Nanosecond),
+            "timestamptz" => ProximaType::TimestampTz(TimeUnit::Nanosecond),
+            "uuid" => ProximaType::Uuid,
+            "binary" => ProximaType::Binary,
+            s if s.starts_with("decimal") => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
+            s if s.starts_with("fixed") => ProximaType::Binary,
+            _ => ProximaType::String,
         },
         IcebergFieldType::List { element, .. } => match element.as_ref() {
             IcebergFieldType::Primitive(s) if s == "float" || s == "double" => {
-                CatalogDataType::Vector
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0,
+                }
             }
-            _ => CatalogDataType::Json,
+            _ => ProximaType::Json,
         },
-        IcebergFieldType::Map { .. } => CatalogDataType::Json,
-        IcebergFieldType::Struct { .. } => CatalogDataType::Json,
+        IcebergFieldType::Map { .. } => ProximaType::Json,
+        IcebergFieldType::Struct { .. } => ProximaType::Json,
     }
 }
 
@@ -1108,7 +1120,13 @@ mod tests {
 
     #[test]
     fn test_catalog_type_to_iceberg_vector() {
-        let ft = catalog_type_to_iceberg(&CatalogDataType::Vector, 10);
+        let ft = catalog_type_to_iceberg(
+            &ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0,
+            },
+            10,
+        );
         match ft {
             IcebergFieldType::List { type_, .. } => assert_eq!(type_, "list"),
             _ => panic!("expected list type for Vector"),
@@ -1125,7 +1143,7 @@ mod tests {
         };
         assert!(matches!(
             iceberg_type_to_catalog(&ft),
-            CatalogDataType::Vector
+            ProximaType::DenseVector { .. }
         ));
     }
 

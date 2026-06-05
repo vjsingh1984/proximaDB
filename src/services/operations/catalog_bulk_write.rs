@@ -14,9 +14,9 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Schema};
 use parking_lot::RwLock;
 use proximadb_catalog::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogTableSchema,
-    CatalogTableStatistics,
+    CatalogColumn, CatalogIndex, CatalogIndexType, CatalogTableSchema, CatalogTableStatistics,
 };
+use proximadb_data_model::ProximaType;
 use tracing::{debug, info, warn};
 
 use crate::catalog::{CatalogManager, TableIdentifier};
@@ -423,44 +423,50 @@ impl CatalogBulkWriteService {
         Ok(schema.with_primary_key(vec!["id".to_string()]))
     }
 
-    /// Convert Arrow DataType to CatalogDataType
+    /// Convert Arrow DataType to the canonical [`ProximaType`].
     fn arrow_to_catalog_type(
         &self,
         arrow_type: &DataType,
-    ) -> Result<(CatalogDataType, HashMap<String, String>)> {
+    ) -> Result<(ProximaType, HashMap<String, String>)> {
+        use proximadb_data_model::{TimeUnit, VectorElement};
         let mut properties = HashMap::new();
 
+        let dense_vector = || ProximaType::DenseVector {
+            element: VectorElement::Float32,
+            dim: 0,
+        };
+
         let catalog_type = match arrow_type {
-            DataType::Boolean => CatalogDataType::Boolean,
-            DataType::Int8 => CatalogDataType::Int8,
-            DataType::Int16 => CatalogDataType::Int16,
-            DataType::Int32 => CatalogDataType::Int32,
-            DataType::Int64 => CatalogDataType::Int64,
-            DataType::Float32 => CatalogDataType::Float32,
-            DataType::Float64 => CatalogDataType::Float64,
-            DataType::Utf8 | DataType::LargeUtf8 => CatalogDataType::String,
-            DataType::Binary | DataType::LargeBinary => CatalogDataType::Binary,
-            DataType::Date32 | DataType::Date64 => CatalogDataType::Date,
-            DataType::Time32(_) | DataType::Time64(_) => CatalogDataType::Time,
-            DataType::Timestamp(_, _) => CatalogDataType::Timestamp,
+            DataType::Boolean => ProximaType::Boolean,
+            DataType::Int8 => ProximaType::Int8,
+            DataType::Int16 => ProximaType::Int16,
+            DataType::Int32 => ProximaType::Int32,
+            DataType::Int64 => ProximaType::Int64,
+            DataType::Float32 => ProximaType::Float32,
+            DataType::Float64 => ProximaType::Float64,
+            DataType::Utf8 | DataType::LargeUtf8 => ProximaType::String,
+            DataType::Binary | DataType::LargeBinary => ProximaType::Binary,
+            DataType::Date32 | DataType::Date64 => ProximaType::Date,
+            DataType::Time32(_) | DataType::Time64(_) => ProximaType::Time(TimeUnit::Nanosecond),
+            DataType::Timestamp(_, _) => ProximaType::Timestamp(TimeUnit::Nanosecond),
             DataType::FixedSizeList(inner, size) => {
                 if matches!(inner.data_type(), DataType::Float32 | DataType::Float64) {
                     properties.insert("dimension".to_string(), size.to_string());
-                    CatalogDataType::Vector
+                    dense_vector()
                 } else {
-                    CatalogDataType::Json // Fallback for other lists
+                    ProximaType::Json // Fallback for other lists
                 }
             }
             DataType::List(inner) => {
                 if matches!(inner.data_type(), DataType::Float32 | DataType::Float64) {
-                    CatalogDataType::Vector
+                    dense_vector()
                 } else {
-                    CatalogDataType::Json
+                    ProximaType::Json
                 }
             }
-            DataType::Struct(_) => CatalogDataType::Json,
-            DataType::Map(_, _) => CatalogDataType::Json,
-            _ => CatalogDataType::Binary, // Fallback
+            DataType::Struct(_) => ProximaType::Json,
+            DataType::Map(_, _) => ProximaType::Json,
+            _ => ProximaType::Binary, // Fallback
         };
 
         Ok((catalog_type, properties))
@@ -496,11 +502,7 @@ impl CatalogBulkWriteService {
     }
 
     /// Check if two catalog types are compatible
-    fn types_compatible(
-        &self,
-        catalog_type: &CatalogDataType,
-        arrow_type: &CatalogDataType,
-    ) -> bool {
+    fn types_compatible(&self, catalog_type: &ProximaType, arrow_type: &ProximaType) -> bool {
         if catalog_type == arrow_type {
             return true;
         }
@@ -509,13 +511,11 @@ impl CatalogBulkWriteService {
         matches!(
             (catalog_type, arrow_type),
             (
-                CatalogDataType::Int8,
-                CatalogDataType::Int16 | CatalogDataType::Int32 | CatalogDataType::Int64
-            ) | (
-                CatalogDataType::Int16,
-                CatalogDataType::Int32 | CatalogDataType::Int64
-            ) | (CatalogDataType::Int32, CatalogDataType::Int64)
-                | (CatalogDataType::Float32, CatalogDataType::Float64)
+                ProximaType::Int8,
+                ProximaType::Int16 | ProximaType::Int32 | ProximaType::Int64
+            ) | (ProximaType::Int16, ProximaType::Int32 | ProximaType::Int64)
+                | (ProximaType::Int32, ProximaType::Int64)
+                | (ProximaType::Float32, ProximaType::Float64)
         )
     }
 
@@ -524,7 +524,7 @@ impl CatalogBulkWriteService {
         schema
             .columns
             .iter()
-            .find(|c| matches!(c.data_type, CatalogDataType::Vector))
+            .find(|c| matches!(c.data_type, ProximaType::DenseVector { .. }))
             .map(|c| c.name.clone())
     }
 

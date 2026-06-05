@@ -18,9 +18,11 @@ use tracing::{debug, info, warn};
 
 use crate::cache::CatalogCache;
 use crate::schema::{apply_evolution, validate_schema};
+use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+
 use crate::{
-    Catalog, CatalogColumn, CatalogDataType, CatalogHealth, CatalogIndex, CatalogNamespace,
-    CatalogSchemaEvolution, CatalogTableSchema, CatalogTableStatistics, TableIdentifier,
+    Catalog, CatalogColumn, CatalogHealth, CatalogIndex, CatalogNamespace, CatalogSchemaEvolution,
+    CatalogTableSchema, CatalogTableStatistics, TableIdentifier,
 };
 
 /// Plain Rust configuration for the Databricks Unity catalog.
@@ -199,52 +201,58 @@ impl UnityCatalog {
         }
     }
 
-    /// Convert Unity type to CatalogDataType
-    fn unity_type_to_data_type(unity_type: &str) -> CatalogDataType {
+    /// Convert Unity type to canonical [`ProximaType`].
+    fn unity_type_to_data_type(unity_type: &str) -> ProximaType {
         let lower = unity_type.to_lowercase();
         match lower.as_str() {
-            "boolean" => CatalogDataType::Boolean,
-            "byte" | "tinyint" => CatalogDataType::Int32,
-            "short" | "smallint" => CatalogDataType::Int32,
-            "int" | "integer" => CatalogDataType::Int32,
-            "long" | "bigint" => CatalogDataType::Int64,
-            "float" | "real" => CatalogDataType::Float32,
-            "double" => CatalogDataType::Float64,
-            "string" => CatalogDataType::String,
-            "binary" => CatalogDataType::Binary,
-            "date" => CatalogDataType::Date,
-            "timestamp" | "timestamp_ntz" => CatalogDataType::Timestamp,
-            "decimal" => CatalogDataType::Decimal,
-            t if t.starts_with("array<float>") || t.contains("vector") => CatalogDataType::Vector,
-            t if t.starts_with("map<") => CatalogDataType::Json,
-            t if t.starts_with("struct<") => CatalogDataType::Json,
-            _ => CatalogDataType::String,
+            "boolean" => ProximaType::Boolean,
+            "byte" | "tinyint" => ProximaType::Int32,
+            "short" | "smallint" => ProximaType::Int32,
+            "int" | "integer" => ProximaType::Int32,
+            "long" | "bigint" => ProximaType::Int64,
+            "float" | "real" => ProximaType::Float32,
+            "double" => ProximaType::Float64,
+            "string" => ProximaType::String,
+            "binary" => ProximaType::Binary,
+            "date" => ProximaType::Date,
+            "timestamp" | "timestamp_ntz" => ProximaType::Timestamp(TimeUnit::Nanosecond),
+            "decimal" => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
+            t if t.starts_with("array<float>") || t.contains("vector") => {
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0,
+                }
+            }
+            t if t.starts_with("map<") => ProximaType::Json,
+            t if t.starts_with("struct<") => ProximaType::Json,
+            _ => ProximaType::String,
         }
     }
 
-    /// Convert CatalogDataType to Unity type
+    /// Convert canonical [`ProximaType`] to Unity type
     fn data_type_to_unity_type(
-        data_type: &CatalogDataType,
+        data_type: &ProximaType,
         _properties: &HashMap<String, String>,
     ) -> String {
         match data_type {
-            CatalogDataType::Boolean => "BOOLEAN".to_string(),
-            CatalogDataType::Int8 | CatalogDataType::Int16 | CatalogDataType::Int32 => {
-                "INT".to_string()
-            }
-            CatalogDataType::Int64 => "BIGINT".to_string(),
-            CatalogDataType::Float32 => "FLOAT".to_string(),
-            CatalogDataType::Float64 => "DOUBLE".to_string(),
-            CatalogDataType::String => "STRING".to_string(),
-            CatalogDataType::Binary | CatalogDataType::BinaryVector => "BINARY".to_string(),
-            CatalogDataType::Date => "DATE".to_string(),
-            CatalogDataType::Timestamp | CatalogDataType::TimestampTz => "TIMESTAMP".to_string(),
-            CatalogDataType::Decimal => "DECIMAL(38,18)".to_string(),
-            CatalogDataType::Json | CatalogDataType::Uuid => "STRING".to_string(), // Unity uses STRING for JSON/UUID
-            CatalogDataType::Vector => {
+            ProximaType::Boolean => "BOOLEAN".to_string(),
+            ProximaType::Int8 | ProximaType::Int16 | ProximaType::Int32 => "INT".to_string(),
+            ProximaType::Int64 => "BIGINT".to_string(),
+            ProximaType::Float32 => "FLOAT".to_string(),
+            ProximaType::Float64 => "DOUBLE".to_string(),
+            ProximaType::String => "STRING".to_string(),
+            ProximaType::Binary | ProximaType::BinaryVector { .. } => "BINARY".to_string(),
+            ProximaType::Date => "DATE".to_string(),
+            ProximaType::Timestamp(_) | ProximaType::TimestampTz(_) => "TIMESTAMP".to_string(),
+            ProximaType::Decimal { .. } => "DECIMAL(38,18)".to_string(),
+            ProximaType::Json | ProximaType::Uuid => "STRING".to_string(), // Unity uses STRING for JSON/UUID
+            ProximaType::DenseVector { .. } => {
                 "ARRAY<FLOAT>".to_string() // Vector stored as array
             }
-            CatalogDataType::SparseVector => "MAP<INT,FLOAT>".to_string(),
+            ProximaType::SparseVector { .. } => "MAP<INT,FLOAT>".to_string(),
             _ => "STRING".to_string(),
         }
     }
@@ -494,7 +502,7 @@ impl Catalog for UnityCatalog {
             .map(|(pos, col)| {
                 let type_name = Self::data_type_to_unity_type(&col.data_type, &col.properties);
 
-                let comment = if col.data_type == CatalogDataType::Vector {
+                let comment = if matches!(col.data_type, ProximaType::DenseVector { .. }) {
                     Some(format!(
                         "vector:{}:metric={}",
                         col.properties.get("dimension").unwrap_or(&"0".to_string()),
@@ -879,15 +887,18 @@ mod tests {
     fn test_unity_type_conversion() {
         assert_eq!(
             UnityCatalog::unity_type_to_data_type("BIGINT"),
-            CatalogDataType::Int64
+            ProximaType::Int64
         );
         assert_eq!(
             UnityCatalog::unity_type_to_data_type("STRING"),
-            CatalogDataType::String
+            ProximaType::String
         );
         assert_eq!(
             UnityCatalog::unity_type_to_data_type("ARRAY<FLOAT>"),
-            CatalogDataType::Vector
+            ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0
+            }
         );
     }
 
@@ -895,15 +906,21 @@ mod tests {
     fn test_data_type_to_unity() {
         let props = HashMap::new();
         assert_eq!(
-            UnityCatalog::data_type_to_unity_type(&CatalogDataType::Int64, &props),
+            UnityCatalog::data_type_to_unity_type(&ProximaType::Int64, &props),
             "BIGINT"
         );
         assert_eq!(
-            UnityCatalog::data_type_to_unity_type(&CatalogDataType::String, &props),
+            UnityCatalog::data_type_to_unity_type(&ProximaType::String, &props),
             "STRING"
         );
         assert_eq!(
-            UnityCatalog::data_type_to_unity_type(&CatalogDataType::Vector, &props),
+            UnityCatalog::data_type_to_unity_type(
+                &ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0,
+                },
+                &props
+            ),
             "ARRAY<FLOAT>"
         );
     }
