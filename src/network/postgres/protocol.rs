@@ -1400,9 +1400,22 @@ impl PostgresProtocol {
         // ComputeScheduler read-route decision as JSON. Additive — does not execute the
         // query. Catalog-free in P0 (routes on query shape).
         if inner_upper.starts_with("SELECT") || inner_upper.starts_with("WITH") {
-            return match crate::network::postgres::relational_pipeline::explain_select_route(
-                inner_query,
-            ) {
+            // Catalog-aware when a DmlService is available: discloses the planned
+            // physical plan (access method, pushdowns, join/agg strategy) for native
+            // PATH B queries, not just the route. Falls back to route-only otherwise.
+            let routing = match self.dml_service.clone() {
+                Some(dml) => {
+                    crate::network::postgres::relational_pipeline::explain_select_route_with_catalog(
+                        inner_query,
+                        &dml,
+                    )
+                    .await
+                }
+                None => crate::network::postgres::relational_pipeline::explain_select_route(
+                    inner_query,
+                ),
+            };
+            return match routing {
                 Ok(explanation) => {
                     let json = serde_json::to_string_pretty(&explanation)?;
                     let fields = vec![FieldDescription::new("QUERY PLAN", PgType::Jsonb)];

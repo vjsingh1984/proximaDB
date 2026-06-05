@@ -35,7 +35,9 @@ use proximadb_relational_executor::{
     ExecError, ExecutionContext, ReaderFactory, build_executor, collect,
 };
 use proximadb_relational_frontend::{CatalogLookup, lower_sql};
-use proximadb_relational_planner::{CapabilityResolver, Planner, StaticCapabilities};
+use proximadb_relational_planner::{
+    CapabilityResolver, PhysicalPlan, Planner, StaticCapabilities, explain_physical,
+};
 use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{ColumnInfo, Expr, NoFunctions, RelationalRow, RelationalSchema};
 use sqlparser::ast::{
@@ -249,8 +251,53 @@ pub async fn try_run_select(
         dml: dml.clone(),
         tables,
     };
-    // Lowering failure → fall through to legacy (over-inclusive, never wrong).
-    let logical = match lower_sql(sql, &snapshot) {
+    // Lower + plan via the shared planning path (so EXPLAIN discloses exactly this
+    // plan). `None` → lowering declined → fall through to legacy. From the planned
+    // physical onward, errors are real and surface to the client.
+    let physical = match plan_over_snapshot(sql, &snapshot)? {
+        Ok(p) => p,
+        Err(e) => return Some(Err(e)),
+    };
+    Some(execute_physical(physical, &snapshot).await)
+}
+
+/// Plan + build + drain an executor for `logical` against `factory`, using
+/// `resolver` for capability/PK-lookup planning (engine path → `StaticCapabilities`,
+/// real-data path → `SnapshotCapabilities`).
+async fn run_plan<F: ReaderFactory, R: CapabilityResolver>(
+    factory: &F,
+    resolver: R,
+    logical: proximadb_relational_algebra::LogicalNode,
+) -> Result<PipelineResult, String> {
+    let planner = Planner::new(resolver);
+    let physical = planner.plan(logical).map_err(|e| format!("plan: {e}"))?;
+    execute_physical(physical, factory).await
+}
+
+/// Build + open + drain an executor for an already-planned `physical` plan.
+/// Shared tail of `run_plan` and the real-data path so EXPLAIN (which plans
+/// without executing) and execution run the SAME `PhysicalPlan`.
+async fn execute_physical<F: ReaderFactory>(
+    physical: PhysicalPlan,
+    factory: &F,
+) -> Result<PipelineResult, String> {
+    let mut exec = build_executor(physical, factory, &ExecutionContext::default())
+        .map_err(|e| format!("build_executor: {e}"))?;
+    exec.open().await.map_err(|e| format!("open: {e}"))?;
+    let schema = exec.schema().clone();
+    let rows = collect(&mut *exec)
+        .await
+        .map_err(|e| format!("scan: {e}"))?;
+    Ok(PipelineResult { schema, rows })
+}
+
+/// Lower + plan a SELECT over an already-prepared `SnapshotCatalog` to a Volcano
+/// `PhysicalPlan`. The single planning path shared by execution
+/// ([`try_run_select`]) and `EXPLAIN` ([`explain_select_route_with_catalog`]) so
+/// the disclosed plan is exactly the one that runs. `None` = lowering declined
+/// (fall through to legacy); `Some(Err)` = a real planning error.
+fn plan_over_snapshot(sql: &str, snapshot: &SnapshotCatalog) -> Option<Result<PhysicalPlan, String>> {
+    let logical = match lower_sql(sql, snapshot) {
         Ok(p) => p,
         Err(e) => {
             tracing::debug!(
@@ -268,28 +315,8 @@ pub async fn try_run_select(
         .map(|(key, prepared)| (key.clone(), prepared.pk_columns.clone()))
         .collect();
     let resolver = SnapshotCapabilities { pk_by_table };
-    // From here, errors are real and surface to the client.
-    Some(run_plan(&snapshot, resolver, logical).await)
-}
-
-/// Plan + build + drain an executor for `logical` against `factory`, using
-/// `resolver` for capability/PK-lookup planning (engine path → `StaticCapabilities`,
-/// real-data path → `SnapshotCapabilities`).
-async fn run_plan<F: ReaderFactory, R: CapabilityResolver>(
-    factory: &F,
-    resolver: R,
-    logical: proximadb_relational_algebra::LogicalNode,
-) -> Result<PipelineResult, String> {
     let planner = Planner::new(resolver);
-    let physical = planner.plan(logical).map_err(|e| format!("plan: {e}"))?;
-    let mut exec = build_executor(physical, factory, &ExecutionContext::default())
-        .map_err(|e| format!("build_executor: {e}"))?;
-    exec.open().await.map_err(|e| format!("open: {e}"))?;
-    let schema = exec.schema().clone();
-    let rows = collect(&mut *exec)
-        .await
-        .map_err(|e| format!("scan: {e}"))?;
-    Ok(PipelineResult { schema, rows })
+    Some(planner.plan(logical).map_err(|e| format!("plan: {e}")))
 }
 
 // =========================================================================
@@ -462,7 +489,11 @@ async fn run_datafusion_select(
             .fields()
             .iter()
             .map(|f| {
-                ColumnInfo::new(f.name(), arrow_type_to_proxima(f.data_type()), f.is_nullable())
+                ColumnInfo::new(
+                    f.name(),
+                    arrow_type_to_proxima(f.data_type()),
+                    f.is_nullable(),
+                )
             })
             .collect();
         schemas.insert(normalize_table_key(name), RelationalSchema::new(cols));
@@ -655,7 +686,11 @@ mod datafusion_route_tests {
             .fields()
             .iter()
             .map(|f| {
-                ColumnInfo::new(f.name(), arrow_type_to_proxima(f.data_type()), f.is_nullable())
+                ColumnInfo::new(
+                    f.name(),
+                    arrow_type_to_proxima(f.data_type()),
+                    f.is_nullable(),
+                )
             })
             .collect();
         let mut schemas = HashMap::new();
@@ -1008,6 +1043,12 @@ pub struct SelectRouteExplanation {
     pub freshness_sla: String,
     /// Human-readable reason for the choice.
     pub reason: String,
+    /// Structural disclosure of the planned physical plan (one string per
+    /// operator, indented), when the query engages the native (Volcano) PATH B
+    /// engine. `None` for simple/legacy SELECTs and non-native routes. No cost
+    /// estimates — the planner is rule-based (ADR-004; CBO is a follow-up).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub physical_plan: Option<Vec<String>>,
 }
 
 /// Build the `EXPLAIN SELECT` payload. `Err` if `sql` is not a routable single
@@ -1030,6 +1071,40 @@ fn decision_to_explanation(
         policy_boundary: "query-plan (one engine per plan)".to_string(),
         freshness_sla,
         reason: decision.reason.clone(),
+        // Populated by the catalog-aware EXPLAIN once the plan is built; the
+        // catalog-free route disclosure has no plan to render.
+        physical_plan: None,
+    }
+}
+
+/// Render the planned physical plan for an engaging SELECT (cold EXPLAIN path).
+/// Resolves table schemas, builds the snapshot, then lowers + plans via the SAME
+/// [`plan_over_snapshot`] execution uses, and renders the tree. `None` when a
+/// schema can't be resolved, lowering declines, or planning errors — EXPLAIN then
+/// falls back to route-only disclosure.
+async fn render_physical_plan(
+    sql: &str,
+    query: &SqlQuery,
+    dml: &Arc<DmlService>,
+) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    collect_table_names(query, &mut names);
+    let mut tables: HashMap<String, PreparedTable> = HashMap::new();
+    for raw in &names {
+        let key = normalize_table_key(raw);
+        if tables.contains_key(&key) {
+            continue;
+        }
+        let schema = dml.resolve_relational_schema(raw).await.ok()?;
+        tables.insert(key, PreparedTable::from_catalog(raw, &schema));
+    }
+    let snapshot = SnapshotCatalog {
+        dml: dml.clone(),
+        tables,
+    };
+    match plan_over_snapshot(sql, &snapshot)? {
+        Ok(physical) => Some(explain_physical(&physical)),
+        Err(_) => None,
     }
 }
 
@@ -1077,16 +1152,24 @@ pub async fn explain_select_route_with_catalog(
             parquet_backed = all_parquet;
         }
     }
-    #[cfg(not(feature = "datafusion-integration"))]
-    let _ = dml; // catalog not consulted without the DataFusion route
-
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: engages,
             parquet_backed,
         },
     );
-    Ok(decision_to_explanation(&decision))
+    let mut explanation = decision_to_explanation(&decision);
+    // Disclose the planned physical plan for native (Volcano) PATH B queries —
+    // the same plan execution runs (via the shared `plan_over_snapshot`).
+    if engages
+        && matches!(
+            decision.backend,
+            crate::query::table_write_plan::ComputeBackend::Native
+        )
+    {
+        explanation.physical_plan = render_physical_plan(sql, query, dml).await;
+    }
+    Ok(explanation)
 }
 
 #[cfg(test)]
@@ -1114,6 +1197,21 @@ mod route_explain_tests {
     #[test]
     fn non_select_is_not_routable() {
         assert!(explain_select_route("INSERT INTO t VALUES (1)").is_err());
+    }
+
+    #[test]
+    fn catalog_free_route_carries_no_physical_plan() {
+        // The catalog-free route disclosure has no planner output to render, so
+        // `physical_plan` stays None and is omitted from the JSON. The physical
+        // plan is only attached by the catalog-aware variant (covered e2e).
+        let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
+            .expect("routable");
+        assert!(expl.physical_plan.is_none());
+        let json = serde_json::to_string(&expl).unwrap();
+        assert!(
+            !json.contains("physical_plan"),
+            "None physical_plan is skipped in JSON: {json}"
+        );
     }
 }
 

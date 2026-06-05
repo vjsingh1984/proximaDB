@@ -250,6 +250,143 @@ impl PhysicalPlan {
 }
 
 // =========================================================================
+// EXPLAIN rendering
+// =========================================================================
+
+/// Render a planned [`PhysicalPlan`] tree as indented text, one line per
+/// operator, for `EXPLAIN SELECT` disclosure (ADR-004 unified EXPLAIN; the
+/// pgwire read path surfaces these alongside the route decision).
+///
+/// STRUCTURAL only: each line names the operator and its planning-decided
+/// attributes — scan access method (`FullScan`/`PkLookup`), which pushdowns
+/// landed (predicate/projection/limit), and the concrete join/aggregate/sort/
+/// distinct strategy. It deliberately emits NO cost/row estimates: the planner
+/// is rule-based with no CBO yet, and invented numbers would be dishonest.
+pub fn explain_physical(plan: &PhysicalPlan) -> Vec<String> {
+    let mut lines = Vec::new();
+    render_explain_node(plan, 0, &mut lines);
+    lines
+}
+
+fn render_explain_node(plan: &PhysicalPlan, depth: usize, lines: &mut Vec<String>) {
+    let indent = "  ".repeat(depth);
+    match plan {
+        PhysicalPlan::Scan {
+            table,
+            projection,
+            predicate,
+            limit,
+            access,
+            ..
+        } => {
+            let access = match access {
+                ScanAccess::FullScan => "FullScan",
+                ScanAccess::PkLookup { .. } => "PkLookup",
+            };
+            let predicate = if predicate.is_some() { "yes" } else { "no" };
+            let projection = match projection {
+                Some(cols) => format!("{} cols", cols.len()),
+                None => "all".to_string(),
+            };
+            let limit = match limit {
+                Some(n) => n.to_string(),
+                None => "none".to_string(),
+            };
+            lines.push(format!(
+                "{indent}Scan table={} access={access} predicate={predicate} projection={projection} limit={limit}",
+                table.name
+            ));
+        }
+        PhysicalPlan::Filter { input, .. } => {
+            lines.push(format!("{indent}Filter"));
+            render_explain_node(input, depth + 1, lines);
+        }
+        PhysicalPlan::Project { input, outputs } => {
+            lines.push(format!("{indent}Project outputs={}", outputs.len()));
+            render_explain_node(input, depth + 1, lines);
+        }
+        PhysicalPlan::Join {
+            left,
+            right,
+            kind,
+            on,
+            strategy,
+        } => {
+            let strategy = match strategy {
+                JoinStrategy::Hash { build_side } => {
+                    let side = match build_side {
+                        JoinSide::Left => "Left",
+                        JoinSide::Right => "Right",
+                    };
+                    format!("Hash(build={side})")
+                }
+                JoinStrategy::NestedLoop => "NestedLoop".to_string(),
+                JoinStrategy::SortMerge => "SortMerge".to_string(),
+                JoinStrategy::Auto => "Auto".to_string(),
+            };
+            let on = if on.is_some() { "yes" } else { "no" };
+            lines.push(format!(
+                "{indent}Join kind={} strategy={strategy} on={on}",
+                kind.as_str()
+            ));
+            render_explain_node(left, depth + 1, lines);
+            render_explain_node(right, depth + 1, lines);
+        }
+        PhysicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+            having,
+            strategy,
+        } => {
+            let having = if having.is_some() { "yes" } else { "no" };
+            lines.push(format!(
+                "{indent}Aggregate groups={} aggs={} strategy={strategy:?} having={having}",
+                group_by.len(),
+                aggregates.len()
+            ));
+            render_explain_node(input, depth + 1, lines);
+        }
+        PhysicalPlan::Sort {
+            input,
+            keys,
+            strategy,
+        } => {
+            lines.push(format!(
+                "{indent}Sort keys={} strategy={strategy:?}",
+                keys.len()
+            ));
+            render_explain_node(input, depth + 1, lines);
+        }
+        PhysicalPlan::Limit {
+            input,
+            limit,
+            offset,
+        } => {
+            let limit = match limit {
+                Some(n) => n.to_string(),
+                None => "none".to_string(),
+            };
+            lines.push(format!("{indent}Limit limit={limit} offset={offset}"));
+            render_explain_node(input, depth + 1, lines);
+        }
+        PhysicalPlan::Distinct { input, strategy } => {
+            lines.push(format!("{indent}Distinct strategy={strategy:?}"));
+            render_explain_node(input, depth + 1, lines);
+        }
+        PhysicalPlan::Union { inputs, all } => {
+            lines.push(format!("{indent}Union all={all}"));
+            for input in inputs {
+                render_explain_node(input, depth + 1, lines);
+            }
+        }
+        PhysicalPlan::Values { rows, .. } => {
+            lines.push(format!("{indent}Values rows={}", rows.len()));
+        }
+    }
+}
+
+// =========================================================================
 // Planner
 // =========================================================================
 
@@ -2144,6 +2281,91 @@ mod tests {
             }
             other => panic!("expected PkLookup scan, got {other:?}"),
         }
+    }
+
+    // --- EXPLAIN rendering --------------------------------------------
+
+    #[test]
+    fn explain_physical_renders_scan_access_and_pushdowns() {
+        // A bare FullScan: access + no-pushdown disclosure.
+        let full = lower_to_physical(users_scan());
+        let lines = explain_physical(&full);
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("Scan table=users")
+                && lines[0].contains("access=FullScan")
+                && lines[0].contains("predicate=no"),
+            "full scan line: {}",
+            lines[0]
+        );
+
+        // A PK-equality filter is rewritten to a PkLookup scan → access=PkLookup.
+        let id = users_schema().resolve_column("id").unwrap();
+        let pred = Expr::bin(
+            BinaryOp::Eq,
+            Expr::column(id),
+            Expr::literal(ProximaValue::Int64(42)),
+        );
+        let pk = push_predicates(
+            PhysicalPlan::Filter {
+                input: Box::new(lower_to_physical(users_scan())),
+                predicate: pred,
+            },
+            &cap_full(vec![0]),
+        );
+        let lines = explain_physical(&pk);
+        assert!(
+            lines.iter().any(|l| l.contains("access=PkLookup")),
+            "expected a PkLookup line: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn explain_physical_renders_join_strategy_and_indents_children() {
+        // An equi INNER join lowers to Hash; both child scans render indented.
+        let equi = Expr::bin(
+            BinaryOp::Eq,
+            col_at(0, "id", ProximaType::Int64),
+            col_at(4, "user_id", ProximaType::Int64),
+        );
+        let join = lower_to_physical(LogicalNode::Join {
+            left: Box::new(users_scan()),
+            right: Box::new(orders_scan()),
+            kind: JoinKind::Inner,
+            on: Some(equi),
+            strategy: JoinStrategy::Auto,
+        });
+        let lines = explain_physical(&join);
+        assert!(
+            lines[0].contains("Join kind=INNER")
+                && lines[0].contains("strategy=Hash")
+                && lines[0].contains("on=yes"),
+            "join line: {}",
+            lines[0]
+        );
+        // Two child scans, indented one level under the join.
+        let scan_lines: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.trim_start().starts_with("Scan"))
+            .collect();
+        assert_eq!(scan_lines.len(), 2, "two scans: {lines:?}");
+        assert!(
+            scan_lines.iter().all(|l| l.starts_with("  ")),
+            "child scans indented: {lines:?}"
+        );
+
+        // A non-equi join renders NestedLoop.
+        let nl = lower_to_physical(LogicalNode::Join {
+            left: Box::new(users_scan()),
+            right: Box::new(orders_scan()),
+            kind: JoinKind::Inner,
+            on: Some(Expr::literal(ProximaValue::Boolean(true))),
+            strategy: JoinStrategy::Auto,
+        });
+        assert!(
+            explain_physical(&nl)[0].contains("strategy=NestedLoop"),
+            "non-equi join uses NestedLoop"
+        );
     }
 
     #[test]

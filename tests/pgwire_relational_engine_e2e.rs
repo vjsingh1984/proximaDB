@@ -424,6 +424,47 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "left-side ON conjunct pushed: only ann matches, bob/cas excluded"
     );
 
+    // (3h) EXPLAIN SELECT discloses the planned PHYSICAL plan (ADR-004 / P0 EXPLAIN
+    // gate), not just the route. An engaging JOIN with a PK filter on the dimension
+    // must surface compute_route=Native(Volcano) AND a physical_plan array whose
+    // dept scan is a PkLookup (WHERE dept.id=1 → PK rewrite) under a Hash join.
+    let rows = client
+        .simple_query(&format!(
+            "EXPLAIN SELECT ename, dname FROM {emp} JOIN {dept} \
+             ON {emp}.dept_id = {dept}.id WHERE {dept}.id = 1"
+        ))
+        .await
+        .expect("EXPLAIN join with PK filter");
+    let plan = query_plan_cell(&rows);
+    assert!(
+        plan.contains("\"compute_route\"") && plan.contains("Native(Volcano)"),
+        "EXPLAIN discloses the native route: {plan}"
+    );
+    assert!(
+        plan.contains("physical_plan"),
+        "EXPLAIN surfaces the physical plan for an engaging query: {plan}"
+    );
+    assert!(
+        plan.contains("access=PkLookup"),
+        "dept WHERE id=1 disclosed as a PkLookup scan: {plan}"
+    );
+    assert!(
+        plan.contains("Join kind=INNER") && plan.contains("strategy=Hash"),
+        "join strategy disclosed as Hash: {plan}"
+    );
+
+    // (3i) EXPLAIN of a simple (non-engaging) SELECT stays route-only: no physical
+    // plan is attached (the query runs on the legacy path, not PATH B).
+    let rows = client
+        .simple_query(&format!("EXPLAIN SELECT id FROM {inv} WHERE id = 'i1'"))
+        .await
+        .expect("EXPLAIN simple select");
+    let plan = query_plan_cell(&rows);
+    assert!(
+        plan.contains("\"compute_route\"") && !plan.contains("physical_plan"),
+        "simple SELECT EXPLAIN is route-only (no physical_plan): {plan}"
+    );
+
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
     // (the gate keeps it on the hardened legacy path, not PATH B).
     let rows = client
@@ -437,4 +478,15 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         set(&["i1", "i2", "i4"]),
         "simple OR stays correct on the legacy path"
     );
+}
+
+/// Extract the single `QUERY PLAN` cell from an `EXPLAIN` simple-query response.
+fn query_plan_cell(messages: &[SimpleQueryMessage]) -> String {
+    messages
+        .iter()
+        .find_map(|msg| match msg {
+            SimpleQueryMessage::Row(row) => row.get("QUERY PLAN").map(|s| s.to_string()),
+            _ => None,
+        })
+        .expect("EXPLAIN returns a QUERY PLAN row")
 }
