@@ -131,6 +131,23 @@ pub enum DdlStatement {
         /// When `true`, silently succeeds if the profile does not exist.
         if_exists: bool,
     },
+    /// `CREATE [OR REPLACE] FUNCTION name(params) RETURNS ty AS '<expr>'` (F5) — a
+    /// SQL-expression-bodied scalar user function. The body is lowered to an engine-neutral
+    /// `Expr` and registered in the shared function registry, so it runs on BOTH the Volcano
+    /// and DataFusion engines without per-engine reimplementation.
+    CreateFunction {
+        /// Function name (registry key).
+        name: String,
+        /// Parameters in order: `(name, type)`. Parameter `i` is referenced in the body as
+        /// column ordinal `i`.
+        params: Vec<(String, ProximaType)>,
+        /// Declared return type.
+        return_ty: ProximaType,
+        /// Raw SQL body — a scalar expression over the parameters.
+        body: String,
+        /// `CREATE OR REPLACE`: when `false`, fail if the name is already registered.
+        or_replace: bool,
+    },
 }
 
 /// Backwards-compat alias for [`DdlColumnDefinition`].
@@ -531,6 +548,16 @@ impl DdlService {
                 self.create_rank_profile(&name, &spec_toml, if_not_exists)
                     .await
             }
+            DdlStatement::CreateFunction {
+                name,
+                params,
+                return_ty,
+                body,
+                or_replace,
+            } => {
+                self.create_function(&name, params, return_ty, &body, or_replace)
+                    .await
+            }
             DdlStatement::DropRankProfile { name, if_exists } => {
                 self.drop_rank_profile(&name, if_exists).await
             }
@@ -621,6 +648,39 @@ impl DdlService {
 
         info!(profile = %name, "Dropped rank profile");
         Ok(DdlResult::success(format!("DROP RANK PROFILE {}", name)))
+    }
+
+    /// `CREATE [OR REPLACE] FUNCTION` (F5): lower the SQL body to an engine-neutral `Expr`
+    /// (parameters as ordinals) and register a SQL-expression-bodied scalar in the shared
+    /// function registry, so the user function runs on BOTH engines (Volcano dispatch +
+    /// DataFusion `ScalarUDF` adapter) reusing native machinery — not a bespoke interpreter.
+    async fn create_function(
+        &self,
+        name: &str,
+        params: Vec<(String, ProximaType)>,
+        return_ty: ProximaType,
+        body: &str,
+        or_replace: bool,
+    ) -> Result<DdlResult> {
+        let key = name.to_ascii_lowercase();
+        if !or_replace
+            && proximadb_functions::builtins()
+                .lookup_scalar(&key)
+                .is_some()
+        {
+            return Err(anyhow!(
+                "function '{name}' already exists (use CREATE OR REPLACE FUNCTION)"
+            ));
+        }
+        // Reuse the shared frontend lowering so the body supports the full scalar grammar.
+        let body_expr = proximadb_relational_frontend::lower_function_body(body, &params)
+            .map_err(|e| anyhow!("CREATE FUNCTION {name}: {e}"))?;
+        let arg_types: Vec<ProximaType> = params.iter().map(|(_, t)| t.clone()).collect();
+        proximadb_functions::builtins().register_scalar(proximadb_functions::sql_bodied_scalar(
+            &key, arg_types, return_ty, body_expr,
+        ));
+        info!(function = %name, params = params.len(), "Created SQL function");
+        Ok(DdlResult::success(format!("Function '{name}' created")))
     }
 
     // ========================
@@ -2635,5 +2695,41 @@ mod tests {
             .await
             .expect_err("DROP without IF EXISTS must fail for missing profile");
         assert!(err.to_string().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn create_function_registers_sql_bodied_scalar() {
+        // F5 slice 3: CREATE FUNCTION lowers the body and registers a SQL-bodied scalar in the
+        // shared registry — so the user function is then dispatchable (and runs on both engines).
+        let ddl = DdlService::new(Arc::new(CatalogManager::new()));
+        ddl.execute(DdlStatement::CreateFunction {
+            name: "triple".to_string(),
+            params: vec![("x".to_string(), ProximaType::Int64)],
+            return_ty: ProximaType::Int64,
+            body: "x * 3".to_string(),
+            or_replace: false,
+        })
+        .await
+        .expect("CREATE FUNCTION triple");
+
+        use proximadb_data_model::ProximaValue;
+        let def = proximadb_functions::builtins()
+            .lookup_scalar("triple")
+            .expect("triple registered");
+        let out = (def.kernel)(&[ProximaValue::Int64(7)]).expect("triple eval");
+        assert_eq!(out, ProximaValue::Int64(21));
+
+        // Re-creating without OR REPLACE fails.
+        assert!(
+            ddl.execute(DdlStatement::CreateFunction {
+                name: "triple".to_string(),
+                params: vec![("x".to_string(), ProximaType::Int64)],
+                return_ty: ProximaType::Int64,
+                body: "x * 4".to_string(),
+                or_replace: false,
+            })
+            .await
+            .is_err()
+        );
     }
 }
