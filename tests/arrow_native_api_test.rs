@@ -15,14 +15,13 @@ use std::sync::Arc;
 
 mod schema_tests {
     use super::*;
-    use proximadb::storage::schema::{
-        ProximaColumn, ProximaDataType, ProximaSchema, VectorElementType,
-    };
+    use proximadb::storage::schema::{ProximaColumn, ProximaSchema};
+    use proximadb_data_model::{ProximaType, VectorElement};
 
     fn make_column(
         id: i32,
         name: &str,
-        data_type: ProximaDataType,
+        data_type: ProximaType,
         nullable: bool,
     ) -> ProximaColumn {
         ProximaColumn {
@@ -43,17 +42,17 @@ mod schema_tests {
         let schema = ProximaSchema::new(
             "test_schema".to_string(),
             vec![
-                make_column(0, "id", ProximaDataType::String, false),
+                make_column(0, "id", ProximaType::String, false),
                 make_column(
                     1,
                     "embedding",
-                    ProximaDataType::Vector {
-                        dimension: 128,
-                        element_type: VectorElementType::Float32,
+                    ProximaType::DenseVector {
+                        element: VectorElement::Float32,
+                        dim: 128,
                     },
                     false,
                 ),
-                make_column(2, "metadata", ProximaDataType::Json, true),
+                make_column(2, "metadata", ProximaType::Json, true),
             ],
             vec![0],
         );
@@ -69,8 +68,8 @@ mod schema_tests {
         let schema = ProximaSchema::new(
             "arrow_test".to_string(),
             vec![
-                make_column(0, "id", ProximaDataType::String, false),
-                make_column(1, "count", ProximaDataType::Int64, true),
+                make_column(0, "id", ProximaType::String, false),
+                make_column(1, "count", ProximaType::Int64, true),
             ],
             vec![0],
         );
@@ -85,13 +84,13 @@ mod schema_tests {
     fn test_schema_fingerprint_consistency() {
         let schema1 = ProximaSchema::new(
             "fingerprint_test".to_string(),
-            vec![make_column(0, "field1", ProximaDataType::String, false)],
+            vec![make_column(0, "field1", ProximaType::String, false)],
             vec![0],
         );
 
         let schema2 = ProximaSchema::new(
             "fingerprint_test".to_string(),
-            vec![make_column(0, "field1", ProximaDataType::String, false)],
+            vec![make_column(0, "field1", ProximaType::String, false)],
             vec![0],
         );
 
@@ -269,9 +268,10 @@ mod spark_tests {
         SparkTable, SparkWriteBuilder, SparkWriteMode,
     };
     use proximadb::storage::formats::FileSplit;
-    use proximadb::storage::schema::{ProximaColumn, ProximaDataType, ProximaSchema};
+    use proximadb::storage::schema::{ProximaColumn, ProximaSchema};
+    use proximadb_data_model::ProximaType;
 
-    fn make_column(id: i32, name: &str, data_type: ProximaDataType) -> ProximaColumn {
+    fn make_column(id: i32, name: &str, data_type: ProximaType) -> ProximaColumn {
         ProximaColumn {
             id,
             name: name.to_string(),
@@ -314,8 +314,8 @@ mod spark_tests {
         let proxima_schema = Arc::new(ProximaSchema::new(
             "test".to_string(),
             vec![
-                make_column(0, "id", ProximaDataType::String),
-                make_column(1, "value", ProximaDataType::Int64),
+                make_column(0, "id", ProximaType::String),
+                make_column(1, "value", ProximaType::Int64),
             ],
             vec![0],
         ));
