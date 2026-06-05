@@ -116,24 +116,22 @@ mod trino_flight_pilot {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use arrow::array::{Int64Array, RecordBatch, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
+    use arrow_flight::SchemaAsIpc;
     use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
     use arrow_flight::{
         Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
         HandshakeRequest, HandshakeResponse, PollInfo, PutResult, SchemaResult, Ticket,
     };
     use futures::Stream;
-    use arrow::array::{Int64Array, RecordBatch, StringArray};
-    use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
-    use arrow_flight::SchemaAsIpc;
     use proximadb::connectors::trino::{
         TrinoConnectorConfig, TrinoPageSink, TrinoPageSource, TrinoSplit, TrinoTable,
         TrinoTupleDomain, flight_get_splits, flight_get_table_schema, flight_list_schemas,
         flight_list_tables, record_batch_to_trino_page,
     };
+    use proximadb::storage::formats::{FileSplit, SplitLocality, SplitStatistics, SplitType};
     use proximadb::storage::schema::ProximaSchema;
-    use proximadb::storage::formats::{
-        FileSplit, SplitLocality, SplitStatistics, SplitType,
-    };
     use tokio::sync::oneshot;
     use tokio_stream::wrappers::TcpListenerStream;
     use tonic::{Request, Response, Status, Streaming};
@@ -221,8 +219,7 @@ mod trino_flight_pilot {
             let Some(messages) = self.canned_do_get.as_ref() else {
                 return Err(Status::unimplemented("do_get"));
             };
-            let items: Vec<Result<FlightData, Status>> =
-                messages.iter().cloned().map(Ok).collect();
+            let items: Vec<Result<FlightData, Status>> = messages.iter().cloned().map(Ok).collect();
             let s = futures::stream::iter(items);
             Ok(Response::new(Box::pin(s)))
         }
@@ -261,8 +258,7 @@ mod trino_flight_pilot {
                     }
                 }
             });
-            let resp_stream =
-                tokio_stream::wrappers::ReceiverStream::new(rx);
+            let resp_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
             Ok(Response::new(Box::pin(resp_stream)))
         }
 
@@ -448,7 +444,11 @@ mod trino_flight_pilot {
 
         let endpoint = format!("grpc://127.0.0.1:{port}");
         let tables = flight_list_tables(&endpoint, "proximadb", "sales").await;
-        assert_eq!(tables.len(), 2, "expected 2 distinct sales tables: {tables:?}");
+        assert_eq!(
+            tables.len(),
+            2,
+            "expected 2 distinct sales tables: {tables:?}"
+        );
         assert!(tables.iter().any(|t| t == "orders"));
         assert!(tables.iter().any(|t| t == "customers"));
 
@@ -490,8 +490,7 @@ mod trino_flight_pilot {
 
     #[tokio::test]
     async fn trino_flight_get_table_schema_returns_none_on_unreachable_endpoint() {
-        let result =
-            flight_get_table_schema("grpc://127.0.0.1:1", "proximadb", "any", "any").await;
+        let result = flight_get_table_schema("grpc://127.0.0.1:1", "proximadb", "any", "any").await;
         assert!(result.is_none(), "unreachable endpoint must yield None");
     }
 
@@ -678,9 +677,11 @@ mod trino_flight_pilot {
             "orders".into(),
             sample_file_split("split-x", "s3://orders/missing.parquet"),
         );
-        let mut source =
-            TrinoPageSource::new("grpc://127.0.0.1:1", split, schema).await;
-        assert!(source.is_finished(), "unreachable endpoint must mark finished");
+        let mut source = TrinoPageSource::new("grpc://127.0.0.1:1", split, schema).await;
+        assert!(
+            source.is_finished(),
+            "unreachable endpoint must mark finished"
+        );
         assert!(source.get_next_page().await.is_none());
     }
 
@@ -714,8 +715,7 @@ mod trino_flight_pilot {
         let table = sample_trino_table(schema.clone());
 
         let counter = Arc::new(AtomicUsize::new(0));
-        let (port, _shutdown) =
-            start_mock_flight_server_with_do_put(counter.clone()).await;
+        let (port, _shutdown) = start_mock_flight_server_with_do_put(counter.clone()).await;
 
         let endpoint = format!("grpc://127.0.0.1:{port}");
         let mut sink = TrinoPageSink::new(&endpoint, table)
@@ -780,8 +780,7 @@ mod trino_flight_pilot {
         )]));
         let table = sample_trino_table(schema);
         let counter = Arc::new(AtomicUsize::new(0));
-        let (port, _shutdown) =
-            start_mock_flight_server_with_do_put(counter.clone()).await;
+        let (port, _shutdown) = start_mock_flight_server_with_do_put(counter.clone()).await;
 
         let endpoint = format!("grpc://127.0.0.1:{port}");
         let mut sink = TrinoPageSink::new(&endpoint, table)

@@ -647,8 +647,7 @@ impl TrinoPageSink {
 
         let mut client = FlightServiceClient::new(channel);
 
-        let (request_tx, request_rx) =
-            tokio::sync::mpsc::channel::<arrow_flight::FlightData>(16);
+        let (request_tx, request_rx) = tokio::sync::mpsc::channel::<arrow_flight::FlightData>(16);
         let request_stream = tokio_stream::wrappers::ReceiverStream::new(request_rx);
 
         let response = client
@@ -700,14 +699,12 @@ impl TrinoPageSink {
             self.schema_sent = true;
         }
 
-        let messages = arrow_flight::utils::batches_to_flight_data(
-            batch_schema.as_ref(),
-            vec![batch.clone()],
-        )
-        .map_err(|e| TrinoError {
-            error_code: TrinoErrorCode::GenericInternalError,
-            message: format!("batch encode failed: {e}"),
-        })?;
+        let messages =
+            arrow_flight::utils::batches_to_flight_data(batch_schema.as_ref(), vec![batch.clone()])
+                .map_err(|e| TrinoError {
+                    error_code: TrinoErrorCode::GenericInternalError,
+                    message: format!("batch encode failed: {e}"),
+                })?;
         // batches_to_flight_data prepends a schema message we've
         // already sent above; skip it.
         for msg in messages.into_iter().skip(1) {
@@ -1106,11 +1103,13 @@ pub async fn flight_get_splits(
     // JSON-encoded predicate so the server can do pushdown without a
     // separate RPC. Tonic serialization is lossless for both fields.
     let cmd_bytes = serde_json::to_vec(constraint).unwrap_or_default();
-    let mut descriptor =
-        FlightDescriptor::new_path(vec![schema.to_string(), table.to_string()]);
+    let mut descriptor = FlightDescriptor::new_path(vec![schema.to_string(), table.to_string()]);
     descriptor.cmd = cmd_bytes.into();
 
-    let info = match client.get_flight_info(tonic::Request::new(descriptor)).await {
+    let info = match client
+        .get_flight_info(tonic::Request::new(descriptor))
+        .await
+    {
         Ok(resp) => resp.into_inner(),
         Err(_) => return Vec::new(),
     };
@@ -1216,12 +1215,8 @@ mod tests {
         // when the test runs in an env with no Flight server on
         // this port). Test pins that contract: no panic, no
         // pages returned, source ends up finished.
-        let mut source = TrinoPageSource::new(
-            "grpc://127.0.0.1:1",
-            split,
-            Arc::new(ArrowSchema::empty()),
-        )
-        .await;
+        let mut source =
+            TrinoPageSource::new("grpc://127.0.0.1:1", split, Arc::new(ArrowSchema::empty())).await;
         // First call should return None and mark finished
         assert!(source.get_next_page().await.is_none());
         assert!(source.is_finished());

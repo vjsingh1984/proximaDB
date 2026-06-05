@@ -246,8 +246,7 @@ async fn hadoop_fetch_next_page_posts_v2_records_scan() {
     // Spec required-keys: empty (all body fields optional). We assert
     // the op exists, has a requestBody, and the SDK can POST with a
     // bare-cursor body shape.
-    let body_schema = request_body_schema(&spec, op)
-        .expect("scanRecords must declare requestBody");
+    let body_schema = request_body_schema(&spec, op).expect("scanRecords must declare requestBody");
     let required = collect_required_fields(&spec, body_schema);
     assert!(
         required.is_empty(),
@@ -465,5 +464,8 @@ async fn hadoop_get_current_value_returns_drained_record() {
     // The shape carries the v2 RecordResponse fields; the test
     // asserts presence of the canonical "id" field (the record id).
     assert!(map.contains_key("id"), "drained record missing id: {map:?}");
-    assert!(map.contains_key("props"), "drained record missing props: {map:?}");
+    assert!(
+        map.contains_key("props"),
+        "drained record missing props: {map:?}"
+    );
 }

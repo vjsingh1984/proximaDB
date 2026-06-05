@@ -313,11 +313,13 @@ fn try_lower_spark_filter(filter: &SparkFilter) -> Option<FilterExpression> {
             operator: spark_op_to_comparison_op(filter.filter_type)?,
             value: filter.value.clone()?,
         }),
-        SparkFilterType::IsNull | SparkFilterType::IsNotNull => Some(FilterExpression::Comparison {
-            field: simple_column(filter)?,
-            operator: spark_op_to_comparison_op(filter.filter_type)?,
-            value: serde_json::Value::Null,
-        }),
+        SparkFilterType::IsNull | SparkFilterType::IsNotNull => {
+            Some(FilterExpression::Comparison {
+                field: simple_column(filter)?,
+                operator: spark_op_to_comparison_op(filter.filter_type)?,
+                value: serde_json::Value::Null,
+            })
+        }
         SparkFilterType::And => Some(FilterExpression::And(lower_children(filter)?)),
         SparkFilterType::Or => Some(FilterExpression::Or(lower_children(filter)?)),
         SparkFilterType::Not => Some(FilterExpression::Not(Box::new(try_lower_spark_filter(
@@ -569,6 +571,11 @@ impl SparkDataWriter {
     /// Spark task partition ID (unique per concurrent writer).
     pub fn partition_id(&self) -> i32 {
         self.partition_id
+    }
+
+    /// Arrow schema captured when Spark created this writer.
+    pub fn schema(&self) -> &ArrowSchema {
+        self.schema.as_ref()
     }
 
     /// Cumulative records ingested across all `spark_write_batch` calls.
@@ -1456,7 +1463,9 @@ mod tests {
             if bytes.is_empty() {
                 break;
             }
-            total += arrow_ipc_to_record_batch(&bytes).expect("decode").num_rows();
+            total += arrow_ipc_to_record_batch(&bytes)
+                .expect("decode")
+                .num_rows();
         }
         total
     }
@@ -1478,7 +1487,8 @@ mod tests {
     #[test]
     fn spark_filter_pushdown_predicate_eq() {
         let (db, _td) = build_spark_test_db();
-        db.create_collection("spark_eq_col", 4, None).expect("create");
+        db.create_collection("spark_eq_col", 4, None)
+            .expect("create");
         let recs = (0..10)
             .map(|i| {
                 make_spark_record_with_category(
@@ -1487,30 +1497,43 @@ mod tests {
                 )
             })
             .collect();
-        db.insert_proxima_records("spark_eq_col", recs).expect("insert");
+        db.insert_proxima_records("spark_eq_col", recs)
+            .expect("insert");
 
-        let filters = r#"[{"filter_type":"EqualTo","column":"category","value":"a","children":[]}]"#;
+        let filters =
+            r#"[{"filter_type":"EqualTo","column":"category","value":"a","children":[]}]"#;
         let (filter, total) = plan_and_read(&db, "spark_eq_col", filters);
-        assert!(filter.is_some(), "filter must be stamped onto the partition");
-        assert_eq!(total, 5, "only the 5 category='a' records pass the pushed filter");
+        assert!(
+            filter.is_some(),
+            "filter must be stamped onto the partition"
+        );
+        assert_eq!(
+            total, 5,
+            "only the 5 category='a' records pass the pushed filter"
+        );
     }
 
     #[test]
     fn spark_filter_pushdown_in_set() {
         let (db, _td) = build_spark_test_db();
-        db.create_collection("spark_in_col", 4, None).expect("create");
+        db.create_collection("spark_in_col", 4, None)
+            .expect("create");
         let recs = (0..12)
             .map(|i| {
                 let cat = ["a", "b", "c"][i % 3];
                 make_spark_record_with_category(&format!("rec_{i}"), cat)
             })
             .collect();
-        db.insert_proxima_records("spark_in_col", recs).expect("insert");
+        db.insert_proxima_records("spark_in_col", recs)
+            .expect("insert");
 
         let filters =
             r#"[{"filter_type":"In","column":"category","value":["a","b"],"children":[]}]"#;
         let (_filter, total) = plan_and_read(&db, "spark_in_col", filters);
-        assert_eq!(total, 8, "category IN ('a','b') matches 8 of 12 (4 'c' excluded)");
+        assert_eq!(
+            total, 8,
+            "category IN ('a','b') matches 8 of 12 (4 'c' excluded)"
+        );
     }
 
     #[test]

@@ -1,12 +1,12 @@
 //! JNI shim exposing ProximaDB's Spark connector helpers to the JVM.
 //!
 //! The Spark DataSource V2 connector lives in `src/connectors/spark.rs` of
-//! the main `proximadb` crate as pure-Rust scaffolds (the `jni_*` functions
-//! return placeholder JSON / empty Vecs / 0). They are NOT callable from
-//! Java as written — they lack the JNI calling convention, JNI-mangled
-//! symbol names, and `JNIEnv` plumbing.
+//! the main `proximadb` crate as pure-Rust `spark_*` functions over
+//! `EmbeddedProximaDB`. They are not callable from Java as written because
+//! they intentionally avoid JNI calling conventions, JNI-mangled symbol names,
+//! and `JNIEnv` plumbing.
 //!
-//! This crate is the satellite cdylib that wraps each scaffold in a
+//! This crate is the satellite cdylib that wraps each operation in a
 //! proper `Java_<package>_<class>_<method>` export so the JVM can
 //! `System.loadLibrary("proximadb_spark_jni")` and call them via JNA /
 //! standard JNI.
@@ -20,34 +20,34 @@
 //!
 //! ## Coverage — TD-097
 //!
-//! All 9 `jni_*` scaffolds in `src/connectors/spark.rs` are wrapped:
+//! All Spark JNI operations in `src/connectors/spark.rs` are wrapped:
 //!
-//! | Rust scaffold | JNI export | Java signature |
+//! | Rust operation | JNI export | Java signature |
 //! |---|---|---|
-//! | `jni_get_table_schema` | `…_getTableSchema` | `String getTableSchema(String)` |
-//! | `jni_plan_input_partitions` | `…_planInputPartitions` | `String planInputPartitions(String, String, int)` |
-//! | `jni_create_partition_reader` | `…_createPartitionReader` | `long createPartitionReader(String)` |
-//! | `jni_read_next_batch` | `…_readNextBatch` | `byte[] readNextBatch(long)` |
-//! | `jni_close_partition_reader` | `…_closePartitionReader` | `void closePartitionReader(long)` |
-//! | `jni_create_data_writer` | `…_createDataWriter` | `long createDataWriter(String, String, int)` |
-//! | `jni_write_batch` | `…_writeBatch` | `void writeBatch(long, byte[])` |
-//! | `jni_commit_writer` | `…_commitWriter` | `String commitWriter(long)` |
-//! | `jni_abort_writer` | `…_abortWriter` | `void abortWriter(long)` |
+//! | `spark_get_table_schema` | `…_getTableSchema` | `String getTableSchema(String)` |
+//! | `spark_plan_input_partitions` | `…_planInputPartitions` | `String planInputPartitions(String, String, int)` |
+//! | `spark_create_partition_reader` | `…_createPartitionReader` | `long createPartitionReader(String)` |
+//! | `spark_read_next_batch` | `…_readNextBatch` | `byte[] readNextBatch(long)` |
+//! | `spark_close_partition_reader` | `…_closePartitionReader` | `void closePartitionReader(long)` |
+//! | `spark_create_data_writer` | `…_createDataWriter` | `long createDataWriter(String, String, int)` |
+//! | `spark_write_batch` | `…_writeBatch` | `void writeBatch(long, byte[])` |
+//! | `spark_commit_writer` | `…_commitWriter` | `String commitWriter(long)` |
+//! | `spark_abort_writer` | `…_abortWriter` | `void abortWriter(long)` |
 //!
-//! The Rust-side scaffolds still return placeholder values; replacing
-//! them with real `ConnectorStorageAdapter` calls is the remaining
-//! TD-097 work. The wire-up below (JNI calling convention, mangled
-//! symbol names, type-correct args/returns) is complete and proven by
-//! `clients/jvm/spark-connector/src/test/java/org/proximadb/spark/NativeProximaDBTest.java`.
+//! `initialize(dataDir)` builds one embedded ProximaDB instance per JVM
+//! process. The singleton is set-once-strict: class-loader reloads and second
+//! initialize attempts return `false` and log a warning rather than replacing
+//! the live database.
 
 pub mod jni_handle;
 
+use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jbyteArray, jint, jlong, jstring};
+use jni::sys::{JNI_FALSE, JNI_TRUE, JavaVM, jboolean, jbyteArray, jint, jlong, jstring};
 
 use proximadb::connectors::spark::{
     SparkDataWriter, SparkPartitionReader, spark_abort_writer, spark_close_partition_reader,
@@ -55,21 +55,54 @@ use proximadb::connectors::spark::{
     spark_get_table_schema, spark_plan_input_partitions, spark_read_next_batch, spark_write_batch,
 };
 use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
+use tracing::{info, warn};
+
+struct SparkJniState {
+    db: Arc<EmbeddedProximaDB>,
+    data_dir: String,
+}
 
 /// Process-singleton embedded database. Set once by
 /// `Java_..._initialize`; read by every other JNI wrapper. Tests
 /// construct their own `EmbeddedProximaDB` directly and call the
 /// pure-Rust `spark_*` impls — they do NOT touch this singleton.
 ///
-/// Holds `Arc<EmbeddedProximaDB>` rather than `EmbeddedProximaDB`
-/// directly so the JNI wrappers can clone the Arc cheaply per call
-/// without contending on the OnceLock.
-static EMBEDDED: OnceLock<Arc<EmbeddedProximaDB>> = OnceLock::new();
+/// Holds an `Arc<EmbeddedProximaDB>` so the JNI wrappers can clone the
+/// Arc cheaply per call without contending on the OnceLock. `data_dir`
+/// is retained only for duplicate-initialize diagnostics.
+static EMBEDDED: OnceLock<SparkJniState> = OnceLock::new();
 
 /// Get a clone of the embedded singleton's Arc handle. Returns `None`
 /// if `initialize` has never been called.
 fn embedded() -> Option<Arc<EmbeddedProximaDB>> {
-    EMBEDDED.get().cloned()
+    EMBEDDED.get().map(|state| state.db.clone())
+}
+
+/// JNI lifecycle hook invoked when the JVM unloads this cdylib. Most JVMs keep
+/// native libraries loaded for the process lifetime, so this is a best-effort
+/// shutdown diagnostic rather than a reset mechanism.
+#[unsafe(no_mangle)]
+pub extern "system" fn JNI_OnUnload(_vm: *mut JavaVM, _reserved: *mut c_void) {
+    let pid = std::process::id();
+    match EMBEDDED.get() {
+        Some(state) => match state.db.flush() {
+            Ok(()) => info!(
+                pid,
+                data_dir = %state.data_dir,
+                "proximadb Spark JNI unload flushed embedded database"
+            ),
+            Err(err) => warn!(
+                pid,
+                data_dir = %state.data_dir,
+                error = %err,
+                "proximadb Spark JNI unload failed to flush embedded database"
+            ),
+        },
+        None => info!(
+            pid,
+            "proximadb Spark JNI unload observed no initialized embedded database"
+        ),
+    }
 }
 
 /// JNI export: bootstrap the embedded database. Java callers MUST call
@@ -87,23 +120,65 @@ pub extern "system" fn Java_org_proximadb_spark_NativeProximaDB_initialize<'loca
     data_dir: JString<'local>,
 ) -> jboolean {
     let dir = jstring_to_string(&mut env, data_dir);
+    let pid = std::process::id();
     if dir.is_empty() {
+        warn!(
+            pid,
+            "proximadb Spark JNI initialize rejected empty data_dir"
+        );
         return JNI_FALSE;
     }
-    if EMBEDDED.get().is_some() {
+    if let Some(state) = EMBEDDED.get() {
         // Already initialized — second call is a no-op and returns
         // false so callers can detect dup-init in tests.
+        warn!(
+            pid,
+            existing_data_dir = %state.data_dir,
+            requested_data_dir = %dir,
+            "proximadb Spark JNI initialize rejected duplicate call; singleton is set-once per JVM process"
+        );
         return JNI_FALSE;
     }
+    info!(
+        pid,
+        data_dir = %dir,
+        "proximadb Spark JNI initializing embedded database"
+    );
     let mut config = EmbeddedConfig::for_low_memory(&dir);
     config.enable_wal = true;
     let db = match EmbeddedProximaDB::new(config) {
         Ok(db) => db,
-        Err(_) => return JNI_FALSE,
+        Err(err) => {
+            warn!(
+                pid,
+                data_dir = %dir,
+                error = %err,
+                "proximadb Spark JNI initialize failed to construct embedded database"
+            );
+            return JNI_FALSE;
+        }
     };
-    match EMBEDDED.set(Arc::new(db)) {
-        Ok(()) => JNI_TRUE,
-        Err(_) => JNI_FALSE,
+    match EMBEDDED.set(SparkJniState {
+        db: Arc::new(db),
+        data_dir: dir.clone(),
+    }) {
+        Ok(()) => {
+            info!(
+                pid,
+                data_dir = %dir,
+                "proximadb Spark JNI initialized embedded database"
+            );
+            JNI_TRUE
+        }
+        Err(state) => {
+            warn!(
+                pid,
+                existing_data_dir = %state.data_dir,
+                requested_data_dir = %dir,
+                "proximadb Spark JNI initialize lost set-once race"
+            );
+            JNI_FALSE
+        }
     }
 }
 

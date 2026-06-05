@@ -66,7 +66,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
-use arrow::array::RecordBatch;
 use arrow::datatypes::Schema as ArrowSchema;
 use serde::{Deserialize, Serialize};
 
