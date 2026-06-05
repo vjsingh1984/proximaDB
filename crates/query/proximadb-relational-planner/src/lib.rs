@@ -1357,13 +1357,20 @@ fn shift_column_ordinals(expr: Expr, offset: usize) -> Expr {
 
 /// A WHERE predicate may only be pushed to a join's PRESERVED side; pushing it
 /// to the null-supplying side would re-admit null-extended rows the post-join
-/// filter removes. Left preserved in Inner/Cross/Left.
+/// filter removes. Left preserved in Inner/Cross/Left. Semi/Anti emit a SUBSET of
+/// left rows (right columns aren't in the output), so a left-column WHERE above
+/// the join filters the same rows whether applied before or after the match test —
+/// safe to push to the left child for both.
 fn can_push_to_left(kind: JoinKind) -> bool {
-    matches!(kind, JoinKind::Inner | JoinKind::Cross | JoinKind::Left)
+    matches!(
+        kind,
+        JoinKind::Inner | JoinKind::Cross | JoinKind::Left | JoinKind::Semi | JoinKind::Anti
+    )
 }
 
-/// Right preserved in Inner/Cross/Right (see [`can_push_to_left`]). Full/Semi/
-/// Anti push to neither side (conservative).
+/// Right preserved in Inner/Cross/Right (see [`can_push_to_left`]). Full pushes to
+/// neither side. Semi/Anti output no right columns, so a post-join WHERE never
+/// references the right side — nothing to push there (conservative).
 fn can_push_to_right(kind: JoinKind) -> bool {
     matches!(kind, JoinKind::Inner | JoinKind::Cross | JoinKind::Right)
 }
@@ -2496,6 +2503,38 @@ mod tests {
                 other => panic!("expected column, got {other:?}"),
             },
             other => panic!("right scan should carry the rebased total predicate: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn where_pushdown_semi_anti_pushes_left_predicate_to_left_child() {
+        // A left-column WHERE above a Semi/Anti join pushes into the LEFT scan:
+        // Semi/Anti emit a SUBSET of left rows, so pre-filtering left is equivalent
+        // to filtering the join output. The join kind is preserved.
+        for kind in [JoinKind::Semi, JoinKind::Anti] {
+            let pred = Expr::bin(
+                BinaryOp::Eq,
+                col_at(2, "age", ProximaType::Int32),
+                Expr::literal(ProximaValue::Int32(30)),
+            );
+            let result = push_predicates(filter_over_join(kind, pred), &cap_full(Vec::new()));
+            let PhysicalPlan::Join {
+                left, kind: got, ..
+            } = result
+            else {
+                panic!("expected Join (left predicate pushed) for {kind:?}");
+            };
+            assert_eq!(got, kind, "join kind preserved");
+            assert!(
+                matches!(
+                    *left,
+                    PhysicalPlan::Scan {
+                        predicate: Some(_),
+                        ..
+                    }
+                ),
+                "left scan gets the age predicate for {kind:?}"
+            );
         }
     }
 
