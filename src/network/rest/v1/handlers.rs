@@ -769,11 +769,17 @@ pub async fn execute_sql(
         request.query.clone()
     };
 
+    // Route through the ApiHandlersPort (TD-104 / seam S1) rather than the
+    // concrete ROOT handler. In the default config `state.api_handlers` is the
+    // ROOT handler exposed as a port (round-trips params back to the inherent
+    // path, so behavior is unchanged); under the runtime override it is the
+    // port-based handler over the reconciled QueryFacadeAdapter. Wire SqlValue
+    // params are lowered to canonical ProximaValue at this protocol boundary.
     match state
-        .request_handlers
+        .api_handlers
         .execute_sql_v1(
             query_with_hint,
-            request.parameters.clone(),
+            sql_params_to_proxima_values(request.parameters.clone()),
             request.collection,
         )
         .await
