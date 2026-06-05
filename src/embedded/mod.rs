@@ -76,6 +76,10 @@ pub use coordination::{
 #[cfg(feature = "python")]
 pub mod python;
 
+// Python DataFrame API via DataFusion
+#[cfg(all(feature = "python", feature = "datafusion-integration"))]
+pub mod python_dataframe;
+
 // Java bindings via JNI
 #[cfg(feature = "java")]
 pub mod java;
@@ -1938,6 +1942,16 @@ impl EmbeddedProximaDB {
                 }
             }))
         })
+    }
+
+    /// Get the shared services
+    pub fn shared_services(&self) -> &crate::network::multi_server::SharedServices {
+        &self.shared_services
+    }
+
+    /// Get the Tokio runtime
+    pub fn runtime(&self) -> &tokio::runtime::Runtime {
+        &self.runtime
     }
 
     /// List all collections

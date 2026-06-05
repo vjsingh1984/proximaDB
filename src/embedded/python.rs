@@ -43,8 +43,8 @@ use std::sync::{Arc, Mutex};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 
 use super::{
-    AccessMode, EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig, json_to_proxima_value,
-    proxima_value_to_json,
+    AccessMode, EmbeddedConfig, EmbeddedProximaDB, EmbeddedSqlQueryResult, StorageLocationConfig,
+    json_to_proxima_value, proxima_value_to_json,
 };
 use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
 
@@ -1258,6 +1258,60 @@ impl PyProximaDB {
                     .collect()
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list collections: {}", e)))
+    }
+
+    #[pyo3(signature = (collection, requested_partitions=1))]
+    fn plan_partitions(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        requested_partitions: u32,
+    ) -> PyResult<PyObject> {
+        let requested = requested_partitions.max(1);
+        let partitions = self
+            .db()?
+            .plan_partitions(collection, requested)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to plan partitions: {}", e)))?;
+
+        let partition_items = PyList::empty(py);
+        for partition in &partitions {
+            let partition_dict = PyDict::new(py);
+            partition_dict.set_item("partition_id", partition.partition_id)?;
+            partition_dict.set_item("preferred_locations", &partition.preferred_locations)?;
+            partition_dict.set_item("estimated_rows", partition.estimated_rows)?;
+            partition_dict.set_item("estimated_bytes", partition.estimated_bytes)?;
+
+            let splits = PyList::empty(py);
+            for split in &partition.splits {
+                let split_dict = PyDict::new(py);
+                split_dict.set_item("split_id", &split.split_id)?;
+                split_dict.set_item("file_path", &split.file_path)?;
+                split_dict.set_item("offset", split.offset)?;
+                split_dict.set_item("length", split.length)?;
+                split_dict.set_item("estimated_rows", split.statistics.row_count)?;
+                split_dict.set_item("estimated_bytes", split.statistics.byte_size)?;
+                splits.append(split_dict)?;
+            }
+            partition_dict.set_item("splits", splits)?;
+            partition_items.append(partition_dict)?;
+        }
+
+        let dict = PyDict::new(py);
+        dict.set_item("collection", collection)?;
+        dict.set_item("requested_partitions", requested)?;
+        dict.set_item("planned_partitions", partitions.len())?;
+        dict.set_item("effective_read_partitions", partitions.len())?;
+        dict.set_item("planner", "whole_collection_fallback")?;
+        dict.set_item("execution_scope", "local_process")?;
+        dict.set_item("safe_parallelism", partitions.len())?;
+        dict.set_item("partitions", partition_items)?;
+        if requested as usize > partitions.len() {
+            dict.set_item(
+                "rejected_parallelism_reason",
+                "split-bound readers are not wired yet; returning more collection:// partitions would duplicate scans",
+            )?;
+        }
+        Ok(dict.into_any().unbind())
     }
 
     /// Insert vectors into a collection
@@ -3456,6 +3510,70 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to execute SQL: {}", e)))
     }
 
+    #[pyo3(signature = (query, parameters=None, collection=None))]
+    fn execute_sql_arrow_ipc(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        parameters: Option<&Bound<'_, PyAny>>,
+        collection: Option<&str>,
+    ) -> PyResult<Vec<u8>> {
+        let rust_params = if let Some(params) = parameters {
+            let json_value = python_to_json(params)?;
+            Some(match json_value {
+                serde_json::Value::Array(values) => values,
+                other => vec![other],
+            })
+        } else {
+            None
+        };
+
+        let inner = self.db()?;
+        py.allow_threads(move || inner.execute_sql(query, rust_params, collection))
+            .and_then(|result| sql_result_to_arrow_ipc(&result))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to execute SQL as Arrow: {}", e)))
+    }
+
+    fn explain_notebook_plan(&self, py: Python<'_>, plan: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let plan_json = python_to_json(plan)?;
+        let explanation = notebook_plan_explain(self.db()?.as_ref(), &plan_json)
+            .map_err(|e| PyValueError::new_err(format!("Invalid notebook plan: {}", e)))?;
+        json_to_python(py, &explanation)
+    }
+
+    fn execute_notebook_plan_arrow_ipc(
+        &self,
+        py: Python<'_>,
+        plan: &Bound<'_, PyAny>,
+    ) -> PyResult<Vec<u8>> {
+        let plan_json = python_to_json(plan)?;
+        let sql = compile_notebook_plan_sql(&plan_json)
+            .map_err(|e| PyValueError::new_err(format!("Invalid notebook plan: {}", e)))?;
+        let inner = self.db()?;
+        py.allow_threads(move || inner.execute_sql(&sql, None, None))
+            .and_then(|result| sql_result_to_arrow_ipc(&result))
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to execute notebook plan as Arrow: {}", e))
+            })
+    }
+
+    /// Create a DataFusion session for distributed execution (Proxima-Spark)
+    #[cfg(feature = "datafusion-integration")]
+    fn dataframe_session(
+        &self,
+    ) -> PyResult<crate::embedded::python_dataframe::PyDataFusionSession> {
+        use crate::datafusion::create_session_context;
+
+        let ctx = create_session_context().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to create DataFusion context: {}", e))
+        })?;
+
+        Ok(crate::embedded::python_dataframe::PyDataFusionSession::new(
+            ctx,
+            self.db()?,
+        ))
+    }
+
     #[pyo3(signature = (collection, ipc_stream, mode="insert", tenant_id=None))]
     fn insert_arrow_ipc(
         &self,
@@ -3895,7 +4013,7 @@ fn proxima_record_from_batch_parts(
             model_id: "default".to_string(),
             modality,
             dim,
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             ..Default::default()
         }],
         props,
@@ -3934,7 +4052,7 @@ fn python_to_proxima_record(
             model_id: "default".to_string(),
             modality,
             dim,
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             ..Default::default()
         }],
         props,
@@ -3985,6 +4103,467 @@ fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObjec
             }
             Ok(dict.into_any().unbind())
         }
+    }
+}
+
+fn sql_result_to_arrow_ipc(
+    result: &EmbeddedSqlQueryResult,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    use arrow::array::{ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, StringBuilder};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::ipc::writer::StreamWriter;
+    use arrow::record_batch::RecordBatch;
+
+    let fields = result
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(idx, column)| {
+            Field::new(
+                column.clone(),
+                sql_column_arrow_type(result.column_types.get(idx).map(String::as_str)),
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+    let schema = Arc::new(Schema::new(fields));
+    let mut arrays = Vec::with_capacity(result.columns.len());
+
+    for (idx, column) in result.columns.iter().enumerate() {
+        let data_type = schema.field(idx).data_type().clone();
+        match data_type {
+            DataType::Boolean => {
+                let mut builder = BooleanBuilder::new();
+                for row in &result.rows {
+                    match sql_row_value(row, column).and_then(json_bool_value) {
+                        Some(value) => builder.append_value(value),
+                        None => builder.append_null(),
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            DataType::Int64 => {
+                let mut builder = Int64Builder::new();
+                for row in &result.rows {
+                    match sql_row_value(row, column).and_then(json_i64_value) {
+                        Some(value) => builder.append_value(value),
+                        None => builder.append_null(),
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            DataType::Float64 => {
+                let mut builder = Float64Builder::new();
+                for row in &result.rows {
+                    match sql_row_value(row, column).and_then(json_f64_value) {
+                        Some(value) => builder.append_value(value),
+                        None => builder.append_null(),
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            _ => {
+                let mut builder = StringBuilder::new();
+                for row in &result.rows {
+                    match sql_row_value(row, column) {
+                        Some(serde_json::Value::String(value)) => builder.append_value(value),
+                        Some(serde_json::Value::Null) | None => builder.append_null(),
+                        Some(value) => builder.append_value(value.to_string()),
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+        }
+    }
+
+    let batch = RecordBatch::try_new(schema.clone(), arrays)?;
+    let mut bytes = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut bytes, &schema)?;
+        writer.write(&batch)?;
+        writer.finish()?;
+    }
+    Ok(bytes)
+}
+
+fn notebook_plan_explain(
+    db: &EmbeddedProximaDB,
+    plan: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let sql = compile_notebook_plan_sql(plan).ok();
+    let source_kind = notebook_plan_source_kind(plan)?;
+    let source = notebook_plan_source(plan)?;
+    let workers = notebook_plan_workers(plan);
+    let partition_plan = if source_kind == "table" {
+        match db.plan_partitions(source, workers.max(1)) {
+            Ok(partitions) => notebook_partitions_to_json(source, workers, &partitions),
+            Err(error) => notebook_fallback_partition_plan(
+                source,
+                workers,
+                &format!(
+                    "native partition planning rejected this source; using one safe logical partition: {error}"
+                ),
+            ),
+        }
+    } else {
+        serde_json::json!({
+            "requested_partitions": workers.max(1),
+            "planned_partitions": 1,
+            "effective_read_partitions": 1,
+            "planner": "sql_source_fallback",
+            "execution_scope": "local_process"
+        })
+    };
+    let effective_parallelism = partition_plan
+        .get("effective_read_partitions")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1);
+
+    Ok(serde_json::json!({
+        "source_surface": "python_notebook",
+        "execution_scope": "local_process",
+        "master": notebook_plan_master(plan),
+        "workers": workers,
+        "memory_limit": notebook_plan_session_value(plan, "memory_limit").cloned().unwrap_or(serde_json::Value::Null),
+        "batch_size": notebook_plan_session_value(plan, "batch_size").and_then(serde_json::Value::as_u64).unwrap_or(10_000),
+        "authority_mode": "ProximaAuthoritative",
+        "policy_boundary": "engine-enforced",
+        "compute_route": if sql.is_some() { "DataFusionLocal" } else { "Native" },
+        "status": "phase1_rust_plan_boundary",
+        "compiled_sql": sql,
+        "partition_plan": partition_plan,
+        "effective_parallelism": effective_parallelism,
+        "unsupported_operations": notebook_plan_unsupported_operations(plan),
+        "plan": plan.get("plan").cloned().unwrap_or_else(|| plan.clone()),
+    }))
+}
+
+fn compile_notebook_plan_sql(plan: &serde_json::Value) -> Result<String, String> {
+    let source_kind = notebook_plan_source_kind(plan)?;
+    let source = notebook_plan_source(plan)?;
+    let operations = notebook_plan_operations(plan)?;
+
+    if source_kind == "sql" {
+        if !operations.is_empty() {
+            return Err("operations on raw SQL frames are not supported yet".to_string());
+        }
+        return Ok(source.trim().to_string());
+    }
+    if source_kind != "table" {
+        return Err(format!("unsupported source kind {source_kind:?}"));
+    }
+
+    let mut select_columns: Option<Vec<String>> = None;
+    let mut predicates = Vec::new();
+    let mut limit_count: Option<u64> = None;
+    let mut group_columns: Option<Vec<String>> = None;
+    let mut aggregate_count = false;
+
+    for op in operations {
+        let op_type = op
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "operation is missing string field 'type'".to_string())?;
+        match op_type {
+            "select" => {
+                select_columns = Some(notebook_string_array(op, "columns")?);
+            }
+            "where" => {
+                let predicate = op
+                    .get("predicate")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        "where operation is missing string field 'predicate'".to_string()
+                    })?;
+                predicates.push(predicate.to_string());
+            }
+            "limit" => {
+                limit_count = Some(
+                    op.get("count")
+                        .and_then(serde_json::Value::as_u64)
+                        .ok_or_else(|| {
+                            "limit operation is missing numeric field 'count'".to_string()
+                        })?,
+                );
+            }
+            "group_count" => {
+                group_columns = Some(notebook_string_array(op, "columns")?);
+                aggregate_count = true;
+            }
+            other => return Err(format!("{other} is not SQL-backed in phase 1")),
+        }
+    }
+
+    let (select_clause, group_clause) = if aggregate_count {
+        let group_columns =
+            group_columns.ok_or_else(|| "group_count operation is missing columns".to_string())?;
+        let projection = group_columns
+            .iter()
+            .map(|column| notebook_quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        (
+            format!("{projection}, COUNT(*) AS count"),
+            format!(" GROUP BY {projection}"),
+        )
+    } else {
+        let select_clause = match select_columns {
+            Some(columns) if !columns.is_empty() => columns
+                .iter()
+                .map(|column| notebook_quote_ident(column))
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "*".to_string(),
+        };
+        (select_clause, String::new())
+    };
+
+    let mut sql = format!(
+        "SELECT {select_clause} FROM {}",
+        notebook_table_ident(source)?
+    );
+    if !predicates.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(
+            &predicates
+                .iter()
+                .map(|predicate| format!("({predicate})"))
+                .collect::<Vec<_>>()
+                .join(" AND "),
+        );
+    }
+    sql.push_str(&group_clause);
+    if let Some(limit_count) = limit_count {
+        sql.push_str(&format!(" LIMIT {limit_count}"));
+    }
+    Ok(sql)
+}
+
+fn notebook_plan_root(plan: &serde_json::Value) -> &serde_json::Value {
+    plan.get("plan").unwrap_or(plan)
+}
+
+fn notebook_plan_source_kind(plan: &serde_json::Value) -> Result<&str, String> {
+    notebook_plan_root(plan)
+        .get("source_kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "plan is missing string field 'source_kind'".to_string())
+}
+
+fn notebook_plan_source(plan: &serde_json::Value) -> Result<&str, String> {
+    notebook_plan_root(plan)
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "plan is missing string field 'source'".to_string())
+}
+
+fn notebook_plan_operations(plan: &serde_json::Value) -> Result<&[serde_json::Value], String> {
+    match notebook_plan_root(plan).get("operations") {
+        Some(serde_json::Value::Array(values)) => Ok(values),
+        None => Ok(&[]),
+        _ => Err("plan field 'operations' must be an array".to_string()),
+    }
+}
+
+fn notebook_plan_session_value<'a>(
+    plan: &'a serde_json::Value,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    plan.get("session").and_then(|session| session.get(key))
+}
+
+fn notebook_plan_workers(plan: &serde_json::Value) -> u32 {
+    notebook_plan_session_value(plan, "workers")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1)
+}
+
+fn notebook_plan_master(plan: &serde_json::Value) -> serde_json::Value {
+    notebook_plan_session_value(plan, "master")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::String("proxima-local[1]".to_string()))
+}
+
+fn notebook_plan_unsupported_operations(plan: &serde_json::Value) -> Vec<serde_json::Value> {
+    notebook_plan_operations(plan)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|op| op.get("type").and_then(serde_json::Value::as_str))
+        .filter(|op_type| !matches!(*op_type, "select" | "where" | "limit" | "group_count"))
+        .map(|op_type| serde_json::Value::String(op_type.to_string()))
+        .collect()
+}
+
+fn notebook_string_array(value: &serde_json::Value, field: &str) -> Result<Vec<String>, String> {
+    let values = value
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("operation is missing array field '{field}'"))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(ToString::to_string)
+                .ok_or_else(|| format!("field '{field}' must contain only strings"))
+        })
+        .collect()
+}
+
+fn notebook_quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+fn notebook_table_ident(name: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err("table name must not be empty".to_string());
+    }
+    let parts = name.split('.').collect::<Vec<_>>();
+    if parts.iter().any(|part| part.is_empty()) {
+        return Err("table name contains an empty identifier segment".to_string());
+    }
+    Ok(parts
+        .iter()
+        .map(|part| {
+            if notebook_is_simple_ident(part) {
+                (*part).to_string()
+            } else {
+                notebook_quote_ident(part)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("."))
+}
+
+fn notebook_is_simple_ident(value: &str) -> bool {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) if first == '_' || first.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+fn notebook_partitions_to_json(
+    collection: &str,
+    requested: u32,
+    partitions: &[crate::connectors::spark::SparkInputPartition],
+) -> serde_json::Value {
+    serde_json::json!({
+        "collection": collection,
+        "requested_partitions": requested.max(1),
+        "planned_partitions": partitions.len(),
+        "effective_read_partitions": partitions.len(),
+        "planner": "whole_collection_fallback",
+        "execution_scope": "local_process",
+        "safe_parallelism": partitions.len(),
+        "rejected_parallelism_reason": if requested as usize > partitions.len() {
+            Some("split-bound readers are not wired yet; returning more collection:// partitions would duplicate scans")
+        } else {
+            None
+        },
+        "partitions": partitions.iter().map(notebook_partition_to_json).collect::<Vec<_>>(),
+    })
+}
+
+fn notebook_partition_to_json(
+    partition: &crate::connectors::spark::SparkInputPartition,
+) -> serde_json::Value {
+    serde_json::json!({
+        "partition_id": partition.partition_id,
+        "preferred_locations": &partition.preferred_locations,
+        "estimated_rows": partition.estimated_rows,
+        "estimated_bytes": partition.estimated_bytes,
+        "splits": partition.splits.iter().map(notebook_split_to_json).collect::<Vec<_>>(),
+    })
+}
+
+fn notebook_split_to_json(split: &crate::storage::formats::FileSplit) -> serde_json::Value {
+    serde_json::json!({
+        "split_id": &split.split_id,
+        "file_path": &split.file_path,
+        "offset": split.offset,
+        "length": split.length,
+        "estimated_rows": split.statistics.row_count,
+        "estimated_bytes": split.statistics.byte_size,
+    })
+}
+
+fn notebook_fallback_partition_plan(
+    collection: &str,
+    requested: u32,
+    reason: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "collection": collection,
+        "requested_partitions": requested.max(1),
+        "planned_partitions": 1,
+        "effective_read_partitions": 1,
+        "planner": "whole_collection_fallback",
+        "execution_scope": "local_process",
+        "safe_parallelism": 1,
+        "rejected_parallelism_reason": reason,
+        "partitions": [{
+            "partition_id": 0,
+            "preferred_locations": [],
+            "estimated_rows": null,
+            "estimated_bytes": null,
+            "splits": [{
+                "split_id": format!("collection:{collection}:whole"),
+                "file_path": format!("collection://{collection}"),
+                "offset": 0,
+                "length": 0,
+                "estimated_rows": null,
+                "estimated_bytes": null,
+            }],
+        }],
+    })
+}
+
+fn sql_column_arrow_type(column_type: Option<&str>) -> arrow::datatypes::DataType {
+    match column_type
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "bool" | "boolean" => arrow::datatypes::DataType::Boolean,
+        "int2" | "int4" | "int8" | "integer" | "bigint" | "smallint" => {
+            arrow::datatypes::DataType::Int64
+        }
+        "float4" | "float8" | "float" | "double" | "real" | "decimal" | "numeric" => {
+            arrow::datatypes::DataType::Float64
+        }
+        _ => arrow::datatypes::DataType::Utf8,
+    }
+}
+
+fn sql_row_value<'a>(row: &'a serde_json::Value, column: &str) -> Option<&'a serde_json::Value> {
+    row.as_object().and_then(|object| object.get(column))
+}
+
+fn json_bool_value(value: &serde_json::Value) -> Option<bool> {
+    match value {
+        serde_json::Value::Bool(value) => Some(*value),
+        serde_json::Value::String(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
+fn json_i64_value(value: &serde_json::Value) -> Option<i64> {
+    match value {
+        serde_json::Value::Number(value) => value.as_i64(),
+        serde_json::Value::String(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
+fn json_f64_value(value: &serde_json::Value) -> Option<f64> {
+    match value {
+        serde_json::Value::Number(value) => value.as_f64(),
+        serde_json::Value::String(value) => value.parse().ok(),
+        _ => None,
     }
 }
 
@@ -4108,6 +4687,10 @@ fn register_python_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Add version info
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+
+    // DataFusion DataFrame API (Proxima-Spark)
+    #[cfg(feature = "datafusion-integration")]
+    crate::embedded::python_dataframe::register_dataframe_module(m)?;
 
     Ok(())
 }

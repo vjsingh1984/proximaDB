@@ -59,6 +59,15 @@ from .records import (
     normalize_records,
     proxima_value,
 )
+from .notebook import (
+    Column,
+    GroupedProximaFrame,
+    Predicate,
+    ProximaFrame,
+    ProximaSession,
+    ProximaSessionBuilder,
+    col,
+)
 import time
 
 __version__ = "0.2.0"
@@ -91,6 +100,13 @@ __all__ = [
     "normalize_graph_node",
     "normalize_observability_event",
     "profile_record_batch_parts",
+    "Column",
+    "GroupedProximaFrame",
+    "Predicate",
+    "ProximaFrame",
+    "ProximaSession",
+    "ProximaSessionBuilder",
+    "col",
     "__version__",
 ]
 
