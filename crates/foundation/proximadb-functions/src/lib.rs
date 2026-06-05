@@ -98,6 +98,53 @@ impl std::fmt::Debug for ScalarFunctionDef {
     }
 }
 
+/// Per-group aggregate state. The engine drives it: `update` folds each input row's argument
+/// values; `finalize` produces the group's value (NULL for an empty group, per SQL). `state`
+/// + `merge` exist for partitioned execution (DataFusion): a partial accumulator exposes its
+/// state as values, and a coordinator folds peers' states back in. NULL handling is the
+/// accumulator's responsibility (standard SQL aggregates skip NULL args).
+///
+/// Single-node Volcano uses only `update` + `finalize` (one accumulator per group, fed every
+/// row); `state`/`merge` are the DataFusion partial-aggregation seam.
+pub trait AggregateAccumulator: Send {
+    /// Fold one input row's evaluated argument values into the accumulator.
+    fn update(&mut self, args: &[ProximaValue]) -> Result<(), ExprError>;
+
+    /// This accumulator's partial state, as canonical values (for cross-partition merge).
+    fn state(&self) -> Vec<ProximaValue>;
+
+    /// Fold another accumulator's partial `state` (from [`AggregateAccumulator::state`]) in.
+    fn merge(&mut self, state: &[ProximaValue]) -> Result<(), ExprError>;
+
+    /// The group's final aggregate value.
+    fn finalize(&self) -> ProximaValue;
+}
+
+/// Factory for an aggregate's per-group accumulators. Engine-neutral, like [`ScalarFn`].
+pub trait AggregateKernel: Send + Sync {
+    /// Create a fresh accumulator for one group.
+    fn new_accumulator(&self) -> Box<dyn AggregateAccumulator>;
+}
+
+/// A registered aggregate function: its signature (`kind = Aggregate`) + its accumulator
+/// factory. The same definition is bound by Volcano (custom accumulator) and DataFusion
+/// (`AggregateUDF` adapter).
+#[derive(Clone)]
+pub struct AggregateFunctionDef {
+    /// Typed signature.
+    pub signature: FunctionSignature,
+    /// Engine-neutral accumulator factory.
+    pub kernel: Arc<dyn AggregateKernel>,
+}
+
+impl std::fmt::Debug for AggregateFunctionDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AggregateFunctionDef")
+            .field("signature", &self.signature)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The canonical function registry. Built once at startup with builtins and (later) user
 /// functions from the xCatalog function catalog; read concurrently by every engine.
 ///
@@ -106,6 +153,7 @@ impl std::fmt::Debug for ScalarFunctionDef {
 #[derive(Default)]
 pub struct ProximaFunctionRegistry {
     scalars: DashMap<String, Arc<ScalarFunctionDef>>,
+    aggregates: DashMap<String, Arc<AggregateFunctionDef>>,
 }
 
 impl ProximaFunctionRegistry {
@@ -114,10 +162,11 @@ impl ProximaFunctionRegistry {
         Self::default()
     }
 
-    /// A registry preloaded with the builtin scalar functions.
+    /// A registry preloaded with the builtin scalar + aggregate functions.
     pub fn with_builtins() -> Self {
         let reg = Self::new();
         register_builtin_scalars(&reg);
+        register_builtin_aggregates(&reg);
         reg
     }
 
@@ -151,6 +200,28 @@ impl ProximaFunctionRegistry {
     /// registry function into a native runtime (e.g. the DataFusion `ScalarUDF` adapter).
     pub fn scalar_defs(&self) -> Vec<Arc<ScalarFunctionDef>> {
         self.scalars.iter().map(|e| e.value().clone()).collect()
+    }
+
+    /// Register (or replace) an aggregate function under its (lower-cased) name.
+    pub fn register_aggregate(&self, def: AggregateFunctionDef) {
+        let key = def.signature.name.to_ascii_lowercase();
+        self.aggregates.insert(key, Arc::new(def));
+    }
+
+    /// Look up an aggregate function by name (case-insensitive).
+    pub fn lookup_aggregate(&self, name: &str) -> Option<Arc<AggregateFunctionDef>> {
+        self.aggregates.get(&name.to_ascii_lowercase()).map(|e| e.clone())
+    }
+
+    /// Number of registered aggregate functions.
+    pub fn aggregate_count(&self) -> usize {
+        self.aggregates.len()
+    }
+
+    /// All registered aggregate definitions (for engine adapters that bind every aggregate
+    /// into a native runtime, e.g. the DataFusion `AggregateUDF` adapter).
+    pub fn aggregate_defs(&self) -> Vec<Arc<AggregateFunctionDef>> {
+        self.aggregates.iter().map(|e| e.value().clone()).collect()
     }
 }
 
@@ -336,6 +407,81 @@ pub fn register_builtin_scalars(reg: &ProximaFunctionRegistry) {
     reg.alias_scalar("ceiling", "ceil");
 }
 
+// =========================================================================
+// Builtin aggregate kernels (engine-neutral, NULL-skipping)
+// =========================================================================
+
+/// `product(x)` — the running product of all non-NULL numeric args. NULL over an empty group.
+/// A simple, non-native (not COUNT/SUM/AVG/MIN/MAX) demonstrator of the aggregate framework
+/// that exercises update / state / merge / finalize.
+struct ProductAccumulator {
+    running: Option<f64>,
+}
+
+impl AggregateAccumulator for ProductAccumulator {
+    fn update(&mut self, args: &[ProximaValue]) -> Result<(), ExprError> {
+        let v = args.first().ok_or(ExprError::WrongFunctionArity {
+            name: "product".to_string(),
+            expected: 1,
+            got: 0,
+        })?;
+        if matches!(v, ProximaValue::Null) {
+            return Ok(());
+        }
+        let n = as_f64("product", v)?;
+        self.running = Some(self.running.unwrap_or(1.0) * n);
+        Ok(())
+    }
+
+    fn state(&self) -> Vec<ProximaValue> {
+        // An empty partial state is represented as NULL so merge stays the identity.
+        match self.running {
+            Some(p) => vec![ProximaValue::Float64(p)],
+            None => vec![ProximaValue::Null],
+        }
+    }
+
+    fn merge(&mut self, state: &[ProximaValue]) -> Result<(), ExprError> {
+        match state.first() {
+            Some(ProximaValue::Null) | None => Ok(()),
+            Some(other) => {
+                let p = as_f64("product", other)?;
+                self.running = Some(self.running.unwrap_or(1.0) * p);
+                Ok(())
+            }
+        }
+    }
+
+    fn finalize(&self) -> ProximaValue {
+        match self.running {
+            Some(p) => ProximaValue::Float64(p),
+            None => ProximaValue::Null,
+        }
+    }
+}
+
+struct ProductKernel;
+
+impl AggregateKernel for ProductKernel {
+    fn new_accumulator(&self) -> Box<dyn AggregateAccumulator> {
+        Box::new(ProductAccumulator { running: None })
+    }
+}
+
+/// Register the builtin aggregate functions.
+pub fn register_builtin_aggregates(reg: &ProximaFunctionRegistry) {
+    reg.register_aggregate(AggregateFunctionDef {
+        signature: FunctionSignature {
+            name: "product".to_string(),
+            arg_types: vec![ProximaType::Float64],
+            variadic: false,
+            return_ty: ProximaType::Float64,
+            volatility: Volatility::Immutable,
+        },
+        kernel: Arc::new(ProductKernel),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +582,39 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn product_aggregate_update_finalize_and_null_skip() {
+        let def = reg().lookup_aggregate("PRODUCT").expect("product builtin");
+        assert_eq!(def.signature.return_ty, ProximaType::Float64);
+        let mut acc = def.kernel.new_accumulator();
+        // empty group → NULL
+        assert_eq!(acc.finalize(), ProximaValue::Null);
+        // 2 * 3 * 4 = 24, NULL skipped
+        acc.update(&[ProximaValue::Float64(2.0)]).unwrap();
+        acc.update(&[ProximaValue::Null]).unwrap();
+        acc.update(&[ProximaValue::Int64(3)]).unwrap();
+        acc.update(&[ProximaValue::Float64(4.0)]).unwrap();
+        assert_eq!(acc.finalize(), ProximaValue::Float64(24.0));
+    }
+
+    #[test]
+    fn product_aggregate_merges_partial_states() {
+        let def = reg().lookup_aggregate("product").unwrap();
+        // partition A: 2 * 5 = 10
+        let mut a = def.kernel.new_accumulator();
+        a.update(&[ProximaValue::Float64(2.0)]).unwrap();
+        a.update(&[ProximaValue::Float64(5.0)]).unwrap();
+        // partition B: 3
+        let mut b = def.kernel.new_accumulator();
+        b.update(&[ProximaValue::Float64(3.0)]).unwrap();
+        // coordinator folds B's state into A → 10 * 3 = 30
+        a.merge(&b.state()).unwrap();
+        assert_eq!(a.finalize(), ProximaValue::Float64(30.0));
+        // merging an empty (NULL) state is the identity
+        let empty = def.kernel.new_accumulator();
+        a.merge(&empty.state()).unwrap();
+        assert_eq!(a.finalize(), ProximaValue::Float64(30.0));
     }
 }

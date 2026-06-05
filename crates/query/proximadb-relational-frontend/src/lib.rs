@@ -376,7 +376,10 @@ fn expr_contains_aggregate(e: &SqlExpr) -> bool {
 
 fn is_aggregate_function_name(name: &ObjectName) -> bool {
     let n = name.to_string().to_uppercase();
+    // Builtin aggregates, plus any aggregate registered in the shared function registry
+    // (so a custom UDAF like `product` is routed to the aggregate path, not scalar lowering).
     matches!(n.as_str(), "COUNT" | "SUM" | "AVG" | "MIN" | "MAX")
+        || proximadb_functions::builtins().lookup_aggregate(&n).is_some()
 }
 
 fn projection_alias_for_expr(e: &SqlExpr) -> Option<String> {
@@ -972,7 +975,28 @@ fn lower_aggregate_call(
                 ));
             }
         },
+        // A non-builtin aggregate: resolve it against the shared registry (the same one the
+        // Volcano executor accumulates through, and the DataFusion AggregateUDF adapter binds).
+        // Unknown names still error clearly.
         other => {
+            if let Some(def) = proximadb_functions::builtins().lookup_aggregate(other) {
+                let lowered = args
+                    .into_iter()
+                    .map(|a| {
+                        a.ok_or_else(|| {
+                            FrontendError::Unsupported(
+                                "wildcard argument in custom aggregate".into(),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(AggregateExpr::Custom {
+                    name: other.to_ascii_lowercase(),
+                    args: lowered,
+                    distinct,
+                    return_ty: def.signature.return_ty.clone(),
+                });
+            }
             return Err(FrontendError::Unsupported(format!(
                 "aggregate function {}",
                 other
@@ -1602,6 +1626,39 @@ mod tests {
         match &outputs[0].expr {
             Expr::FuncCall { name, .. } => assert_eq!(name, "some_udf"),
             other => panic!("expected FuncCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_aggregate_lowers_to_aggregate_expr_custom() {
+        // F3: a non-builtin aggregate registered in the shared registry (`product`) lowers to
+        // AggregateExpr::Custom carrying the registry's return type, instead of being rejected.
+        let plan = lower("SELECT product(age) FROM users");
+        let LogicalNode::Project { input, .. } = plan else {
+            panic!("expected Project");
+        };
+        let LogicalNode::Aggregate {
+            aggregates,
+            group_by,
+            ..
+        } = *input
+        else {
+            panic!("expected Aggregate");
+        };
+        assert!(group_by.is_empty());
+        assert_eq!(aggregates.len(), 1);
+        match &aggregates[0].agg {
+            AggregateExpr::Custom {
+                name,
+                args,
+                return_ty,
+                ..
+            } => {
+                assert_eq!(name, "product");
+                assert_eq!(args.len(), 1);
+                assert_eq!(*return_ty, ProximaType::Float64);
+            }
+            other => panic!("expected Custom, got {other:?}"),
         }
     }
 

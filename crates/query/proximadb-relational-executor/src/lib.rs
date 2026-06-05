@@ -1629,6 +1629,12 @@ enum Accumulator {
     Max {
         current: Option<ProximaValue>,
     },
+    /// Registry-supplied aggregate (`AggregateExpr::Custom`). `acc` is `None` when the name
+    /// did not resolve in the function registry — accumulation then errors clearly.
+    Custom {
+        acc: Option<Box<dyn proximadb_functions::AggregateAccumulator>>,
+        distinct: Option<HashSet<GroupKey>>,
+    },
 }
 
 impl Accumulator {
@@ -1663,7 +1669,16 @@ impl Accumulator {
             AggregateExpr::Min { .. } => Accumulator::Min { current: None },
             AggregateExpr::Max { .. } => Accumulator::Max { current: None },
             AggregateExpr::StringAgg { .. } => Accumulator::Min { current: None }, // placeholder
-            AggregateExpr::Custom { .. } => Accumulator::Min { current: None },    // placeholder
+            AggregateExpr::Custom { name, distinct, .. } => Accumulator::Custom {
+                acc: builtins()
+                    .lookup_aggregate(name)
+                    .map(|def| def.kernel.new_accumulator()),
+                distinct: if *distinct {
+                    Some(HashSet::new())
+                } else {
+                    None
+                },
+            },
         }
     }
 
@@ -1765,8 +1780,25 @@ impl Accumulator {
             (_, AggregateExpr::StringAgg { .. }) => {
                 Err(ExecError::UnsupportedAggregate("STRING_AGG".into()))
             }
-            (_, AggregateExpr::Custom { name, .. }) => {
-                Err(ExecError::UnsupportedAggregate(name.clone()))
+            (
+                Accumulator::Custom { acc, distinct },
+                AggregateExpr::Custom { name, args, .. },
+            ) => {
+                let acc = acc
+                    .as_mut()
+                    .ok_or_else(|| ExecError::UnsupportedAggregate(name.clone()))?;
+                let vals = args
+                    .iter()
+                    .map(|e| e.eval(row, builtins()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if let Some(seen) = distinct {
+                    let key = GroupKey::from_values(&vals)?;
+                    if !seen.insert(key) {
+                        return Ok(());
+                    }
+                }
+                acc.update(&vals)?;
+                Ok(())
             }
             // Mismatch (shouldn't happen — accumulators are paired
             // with their aggregate at construction).
@@ -1791,6 +1823,10 @@ impl Accumulator {
             Accumulator::Min { current } | Accumulator::Max { current } => {
                 current.clone().unwrap_or(ProximaValue::Null)
             }
+            Accumulator::Custom { acc, .. } => match acc {
+                Some(a) => a.finalize(),
+                None => ProximaValue::Null,
+            },
         }
     }
 }
@@ -2201,6 +2237,35 @@ mod tests {
         let rows = collect(&mut *exec).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], ProximaValue::Int64(3));
+    }
+
+    #[tokio::test]
+    async fn streaming_aggregate_custom_product() {
+        // F3: AggregateExpr::Custom dispatches through the shared function registry (the
+        // `product` builtin accumulator): product(age) over [30, 25, 40] = 30000.
+        let age = users_schema().resolve_column("age").unwrap();
+        let plan = PhysicalPlan::Aggregate {
+            input: Box::new(scan_users()),
+            group_by: vec![],
+            aggregates: vec![NamedAggregate::new(
+                "p",
+                AggExpr::Custom {
+                    name: "product".into(),
+                    args: vec![Expr::column(age)],
+                    distinct: false,
+                    return_ty: ProximaType::Float64,
+                },
+            )],
+            having: None,
+            strategy: AggregateStrategy::Streaming,
+        };
+        let f = factory_with_users();
+        let ctx = ExecutionContext::default();
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], ProximaValue::Float64(30000.0));
     }
 
     #[tokio::test]
