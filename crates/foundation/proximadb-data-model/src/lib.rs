@@ -455,6 +455,94 @@ impl ProximaType {
             _ => ProximaType::Binary,
         }
     }
+
+    /// Canonical [`ProximaType`] → proto v1 `DataType` i32 wire code (ADR-024).
+    ///
+    /// These codes are DURABLE proto wire values and MUST match the historical
+    /// `CatalogDataType::to_proto_i32` mapping exactly (this is the single home
+    /// after `CatalogDataType` was deleted). The proto `DataType` enum only
+    /// covers the subset that `CatalogDataType` exposed; richer [`ProximaType`]
+    /// variants (unsigned ints, `Float16`, `Symbol`, `Jsonb`, `Array`, `Map`,
+    /// `Struct`, `Interval`, `Duration`, `ULID`, geo, `Null`) widen to the
+    /// closest representable code (matching the legacy lossy projection) so the
+    /// wire stays stable.
+    pub fn to_proto_i32(&self) -> i32 {
+        match self {
+            ProximaType::Boolean => 1,
+            // Int8 historically mapped to code 2; signed widths preserve their
+            // dedicated codes. Unsigned ints widen to the closest signed code.
+            ProximaType::Int8 | ProximaType::UInt8 => 2,
+            ProximaType::Int16 | ProximaType::UInt16 => 3,
+            ProximaType::Int32 | ProximaType::UInt32 => 4,
+            ProximaType::Int64 | ProximaType::UInt64 => 5,
+            ProximaType::Float16 | ProximaType::Float32 => 6,
+            ProximaType::Float64 => 7,
+            ProximaType::String | ProximaType::Symbol => 8,
+            ProximaType::Binary => 9,
+            ProximaType::Date => 10,
+            ProximaType::Time(_) => 11,
+            ProximaType::Timestamp(_) => 12,
+            ProximaType::TimestampTz(_) => 13,
+            ProximaType::Decimal { .. } => 14,
+            ProximaType::Uuid | ProximaType::ULID => 15,
+            ProximaType::Json | ProximaType::Jsonb => 16,
+            ProximaType::DenseVector { .. } => 20,
+            ProximaType::SparseVector { .. } => 21,
+            ProximaType::BinaryVector { .. } => 22,
+            // No dedicated proto code: project to the JSON carrier code (16),
+            // matching the legacy catalog fallback for structured/unknown types.
+            ProximaType::Array(_)
+            | ProximaType::Map { .. }
+            | ProximaType::Struct { .. }
+            | ProximaType::Interval(_)
+            | ProximaType::Duration(_)
+            | ProximaType::Point
+            | ProximaType::GeographyPoint
+            | ProximaType::Null => 16,
+        }
+    }
+
+    /// Proto v1 `DataType` i32 wire code → canonical [`ProximaType`] (ADR-024).
+    ///
+    /// Inverse of [`to_proto_i32`](Self::to_proto_i32) for the codes the proto
+    /// `DataType` enum defines. Codes map to the same [`ProximaType`] the
+    /// historical `CatalogDataType::from_proto_i32` produced via
+    /// `CatalogDataType::to_proxima_type` (dimensionless vectors keep `dim: 0`;
+    /// the real dimension lives in column properties / collection config).
+    /// Unknown codes return [`None`] (callers previously defaulted to `String`).
+    pub fn from_proto_i32(value: i32) -> Option<ProximaType> {
+        let ty = match value {
+            1 => ProximaType::Boolean,
+            2 => ProximaType::Int8,
+            3 => ProximaType::Int16,
+            4 => ProximaType::Int32,
+            5 => ProximaType::Int64,
+            6 => ProximaType::Float32,
+            7 => ProximaType::Float64,
+            8 => ProximaType::String,
+            9 => ProximaType::Binary,
+            10 => ProximaType::Date,
+            11 => ProximaType::Time(TimeUnit::Nanosecond),
+            12 => ProximaType::Timestamp(TimeUnit::Nanosecond),
+            13 => ProximaType::TimestampTz(TimeUnit::Nanosecond),
+            14 => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
+            15 => ProximaType::Uuid,
+            16 => ProximaType::Json,
+            20 => ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0,
+            },
+            21 => ProximaType::SparseVector {
+                element: VectorElement::Float32,
+            },
+            22 => ProximaType::BinaryVector { dim: 0 },
+            _ => return None,
+        };
+        Some(ty)
+    }
 }
 
 /// Map the canonical [`TimeUnit`] to Arrow's time unit.
@@ -682,6 +770,62 @@ mod tests {
             let back = ProximaType::from_arrow_type(&arrow);
             assert_eq!(ty, back, "Arrow round-trip must preserve {ty:?}");
         }
+    }
+
+    #[test]
+    fn proxima_type_proto_i32_preserves_legacy_catalog_codes() {
+        // DURABLE proto v1 DataType wire codes (formerly CatalogDataType::to_proto_i32).
+        // These exact pairings MUST NOT change without a wire migration.
+        let cases: [(ProximaType, i32); 19] = [
+            (ProximaType::Boolean, 1),
+            (ProximaType::Int8, 2),
+            (ProximaType::Int16, 3),
+            (ProximaType::Int32, 4),
+            (ProximaType::Int64, 5),
+            (ProximaType::Float32, 6),
+            (ProximaType::Float64, 7),
+            (ProximaType::String, 8),
+            (ProximaType::Binary, 9),
+            (ProximaType::Date, 10),
+            (ProximaType::Time(TimeUnit::Nanosecond), 11),
+            (ProximaType::Timestamp(TimeUnit::Nanosecond), 12),
+            (ProximaType::TimestampTz(TimeUnit::Nanosecond), 13),
+            (
+                ProximaType::Decimal {
+                    precision: 38,
+                    scale: 10,
+                },
+                14,
+            ),
+            (ProximaType::Uuid, 15),
+            (ProximaType::Json, 16),
+            (
+                ProximaType::DenseVector {
+                    element: VectorElement::Float32,
+                    dim: 0,
+                },
+                20,
+            ),
+            (
+                ProximaType::SparseVector {
+                    element: VectorElement::Float32,
+                },
+                21,
+            ),
+            (ProximaType::BinaryVector { dim: 0 }, 22),
+        ];
+        for (ty, code) in cases {
+            assert_eq!(ty.to_proto_i32(), code, "to_proto_i32 for {ty:?}");
+            // Round-trip: code -> canonical ProximaType (vectors keep dim:0).
+            assert_eq!(
+                ProximaType::from_proto_i32(code),
+                Some(ty.clone()),
+                "from_proto_i32({code})"
+            );
+        }
+        // Unknown codes return None (legacy defaulted to String at the call site).
+        assert_eq!(ProximaType::from_proto_i32(999), None);
+        assert_eq!(ProximaType::from_proto_i32(17), None);
     }
 
     #[test]
