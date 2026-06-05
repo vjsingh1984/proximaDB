@@ -27,11 +27,12 @@ use std::sync::Arc;
 use arrow_array::{Float32Array, RecordBatch, StringArray};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
-use datafusion::catalog::Session;
+use datafusion::catalog::{Session, TableFunctionImpl};
 use datafusion::datasource::{MemTable, TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::scalar::ScalarValue;
 
 use crate::proto::proximadb_v1::{SearchQuery, SearchVectorRecord, VectorSearchRequest};
 
@@ -146,6 +147,89 @@ impl TableProvider for VectorSearchTableProvider {
         let mem = MemTable::try_new(vector_matches_schema(), vec![vec![batch]])?;
         mem.scan(state, projection, filters, limit).await
     }
+}
+
+/// DataFusion table-valued function `vector_search(collection, query, k)` returning a
+/// [`VectorSearchTableProvider`] — makes the cross-modal join expressible directly in
+/// SQL (and so reachable from the pgwire DataFusion path):
+/// `SELECT d.title, v.score
+///  FROM docs d JOIN vector_search('docs_vec', '[0.1,0.2,0.3]', 10) v ON d.id = v.id`.
+/// Register once per `SessionContext`:
+/// `ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::new(ops)))`.
+pub struct VectorSearchTableFunction {
+    vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+}
+
+impl VectorSearchTableFunction {
+    /// Capture the live vector service the function will search.
+    pub fn new(vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>) -> Self {
+        Self { vector_ops }
+    }
+}
+
+impl std::fmt::Debug for VectorSearchTableFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VectorSearchTableFunction")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TableFunctionImpl for VectorSearchTableFunction {
+    fn call(&self, args: &[Expr]) -> DFResult<Arc<dyn TableProvider>> {
+        let collection = arg_string(args, 0).ok_or_else(|| {
+            DataFusionError::Plan(
+                "vector_search(collection, query, k): arg 1 must be a collection-name string"
+                    .into(),
+            )
+        })?;
+        let query_text = arg_string(args, 1).ok_or_else(|| {
+            DataFusionError::Plan("vector_search: arg 2 must be a '[..]' query-vector string".into())
+        })?;
+        let top_k = arg_i64(args, 2).ok_or_else(|| {
+            DataFusionError::Plan("vector_search: arg 3 must be an integer top_k".into())
+        })?;
+        let query_vector = parse_vector_literal(&query_text).ok_or_else(|| {
+            DataFusionError::Plan(format!("vector_search: cannot parse query vector {query_text:?}"))
+        })?;
+        Ok(Arc::new(VectorSearchTableProvider::new(
+            self.vector_ops.clone(),
+            collection,
+            query_vector,
+            top_k.max(0) as u32,
+            None,
+        )))
+    }
+}
+
+/// Extract a string-literal argument at position `i`.
+fn arg_string(args: &[Expr], i: usize) -> Option<String> {
+    match args.get(i)? {
+        Expr::Literal(ScalarValue::Utf8(Some(s)), _)
+        | Expr::Literal(ScalarValue::LargeUtf8(Some(s)), _) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// Extract an integer-literal argument at position `i`.
+fn arg_i64(args: &[Expr], i: usize) -> Option<i64> {
+    match args.get(i)? {
+        Expr::Literal(ScalarValue::Int64(Some(n)), _) => Some(*n),
+        Expr::Literal(ScalarValue::Int32(Some(n)), _) => Some(*n as i64),
+        Expr::Literal(ScalarValue::UInt64(Some(n)), _) => Some(*n as i64),
+        _ => None,
+    }
+}
+
+/// Parse a pgvector-style text literal `[0.1, 0.2, 0.3]` into `Vec<f32>`.
+fn parse_vector_literal(text: &str) -> Option<Vec<f32>> {
+    let inner = text.trim().strip_prefix('[')?.strip_suffix(']')?;
+    if inner.trim().is_empty() {
+        return Some(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|p| p.trim().parse::<f32>().ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -336,5 +420,58 @@ mod tests {
             .map(|b| b.num_rows())
             .sum();
         assert_eq!(joined, 2); // a + b match docs; c has no doc, z has no match.
+    }
+
+    #[test]
+    fn parses_pgvector_text_literal() {
+        assert_eq!(parse_vector_literal("[0.1, 0.2, 0.3]"), Some(vec![0.1, 0.2, 0.3]));
+        assert_eq!(parse_vector_literal("[]"), Some(vec![]));
+        assert_eq!(parse_vector_literal("0.1,0.2"), None); // missing brackets
+    }
+
+    /// The customer-facing moat: a single SQL statement (via the `vector_search` UDTF)
+    /// joins vector similarity with relational data — the shape a pgwire client writes.
+    #[tokio::test]
+    async fn vector_search_udtf_joins_relational_in_sql() {
+        let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(FixedVectorOps {
+            matches: vec![("a".into(), 0.95), ("b".into(), 0.80), ("c".into(), 0.70)],
+        });
+        let ctx = SessionContext::new();
+        ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::new(ops)));
+
+        let docs_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("title", DataType::Utf8, false),
+        ]));
+        let docs = RecordBatch::try_new(
+            docs_schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["a", "b", "z"])),
+                Arc::new(StringArray::from(vec!["Alpha", "Bravo", "Zulu"])),
+            ],
+        )
+        .unwrap();
+        ctx.register_table(
+            "docs",
+            Arc::new(MemTable::try_new(docs_schema, vec![vec![docs]]).unwrap()),
+        )
+        .unwrap();
+
+        let n: usize = ctx
+            .sql(
+                "SELECT d.title, v.score \
+                 FROM docs d JOIN vector_search('docs_vec', '[0.1,0.2,0.3]', 10) v \
+                   ON d.id = v.id \
+                 ORDER BY v.score DESC",
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(n, 2); // a + b
     }
 }
