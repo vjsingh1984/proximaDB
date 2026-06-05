@@ -1353,6 +1353,39 @@ impl Scope {
 }
 
 // =========================================================================
+// CREATE FUNCTION body lowering (F5)
+// =========================================================================
+
+/// Lower a SQL-language function body — a scalar expression over the function's parameters —
+/// into an engine-neutral [`Expr`]. Each parameter is exposed as a column (parameter `i` →
+/// ordinal `i`) so the body references it by name; the resulting `Expr` feeds
+/// `proximadb_functions::sql_bodied_scalar` to register a `CREATE FUNCTION` as a registry
+/// function that runs on both engines (F5).
+///
+/// Uses the SAME `lower_expr` the SELECT path uses, so a function body supports the full scalar
+/// grammar (arithmetic, builtins, CASE, …). Parse errors and references to unknown parameters
+/// return a clear [`FrontendError`].
+pub fn lower_function_body(
+    body_sql: &str,
+    params: &[(String, ProximaType)],
+) -> Result<Expr, FrontendError> {
+    let columns: Vec<ColumnInfo> = params
+        .iter()
+        .map(|(name, ty)| ColumnInfo::new(name.clone(), ty.clone(), true))
+        .collect();
+    let schema = RelationalSchema::new(columns);
+    let scope = Scope::from_schema(&schema);
+
+    let mut parser = Parser::new(&GenericDialect {})
+        .try_with_sql(body_sql)
+        .map_err(|e| FrontendError::Parse(format!("function body: {e}")))?;
+    let expr = parser
+        .parse_expr()
+        .map_err(|e| FrontendError::Parse(format!("function body: {e}")))?;
+    lower_expr(&expr, &scope)
+}
+
+// =========================================================================
 // Tests
 // =========================================================================
 
@@ -1911,5 +1944,32 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, FrontendError::AmbiguousColumn(_)));
+    }
+
+    #[test]
+    fn lower_function_body_lowers_param_expression() {
+        // F5: `CREATE FUNCTION double(x BIGINT) AS 'x * 2'` body → BinaryOp(Mul, Col(0), Lit).
+        let body =
+            lower_function_body("x * 2", &[("x".to_string(), ProximaType::Int64)]).unwrap();
+        match body {
+            Expr::BinaryOp { op, left, right } => {
+                assert_eq!(op, BinaryOp::Mul);
+                assert!(matches!(*left, Expr::Column(ColumnRef { ordinal: 0, .. })));
+                assert!(matches!(*right, Expr::Literal { .. }));
+            }
+            other => panic!("expected BinaryOp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lower_function_body_supports_builtins_and_rejects_unknown_param() {
+        // body may call builtins (resolved at execution against the registry) ...
+        assert!(
+            lower_function_body("abs(x)", &[("x".to_string(), ProximaType::Float64)]).is_ok()
+        );
+        // ... and a reference to an undeclared parameter errors clearly.
+        let err = lower_function_body("y + 1", &[("x".to_string(), ProximaType::Int64)])
+            .unwrap_err();
+        assert!(matches!(err, FrontendError::ColumnNotFound(_)));
     }
 }
