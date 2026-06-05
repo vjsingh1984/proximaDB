@@ -452,9 +452,11 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         plan.contains("Join kind=INNER") && plan.contains("strategy=Hash"),
         "join strategy disclosed as Hash: {plan}"
     );
-    // Plain EXPLAIN does NOT execute → no ANALYZE metrics.
+    // Plain EXPLAIN does NOT execute → no ANALYZE metrics (whole-query or per-op).
     assert!(
-        !plan.contains("execution_rows") && !plan.contains("execution_elapsed_us"),
+        !plan.contains("execution_rows")
+            && !plan.contains("execution_elapsed_us")
+            && !plan.contains("actual rows="),
         "plain EXPLAIN omits ANALYZE execution metrics: {plan}"
     );
 
@@ -476,6 +478,11 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
     assert!(
         plan.contains("execution_elapsed_us"),
         "EXPLAIN ANALYZE reports measured elapsed time: {plan}"
+    );
+    // Per-operator actuals annotate the plan lines; the inner join emits 3 rows.
+    assert!(
+        plan.contains("actual rows=3"),
+        "EXPLAIN ANALYZE annotates per-operator actual rows (join=3): {plan}"
     );
 
     // (3i) EXPLAIN of a simple (non-engaging) SELECT stays route-only: no physical

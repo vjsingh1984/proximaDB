@@ -32,7 +32,7 @@ use proximadb_relational_engine::{
     EngineReaderFactory, InMemoryRelationalEngine, RelationalWriter,
 };
 use proximadb_relational_executor::{
-    ExecError, ExecutionContext, ReaderFactory, build_executor, collect,
+    ExecError, ExecMetrics, ExecutionContext, NodeMetric, ReaderFactory, build_executor, collect,
 };
 use proximadb_relational_frontend::{CatalogLookup, lower_sql};
 use proximadb_relational_planner::{
@@ -289,6 +289,33 @@ async fn execute_physical<F: ReaderFactory>(
         .await
         .map_err(|e| format!("scan: {e}"))?;
     Ok(PipelineResult { schema, rows })
+}
+
+/// Like [`execute_physical`] but meters every operator (EXPLAIN ANALYZE): returns the
+/// result plus per-operator [`NodeMetric`]s in pre-order (aligned with
+/// `explain_physical`'s line order). The executor tree is dropped before reading the
+/// metrics so each `MeteredExec` has flushed its counters.
+async fn execute_physical_metered<F: ReaderFactory>(
+    physical: PhysicalPlan,
+    factory: &F,
+) -> Result<(PipelineResult, Vec<NodeMetric>), String> {
+    let metrics = Arc::new(ExecMetrics::new());
+    let result = {
+        let mut exec = build_executor(
+            physical,
+            factory,
+            &ExecutionContext::with_metrics(metrics.clone()),
+        )
+        .map_err(|e| format!("build_executor: {e}"))?;
+        exec.open().await.map_err(|e| format!("open: {e}"))?;
+        let schema = exec.schema().clone();
+        let rows = collect(&mut *exec)
+            .await
+            .map_err(|e| format!("scan: {e}"))?;
+        PipelineResult { schema, rows }
+        // `exec` dropped here → MeteredExec counters flush into `metrics`.
+    };
+    Ok((result, metrics.snapshot()))
 }
 
 /// Lower + plan a SELECT over an already-prepared `SnapshotCatalog` to a Volcano
@@ -1201,17 +1228,43 @@ async fn route_and_plan_select(
         )
     {
         if let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml).await {
-            explanation.physical_plan = Some(explain_physical(&physical));
+            let base_lines = explain_physical(&physical);
             if analyze {
-                // EXPLAIN ANALYZE: run the query (read-only) and record actuals.
+                // EXPLAIN ANALYZE: run the query (read-only) and record actuals —
+                // whole-query totals plus per-operator rows/time annotated onto the
+                // plan lines (metrics are pre-order aligned with `base_lines`).
                 let started = std::time::Instant::now();
-                let result = execute_physical(physical, &snapshot).await?;
+                let (result, node_metrics) = execute_physical_metered(physical, &snapshot).await?;
                 explanation.execution_rows = Some(result.rows.len() as u64);
                 explanation.execution_elapsed_us = Some(started.elapsed().as_micros() as u64);
+                explanation.physical_plan = Some(annotate_plan_lines(base_lines, &node_metrics));
+            } else {
+                explanation.physical_plan = Some(base_lines);
             }
         }
     }
     Ok(explanation)
+}
+
+/// Append per-operator actuals to each physical-plan line. Metrics are pre-order
+/// aligned with the lines (both walk the plan parent-first, left-to-right); if the
+/// counts ever disagree, leave the lines unannotated (whole-query metrics still
+/// reported) rather than mislabel.
+fn annotate_plan_lines(lines: Vec<String>, metrics: &[NodeMetric]) -> Vec<String> {
+    if lines.len() != metrics.len() {
+        return lines;
+    }
+    lines
+        .into_iter()
+        .zip(metrics)
+        .map(|(line, m)| {
+            format!(
+                "{line} (actual rows={} time={}us)",
+                m.rows,
+                m.elapsed_ns / 1000
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1538,7 +1591,9 @@ mod tests {
         // WHERE subqueries (IN/EXISTS) lower to Semi/Anti joins → engage PATH B,
         // even on a single FROM table (incl. when ANDed with a plain predicate).
         assert!(gate("SELECT id FROM inv WHERE id IN (SELECT id FROM dept)"));
-        assert!(gate("SELECT id FROM inv WHERE EXISTS (SELECT id FROM dept)"));
+        assert!(gate(
+            "SELECT id FROM inv WHERE EXISTS (SELECT id FROM dept)"
+        ));
         assert!(gate(
             "SELECT id FROM inv WHERE qty > 5 AND id IN (SELECT id FROM dept)"
         ));

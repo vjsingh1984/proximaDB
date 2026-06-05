@@ -26,16 +26,18 @@
 
 use async_trait::async_trait;
 use proximadb_data_model::{ProximaType, ProximaValue, TimeUnit};
+use proximadb_functions::builtins;
 use proximadb_relational_algebra::{
     AggregateExpr, JoinKind, JoinStrategy, NamedAggregate, NamedExpr, SortKey, TableId,
 };
 use proximadb_relational_planner::{
     AggregateStrategy, DistinctStrategy, PhysicalPlan, ScanAccess, SortStrategy,
 };
-use proximadb_functions::builtins;
 use proximadb_relational_reader::{ReadSnapshot, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{BinaryOp, Expr, ExprError, RelationalRow, RelationalSchema};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use thiserror::Error;
 
 // =========================================================================
@@ -76,17 +78,88 @@ pub enum ExecError {
 #[derive(Clone)]
 pub struct ExecutionContext {
     pub snapshot: ReadSnapshot,
+    /// When set (EXPLAIN ANALYZE), `build_executor` wraps every operator in a
+    /// [`MeteredExec`] that records actual rows + inclusive time. `None` on the
+    /// normal execution path → no wrapping, zero overhead.
+    pub metrics: Option<Arc<ExecMetrics>>,
 }
 
 impl ExecutionContext {
     pub fn new(snapshot: ReadSnapshot) -> Self {
-        Self { snapshot }
+        Self {
+            snapshot,
+            metrics: None,
+        }
+    }
+
+    /// Context that meters every operator into `metrics` (EXPLAIN ANALYZE).
+    pub fn with_metrics(metrics: Arc<ExecMetrics>) -> Self {
+        Self {
+            snapshot: ReadSnapshot::latest(),
+            metrics: Some(metrics),
+        }
     }
 }
 
 impl Default for ExecutionContext {
     fn default() -> Self {
         Self::new(ReadSnapshot::latest())
+    }
+}
+
+// =========================================================================
+// Per-operator execution metrics (EXPLAIN ANALYZE)
+// =========================================================================
+
+/// Actuals recorded for one physical-plan operator during EXPLAIN ANALYZE.
+#[derive(Debug, Clone)]
+pub struct NodeMetric {
+    /// Operator keyword (matches the planner's `explain_physical` line order).
+    pub label: String,
+    /// Rows this operator emitted.
+    pub rows: u64,
+    /// Wall-clock nanoseconds spent in this operator's `next_row`, INCLUSIVE of
+    /// children (pull model) — matches Postgres "actual time".
+    pub elapsed_ns: u128,
+}
+
+/// Collector shared by every [`MeteredExec`] in a metered run. Operators are
+/// allocated a pre-order id at build time (`alloc`, parent before children) so the
+/// metric vector aligns index-for-index with `explain_physical`'s line order.
+#[derive(Default)]
+pub struct ExecMetrics {
+    nodes: Mutex<Vec<NodeMetric>>,
+}
+
+impl ExecMetrics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register an operator and return its pre-order id (its slot index).
+    fn alloc(&self, label: &str) -> usize {
+        let mut nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
+        nodes.push(NodeMetric {
+            label: label.to_string(),
+            rows: 0,
+            elapsed_ns: 0,
+        });
+        nodes.len() - 1
+    }
+
+    /// Record the final counters for operator `idx` (called from `MeteredExec::drop`).
+    fn record(&self, idx: usize, rows: u64, elapsed_ns: u128) {
+        let mut nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(slot) = nodes.get_mut(idx) {
+            slot.rows = rows;
+            slot.elapsed_ns = elapsed_ns;
+        }
+    }
+
+    /// Per-operator metrics in pre-order. Call after the executor tree is dropped
+    /// (each [`MeteredExec`] flushes its counters on `Drop`).
+    pub fn snapshot(&self) -> Vec<NodeMetric> {
+        self.nodes.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
@@ -132,6 +205,13 @@ pub fn build_executor<F: ReaderFactory>(
     factory: &F,
     ctx: &ExecutionContext,
 ) -> Result<Box<dyn ExecNode>, ExecError> {
+    // Allocate this operator's metric id BEFORE the match recurses into children, so
+    // ids are assigned parent-first / left-to-right — exactly the pre-order the
+    // planner's `explain_physical` renders, keeping metric[i] aligned with line[i].
+    let metric = ctx
+        .metrics
+        .as_ref()
+        .map(|m| (m.clone(), m.alloc(plan_label(&plan))));
     let node: Box<dyn ExecNode> = match plan {
         PhysicalPlan::Scan {
             table,
@@ -221,7 +301,86 @@ pub fn build_executor<F: ReaderFactory>(
         } => Box::new(ValuesExec::new(rows, output_schema)),
     };
     let _ = (DistinctStrategy::Hash, SortStrategy::InMemory); // silence "imported but only matched in path"
-    Ok(node)
+    Ok(match metric {
+        Some((metrics, idx)) => Box::new(MeteredExec::new(node, idx, metrics)),
+        None => node,
+    })
+}
+
+/// Operator keyword for a physical-plan node — matches the planner's
+/// `explain_physical` line keywords (and is allocated in the same pre-order), so
+/// per-operator metrics line up with the rendered plan.
+fn plan_label(plan: &PhysicalPlan) -> &'static str {
+    match plan {
+        PhysicalPlan::Scan { .. } => "Scan",
+        PhysicalPlan::Filter { .. } => "Filter",
+        PhysicalPlan::Project { .. } => "Project",
+        PhysicalPlan::Join { .. } => "Join",
+        PhysicalPlan::Aggregate { .. } => "Aggregate",
+        PhysicalPlan::Sort { .. } => "Sort",
+        PhysicalPlan::Limit { .. } => "Limit",
+        PhysicalPlan::Distinct { .. } => "Distinct",
+        PhysicalPlan::Union { .. } => "Union",
+        PhysicalPlan::Values { .. } => "Values",
+    }
+}
+
+// =========================================================================
+// MeteredExec — transparent per-operator metrics wrapper (EXPLAIN ANALYZE)
+// =========================================================================
+
+/// Wraps a child operator, recording rows emitted and inclusive `next_row` time.
+/// Counters are flushed to the shared [`ExecMetrics`] on `Drop` — the pipeline
+/// drains via [`collect`] and never calls `close`, so `Drop` is the reliable point.
+struct MeteredExec {
+    inner: Box<dyn ExecNode>,
+    idx: usize,
+    metrics: Arc<ExecMetrics>,
+    rows: u64,
+    elapsed_ns: u128,
+}
+
+impl MeteredExec {
+    fn new(inner: Box<dyn ExecNode>, idx: usize, metrics: Arc<ExecMetrics>) -> Self {
+        Self {
+            inner,
+            idx,
+            metrics,
+            rows: 0,
+            elapsed_ns: 0,
+        }
+    }
+}
+
+#[async_trait]
+impl ExecNode for MeteredExec {
+    fn schema(&self) -> &RelationalSchema {
+        self.inner.schema()
+    }
+
+    async fn open(&mut self) -> Result<(), ExecError> {
+        self.inner.open().await
+    }
+
+    async fn next_row(&mut self) -> Result<Option<RelationalRow>, ExecError> {
+        let started = Instant::now();
+        let result = self.inner.next_row().await;
+        self.elapsed_ns += started.elapsed().as_nanos();
+        if matches!(result, Ok(Some(_))) {
+            self.rows += 1;
+        }
+        result
+    }
+
+    async fn close(&mut self) -> Result<(), ExecError> {
+        self.inner.close().await
+    }
+}
+
+impl Drop for MeteredExec {
+    fn drop(&mut self) {
+        self.metrics.record(self.idx, self.rows, self.elapsed_ns);
+    }
 }
 
 // =========================================================================
@@ -1780,10 +1939,7 @@ impl Accumulator {
             (_, AggregateExpr::StringAgg { .. }) => {
                 Err(ExecError::UnsupportedAggregate("STRING_AGG".into()))
             }
-            (
-                Accumulator::Custom { acc, distinct },
-                AggregateExpr::Custom { name, args, .. },
-            ) => {
+            (Accumulator::Custom { acc, distinct }, AggregateExpr::Custom { name, args, .. }) => {
                 let acc = acc
                     .as_mut()
                     .ok_or_else(|| ExecError::UnsupportedAggregate(name.clone()))?;
@@ -2454,6 +2610,41 @@ mod tests {
             rows.iter().filter(|r| r[3] == ProximaValue::Null).count(),
             1,
             "unmatched left (carol) → NULL right"
+        );
+    }
+
+    #[tokio::test]
+    async fn metered_exec_aligns_metrics_pre_order_with_plan() {
+        // Filter(Join(Scan users, Scan orders)) → pre-order labels must be
+        // [Filter, Join, Scan, Scan], matching how `explain_physical` renders the
+        // tree. The root (Filter) row count equals the drained row count.
+        let f = VecReaderFactory::new();
+        let plan = PhysicalPlan::Filter {
+            input: Box::new(users_orders_join(
+                JoinKind::Inner,
+                orders_with_unmatched(),
+                JoinStrategy::NestedLoop,
+                &f,
+            )),
+            predicate: Expr::literal(ProximaValue::Boolean(true)),
+        };
+        let metrics = std::sync::Arc::new(ExecMetrics::new());
+        let ctx = ExecutionContext::with_metrics(metrics.clone());
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        drop(exec); // flush MeteredExec counters
+        let nodes = metrics.snapshot();
+        let labels: Vec<&str> = nodes.iter().map(|n| n.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["Filter", "Join", "Scan", "Scan"],
+            "metrics align pre-order with the plan tree"
+        );
+        assert_eq!(
+            nodes[0].rows as usize,
+            rows.len(),
+            "root (Filter) rows == drained rows"
         );
     }
 
