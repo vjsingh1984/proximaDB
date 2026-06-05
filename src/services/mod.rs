@@ -181,6 +181,7 @@ pub mod embedding_drainer;
 pub mod events;
 pub mod external_collection;
 pub mod graph_collection;
+pub mod function_store;
 pub mod operations;
 pub mod queue_fs_adapter;
 pub mod rank_profile_store;
@@ -213,6 +214,9 @@ pub use embedding_drainer::{
     EmbeddingDrainer, EmbeddingDrainerConfig,
 };
 pub use events::EventLog;
+pub use function_store::{
+    CanonicalWalFunctionStore, FUNCTIONS_COLLECTION_ID, FunctionStore, StoredFunction,
+};
 pub use graph_collection::GraphCollectionService;
 pub use operations::VectorOps;
 pub use rank_profile_store::{
