@@ -151,6 +151,22 @@ use datafusion::prelude::*;
 /// - Custom vector distance functions (cosine, euclidean, dot_product)
 /// - Optimizer rules for predicate pushdown
 pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
+    build_session_context(None)
+}
+
+/// Like [`create_session_context`] but also registers the live `vector_search` table function
+/// (F4), backed by `vector_ops` — so a cross-modal
+/// `... JOIN vector_search('coll', '[..]', k) v ON d.id = v.id` is expressible directly over
+/// the DataFusion path. Used by the pgwire OLAP route, which owns the vector service.
+pub fn create_session_context_with_vector_ops(
+    vector_ops: std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>,
+) -> datafusion::error::Result<SessionContext> {
+    build_session_context(Some(vector_ops))
+}
+
+fn build_session_context(
+    vector_ops: Option<std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>>,
+) -> datafusion::error::Result<SessionContext> {
     let config = SessionConfig::new()
         .with_batch_size(8192)
         .with_target_partitions(num_cpus::get());
@@ -173,6 +189,15 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
     registry_udf::register_proxima_scalars(&ctx, proximadb_functions::builtins());
     // F3b: bind every registry aggregate as a DataFusion AggregateUDF (e.g. `product`).
     registry_udf::register_proxima_aggregates(&ctx, proximadb_functions::builtins());
+
+    // F4: the cross-modal moat — `vector_search(collection, query, k)` as a joinable table,
+    // backed by the live vector service (registered only when one is supplied).
+    if let Some(ops) = vector_ops {
+        ctx.register_udtf(
+            "vector_search",
+            std::sync::Arc::new(cross_modal::VectorSearchTableFunction::new(ops)),
+        );
+    }
 
     Ok(ctx)
 }

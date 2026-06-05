@@ -484,4 +484,26 @@ mod tests {
             .sum();
         assert_eq!(n, 2); // a + b
     }
+
+    #[tokio::test]
+    async fn live_session_context_registers_vector_search() {
+        // F4: the live session-context builder registers `vector_search` itself, so the
+        // cross-modal table function is available over the DataFusion path WITHOUT a manual
+        // register_udtf — this is exactly how the pgwire OLAP route wires it.
+        let ops: Arc<dyn proximadb_runtime::VectorOpsPort> = Arc::new(FixedVectorOps {
+            matches: vec![("a".into(), 0.95), ("b".into(), 0.80)],
+        });
+        let ctx = crate::datafusion::create_session_context_with_vector_ops(ops).unwrap();
+        let n: usize = ctx
+            .sql("SELECT id, score FROM vector_search('docs_vec', '[0.1,0.2]', 10)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(n, 2);
+    }
 }
