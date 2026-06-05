@@ -145,6 +145,13 @@ impl ProximaFunctionRegistry {
     pub fn scalar_count(&self) -> usize {
         self.scalars.len()
     }
+
+    /// All registered scalar definitions (incl. alias entries, which share the same
+    /// `Arc<ScalarFunctionDef>` as their target). Used by engine adapters that bind every
+    /// registry function into a native runtime (e.g. the DataFusion `ScalarUDF` adapter).
+    pub fn scalar_defs(&self) -> Vec<Arc<ScalarFunctionDef>> {
+        self.scalars.iter().map(|e| e.value().clone()).collect()
+    }
 }
 
 /// The process-wide builtin scalar registry. Builtin functions are global (every query

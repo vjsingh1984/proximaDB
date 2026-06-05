@@ -6537,6 +6537,7 @@ dependencies = [
  "proximadb-embedded-common",
  "proximadb-embedding",
  "proximadb-filter-expression",
+ "proximadb-functions",
  "proximadb-graph",
  "proximadb-graph-arrow",
  "proximadb-graph-query",

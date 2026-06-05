@@ -319,7 +319,18 @@ fn lower_scalar_function(name: &str, args: Vec<Expr>) -> DFResult<Expr> {
         "floor" => f::floor(one(name, args)?),
         "sqrt" => f::sqrt(one(name, args)?),
         "concat" => f::concat(args), // variadic
-        other => return Err(unsupported(format!("function {other}"))),
+        // F2 fallback: a registry function DataFusion lacks natively (custom functions; and via
+        // F4/F5 vector distances + user CREATE FUNCTIONs). Bind its engine-neutral kernel as a
+        // ScalarUDF and call it. Variadic registry funcs aren't fixed-arity-adaptable here.
+        other => match proximadb_functions::builtins().lookup_scalar(other) {
+            Some(def) if !def.signature.variadic => {
+                let udf = std::sync::Arc::new(super::registry_udf::proxima_scalar_udf(def));
+                Expr::ScalarFunction(datafusion::logical_expr::expr::ScalarFunction::new_udf(
+                    udf, args,
+                ))
+            }
+            _ => return Err(unsupported(format!("function {other}"))),
+        },
     })
 }
 
@@ -368,7 +379,7 @@ fn lower_binary_op(op: &RBinOp) -> DFResult<Operator> {
 }
 
 /// Convert a `ProximaValue` literal to a DataFusion `ScalarValue` (common scalar types).
-fn proxima_value_to_scalar(v: &ProximaValue) -> DFResult<ScalarValue> {
+pub(crate) fn proxima_value_to_scalar(v: &ProximaValue) -> DFResult<ScalarValue> {
     Ok(match v {
         ProximaValue::Null => ScalarValue::Null,
         ProximaValue::Boolean(b) => ScalarValue::Boolean(Some(*b)),

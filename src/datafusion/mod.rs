@@ -70,6 +70,10 @@ pub mod logical_lowering;
 // DataFusion-joinable table so one SQL plan joins vector similarity with relational data.
 pub mod cross_modal;
 
+// F2: registry -> DataFusion scalar-UDF adapter. Binds engine-neutral ProximaFunctionRegistry
+// kernels into DataFusion as ScalarUDFs (native builtins stay the fast path).
+pub mod registry_udf;
+
 // Re-exports for convenience
 pub use table_provider::{
     // Original format-based provider
@@ -161,6 +165,12 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
     // - mc_price: Monte Carlo European option pricing (financial compute benchmark).
     // Deferred: cosine_distance, euclidean_distance, etc.
     ctx.register_udf(udf::mc_price_udf());
+
+    // F2: bind every NON-native registry scalar as a DataFusion ScalarUDF (the consolidated
+    // engine-neutral functions defined once in proximadb-functions). DataFusion's own
+    // vectorized builtins (UPPER/ABS/…) stay the fast path; this covers registry/custom
+    // functions DataFusion lacks.
+    registry_udf::register_proxima_scalars(&ctx, proximadb_functions::builtins());
 
     Ok(ctx)
 }

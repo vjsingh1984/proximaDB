@@ -223,6 +223,7 @@ proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
+proximadb-functions = { path = "crates/foundation/proximadb-functions" }
 proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
 proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
 proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
