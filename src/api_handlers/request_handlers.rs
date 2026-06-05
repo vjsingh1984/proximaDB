@@ -251,29 +251,24 @@ pub struct UnifiedHandlers {
     /// Optional hybrid runtime configuration (weights, seeding). Thread-safe.
     pub hybrid_runtime:
         std::sync::Arc<std::sync::RwLock<Option<crate::core::config::HybridRuntimeConfig>>>,
-    /// Cache for collection ID resolution to reduce metadata backend lookups
-    /// Reduces latency from ~5ms/request to ~0.1ms on cache hits
-    collection_id_cache: CollectionIdCache,
     /// Query facade adapter for unified query execution
     /// Optional for backward compatibility during feature flag transition
     /// When set, SQL queries route through the unified facade for consistent routing and metrics
     /// Uses RwLock for thread-safe post-initialization setting (similar to hybrid_runtime)
     query_adapter: std::sync::RwLock<Option<Arc<QueryFacadeAdapter>>>,
-    /// DML service for EXPLAIN and row-level DML routing (EXPLAIN INSERT/UPDATE/DELETE queries
-    /// detected in execute_sql_v1 are dispatched here instead of the legacy SQL frontend).
-    /// Optional; settable post-initialization via `set_dml_service`.
-    dml_service: std::sync::RwLock<Option<Arc<DmlService>>>,
-    /// Set-once resolver — populated after server bootstrap so the
-    /// v1 vector batch path can look up each collection's
-    /// `canonical_embedding_precision` and coerce records to that
-    /// precision before WAL append. Without this, REST clients
-    /// inserting into a fp16 collection see their records written
-    /// (and metered) as fp32 — the queue-drainer ingest path coerces
-    /// correctly via BulkLoadDrainerSink but the direct REST path
-    /// bypasses that sink.
-    precision_resolver: std::sync::OnceLock<
-        Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
-    >,
+    /// Canonical record-batch orchestration service (TD-104 S3-c).
+    ///
+    /// Owns the record insert/upsert/delete orchestration AND the shared
+    /// resolution state that ROOT's other paths reuse: the collection-ID
+    /// cache, the post-construction `DmlService` handle (schema validation +
+    /// row-count stats and EXPLAIN/DML routing), and the set-once
+    /// `CanonicalPrecisionResolver`. ROOT delegates its inherent
+    /// record-batch handlers, its `RecordOpsPort` impl, and the
+    /// resolution/cache/setter helpers here so there is ONE logical owner of
+    /// this state and no duplicated logic (Convergence Gate). The Arrow Flight
+    /// write path holds this same service as its `RecordOpsPort` directly, so
+    /// it no longer routes through ROOT.
+    record_ops: Arc<crate::api_handlers::record_ops_service::RecordOpsService>,
 }
 
 impl UnifiedHandlers {
@@ -306,6 +301,12 @@ impl UnifiedHandlers {
     ) -> Self {
         let graph_execution_service: Arc<dyn GraphExecutionService> =
             graph_operations_service.clone();
+        let record_ops = Arc::new(
+            crate::api_handlers::record_ops_service::RecordOpsService::new(
+                collection_service.clone(),
+                vector_operations_service.clone(),
+            ),
+        );
         Self {
             collection_service,
             vector_operations_service,
@@ -317,10 +318,8 @@ impl UnifiedHandlers {
             graph_execution_service,
             metrics_query_service: None,
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
-            collection_id_cache: CollectionIdCache::new(),
             query_adapter: std::sync::RwLock::new(None),
-            dml_service: std::sync::RwLock::new(None),
-            precision_resolver: std::sync::OnceLock::new(),
+            record_ops,
         }
     }
 
@@ -337,6 +336,12 @@ impl UnifiedHandlers {
     ) -> Self {
         let graph_execution_service: Arc<dyn GraphExecutionService> =
             graph_operations_service.clone();
+        let record_ops = Arc::new(
+            crate::api_handlers::record_ops_service::RecordOpsService::new(
+                collection_service.clone(),
+                vector_operations_service.clone(),
+            ),
+        );
         Self {
             collection_service,
             vector_operations_service,
@@ -348,10 +353,8 @@ impl UnifiedHandlers {
             graph_execution_service,
             metrics_query_service: Some(metrics_query_service),
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
-            collection_id_cache: CollectionIdCache::new(),
             query_adapter: std::sync::RwLock::new(None),
-            dml_service: std::sync::RwLock::new(None),
-            precision_resolver: std::sync::OnceLock::new(),
+            record_ops,
         }
     }
 
@@ -376,17 +379,23 @@ impl UnifiedHandlers {
             .and_then(|guard| guard.clone())
     }
 
+    /// Canonical record-batch orchestration service shared with the Arrow
+    /// Flight write path (injected as its `RecordOpsPort`). TD-104 S3-c.
+    pub fn record_ops(&self) -> Arc<crate::api_handlers::record_ops_service::RecordOpsService> {
+        self.record_ops.clone()
+    }
+
     /// Wire a `DmlService` for EXPLAIN routing through the gRPC `ExecuteSql` RPC.
-    /// Callable post-initialization; thread-safe.
+    /// Callable post-initialization; thread-safe. Delegated to the shared
+    /// `RecordOpsService` so the record-batch path (REST/gRPC/Arrow Flight) and
+    /// ROOT's EXPLAIN/DML routing observe the same handle (TD-104 S3-c).
     pub fn set_dml_service(&self, svc: Arc<DmlService>) {
-        if let Ok(mut guard) = self.dml_service.write() {
-            *guard = Some(svc);
-            tracing::info!("DmlService set on UnifiedHandlers for EXPLAIN routing");
-        }
+        self.record_ops.set_dml_service(svc);
+        tracing::info!("DmlService set on UnifiedHandlers for EXPLAIN routing");
     }
 
     fn get_dml_service(&self) -> Option<Arc<DmlService>> {
-        self.dml_service.read().ok().and_then(|guard| guard.clone())
+        self.record_ops.get_dml_service()
     }
 
     /// Post-construction setter for the canonical-precision resolver.
@@ -402,26 +411,14 @@ impl UnifiedHandlers {
         &self,
         resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
     ) {
-        if self.precision_resolver.set(resolver).is_ok() {
-            tracing::info!(
-                "✅ CanonicalPrecisionResolver wired into UnifiedHandlers — \
-                 REST/gRPC inserts into non-fp32 collections will coerce records"
-            );
-        }
-    }
-
-    /// Mirror of `CollectionManager::collection_table_identifier`
-    /// (src/services/collection/manager.rs:2048) so the resolver hits
-    /// the same catalog key the manager wrote at create time.
-    fn collection_to_table_identifier(
-        target_collection: &str,
-    ) -> proximadb_catalog::TableIdentifier {
-        let parsed = proximadb_catalog::TableIdentifier::parse(target_collection);
-        if parsed.namespace.is_empty() {
-            proximadb_catalog::TableIdentifier::new(vec!["default".to_string()], parsed.name)
-        } else {
-            parsed
-        }
+        // Delegated to the shared `RecordOpsService` so the record-batch path
+        // and ROOT's v1 vector-batch coercion observe the same resolver
+        // (TD-080/TD-082, TD-104 S3-c).
+        self.record_ops.set_precision_resolver(resolver);
+        tracing::info!(
+            "✅ CanonicalPrecisionResolver wired into UnifiedHandlers — \
+             REST/gRPC inserts into non-fp32 collections will coerce records"
+        );
     }
 
     /// Coerce every embedding cell on every record to the collection's
@@ -447,63 +444,18 @@ impl UnifiedHandlers {
     /// * On resolver error, log a `warn` and keep records at input precision
     ///   (matches the pre-helper behaviour; cataloging mismatches surface
     ///   via the per-precision canonical_bytes metric).
+    /// Delegates to the shared `RecordOpsService` (single source of truth for
+    /// the v2 precision-coercion contract). ROOT's v1 vector-batch path still
+    /// calls this; the record-batch handlers now call the service directly.
+    /// TD-080/TD-082, TD-104 S3-c.
     async fn coerce_records_to_canonical_precision(
         &self,
         records: &mut [proximadb_records::ProximaRecord],
         collection_id: &str,
     ) {
-        if let Some(resolver) = self.precision_resolver.get() {
-            let table_id = Self::collection_to_table_identifier(collection_id);
-            match resolver.resolve(&table_id).await {
-                Ok(target_precision)
-                    if target_precision != proximadb_records::EmbeddingScalarType::Fp32 =>
-                {
-                    for record in records.iter_mut() {
-                        for cell in &mut record.embeddings {
-                            cell.coerce_to_precision(target_precision);
-                        }
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!(
-                        collection = %collection_id,
-                        error = %e,
-                        "v2 record batch: precision resolver lookup failed; \
-                         records will land at their input precision"
-                    );
-                }
-            }
-        }
-        // Emit the per-precision canonical_bytes metric using the user-facing
-        // `collection_id` the handler received. The WAL writer's own emitter
-        // (mod.rs:2145, bincode_serialization_strategy.rs:235) labels by the
-        // internal UUID after `resolve_collection_id_internal`, which makes
-        // dashboards harder to read and breaks the regression test that
-        // scrapes by user-facing name. Keep the WAL emitter for non-handler
-        // paths (queue drainer, bulk loader) where only the UUID is known;
-        // for the handler-driven v2 record path this emission carries the
-        // authoritative label and the WAL-side emission is a no-op duplicate
-        // operators can dedupe by label cardinality. TD-080 closure.
-        if let Some(pm) = crate::observability::precision_metrics::metrics() {
-            let mut per_precision: std::collections::HashMap<
-                proximadb_records::EmbeddingScalarType,
-                i64,
-            > = std::collections::HashMap::new();
-            for record in records.iter() {
-                for cell in &record.embeddings {
-                    *per_precision.entry(cell.precision).or_insert(0) +=
-                        cell.values_byte_size() as i64;
-                }
-            }
-            for (precision, delta) in per_precision {
-                pm.add_canonical_bytes(
-                    collection_id,
-                    crate::observability::precision_metrics::precision_label(precision),
-                    delta,
-                );
-            }
-        }
+        self.record_ops
+            .coerce_records_to_canonical_precision(records, collection_id)
+            .await
     }
 
     /// Set hybrid runtime configuration (thread-safe; callable post-initialization)
@@ -533,46 +485,27 @@ impl UnifiedHandlers {
     /// * `Ok(Some(id))` - Resolved collection ID
     /// * `Ok(None)` - Collection not found
     /// * `Err(_)` - Resolution failed
+    /// Delegates to the shared `RecordOpsService` cache (single owner — TD-104 S3-c).
     pub async fn resolve_collection_id_cached(&self, identifier: &str) -> Result<Option<String>> {
-        // Check cache first
-        if let Some(cached_id) = self.collection_id_cache.get(identifier) {
-            return Ok(Some(cached_id));
-        }
-
-        // Cache miss - resolve from metadata backend
-        let result = self
-            .collection_service
-            .resolve_collection_id(identifier)
-            .await?;
-
-        // Cache the result on success
-        if let Some(ref id) = result {
-            self.collection_id_cache
-                .insert(identifier.to_string(), id.clone());
-            debug!(
-                "Collection ID cache miss: '{}' -> '{}' (cached)",
-                identifier, id
-            );
-        }
-
-        Ok(result)
+        self.record_ops
+            .resolve_collection_id_cached(identifier)
+            .await
     }
 
     /// Invalidate collection ID cache entry
     ///
     /// Call this when a collection is deleted or renamed to ensure
-    /// stale cache entries don't cause issues.
+    /// stale cache entries don't cause issues. Delegated to the shared
+    /// `RecordOpsService` cache so the record-batch path sees invalidations.
     pub fn invalidate_collection_cache(&self, identifier: &str) {
-        self.collection_id_cache.invalidate(identifier);
-        debug!("Collection ID cache invalidated: '{}'", identifier);
+        self.record_ops.invalidate_collection_cache(identifier);
     }
 
     /// Clear the entire collection ID cache
     ///
     /// Use this during testing or when a bulk cache invalidation is needed.
     pub fn clear_collection_cache(&self) {
-        self.collection_id_cache.clear();
-        debug!("Collection ID cache cleared");
+        self.record_ops.clear_collection_cache();
     }
 
     /// Handle any collection operation with unified logic
@@ -1018,208 +951,42 @@ impl UnifiedHandlers {
     }
 
     /// Canonical rich-record delete handler used by v2 REST/gRPC/internal callers.
+    ///
+    /// Delegates to the shared `RecordOpsService` (TD-104 S3-c) — no duplicated
+    /// orchestration logic. Kept as a thin inherent wrapper so existing ROOT
+    /// callers compile unchanged.
     pub async fn handle_record_delete_batch_for_tenant(
         &self,
         request: RichRecordDeleteBatchRequest,
         tenant_id: Option<&str>,
     ) -> Result<crate::services::operations::BatchOperationResult> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let collection_id = match self
-            .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
-            .await?
-        {
-            Some(id) => id,
-            None => {
-                return Err(anyhow!("Collection '{}' not found", request.collection_id));
-            }
-        };
-
-        let collection_name = request.collection_id.clone();
-        if let Err(e) = enforce_wal_lane_for_record_batch(
-            &collection_name,
-            WriteOperationKind::Delete,
-            request.record_ids.len() as u64,
-            "REST/gRPC handle_record_delete_batch_for_tenant",
-        ) {
-            return Ok(BatchOperationResult::failure(
-                e,
-                "WAL_LANE_REJECTED".to_string(),
-            ));
-        }
-        let result = self
-            .vector_operations_service
-            .delete_records_with_tenant_context(
-                &collection_id,
-                request.record_ids,
-                tenant_context.as_ref(),
-            )
-            .await?;
-        if result.success {
-            let n = result.vector_ids.len() as i64;
-            if n > 0
-                && let Some(dml_svc) = self.get_dml_service()
-            {
-                dml_svc.bump_row_count_stats(&collection_name, -n).await;
-            }
-        }
-        Ok(result)
+        self.record_ops
+            .handle_record_delete_batch_for_tenant(request, tenant_id)
+            .await
     }
 
-    /// Canonical rich-record batch handler used by v2 REST/gRPC/internal callers.
+    /// Canonical rich-record batch (upsert) handler used by v2 REST/gRPC/internal callers.
+    /// Delegates to the shared `RecordOpsService` (TD-104 S3-c).
     pub async fn handle_record_batch_for_tenant(
         &self,
         request: RichRecordBatchRequest,
         tenant_id: Option<&str>,
     ) -> Result<BatchOperationResult> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let collection_id = match self
-            .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
-            .await?
-        {
-            Some(id) => id,
-            None => {
-                return Ok(BatchOperationResult::failure(
-                    format!("Collection '{}' not found", request.collection_id),
-                    "NOT_FOUND".to_string(),
-                ));
-            }
-        };
-
-        let collection_name = request.collection_id.clone();
-        if let Some(dml_svc) = self.get_dml_service()
-            && let Err(e) = dml_svc
-                .validate_record_batch_against_schema(&collection_name, &request.records)
-                .await
-        {
-            return Ok(BatchOperationResult::failure(
-                format!("Schema validation failed: {}", e),
-                "SCHEMA_VALIDATION_FAILED".to_string(),
-            ));
-        }
-        if let Err(e) = enforce_wal_lane_for_record_batch(
-            &collection_name,
-            WriteOperationKind::Insert,
-            request.records.len() as u64,
-            "REST/gRPC handle_record_batch_for_tenant",
-        ) {
-            return Ok(BatchOperationResult::failure(
-                e,
-                "WAL_LANE_REJECTED".to_string(),
-            ));
-        }
-
-        // Coerce embeddings to the collection's canonical precision. Single
-        // source of truth lives in `coerce_records_to_canonical_precision`
-        // so the Arrow Flight insert-only handler cannot drift out of sync
-        // again (TD-082 closure).
-        let mut records = request.records;
-        self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
-            .await;
-
-        match self
-            .vector_operations_service
-            .insert_records_with_tenant_context(&collection_id, records, tenant_context.as_ref())
+        self.record_ops
+            .handle_record_batch_for_tenant(request, tenant_id)
             .await
-        {
-            Ok(result) => {
-                if result.success {
-                    let n = result.vector_ids.len() as i64;
-                    if let Some(dml_svc) = self.get_dml_service() {
-                        dml_svc.bump_row_count_stats(&collection_name, n).await;
-                    }
-                }
-                Ok(result)
-            }
-            Err(error) => {
-                tracing::error!("Failed to process rich record batch: {:?}", error);
-                Ok(BatchOperationResult::failure(
-                    format!("Record insert failed: {}", error),
-                    "RECORD_INSERT_FAILED".to_string(),
-                ))
-            }
-        }
     }
 
-    /// Canonical insert-only rich-record handler used when callers require
-    /// existing records to be rejected instead of upserted.
+    /// Canonical insert-only rich-record handler (Arrow Flight `do_put`).
+    /// Delegates to the shared `RecordOpsService` (TD-104 S3-c).
     pub async fn handle_record_insert_batch_for_tenant(
         &self,
         request: RichRecordBatchRequest,
         tenant_id: Option<&str>,
     ) -> Result<BatchOperationResult> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let collection_id = match self
-            .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
-            .await?
-        {
-            Some(id) => id,
-            None => {
-                return Ok(BatchOperationResult::failure(
-                    format!("Collection '{}' not found", request.collection_id),
-                    "NOT_FOUND".to_string(),
-                ));
-            }
-        };
-
-        let collection_name = request.collection_id.clone();
-        if let Some(dml_svc) = self.get_dml_service()
-            && let Err(e) = dml_svc
-                .validate_record_batch_against_schema(&collection_name, &request.records)
-                .await
-        {
-            return Ok(BatchOperationResult::failure(
-                format!("Schema validation failed: {}", e),
-                "SCHEMA_VALIDATION_FAILED".to_string(),
-            ));
-        }
-        if let Err(e) = enforce_wal_lane_for_record_batch(
-            &collection_name,
-            WriteOperationKind::Insert,
-            request.records.len() as u64,
-            "REST/gRPC handle_record_insert_batch_for_tenant",
-        ) {
-            return Ok(BatchOperationResult::failure(
-                e,
-                "WAL_LANE_REJECTED".to_string(),
-            ));
-        }
-        // Coerce embeddings to the collection's canonical precision. Calls
-        // the same shared helper as `handle_record_batch_for_tenant` so
-        // Arrow Flight INSERT (this handler) and REST/gRPC v2 UPSERT
-        // (the other handler) cannot diverge on precision handling.
-        // TD-082 closure — see `coerce_records_to_canonical_precision`.
-        let mut records = request.records;
-        self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
-            .await;
-        match self
-            .vector_operations_service
-            .insert_records_only_with_tenant_context(
-                &collection_id,
-                records,
-                tenant_context.as_ref(),
-            )
+        self.record_ops
+            .handle_record_insert_batch_for_tenant(request, tenant_id)
             .await
-        {
-            Ok(result) => {
-                if result.success {
-                    let n = result.vector_ids.len() as i64;
-                    if let Some(dml_svc) = self.get_dml_service() {
-                        dml_svc.bump_row_count_stats(&collection_name, n).await;
-                    }
-                }
-                Ok(result)
-            }
-            Err(error) => {
-                tracing::error!(
-                    "Failed to process insert-only rich record batch: {:?}",
-                    error
-                );
-                Ok(BatchOperationResult::failure(
-                    format!("Record insert failed: {}", error),
-                    "RECORD_INSERT_FAILED".to_string(),
-                ))
-            }
-        }
     }
 
     /// v1 native: accept v1::VectorBatchRequest, delegate to v1 services, and return v1 response
@@ -1288,39 +1055,11 @@ impl UnifiedHandlers {
             .map(crate::proto::defaults::vector_record_to_proxima_record)
             .collect();
 
-        // Coerce embeddings to the collection's canonical precision so
-        // REST/gRPC inserts into a non-fp32 collection produce the
-        // right typed cells (and the right per-precision metric
-        // accumulation at WAL flush). The queue-drainer path gets this
-        // via BulkLoadDrainerSink; this is the equivalent for the
-        // direct insert path. Resolver failure or unset (degraded
-        // boot / fp32 collection / no catalog wired) keeps the legacy
-        // fp32 behavior.
-        if let Some(resolver) = self.precision_resolver.get() {
-            let table_id = Self::collection_to_table_identifier(collection_identifier);
-            match resolver.resolve(&table_id).await {
-                Ok(target_precision)
-                    if target_precision != proximadb_records::EmbeddingScalarType::Fp32 =>
-                {
-                    for record in &mut records {
-                        for cell in &mut record.embeddings {
-                            cell.coerce_to_precision(target_precision);
-                        }
-                    }
-                }
-                Ok(_) => {
-                    // Fp32 — no coercion needed.
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        collection = %collection_identifier,
-                        error = %e,
-                        "vector batch v1 (UnifiedHandlers path): precision resolver \
-                         lookup failed; records will land at their input precision"
-                    );
-                }
-            }
-        }
+        // Coerce embeddings through the shared RecordOpsService-owned resolver.
+        // This keeps the v1 vector batch path aligned with v2 record batches
+        // and Arrow Flight writes after the TD-104 S3-c extraction.
+        self.coerce_records_to_canonical_precision(&mut records, collection_identifier)
+            .await;
 
         match self
             .vector_operations_service
@@ -2737,7 +2476,7 @@ impl UnifiedHandlers {
 ///
 /// Returns the rejection reason string on failure. Callers wrap it in a
 /// `BatchOperationResult::failure(reason, "WAL_LANE_REJECTED")`.
-fn enforce_wal_lane_for_record_batch(
+pub(crate) fn enforce_wal_lane_for_record_batch(
     collection_id: &str,
     operation_kind: WriteOperationKind,
     row_count: u64,

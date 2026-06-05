@@ -978,15 +978,16 @@ impl MultiServer {
             .into_server();
 
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
-            let flight_service = crate::network::arrow_ipc::service::ProximaFlightService::new(
-                services.request_handlers.clone(),
-            )
-            .with_security_coordinator(if self.rest_auth_enabled {
-                self.security_coordinator.clone()
-            } else {
-                None
-            })
-            .with_catalog_manager(Some(services.catalog_manager.clone()));
+            let flight_service =
+                crate::network::arrow_ipc::service::ProximaFlightService::from_unified_handlers(
+                    services.request_handlers.clone(),
+                )
+                .with_security_coordinator(if self.rest_auth_enabled {
+                    self.security_coordinator.clone()
+                } else {
+                    None
+                })
+                .with_catalog_manager(Some(services.catalog_manager.clone()));
             let flight_server =
                 arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
                     .max_encoding_message_size(512 * 1024 * 1024)

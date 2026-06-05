@@ -19,6 +19,7 @@
 #[cfg(feature = "ai_endpoints")]
 pub mod ai_endpoints;
 pub mod enterprise;
+pub mod record_ops_service;
 pub mod request_handlers;
 #[cfg(feature = "sales_endpoints")]
 pub mod sales_endpoints;

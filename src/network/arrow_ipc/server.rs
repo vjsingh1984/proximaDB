@@ -97,9 +97,10 @@ impl ArrowFlightServer {
         );
 
         // Create Flight service
-        let mut flight_service = ProximaFlightService::new(self.request_handlers.clone())
-            .with_security_coordinator(self.security_coordinator.clone())
-            .with_catalog_manager(self.catalog_manager.clone());
+        let mut flight_service =
+            ProximaFlightService::from_unified_handlers(self.request_handlers.clone())
+                .with_security_coordinator(self.security_coordinator.clone())
+                .with_catalog_manager(self.catalog_manager.clone());
 
         // Slice 6.2: only wire the gate when BOTH the registry and
         // the pod identity are present. Partial wiring would silently

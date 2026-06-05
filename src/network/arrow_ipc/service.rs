@@ -161,28 +161,21 @@ fn check_flight_primary_pod_gate(
 }
 
 impl ProximaFlightService {
-    /// Create a new Arrow Flight service backed by unified handlers
-    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
-        // Get storage locations from config
-        let storage_locations = request_handlers
-            .storage_config()
-            .map(|config| {
-                config
-                    .storage_locations
-                    .iter()
-                    .map(|loc| loc.url.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Extract the ports + concrete services the Flight path uses; the service
-        // no longer holds the root `UnifiedHandlers` (TD-104 S3). `new()` remains
-        // the boot adapter so callers (ArrowFlightServer/multi_server) are unchanged.
-        let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> = request_handlers.clone();
-        let record_port: Arc<dyn proximadb_runtime::RecordOpsPort> = request_handlers.clone();
-        let vector_operations_service = request_handlers.vector_operations_service.clone();
-        let collection_service = request_handlers.collection_service.clone();
-
+    /// Create a new Arrow Flight service from injected ports + concrete services.
+    ///
+    /// TD-104 S3-c: the Flight service no longer depends on the concrete root
+    /// `UnifiedHandlers`. Vector search goes through the `ApiHandlersPort`;
+    /// record-batch ingest goes through the canonical `RecordOpsPort` (backed
+    /// directly by the runtime `RecordOpsService`, so the write path no longer
+    /// routes through ROOT). The vector-ops/collection services and the storage
+    /// locations are passed in by the boot wiring (multi_server / ArrowFlightServer).
+    pub fn new(
+        api_port: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+        record_port: Arc<dyn proximadb_runtime::RecordOpsPort>,
+        vector_operations_service: Arc<crate::services::VectorOperationsService>,
+        collection_service: Arc<crate::services::CollectionService>,
+        storage_locations: Vec<String>,
+    ) -> Self {
         Self {
             api_port,
             record_port,
@@ -195,6 +188,37 @@ impl ProximaFlightService {
             _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
         }
+    }
+
+    /// Boot adapter that derives the injected pieces from a root `UnifiedHandlers`.
+    ///
+    /// The Flight write path is wired to the runtime `RecordOpsService` (via
+    /// `UnifiedHandlers::record_ops`) rather than ROOT's `RecordOpsPort` impl, so
+    /// `do_put` ingest no longer routes through ROOT even via this convenience.
+    pub fn from_unified_handlers(request_handlers: Arc<UnifiedHandlers>) -> Self {
+        let storage_locations = request_handlers
+            .storage_config()
+            .map(|config| {
+                config
+                    .storage_locations
+                    .iter()
+                    .map(|loc| loc.url.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> = request_handlers.clone();
+        let record_port: Arc<dyn proximadb_runtime::RecordOpsPort> = request_handlers.record_ops();
+        let vector_operations_service = request_handlers.vector_operations_service.clone();
+        let collection_service = request_handlers.collection_service.clone();
+
+        Self::new(
+            api_port,
+            record_port,
+            vector_operations_service,
+            collection_service,
+            storage_locations,
+        )
     }
 
     /// Slice 6.2: attach the primary-pod write router. Once set,
