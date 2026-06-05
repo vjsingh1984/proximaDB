@@ -27,11 +27,11 @@ pub use analyzer::CollectionAnalyzer;
 pub use ann_advisor::{
     AnnAdvisorInput, AnnAdvisorOutput, AnnIndexAdvisor, AnnSelector, SupportedAlgorithm,
 };
+pub use hmgi_param_advisor::HmgiIndexAdvisor;
 pub use hnsw_param_advisor::{
     EF_SEARCH_MAX, EF_SEARCH_MIN, HnswIndexAdvisor, HnswSizingInput, HnswSizingOutput,
     advise_hnsw_params,
 };
-pub use hmgi_param_advisor::HmgiIndexAdvisor;
 pub use ivf_param_advisor::{IvfIndexAdvisor, nlist_for_n, nprobe_for_recall, recall_for_nprobe};
 pub use migration_engine::{
     IndexMigrationEngine, MigrationComplexity, MigrationDecision, MigrationPhase, MigrationPlan,

@@ -217,9 +217,7 @@ impl RecallDriftSweeper {
                     .apply_hnsw_ef_hot_swap(&config.name, new_ef)
                     .await
                 {
-                    Ok(crate::index::axis::management::HotSwapOutcome::Applied {
-                        changes,
-                    }) => {
+                    Ok(crate::index::axis::management::HotSwapOutcome::Applied { changes }) => {
                         crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
                             &config.name,
                             crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_SWEEPER,

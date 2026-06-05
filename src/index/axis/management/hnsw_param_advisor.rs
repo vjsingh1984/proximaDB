@@ -254,12 +254,7 @@ pub fn recall_for_ef(m: u32, ef_search: u32, vector_count: u64, top_k: u32) -> f
 /// Inverse: the ef the formula thinks delivers `recall_target` at
 /// `(m, N, k)`. Returned value already factors in the
 /// `[EF_SEARCH_MIN, EF_SEARCH_MAX]` clamp and `top_k` floor.
-pub fn ef_for_recall(
-    m: u32,
-    recall_target: f32,
-    vector_count: u64,
-    top_k: u32,
-) -> u32 {
+pub fn ef_for_recall(m: u32, recall_target: f32, vector_count: u64, top_k: u32) -> u32 {
     let r = recall_target.clamp(0.0, 0.99999) as f64;
     let ceil = ceiling_of_m(m);
     let a = a_of_m(m);
@@ -437,12 +432,7 @@ impl AnnIndexAdvisor for HnswIndexAdvisor {
         })
     }
 
-    fn recall_for(
-        &self,
-        algorithm: &IndexAlgorithm,
-        vector_count: u64,
-        top_k: u32,
-    ) -> Option<f32> {
+    fn recall_for(&self, algorithm: &IndexAlgorithm, vector_count: u64, top_k: u32) -> Option<f32> {
         match algorithm {
             IndexAlgorithm::HNSW { m, ef_search, .. } => {
                 Some(recall_for_ef(*m, *ef_search, vector_count, top_k))
@@ -563,7 +553,11 @@ mod tests {
         let got_600 = recall_for_ef(48, 600, 100_000, 10);
         let got_900 = recall_for_ef(48, 900, 100_000, 10);
         let got_1600 = recall_for_ef(48, 1600, 100_000, 10);
-        assert!(got_600 >= 0.995, "m=48 ef=600 should be ~1.0, got {}", got_600);
+        assert!(
+            got_600 >= 0.995,
+            "m=48 ef=600 should be ~1.0, got {}",
+            got_600
+        );
         assert!(got_900 >= 0.999);
         assert!(got_1600 >= 0.9999);
     }
@@ -925,7 +919,10 @@ mod tests {
             (100_000_000, "100M"),
         ];
         let targets = [0.80f32, 0.85, 0.90, 0.92, 0.95, 0.97, 0.99, 0.995];
-        println!("\n{:<8}{:<10}{:>5}{:>6}{:>8}", "N", "recall", "m", "efc", "ef");
+        println!(
+            "\n{:<8}{:<10}{:>5}{:>6}{:>8}",
+            "N", "recall", "m", "efc", "ef"
+        );
         println!("{}", "-".repeat(40));
         for (n, n_label) in sizes {
             for &target in &targets {

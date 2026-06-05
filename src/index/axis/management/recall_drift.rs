@@ -284,7 +284,12 @@ fn size_ivf(n: u64, input: &IvfRecallDriftInput) -> IvfSizing {
     if let Some(latency_ms) = input.max_query_latency_ms {
         let cluster_size = (n as f64) / (nlist as f64).max(1.0);
         // Per-vector cost mirrors the IVF advisor.
-        let per_vec_us = 0.15_f64 * if input.binary_rerank_allowed { 1.10 } else { 1.0 };
+        let per_vec_us = 0.15_f64
+            * if input.binary_rerank_allowed {
+                1.10
+            } else {
+                1.0
+            };
         let max_visited = ((latency_ms * 1000.0) / per_vec_us).floor();
         let max_nprobe = (max_visited / cluster_size).floor().max(1.0) as u32;
         if nprobe > max_nprobe {
@@ -380,10 +385,9 @@ fn summarize(baseline: &HnswSizingOutput, current: &HnswSizingOutput, kind: Drif
         // produce these (its inputs are HnswSizingOutput), but
         // the type system needs all DriftKind arms covered.
         // Defensive: should-never-fire.
-        DriftKind::NprobeOnly | DriftKind::NlistOrQuantizer => format!(
-            "unexpected IVF drift kind from HNSW classifier: {:?}",
-            kind
-        ),
+        DriftKind::NprobeOnly | DriftKind::NlistOrQuantizer => {
+            format!("unexpected IVF drift kind from HNSW classifier: {:?}", kind)
+        }
     }
 }
 
@@ -403,12 +407,7 @@ mod tests {
         }
     }
 
-    fn input_with_cap(
-        baseline_n: u64,
-        current_n: u64,
-        recall: f32,
-        cap: u32,
-    ) -> RecallDriftInput {
+    fn input_with_cap(baseline_n: u64, current_n: u64, recall: f32, cap: u32) -> RecallDriftInput {
         let mut i = input(baseline_n, current_n, recall);
         i.max_ef_search = Some(cap);
         i

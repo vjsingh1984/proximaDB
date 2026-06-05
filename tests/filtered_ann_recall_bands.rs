@@ -310,15 +310,10 @@ async fn filtered_ann_recall_across_selectivity_bands() {
 
     // Low selectivity (~10%): bucket=0
     let base = server.base_url();
-    let low_ann = run_band(
-        &http, &base, &coll, query.clone(), top_k, Some(0), "low",
-    )
-    .await;
+    let low_ann = run_band(&http, &base, &coll, query.clone(), top_k, Some(0), "low").await;
     let low_exact = exact_filtered(Some(0));
     let low_recall = recall(&low_exact, &low_ann);
-    eprintln!(
-        "Low band  | exact={low_exact:?} ann={low_ann:?} recall@{top_k}={low_recall:.2}"
-    );
+    eprintln!("Low band  | exact={low_exact:?} ann={low_ann:?} recall@{top_k}={low_recall:.2}");
     assert!(
         low_recall >= 0.30,
         "Low-selectivity ANN recall@{top_k} regressed below 0.30 (got {low_recall:.2}). \
@@ -326,15 +321,10 @@ async fn filtered_ann_recall_across_selectivity_bands() {
     );
 
     // Medium selectivity (~50%): bucket=1
-    let med_ann = run_band(
-        &http, &base, &coll, query.clone(), top_k, Some(1), "medium",
-    )
-    .await;
+    let med_ann = run_band(&http, &base, &coll, query.clone(), top_k, Some(1), "medium").await;
     let med_exact = exact_filtered(Some(1));
     let med_recall = recall(&med_exact, &med_ann);
-    eprintln!(
-        "Med band  | exact={med_exact:?} ann={med_ann:?} recall@{top_k}={med_recall:.2}"
-    );
+    eprintln!("Med band  | exact={med_exact:?} ann={med_ann:?} recall@{top_k}={med_recall:.2}");
     assert!(
         med_recall >= 0.60,
         "Medium-selectivity ANN recall@{top_k} regressed below 0.60 (got {med_recall:.2}). \
@@ -342,15 +332,10 @@ async fn filtered_ann_recall_across_selectivity_bands() {
     );
 
     // High selectivity / no filter (baseline)
-    let high_ann = run_band(
-        &http, &base, &coll, query.clone(), top_k, None, "high",
-    )
-    .await;
+    let high_ann = run_band(&http, &base, &coll, query.clone(), top_k, None, "high").await;
     let high_exact = exact_filtered(None);
     let high_recall = recall(&high_exact, &high_ann);
-    eprintln!(
-        "High band | exact={high_exact:?} ann={high_ann:?} recall@{top_k}={high_recall:.2}"
-    );
+    eprintln!("High band | exact={high_exact:?} ann={high_ann:?} recall@{top_k}={high_recall:.2}");
     assert!(
         high_recall >= 0.80,
         "Unfiltered ANN recall@{top_k} regressed below 0.80 (got {high_recall:.2}). \

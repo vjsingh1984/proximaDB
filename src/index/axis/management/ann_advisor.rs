@@ -191,12 +191,7 @@ pub trait AnnIndexAdvisor: Send + Sync {
     /// `projected_recall` surface across algos. Returns `None` if
     /// the algorithm variant doesn't match this impl (e.g. you
     /// handed an IVF spec to the HNSW advisor).
-    fn recall_for(
-        &self,
-        algorithm: &IndexAlgorithm,
-        vector_count: u64,
-        top_k: u32,
-    ) -> Option<f32>;
+    fn recall_for(&self, algorithm: &IndexAlgorithm, vector_count: u64, top_k: u32) -> Option<f32>;
 }
 
 /// Selector — walks every registered advisor, gathers their
@@ -221,9 +216,13 @@ impl AnnSelector {
     pub fn default_set() -> Self {
         Self {
             advisors: vec![
-                Box::new(crate::index::axis::management::hnsw_param_advisor::HnswIndexAdvisor::new()),
+                Box::new(
+                    crate::index::axis::management::hnsw_param_advisor::HnswIndexAdvisor::new(),
+                ),
                 Box::new(crate::index::axis::management::ivf_param_advisor::IvfIndexAdvisor::new()),
-                Box::new(crate::index::axis::management::hmgi_param_advisor::HmgiIndexAdvisor::new()),
+                Box::new(
+                    crate::index::axis::management::hmgi_param_advisor::HmgiIndexAdvisor::new(),
+                ),
             ],
         }
     }
@@ -235,10 +234,7 @@ impl AnnSelector {
     ///
     /// Returns `None` when no registered advisor can produce
     /// anything (empty advisor set, or every advisor declined).
-    pub fn select_and_advise(
-        &self,
-        input: &AnnAdvisorInput,
-    ) -> Option<AnnAdvisorOutput> {
+    pub fn select_and_advise(&self, input: &AnnAdvisorInput) -> Option<AnnAdvisorOutput> {
         let mut all: Vec<AnnAdvisorOutput> = self
             .advisors
             .iter()
@@ -279,8 +275,7 @@ impl AnnSelector {
         // 4. Among survivors prefer lowest per-query work
         // (Balanced / MinLatency default). The MinMemory branch is
         // wired in P1 commit 5 when OptimizationGoal threads here.
-        let mut survivors: Vec<AnnAdvisorOutput> =
-            memory_ok.into_iter().cloned().collect();
+        let mut survivors: Vec<AnnAdvisorOutput> = memory_ok.into_iter().cloned().collect();
         survivors.sort_by(|a, b| {
             a.estimated_per_query_work
                 .cmp(&b.estimated_per_query_work)
@@ -407,13 +402,7 @@ mod tests {
             }),
             Box::new(FakeAdvisor {
                 kind: SupportedAlgorithm::Ivf,
-                output: Some(fake_output(
-                    SupportedAlgorithm::Ivf,
-                    false,
-                    50.0,
-                    800,
-                    None,
-                )),
+                output: Some(fake_output(SupportedAlgorithm::Ivf, false, 50.0, 800, None)),
             }),
         ]);
         let out = sel.select_and_advise(&default_input()).unwrap();
@@ -436,13 +425,7 @@ mod tests {
             }),
             Box::new(FakeAdvisor {
                 kind: SupportedAlgorithm::Ivf,
-                output: Some(fake_output(
-                    SupportedAlgorithm::Ivf,
-                    false,
-                    50.0,
-                    800,
-                    None,
-                )),
+                output: Some(fake_output(SupportedAlgorithm::Ivf, false, 50.0, 800, None)),
             }),
         ]);
         let mut input = default_input();

@@ -737,8 +737,7 @@ pub struct RangedWarmSource {
     /// Absolute byte offset of the WARM blob (`4 + header_len + cold_tier_bytes`).
     pub warm_base: u64,
     /// `cluster_id` → its WARM byte-extent, for O(1) per-cluster range fetch.
-    pub directory:
-        HashMap<u32, crate::index::axis::storage::serialization::WarmExtent>,
+    pub directory: HashMap<u32, crate::index::axis::storage::serialization::WarmExtent>,
 }
 
 /// Default target recall for the binary two-stage route (ADR-023 T-H). A
@@ -797,11 +796,7 @@ const COLD_ROTATION_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 /// Next power of two ≥ `n` (the randomized Hadamard transform needs a pow2
 /// length; the residual is zero-padded up to it). `0 -> 0`.
 fn next_pow2(n: usize) -> usize {
-    if n == 0 {
-        0
-    } else {
-        n.next_power_of_two()
-    }
+    if n == 0 { 0 } else { n.next_power_of_two() }
 }
 
 /// Deterministic ±1 sign vector of length `n` (the `D` of the randomized
@@ -2901,7 +2896,7 @@ mod tests {
 
     #[test]
     fn rotated_residual_code_is_deterministic_and_self_consistent() {
-        use super::{rotation_signs, BinaryCode, COLD_ROTATION_SEED};
+        use super::{BinaryCode, COLD_ROTATION_SEED, rotation_signs};
         // dim=6 → padded to next_pow2 = 8; exercises zero-padding + WHT.
         let signs = rotation_signs(8, COLD_ROTATION_SEED);
         let centroid = vec![0.1, 0.2, -0.3, 0.4, -0.5, 0.6];
@@ -2970,7 +2965,10 @@ mod tests {
             .await
             .unwrap();
         assert!(!results.is_empty());
-        assert_eq!(results[0].0, "v0", "top-1 correct even when early-terminated");
+        assert_eq!(
+            results[0].0, "v0",
+            "top-1 correct even when early-terminated"
+        );
     }
 
     fn binary_ivf_config(dim: usize, n_clusters: usize) -> UnifiedIvfConfig {
@@ -3545,7 +3543,9 @@ mod tests {
             .await
             .unwrap();
 
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_cold_rt").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_cold_rt")
+            .await
+            .unwrap();
         let (restored, _meta) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
         assert!(restored.has_binary_tier(), "COLD tier installed on restore");
         let after = restored
@@ -3553,7 +3553,11 @@ mod tests {
             .await
             .unwrap();
         let ids = |v: &Vec<(String, f32)>| v.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(&after), ids(&before), "binary top-k identical after COLD restore");
+        assert_eq!(
+            ids(&after),
+            ids(&before),
+            "binary top-k identical after COLD restore"
+        );
     }
 
     #[tokio::test]
@@ -3562,8 +3566,7 @@ mod tests {
         // Stage-1 Hamming results. Proves the ~1/32 blob is independently
         // sufficient for cold-start serving.
         let _ = proximadb_hardware::hardware_capabilities();
-        let mut full =
-            UnifiedIvfIndex::new("c_full".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let mut full = UnifiedIvfIndex::new("c_full".to_string(), binary_ivf_config(4, 2)).unwrap();
         let data = mixed_sign_vectors();
         full.train(data.iter().map(|(_, v)| v.clone()).collect())
             .await
@@ -3594,18 +3597,20 @@ mod tests {
             .unwrap();
         assert!(!results.is_empty(), "cold-only serves Stage-1 results");
         assert!(results.len() <= 3);
-        assert_eq!(results[0].0, "v0", "exact-match query ranks first (Hamming 0)");
+        assert_eq!(
+            results[0].0, "v0",
+            "exact-match query ranks first (Hamming 0)"
+        );
     }
 
     #[tokio::test]
     async fn cold_first_load_serves_stage1_then_upgrades_to_full() {
         // ADR-023 T-C: load the COLD blob first → ColdBinaryOnly serving, with the
         // WARM fp32 tier deferred; then apply WARM → FullTwoStage exact search.
-        use crate::index::axis::storage::serialization::IndexSerializer;
         use crate::index::axis::ColdPathLoadPolicy;
+        use crate::index::axis::storage::serialization::IndexSerializer;
         let _ = proximadb_hardware::hardware_capabilities();
-        let mut index =
-            UnifiedIvfIndex::new("c_cf".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let mut index = UnifiedIvfIndex::new("c_cf".to_string(), binary_ivf_config(4, 2)).unwrap();
         let data = mixed_sign_vectors();
         index
             .train(data.iter().map(|(_, v)| v.clone()).collect())
@@ -3614,14 +3619,21 @@ mod tests {
         for (id, v) in &data {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_cf").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_cf")
+            .await
+            .unwrap();
 
         // BinaryFirstThenRerank: COLD only → ColdBinaryOnly + deferred WARM.
-        let mut loaded =
-            IndexSerializer::load_ivf_with_policy(&bytes, ColdPathLoadPolicy::BinaryFirstThenRerank)
-                .await
-                .unwrap();
-        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        let mut loaded = IndexSerializer::load_ivf_with_policy(
+            &bytes,
+            ColdPathLoadPolicy::BinaryFirstThenRerank,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            loaded.index.serving_state(),
+            IvfServingState::ColdBinaryOnly
+        );
         assert!(loaded.warm.is_some(), "WARM bytes deferred");
         assert_eq!(loaded.index.len(), data.len());
         let profile = loaded.metadata.cold_path_profile().unwrap();
@@ -3651,10 +3663,9 @@ mod tests {
         assert_eq!(loaded.index.search(&q, 1, None).await.unwrap()[0].0, "v0");
 
         // FullEager loads both tiers at once → FullTwoStage, no deferred WARM.
-        let eager =
-            IndexSerializer::load_ivf_with_policy(&bytes, ColdPathLoadPolicy::FullEager)
-                .await
-                .unwrap();
+        let eager = IndexSerializer::load_ivf_with_policy(&bytes, ColdPathLoadPolicy::FullEager)
+            .await
+            .unwrap();
         assert_eq!(eager.index.serving_state(), IvfServingState::FullTwoStage);
         assert!(eager.warm.is_none());
     }
@@ -3664,8 +3675,8 @@ mod tests {
         // ADR-023 R3: WARM is grouped per cluster; applying clusters one at a time
         // (no flip) keeps the index ColdBinaryOnly until the final mark — then
         // exact search works. This is what lets warm-apply overlap with serving.
-        use crate::index::axis::storage::serialization::IndexSerializer;
         use crate::index::axis::ColdPathLoadPolicy;
+        use crate::index::axis::storage::serialization::IndexSerializer;
         let _ = proximadb_hardware::hardware_capabilities();
         let mut full = UnifiedIvfIndex::new("c_r3".to_string(), binary_ivf_config(4, 2)).unwrap();
         let data = mixed_sign_vectors();
@@ -3676,19 +3687,31 @@ mod tests {
             full.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
         let bytes = IndexSerializer::serialize_ivf(&full, "c_r3").await.unwrap();
-        let mut loaded =
-            IndexSerializer::load_ivf_with_policy(&bytes, ColdPathLoadPolicy::BinaryFirstThenRerank)
-                .await
-                .unwrap();
+        let mut loaded = IndexSerializer::load_ivf_with_policy(
+            &bytes,
+            ColdPathLoadPolicy::BinaryFirstThenRerank,
+        )
+        .await
+        .unwrap();
         let warm_bytes = loaded.warm.take().unwrap();
 
         // WARM is split into per-cluster extents covering every vector (v3 dir).
         let warm_dir = loaded.metadata.warm_directory().unwrap();
         let clusters = IndexSerializer::decode_warm_clusters_dir(&warm_bytes, &warm_dir).unwrap();
-        assert!(!clusters.is_empty(), "warm is grouped into >=1 cluster extent");
+        assert!(
+            !clusters.is_empty(),
+            "warm is grouped into >=1 cluster extent"
+        );
         let total: usize = clusters.iter().map(|(_, v)| v.len()).sum();
-        assert_eq!(total, data.len(), "every vector lands in some cluster extent");
-        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        assert_eq!(
+            total,
+            data.len(),
+            "every vector lands in some cluster extent"
+        );
+        assert_eq!(
+            loaded.index.serving_state(),
+            IvfServingState::ColdBinaryOnly
+        );
 
         // Chunked apply: install each cluster (no flip) — still cold until marked.
         for (_cid, vecs) in &clusters {
@@ -3713,8 +3736,8 @@ mod tests {
         // (2) extents tile the WARM blob with no gaps/overlap, and (3) the
         // absolute file-offset formula the ranged loader (Slice 2) will use lands
         // on each chunk: `4 + header_len + cold_tier_bytes + extent.offset`.
-        use crate::index::axis::storage::serialization::IndexSerializer;
         use crate::index::axis::ColdPathLoadPolicy;
+        use crate::index::axis::storage::serialization::IndexSerializer;
         let _ = proximadb_hardware::hardware_capabilities();
         let mut index = UnifiedIvfIndex::new("c_dir".to_string(), binary_ivf_config(4, 2)).unwrap();
         let data = mixed_sign_vectors();
@@ -3725,7 +3748,9 @@ mod tests {
         for (id, v) in &data {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_dir").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_dir")
+            .await
+            .unwrap();
 
         let loaded = IndexSerializer::load_ivf_with_policy(
             &bytes,
@@ -3749,7 +3774,11 @@ mod tests {
             assert!(!vecs.is_empty(), "non-empty cluster chunk");
             seen += vecs.len();
         }
-        assert_eq!(seen, data.len(), "directory covers every vector exactly once");
+        assert_eq!(
+            seen,
+            data.len(),
+            "directory covers every vector exactly once"
+        );
 
         // (2) Extents tile the WARM blob contiguously (no gaps, no overlap).
         let mut cursor = 0u64;
@@ -3757,7 +3786,10 @@ mod tests {
             assert_eq!(ext.offset, cursor, "extent starts where the previous ended");
             cursor += ext.len;
         }
-        assert_eq!(cursor, profile.warm_tier_bytes, "extents tile the WARM blob");
+        assert_eq!(
+            cursor, profile.warm_tier_bytes,
+            "extents tile the WARM blob"
+        );
 
         // (3) Absolute file-offset math addresses each chunk in the full file.
         let header_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as u64;
@@ -3793,11 +3825,13 @@ mod tests {
         for (id, v) in &data {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_ranged").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_ranged")
+            .await
+            .unwrap();
         let file_size = bytes.len() as u64;
 
-        let path = std::env::temp_dir()
-            .join(format!("proximadb_ranged_{}.axis", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("proximadb_ranged_{}.axis", std::process::id()));
         let path_str = path.to_string_lossy().to_string();
         tokio::fs::write(&path, &bytes).await.unwrap();
 
@@ -3812,8 +3846,13 @@ mod tests {
         let fs: Arc<dyn FileSystem> = Arc::new(local);
 
         // Ranged cold load: only [header]+[COLD] read → ColdBinaryOnly serves S1.
-        let mut loaded = IndexSerializer::cold_load_ranged(&fs, &path_str).await.unwrap();
-        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        let mut loaded = IndexSerializer::cold_load_ranged(&fs, &path_str)
+            .await
+            .unwrap();
+        assert_eq!(
+            loaded.index.serving_state(),
+            IvfServingState::ColdBinaryOnly
+        );
         assert!(!loaded.directory.is_empty(), "v3 directory present");
         assert!(
             loaded.warm_base < file_size,
@@ -3832,10 +3871,9 @@ mod tests {
         let dir = loaded.directory.clone();
         let mut fetched = 0usize;
         for ext in &dir {
-            let vecs =
-                IndexSerializer::fetch_warm_cluster_ranged(&fs, &path_str, warm_base, ext)
-                    .await
-                    .unwrap();
+            let vecs = IndexSerializer::fetch_warm_cluster_ranged(&fs, &path_str, warm_base, ext)
+                .await
+                .unwrap();
             fetched += vecs.len();
             loaded.index.restore_warm_cluster(&vecs).unwrap();
         }
@@ -3907,7 +3945,10 @@ mod tests {
         ) -> crate::storage::persistence::filesystem::FsResult<()> {
             self.inner.append(path, data).await
         }
-        async fn delete(&self, path: &str) -> crate::storage::persistence::filesystem::FsResult<()> {
+        async fn delete(
+            &self,
+            path: &str,
+        ) -> crate::storage::persistence::filesystem::FsResult<()> {
             self.inner.delete(path).await
         }
         async fn exists(
@@ -3991,8 +4032,7 @@ mod tests {
 
         // A corpus large enough that the WARM (fp32) tier dominates the file, so
         // skipping it is a material saving.
-        let mut index =
-            UnifiedIvfIndex::new("c_bw".to_string(), binary_ivf_config(8, 4)).unwrap();
+        let mut index = UnifiedIvfIndex::new("c_bw".to_string(), binary_ivf_config(8, 4)).unwrap();
         let data: Vec<(String, Vec<f32>)> = (0..200)
             .map(|i| {
                 let mut v = vec![0.0f32; 8];
@@ -4009,10 +4049,11 @@ mod tests {
         for (id, v) in &data {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_bw").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_bw")
+            .await
+            .unwrap();
         let file_size = bytes.len() as u64;
-        let path =
-            std::env::temp_dir().join(format!("proximadb_bw_{}.axis", std::process::id()));
+        let path = std::env::temp_dir().join(format!("proximadb_bw_{}.axis", std::process::id()));
         let path_str = path.to_string_lossy().to_string();
         tokio::fs::write(&path, &bytes).await.unwrap();
 
@@ -4034,7 +4075,9 @@ mod tests {
             });
 
         // Cold-first load: reads only [len-prefix] + [header] + [COLD].
-        let loaded = IndexSerializer::cold_load_ranged(&fs, &path_str).await.unwrap();
+        let loaded = IndexSerializer::cold_load_ranged(&fs, &path_str)
+            .await
+            .unwrap();
         let cold_bytes = counter.load(Ordering::Relaxed);
         assert!(
             cold_bytes < file_size,
@@ -4050,14 +4093,9 @@ mod tests {
             .min_by_key(|e| e.len)
             .cloned()
             .unwrap();
-        let _ = IndexSerializer::fetch_warm_cluster_ranged(
-            &fs,
-            &path_str,
-            loaded.warm_base,
-            &ext,
-        )
-        .await
-        .unwrap();
+        let _ = IndexSerializer::fetch_warm_cluster_ranged(&fs, &path_str, loaded.warm_base, &ext)
+            .await
+            .unwrap();
         let after_one_cluster = counter.load(Ordering::Relaxed);
 
         // The faithful bandwidth assertion: cold-serve + one probed cluster
@@ -4104,8 +4142,7 @@ mod tests {
             std::env::var("PROXIMADB_S3_TEST_SECRET").unwrap_or_else(|_| "minioadmin".into());
         let _ = proximadb_hardware::hardware_capabilities();
 
-        let mut index =
-            UnifiedIvfIndex::new("c_s3".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let mut index = UnifiedIvfIndex::new("c_s3".to_string(), binary_ivf_config(4, 2)).unwrap();
         let data = mixed_sign_vectors();
         index
             .train(data.iter().map(|(_, v)| v.clone()).collect())
@@ -4114,7 +4151,9 @@ mod tests {
         for (id, v) in &data {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_s3").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_s3")
+            .await
+            .unwrap();
 
         let fs: Arc<dyn FileSystem> = Arc::new(
             AwsS3FileSystem::new(AwsS3Config {
@@ -4134,7 +4173,10 @@ mod tests {
 
         // Cold-load via byte-RANGE reads from S3 (only [header]+[COLD] before serving).
         let mut loaded = IndexSerializer::cold_load_ranged(&fs, &path).await.unwrap();
-        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        assert_eq!(
+            loaded.index.serving_state(),
+            IvfServingState::ColdBinaryOnly
+        );
         assert!(!loaded.directory.is_empty(), "v3 directory present over S3");
         let q = data[0].1.clone();
         let s1 = loaded
@@ -4199,8 +4241,7 @@ mod tests {
             return;
         }
         let _ = proximadb_hardware::hardware_capabilities();
-        let mut index =
-            UnifiedIvfIndex::new("c_az".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let mut index = UnifiedIvfIndex::new("c_az".to_string(), binary_ivf_config(4, 2)).unwrap();
         let data = mixed_sign_vectors();
         index
             .train(data.iter().map(|(_, v)| v.clone()).collect())
@@ -4209,7 +4250,9 @@ mod tests {
         for (id, v) in &data {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_az").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_az")
+            .await
+            .unwrap();
 
         let azfs = AzureBlobFileSystem::new(AzureBlobConfig {
             use_emulator: true,
@@ -4224,7 +4267,10 @@ mod tests {
         let path = "az://proximadb-test/proximadb_r3_azure_test.bin".to_string();
         fs.write(&path, &bytes, None).await.unwrap();
         let mut loaded = IndexSerializer::cold_load_ranged(&fs, &path).await.unwrap();
-        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        assert_eq!(
+            loaded.index.serving_state(),
+            IvfServingState::ColdBinaryOnly
+        );
         let q = data[0].1.clone();
         for ext in &loaded.directory.clone() {
             let vecs =
@@ -4263,8 +4309,7 @@ mod tests {
         let bucket =
             std::env::var("PROXIMADB_GCS_TEST_BUCKET").unwrap_or_else(|_| "proximadb-test".into());
         let _ = proximadb_hardware::hardware_capabilities();
-        let mut index =
-            UnifiedIvfIndex::new("c_gcs".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let mut index = UnifiedIvfIndex::new("c_gcs".to_string(), binary_ivf_config(4, 2)).unwrap();
         let data = mixed_sign_vectors();
         index
             .train(data.iter().map(|(_, v)| v.clone()).collect())
@@ -4273,7 +4318,9 @@ mod tests {
         for (id, v) in &data {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_gcs").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_gcs")
+            .await
+            .unwrap();
 
         let fs: Arc<dyn FileSystem> = Arc::new(
             GcsFileSystem::new(GcsConfig {
@@ -4288,7 +4335,10 @@ mod tests {
         let path = format!("gs://{bucket}/proximadb_r3_gcs_test.bin");
         fs.write(&path, &bytes, None).await.unwrap();
         let mut loaded = IndexSerializer::cold_load_ranged(&fs, &path).await.unwrap();
-        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        assert_eq!(
+            loaded.index.serving_state(),
+            IvfServingState::ColdBinaryOnly
+        );
         let q = data[0].1.clone();
         for ext in &loaded.directory.clone() {
             let vecs =
@@ -4333,10 +4383,11 @@ mod tests {
         for (id, v) in &data {
             full.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
-        let bytes = IndexSerializer::serialize_ivf(&full, "c_r3c").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&full, "c_r3c")
+            .await
+            .unwrap();
 
-        let path =
-            std::env::temp_dir().join(format!("proximadb_r3c_{}.axis", std::process::id()));
+        let path = std::env::temp_dir().join(format!("proximadb_r3c_{}.axis", std::process::id()));
         let path_str = path.to_string_lossy().to_string();
         tokio::fs::write(&path, &bytes).await.unwrap();
         let local = LocalFileSystem::new(LocalConfig {
@@ -4354,7 +4405,9 @@ mod tests {
             warm_base,
             directory,
             ..
-        } = IndexSerializer::cold_load_ranged(&fs, &path_str).await.unwrap();
+        } = IndexSerializer::cold_load_ranged(&fs, &path_str)
+            .await
+            .unwrap();
         assert_eq!(index.serving_state(), IvfServingState::ColdBinaryOnly);
 
         // Wire the on-probe warm source (cluster_id → extent).
@@ -4365,7 +4418,11 @@ mod tests {
             warm_base,
             directory: dir_map,
         });
-        assert_eq!(index.fetched_cluster_count(), 0, "nothing fetched before any query");
+        assert_eq!(
+            index.fetched_cluster_count(),
+            0,
+            "nothing fetched before any query"
+        );
 
         // Query with n_probe=1: only the single nearest (survivor) cluster's fp32
         // is fetched — not the whole tier — and the rerank matches exact search.
@@ -4428,7 +4485,9 @@ mod tests {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
 
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_tf").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_tf")
+            .await
+            .unwrap();
         let (_idx, meta) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
         let p = meta.cold_path_profile().unwrap();
         assert!(p.has_binary_tier);
@@ -4458,9 +4517,14 @@ mod tests {
             bin.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
         let bin_bytes = IndexSerializer::serialize_ivf(&bin, "c_b").await.unwrap();
-        let bin_load = IndexSerializer::load_ivf_cold_path(&bin_bytes).await.unwrap();
+        let bin_load = IndexSerializer::load_ivf_cold_path(&bin_bytes)
+            .await
+            .unwrap();
         assert!(bin_load.warm.is_some(), "binary index loads cold-first");
-        assert_eq!(bin_load.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        assert_eq!(
+            bin_load.index.serving_state(),
+            IvfServingState::ColdBinaryOnly
+        );
 
         // Non-binary collection → v1 full eager.
         let mut cfg = binary_ivf_config(4, 2);
@@ -4474,12 +4538,20 @@ mod tests {
             plain.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
         let plain_bytes = IndexSerializer::serialize_ivf(&plain, "c_p").await.unwrap();
-        let plain_load = IndexSerializer::load_ivf_cold_path(&plain_bytes).await.unwrap();
+        let plain_load = IndexSerializer::load_ivf_cold_path(&plain_bytes)
+            .await
+            .unwrap();
         assert!(plain_load.warm.is_none(), "non-binary index loads fully");
-        assert_eq!(plain_load.index.serving_state(), IvfServingState::FullTwoStage);
+        assert_eq!(
+            plain_load.index.serving_state(),
+            IvfServingState::FullTwoStage
+        );
         // And it serves exact results immediately (full eager).
         let q = data[0].1.clone();
-        assert_eq!(plain_load.index.search(&q, 1, None).await.unwrap()[0].0, "v0");
+        assert_eq!(
+            plain_load.index.search(&q, 1, None).await.unwrap()[0].0,
+            "v0"
+        );
     }
 
     #[tokio::test]
@@ -4499,7 +4571,9 @@ mod tests {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
 
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_prof").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_prof")
+            .await
+            .unwrap();
         let (_restored, meta) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
         let profile = meta
             .cold_path_profile()

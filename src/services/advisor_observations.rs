@@ -379,11 +379,9 @@ mod tests {
             6320,
             12_500,
         );
-        append_to_sidecar(tmp.to_str().unwrap(), &obs)
-            .expect("first append");
+        append_to_sidecar(tmp.to_str().unwrap(), &obs).expect("first append");
         // Second append → JSONL means two lines.
-        append_to_sidecar(tmp.to_str().unwrap(), &obs)
-            .expect("second append");
+        append_to_sidecar(tmp.to_str().unwrap(), &obs).expect("second append");
         let contents = std::fs::read_to_string(&tmp).expect("read back");
         let line_count = contents.lines().count();
         assert_eq!(line_count, 2, "two appends → two JSONL lines");
@@ -426,12 +424,14 @@ mod tests {
     fn record_observation_handles_none_observed_recall() {
         // None observed_recall → counter still bumps; recall
         // residual histogram skipped.
-        let before_count = crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_OBSERVATIONS_TOTAL
-            .with_label_values(&["test_none_recall_advisor_obs_unique", "ivf"])
-            .get();
-        let before_resid = crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_RECALL_RESIDUAL
-            .with_label_values(&["test_none_recall_advisor_obs_unique", "ivf"])
-            .get_sample_count();
+        let before_count =
+            crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_OBSERVATIONS_TOTAL
+                .with_label_values(&["test_none_recall_advisor_obs_unique", "ivf"])
+                .get();
+        let before_resid =
+            crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_RECALL_RESIDUAL
+                .with_label_values(&["test_none_recall_advisor_obs_unique", "ivf"])
+                .get_sample_count();
         let obs = AdvisorObservation::now(
             "test_none_recall_advisor_obs_unique",
             SupportedAlgorithm::Ivf,
@@ -446,12 +446,14 @@ mod tests {
             12_500,
         );
         record_observation(&obs);
-        let after_count = crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_OBSERVATIONS_TOTAL
-            .with_label_values(&["test_none_recall_advisor_obs_unique", "ivf"])
-            .get();
-        let after_resid = crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_RECALL_RESIDUAL
-            .with_label_values(&["test_none_recall_advisor_obs_unique", "ivf"])
-            .get_sample_count();
+        let after_count =
+            crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_OBSERVATIONS_TOTAL
+                .with_label_values(&["test_none_recall_advisor_obs_unique", "ivf"])
+                .get();
+        let after_resid =
+            crate::metrics::advisor_observations_metrics::AXIS_ADVISOR_RECALL_RESIDUAL
+                .with_label_values(&["test_none_recall_advisor_obs_unique", "ivf"])
+                .get_sample_count();
         assert_eq!(after_count - before_count, 1.0);
         assert_eq!(after_resid - before_resid, 0);
     }

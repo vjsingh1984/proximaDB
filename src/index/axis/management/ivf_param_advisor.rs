@@ -263,10 +263,7 @@ pub fn recall_for_nprobe_with_rerank(
 /// `None` when `recall_target >= RECALL_CEILING` (unreachable at
 /// this nlist; caller should bump nlist or switch algorithm).
 /// Otherwise returns the clamped nprobe (in `[NPROBE_MIN, nlist]`).
-pub fn nprobe_for_recall(
-    recall_target: f32,
-    nlist: u32,
-) -> Option<u32> {
+pub fn nprobe_for_recall(recall_target: f32, nlist: u32) -> Option<u32> {
     nprobe_for_recall_with_rerank(recall_target, nlist, false)
 }
 
@@ -285,9 +282,7 @@ pub fn nprobe_for_recall_with_rerank(
     }
     let headroom = (ceiling - r).max(1e-6);
     let raw = -((headroom / A_AMPLITUDE).ln()) / GAMMA;
-    let clamped = (raw.ceil() as i64)
-        .max(NPROBE_MIN as i64)
-        .min(nlist as i64) as u32;
+    let clamped = (raw.ceil() as i64).max(NPROBE_MIN as i64).min(nlist as i64) as u32;
     Some(clamped)
 }
 
@@ -320,9 +315,7 @@ impl AnnIndexAdvisor for IvfIndexAdvisor {
         // single-stage ceiling.
         let headroom = (active_ceiling - r as f64).max(1e-6);
         let raw = -((headroom / A_AMPLITUDE).ln()) / GAMMA;
-        let mut nprobe = (raw.ceil() as i64)
-            .max(NPROBE_MIN as i64)
-            .min(nlist as i64) as u32;
+        let mut nprobe = (raw.ceil() as i64).max(NPROBE_MIN as i64).min(nlist as i64) as u32;
 
         // Per-query work model. cluster_size = N / nlist; visited
         // vectors per query = nprobe * cluster_size + (rerank
@@ -366,8 +359,7 @@ impl AnnIndexAdvisor for IvfIndexAdvisor {
                 (PQ_SUBSPACES_DEFAULT as f64) * (PQ_NBITS_DEFAULT as f64) / 8.0;
             // PQ codebook size: 2^nbits codewords × m_subspaces ×
             // (dim/m_subspaces) × 4 bytes = 2^nbits × dim × 4.
-            let codebook_bytes =
-                (1u64 << PQ_NBITS_DEFAULT) as f64 * dim * 4.0;
+            let codebook_bytes = (1u64 << PQ_NBITS_DEFAULT) as f64 * dim * 4.0;
             pq_code_bytes_per_vec * n + codebook_bytes
         } else {
             n * dim * 4.0
@@ -440,12 +432,7 @@ impl AnnIndexAdvisor for IvfIndexAdvisor {
         })
     }
 
-    fn recall_for(
-        &self,
-        algorithm: &IndexAlgorithm,
-        vector_count: u64,
-        top_k: u32,
-    ) -> Option<f32> {
+    fn recall_for(&self, algorithm: &IndexAlgorithm, vector_count: u64, top_k: u32) -> Option<f32> {
         match algorithm {
             IndexAlgorithm::IVF { nlist, nprobe, .. } => {
                 Some(recall_for_nprobe(*nprobe, *nlist, vector_count, top_k))

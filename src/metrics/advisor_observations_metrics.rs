@@ -47,8 +47,7 @@
 
 use lazy_static::lazy_static;
 use prometheus::{
-    CounterVec, HistogramOpts, HistogramVec, Opts, register_counter_vec,
-    register_histogram_vec,
+    CounterVec, HistogramOpts, HistogramVec, Opts, register_counter_vec, register_histogram_vec,
 };
 use tracing::error;
 
@@ -93,8 +92,7 @@ fn register_histogram_vec_safe(
 /// range from the m=32 sweep (±0.005) up to gross mispredictions.
 fn recall_residual_buckets() -> Vec<f64> {
     vec![
-        -0.20, -0.10, -0.05, -0.02, -0.01, -0.005, 0.0, 0.005, 0.01, 0.02, 0.05,
-        0.10, 0.20,
+        -0.20, -0.10, -0.05, -0.02, -0.01, -0.005, 0.0, 0.005, 0.01, 0.02, 0.05, 0.10, 0.20,
     ]
 }
 
@@ -103,8 +101,20 @@ fn recall_residual_buckets() -> Vec<f64> {
 /// IVF nprobe scans observed in the multi-N sweep).
 fn latency_us_buckets() -> Vec<f64> {
     vec![
-        50.0, 100.0, 200.0, 500.0, 1_000.0, 2_000.0, 5_000.0, 10_000.0, 25_000.0,
-        50_000.0, 100_000.0, 250_000.0, 500_000.0, 1_000_000.0,
+        50.0,
+        100.0,
+        200.0,
+        500.0,
+        1_000.0,
+        2_000.0,
+        5_000.0,
+        10_000.0,
+        25_000.0,
+        50_000.0,
+        100_000.0,
+        250_000.0,
+        500_000.0,
+        1_000_000.0,
     ]
 }
 

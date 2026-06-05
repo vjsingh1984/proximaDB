@@ -259,7 +259,12 @@ pub fn apply_advisor_to_indexes(
         };
         if let Some(picked) = selector.select_and_advise(&input) {
             match &picked.algorithm {
-                IndexAlgorithm::HNSW { m, ef_construction, ef_search, .. } => {
+                IndexAlgorithm::HNSW {
+                    m,
+                    ef_construction,
+                    ef_search,
+                    ..
+                } => {
                     let m = *m;
                     let ef_construction = *ef_construction;
                     let ef_search = *ef_search;
@@ -289,13 +294,11 @@ pub fn apply_advisor_to_indexes(
                         .push(crate::proto::proximadb_v1::IndexConfig {
                             index_name: AUTO_IVF_INDEX_NAME.to_string(),
                             algorithm: IndexingAlgorithm::Ivf as i32,
-                            ivf_config: Some(
-                                crate::proto::proximadb_v1::IvfConfig {
-                                    n_lists: Some(nlist),
-                                    n_probe: Some(nprobe),
-                                    ..Default::default()
-                                },
-                            ),
+                            ivf_config: Some(crate::proto::proximadb_v1::IvfConfig {
+                                n_lists: Some(nlist),
+                                n_probe: Some(nprobe),
+                                ..Default::default()
+                            }),
                             ..Default::default()
                         });
                     return vec![AppliedAdvice {
@@ -354,17 +357,14 @@ pub fn apply_advisor_to_indexes(
     // per their algorithm-specific advisor.
     let mut applied: Vec<AppliedAdvice> = Vec::new();
     for idx in config.index_configs.iter_mut() {
-        let algo = IndexingAlgorithm::try_from(idx.algorithm)
-            .unwrap_or(IndexingAlgorithm::Unspecified);
+        let algo =
+            IndexingAlgorithm::try_from(idx.algorithm).unwrap_or(IndexingAlgorithm::Unspecified);
         match algo {
             IndexingAlgorithm::Hnsw => {
                 // Skip caller-pinned HNSW.
-                let already_pinned = idx
-                    .hnsw_config
-                    .as_ref()
-                    .is_some_and(|h| {
-                        h.m.is_some() || h.ef_construction.is_some() || h.ef_search.is_some()
-                    });
+                let already_pinned = idx.hnsw_config.as_ref().is_some_and(|h| {
+                    h.m.is_some() || h.ef_construction.is_some() || h.ef_search.is_some()
+                });
                 if already_pinned {
                     continue;
                 }
@@ -1020,11 +1020,12 @@ mod tests {
             128,
             &["recall_target:0.70", "target_vector_count:100000"],
         );
-        c.index_configs.push(crate::proto::proximadb_v1::IndexConfig {
-            index_name: "explicit_ivf".to_string(),
-            algorithm: IndexingAlgorithm::Ivf as i32,
-            ..Default::default()
-        });
+        c.index_configs
+            .push(crate::proto::proximadb_v1::IndexConfig {
+                index_name: "explicit_ivf".to_string(),
+                algorithm: IndexingAlgorithm::Ivf as i32,
+                ..Default::default()
+            });
         let advice = apply_advisor_to_indexes(&mut c, 0.70);
         assert_eq!(advice.len(), 1);
         assert_eq!(advice[0].index_name, "explicit_ivf");
@@ -1092,11 +1093,7 @@ mod tests {
 
     #[test]
     fn parse_modalities_happy_path() {
-        let c = cfg(
-            "c",
-            128,
-            &["modalities:text,image,video"],
-        );
+        let c = cfg("c", 128, &["modalities:text,image,video"]);
         assert_eq!(
             parse_modalities(&c),
             vec!["text".to_string(), "image".to_string(), "video".to_string()]
@@ -1112,11 +1109,7 @@ mod tests {
     #[test]
     fn parse_modalities_normalises_case_and_whitespace() {
         // "Text" / "TEXT" / "  text  " should all collapse to "text".
-        let c = cfg(
-            "c",
-            128,
-            &["modalities: Text , IMAGE,image"],
-        );
+        let c = cfg("c", 128, &["modalities: Text , IMAGE,image"]);
         let out = parse_modalities(&c);
         assert_eq!(out, vec!["text".to_string(), "image".to_string()]);
     }
@@ -1161,16 +1154,17 @@ mod tests {
     fn apply_advisor_to_indexes_respects_caller_pinned_ivf() {
         // IVF with pinned n_lists/n_probe → no-op.
         let mut c = cfg("c_pinned_ivf", 128, &["recall_target:0.70"]);
-        c.index_configs.push(crate::proto::proximadb_v1::IndexConfig {
-            index_name: "pinned".to_string(),
-            algorithm: IndexingAlgorithm::Ivf as i32,
-            ivf_config: Some(crate::proto::proximadb_v1::IvfConfig {
-                n_lists: Some(500),
-                n_probe: Some(25),
+        c.index_configs
+            .push(crate::proto::proximadb_v1::IndexConfig {
+                index_name: "pinned".to_string(),
+                algorithm: IndexingAlgorithm::Ivf as i32,
+                ivf_config: Some(crate::proto::proximadb_v1::IvfConfig {
+                    n_lists: Some(500),
+                    n_probe: Some(25),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        });
+            });
         let advice = apply_advisor_to_indexes(&mut c, 0.70);
         assert_eq!(advice.len(), 0, "pinned config must be untouched");
         let i = c.index_configs[0].ivf_config.as_ref().unwrap();

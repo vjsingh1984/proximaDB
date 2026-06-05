@@ -65,10 +65,10 @@
 //! `projected_recall_if_clamped = min(per-partition recall)`
 //! when any partition's HNSW advisor clamps by budget.
 
+use crate::index::axis::management::HnswIndexAdvisor;
 use crate::index::axis::management::ann_advisor::{
     AnnAdvisorInput, AnnAdvisorOutput, AnnIndexAdvisor, SupportedAlgorithm,
 };
-use crate::index::axis::management::HnswIndexAdvisor;
 use crate::index::axis::types::{HmgiPartitionAlgo, IndexAlgorithm};
 
 /// HMGI impl of [`AnnIndexAdvisor`]. Stateless. Delegates per-
@@ -129,9 +129,7 @@ impl AnnIndexAdvisor for HmgiIndexAdvisor {
                 dimension: input.dimension,
                 distance_metric: input.distance_metric,
                 max_query_latency_ms: input.max_query_latency_ms,
-                max_memory_mb: input
-                    .max_memory_mb
-                    .map(|cap| cap / num_modalities as f64),
+                max_memory_mb: input.max_memory_mb.map(|cap| cap / num_modalities as f64),
                 binary_rerank_allowed: input.binary_rerank_allowed,
                 // Clear modalities for the inner call so the
                 // HNSW advisor doesn't loop back into HMGI.
@@ -157,8 +155,7 @@ impl AnnIndexAdvisor for HmgiIndexAdvisor {
             });
 
             total_memory_mb += partition_out.estimated_memory_mb;
-            max_per_query_work =
-                max_per_query_work.max(partition_out.estimated_per_query_work);
+            max_per_query_work = max_per_query_work.max(partition_out.estimated_per_query_work);
 
             if partition_out.clamped_by_budget {
                 any_clamped = true;
@@ -208,17 +205,8 @@ impl AnnIndexAdvisor for HmgiIndexAdvisor {
         })
     }
 
-    fn recall_for(
-        &self,
-        algorithm: &IndexAlgorithm,
-        vector_count: u64,
-        top_k: u32,
-    ) -> Option<f32> {
-        let IndexAlgorithm::HMGI {
-            per_modality,
-            ..
-        } = algorithm
-        else {
+    fn recall_for(&self, algorithm: &IndexAlgorithm, vector_count: u64, top_k: u32) -> Option<f32> {
+        let IndexAlgorithm::HMGI { per_modality, .. } = algorithm else {
             return None;
         };
         if per_modality.is_empty() {
@@ -304,8 +292,10 @@ mod tests {
                     assert!(partition.ef_search >= 16);
                 }
                 // Modality tags preserved in order.
-                let tags: Vec<&str> =
-                    per_modality.iter().map(|p| p.modality_tag.as_str()).collect();
+                let tags: Vec<&str> = per_modality
+                    .iter()
+                    .map(|p| p.modality_tag.as_str())
+                    .collect();
                 assert_eq!(tags, vec!["text", "image", "video"]);
             }
             other => panic!("expected HMGI, got {:?}", other),
@@ -323,9 +313,7 @@ mod tests {
         let four = advisor
             .advise(&hmgi_input(0.95, vec!["a", "b", "c", "d"]))
             .unwrap();
-        let two = advisor
-            .advise(&hmgi_input(0.95, vec!["a", "b"]))
-            .unwrap();
+        let two = advisor.advise(&hmgi_input(0.95, vec!["a", "b"])).unwrap();
 
         let ef_four = match &four.algorithm {
             IndexAlgorithm::HMGI { per_modality, .. } => per_modality[0].ef_search,
@@ -393,8 +381,8 @@ mod tests {
 
         // HMGI's per-query work should be ~= single-partition HNSW work.
         // Allow a small margin since the modality count factors in.
-        let ratio = (hmgi_out.estimated_per_query_work as f64)
-            / (hnsw_out.estimated_per_query_work as f64);
+        let ratio =
+            (hmgi_out.estimated_per_query_work as f64) / (hnsw_out.estimated_per_query_work as f64);
         assert!(
             (0.9..=1.1).contains(&ratio),
             "HMGI work {} should be ~= single-partition HNSW work {} (ratio {:.2})",

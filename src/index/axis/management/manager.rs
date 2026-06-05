@@ -247,8 +247,7 @@ pub struct AxisManager {
     /// ADR-023 R3 Slice 4: the shared `FilesystemFactory` (injected at boot) that
     /// `index_persist_url` dispatches through by scheme. `None` ⇒ URI mode off
     /// (falls back to the local `index_persist_dir`).
-    filesystem_factory:
-        Option<Arc<crate::storage::persistence::filesystem::FilesystemFactory>>,
+    filesystem_factory: Option<Arc<crate::storage::persistence::filesystem::FilesystemFactory>>,
 
     /// Phase 8 F4a (TD-094): collections whose in-memory IVF index was evicted by
     /// `suspend_collection` to free memory. The persisted `ivf.bin` remains, so
@@ -450,7 +449,7 @@ impl AxisManager {
             index_persist_url: None,  // Set later via set_index_persist_url (ADR-023 R3 Slice 4)
             filesystem_factory: None, // Set later via set_filesystem_factory (ADR-023 R3 Slice 4)
             suspended_collections: Arc::new(RwLock::new(std::collections::HashSet::new())), // F4a
-            cold_lazy_warm: false, // ADR-023 R3 (c): eager warm by default
+            cold_lazy_warm: false,    // ADR-023 R3 (c): eager warm by default
             shared_collection_cache: None, // Will be set via set_shared_collection_cache
             hnsw_indexes: Arc::new(RwLock::new(HashMap::new())), // Real HNSW indexes per collection
             ivf_indexes: Arc::new(RwLock::new(HashMap::new())), // Real IVF indexes per collection (DEFAULT)
@@ -561,9 +560,7 @@ impl AxisManager {
         Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
         String,
     )> {
-        if let (Some(url), Some(factory)) =
-            (&self.index_persist_url, &self.filesystem_factory)
-        {
+        if let (Some(url), Some(factory)) = (&self.index_persist_url, &self.filesystem_factory) {
             let path = format!("{}/{}/ivf.bin", url.trim_end_matches('/'), collection_id);
             return match factory.get_filesystem(&path) {
                 Ok(fs) => Some((fs, path)),
@@ -679,8 +676,9 @@ impl AxisManager {
                         },
                     );
                 }
-                let Some(index_arc) =
-                    self.install_loaded_ivf(collection_id, index, dimension, n).await
+                let Some(index_arc) = self
+                    .install_loaded_ivf(collection_id, index, dimension, n)
+                    .await
                 else {
                     return; // another task loaded it concurrently
                 };
@@ -739,7 +737,8 @@ impl AxisManager {
             }
             Ok(None) => {
                 // v1 / non-binary: whole-file load (membership lives in the body).
-                self.load_ivf_whole_file(collection_id, &fs, &path_str).await;
+                self.load_ivf_whole_file(collection_id, &fs, &path_str)
+                    .await;
             }
             Err(e) => {
                 tracing::warn!(
@@ -747,7 +746,8 @@ impl AxisManager {
                     collection_id,
                     e,
                 );
-                self.load_ivf_whole_file(collection_id, &fs, &path_str).await;
+                self.load_ivf_whole_file(collection_id, &fs, &path_str)
+                    .await;
             }
         }
     }
@@ -817,7 +817,11 @@ impl AxisManager {
         let bytes = match fs.read(path).await {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!("AXIS: read IVF index for '{}' failed ({})", collection_id, e);
+                tracing::warn!(
+                    "AXIS: read IVF index for '{}' failed ({})",
+                    collection_id,
+                    e
+                );
                 return;
             }
         };
@@ -829,8 +833,9 @@ impl AxisManager {
             }) => {
                 let (dimension, n) = (index.dimension(), index.len());
                 let cold_first = warm.is_some();
-                let Some(index_arc) =
-                    self.install_loaded_ivf(collection_id, index, dimension, n).await
+                let Some(index_arc) = self
+                    .install_loaded_ivf(collection_id, index, dimension, n)
+                    .await
                 else {
                     return;
                 };
@@ -849,7 +854,11 @@ impl AxisManager {
                         let clusters = match decoded {
                             Ok(c) => c,
                             Err(e) => {
-                                tracing::warn!("AXIS: decode warm tier failed for '{}': {}", coll, e);
+                                tracing::warn!(
+                                    "AXIS: decode warm tier failed for '{}': {}",
+                                    coll,
+                                    e
+                                );
                                 return;
                             }
                         };
@@ -2161,10 +2170,9 @@ impl AxisManager {
                 // store yet, so exact search would return nothing — force the
                 // binary (Stage-1) route regardless of the recall gate. The gate
                 // governs the warm (`FullTwoStage`) path normally.
-                let cold_binary = index.serving_state()
-                    == crate::index::axis::IvfServingState::ColdBinaryOnly;
-                let use_quantized =
-                    cold_binary || decide_quantized_route(gate_open, has_quantized);
+                let cold_binary =
+                    index.serving_state() == crate::index::axis::IvfServingState::ColdBinaryOnly;
+                let use_quantized = cold_binary || decide_quantized_route(gate_open, has_quantized);
                 let route = if has_quantized {
                     Some(use_quantized)
                 } else {
@@ -3580,9 +3588,7 @@ impl AxisManager {
         binary_rerank: bool,
     ) -> Result<Option<crate::index::axis::management::AnnAdvisorOutput>> {
         use crate::compute::distance_computation::DistanceMetric;
-        use crate::index::axis::management::{
-            AnnAdvisorInput, AnnIndexAdvisor, IvfIndexAdvisor,
-        };
+        use crate::index::axis::management::{AnnAdvisorInput, AnnIndexAdvisor, IvfIndexAdvisor};
 
         // (1) Gate on records being non-empty + carrying valid embeddings.
         let dim = records
@@ -5210,10 +5216,10 @@ mod recluster_apply_tests {
         );
 
         let m = AxisManager::new(AxisConfig::default()).await.unwrap();
-        m.ivf_indexes
-            .write()
-            .await
-            .insert("colb".to_string(), Arc::new(tokio::sync::RwLock::new(cold_idx)));
+        m.ivf_indexes.write().await.insert(
+            "colb".to_string(),
+            Arc::new(tokio::sync::RwLock::new(cold_idx)),
+        );
 
         let query = AxisHybridQuery {
             collection_id: "colb".to_string(),
@@ -5531,7 +5537,10 @@ mod recluster_apply_tests {
             .into_iter()
             .map(|(id, _)| id)
             .collect();
-        assert_eq!(got, want, "pure-lazy on-probe rerank matches the warm top-k");
+        assert_eq!(
+            got, want,
+            "pure-lazy on-probe rerank matches the warm top-k"
+        );
         assert!(
             idx_l.read().await.fetched_cluster_count() <= 2,
             "on-probe fetched only the probed clusters"

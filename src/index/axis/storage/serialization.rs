@@ -666,7 +666,10 @@ impl IndexSerializer {
             index
                 .restore_warm_tier(warm_flat)
                 .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
-            info!("Deserialized IVF index with {} vectors", header.metadata.num_vectors);
+            info!(
+                "Deserialized IVF index with {} vectors",
+                header.metadata.num_vectors
+            );
             return Ok((index, header.metadata));
         }
 
@@ -682,7 +685,10 @@ impl IndexSerializer {
             .restore_state(state)
             .await
             .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
-        info!("Deserialized IVF index with {} vectors", header.metadata.num_vectors);
+        info!(
+            "Deserialized IVF index with {} vectors",
+            header.metadata.num_vectors
+        );
         Ok((index, header.metadata))
     }
 
@@ -742,7 +748,11 @@ impl IndexSerializer {
         let (header, body) = split_header(data)?;
         if header.version < 2 {
             let (index, metadata) = Self::deserialize_ivf(data).await?;
-            return Ok(ColdLoadResult { index, metadata, warm: None });
+            return Ok(ColdLoadResult {
+                index,
+                metadata,
+                warm: None,
+            });
         }
         let (cold, warm_bytes) = Self::read_cold_blob(&header, body)?;
         let warm = Some(warm_bytes.to_vec());
@@ -750,10 +760,18 @@ impl IndexSerializer {
         info!(
             "Cold-first load: {} vectors served Stage-1 ({} cold bytes, {} warm deferred)",
             header.metadata.num_vectors,
-            header.metadata.cold_path_profile().map(|p| p.cold_tier_bytes).unwrap_or(0),
+            header
+                .metadata
+                .cold_path_profile()
+                .map(|p| p.cold_tier_bytes)
+                .unwrap_or(0),
             warm_bytes.len(),
         );
-        Ok(ColdLoadResult { index, metadata: header.metadata, warm })
+        Ok(ColdLoadResult {
+            index,
+            metadata: header.metadata,
+            warm,
+        })
     }
 
     /// Load an IVF index under a [`ColdPathLoadPolicy`] (ADR-023 T-C). `FullEager`
@@ -766,7 +784,11 @@ impl IndexSerializer {
         match policy {
             ColdPathLoadPolicy::FullEager => {
                 let (index, metadata) = Self::deserialize_ivf(data).await?;
-                Ok(ColdLoadResult { index, metadata, warm: None })
+                Ok(ColdLoadResult {
+                    index,
+                    metadata,
+                    warm: None,
+                })
             }
             ColdPathLoadPolicy::BinaryFirstThenRerank => {
                 Self::deserialize_ivf_cold_only(data).await
@@ -828,7 +850,8 @@ impl IndexSerializer {
         match header.metadata.warm_directory() {
             Some(directory) => {
                 let mut flat = Vec::new();
-                for (_cluster_id, vectors) in Self::decode_warm_clusters_dir(warm_bytes, &directory)?
+                for (_cluster_id, vectors) in
+                    Self::decode_warm_clusters_dir(warm_bytes, &directory)?
                 {
                     flat.extend(vectors);
                 }
@@ -929,7 +952,9 @@ impl IndexSerializer {
         if !eligible {
             return Ok(None);
         }
-        Ok(Some(Self::cold_from_header(fs, path, header, header_len).await?))
+        Ok(Some(
+            Self::cold_from_header(fs, path, header, header_len).await?,
+        ))
     }
 
     /// Range-read the `[u32 header_len][header]` prefix and validate magic/version.
