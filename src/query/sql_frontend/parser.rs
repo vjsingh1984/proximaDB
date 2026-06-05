@@ -2530,6 +2530,7 @@ use crate::services::ddl::{
     AlterTableChange, ColumnDefinition, ColumnPosition, DdlStatement, IndexType, SqlDataType,
     TableConstraint,
 };
+use proximadb_data_model::ProximaType;
 
 impl SqlFrontendParser {
     /// Parse SQL text and return a DDL statement if it's CREATE/ALTER/DROP
@@ -2545,6 +2546,10 @@ impl SqlFrontendParser {
         }
         // Pattern: DROP RANK PROFILE [IF EXISTS] <ident>
         if let Some(result) = try_parse_drop_rank_profile(sql)? {
+            return Ok(Some(result));
+        }
+        // Pattern: CREATE [OR REPLACE] FUNCTION <name>(params) RETURNS <ty> AS '<body>' (F5)
+        if let Some(result) = try_parse_create_function(sql)? {
             return Ok(Some(result));
         }
 
@@ -3309,6 +3314,90 @@ pub(crate) fn try_parse_drop_rank_profile(sql: &str) -> Result<Option<DdlStateme
     Ok(Some(DdlStatement::DropRankProfile { name, if_exists }))
 }
 
+/// Map a SQL type name (as written in a `CREATE FUNCTION` signature) to a [`ProximaType`].
+/// Covers the common scalar types; `DOUBLE PRECISION` and other multi-word names arrive joined.
+fn parse_function_param_type(s: &str) -> Result<ProximaType> {
+    Ok(match s.trim().to_ascii_uppercase().as_str() {
+        "BOOLEAN" | "BOOL" => ProximaType::Boolean,
+        "TINYINT" | "INT1" => ProximaType::Int8,
+        "SMALLINT" | "INT2" => ProximaType::Int16,
+        "INT" | "INTEGER" | "INT4" => ProximaType::Int32,
+        "BIGINT" | "INT8" => ProximaType::Int64,
+        "REAL" | "FLOAT4" => ProximaType::Float32,
+        "DOUBLE" | "DOUBLE PRECISION" | "FLOAT" | "FLOAT8" => ProximaType::Float64,
+        "TEXT" | "VARCHAR" | "CHAR" | "STRING" => ProximaType::String,
+        "JSON" | "JSONB" => ProximaType::Json,
+        other => return Err(anyhow!("unsupported function type '{}'", other)),
+    })
+}
+
+/// Match `CREATE [OR REPLACE] FUNCTION <name>(p1 t1, p2 t2, ...) RETURNS <ty> AS '<expr>'` (F5).
+/// The body is a SQL string literal (a scalar expression over the parameters). Returns `Ok(None)`
+/// when the prefix doesn't match so the caller falls through to sqlparser. Parameterized types
+/// (e.g. `VARCHAR(255)`) are not supported in this first cut.
+pub(crate) fn try_parse_create_function(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let upper = normalised.to_ascii_uppercase();
+    let (or_replace, after_create) = if upper.starts_with("CREATE OR REPLACE FUNCTION") {
+        (true, &normalised["CREATE OR REPLACE FUNCTION".len()..])
+    } else if upper.starts_with("CREATE FUNCTION") {
+        (false, &normalised["CREATE FUNCTION".len()..])
+    } else {
+        return Ok(None);
+    };
+
+    let after = after_create.trim_start();
+
+    // Parameter list: name ( p1 t1, p2 t2, ... ) — simple types only (no inner parens). The
+    // name is the text up to '(' (which may abut the name with no space).
+    let open = after
+        .find('(')
+        .ok_or_else(|| anyhow!("CREATE FUNCTION: expected '(' before the parameter list"))?;
+    let name = after[..open].trim().to_string();
+    if name.is_empty() {
+        return Err(anyhow!("CREATE FUNCTION: missing function name"));
+    }
+    let close_rel = after[open..]
+        .find(')')
+        .ok_or_else(|| anyhow!("CREATE FUNCTION '{}': expected ')' after parameters", name))?;
+    let close = open + close_rel;
+    let mut params: Vec<(String, ProximaType)> = Vec::new();
+    for part in after[open + 1..close].split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let mut it = part.splitn(2, char::is_whitespace);
+        let pname = it.next().unwrap_or("").trim().to_string();
+        let ptype = it.next().ok_or_else(|| {
+            anyhow!("CREATE FUNCTION '{}': parameter '{}' is missing a type", name, pname)
+        })?;
+        params.push((pname, parse_function_param_type(ptype)?));
+    }
+
+    // RETURNS <ty> AS '<body>'
+    let rest = after[close + 1..].trim_start();
+    if !rest.to_ascii_uppercase().starts_with("RETURNS") {
+        return Err(anyhow!("CREATE FUNCTION '{}': expected RETURNS <type>", name));
+    }
+    let after_returns = rest["RETURNS".len()..].trim_start();
+    let as_pos = after_returns
+        .to_ascii_uppercase()
+        .find(" AS ")
+        .ok_or_else(|| anyhow!("CREATE FUNCTION '{}': expected AS '<body>'", name))?;
+    let return_ty = parse_function_param_type(after_returns[..as_pos].trim())?;
+    let body = extract_single_quoted_literal(after_returns[as_pos + 4..].trim_start())
+        .map_err(|e| anyhow!("CREATE FUNCTION '{}': expected single-quoted body after AS: {}", name, e))?;
+
+    Ok(Some(DdlStatement::CreateFunction {
+        name,
+        params,
+        return_ty,
+        body,
+        or_replace,
+    }))
+}
+
 fn strip_if_not_exists(input: &str) -> (bool, &str) {
     let upper = input.to_ascii_uppercase();
     if upper.starts_with("IF NOT EXISTS")
@@ -3559,6 +3648,62 @@ mod rank_profile_ddl_tests {
             .unwrap()
             .expect("parse should succeed");
         assert!(matches!(stmt, DdlStatement::DropRankProfile { .. }));
+    }
+
+    #[test]
+    fn parse_create_function_lowers_signature_and_body() {
+        // F5 slice 4: CREATE FUNCTION text → DdlStatement::CreateFunction.
+        let stmt = try_parse_create_function("CREATE FUNCTION double(x BIGINT) RETURNS BIGINT AS 'x * 2'")
+            .unwrap()
+            .unwrap();
+        match stmt {
+            DdlStatement::CreateFunction {
+                name,
+                params,
+                return_ty,
+                body,
+                or_replace,
+            } => {
+                assert_eq!(name, "double");
+                assert_eq!(params, vec![("x".to_string(), ProximaType::Int64)]);
+                assert_eq!(return_ty, ProximaType::Int64);
+                assert_eq!(body, "x * 2");
+                assert!(!or_replace);
+            }
+            other => panic!("expected CreateFunction, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_create_or_replace_function_multi_param() {
+        let stmt = try_parse_create_function(
+            "CREATE OR REPLACE FUNCTION wsum(a DOUBLE, b DOUBLE) RETURNS DOUBLE AS 'a * 2 + b'",
+        )
+        .unwrap()
+        .unwrap();
+        let DdlStatement::CreateFunction {
+            params,
+            or_replace,
+            body,
+            ..
+        } = stmt
+        else {
+            panic!("expected CreateFunction");
+        };
+        assert!(or_replace);
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[1], ("b".to_string(), ProximaType::Float64));
+        assert_eq!(body, "a * 2 + b");
+    }
+
+    #[test]
+    fn parse_create_function_falls_through_for_non_function() {
+        assert!(try_parse_create_function("SELECT 1").unwrap().is_none());
+        assert!(
+            try_parse_create_function("CREATE TABLE t (id INT)")
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
