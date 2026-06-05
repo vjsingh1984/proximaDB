@@ -1406,4 +1406,13 @@ physical layouts.
 | Active plan: `roadmap/techdebt/TD_110_OLTP_OLAP_HTAP_STORAGE_AND_CONSTRAINTS_PLAN_2026_06_04.adoc`. PostgreSQL-style latency-sensitive workloads need native OLTP authority below pgwire: xCatalog constraint/index metadata, WAL plus row/delta commit, primary-key/unique/check/FK enforcement, MVCC visibility, Volcano strong-freshness execution, and DataFusion snapshot-plus-delta reads. Parquet/Iceberg remains the OLAP/open-format publication tier, not the direct write authority for mutable OLTP tables.
 | 4-8 sprints
 | Acceptance: (1) xCatalog records PK/unique/not-null/check/FK/locality/isolation/freshness metadata. (2) DML enforces PK/unique/not-null/check and rejects unsupported FK shapes before commit. (3) Row/delta indexes recover from WAL. (4) `EXPLAIN` reports authority, workload, route, freshness, snapshot watermark, and rejected-route reasons. (5) Volcano and DataFusion agree for snapshot-safe queries; fresh HTAP reads either union delta state or reject unsafe routes.
+
+| TD-111
+| Unify data-type enums + schema structs onto canonical ProximaType (ADR-024 / seam S8)
+| P2
+| MEDIUM
+| Mostly done (2026-06-05) — residual follow-ups open
+| Governed by `docs/12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc` + CONVERGENCE_AUDIT seam S8. Three parallel logical type enums (`ProximaType`/`ProximaDataType`/`CatalogDataType`) and two schema structs (`CatalogTableSchema`/`ProximaSchema`) collapsed onto the canonical `ProximaType` + `CatalogTableSchema`. DONE: ProximaType superset + Arrow/pgwire/proto-code bridges (`7d78df773`,`be1c0b2f6`); `ProximaDataType` deleted (`320d62747`); `CatalogDataType` deleted + durable serde-compat shim (`8009ab052`); REST v2 type vocabulary derived from ProximaType (`d6e897689`); `ProximaSchema` merged into `CatalogTableSchema` (`fcac4f5fe`). Physical encoding/quantization kept as an orthogonal storage attribute (not a logical-type variant).
+| residual ~1 day
+| Acceptance: (1) one logical type enum [DONE]. (2) one schema struct [DONE]. (3) REST/pgwire/proto type paths funnel through ProximaType [DONE]. RESIDUAL: (a) `build_vector_column` honors non-f32 dense-vector element width (currently writes fp32 `dim*4` while `DenseVector::to_arrow_type` declares `dim*element_width`; latent — only f32 used in practice). (b) Broader `SqlValue→ProximaValue` value migration is tracked separately under TD-106/S3.
 |===
