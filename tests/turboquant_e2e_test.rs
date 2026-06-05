@@ -26,9 +26,7 @@ use proximadb::metrics::turboquant_metrics::{
     TURBOQUANT_BLOCKS_SKIPPED_BY_MASK_TOTAL, record_blocks_skipped,
 };
 use proximadb_quantization_types::CalibrationMode;
-use proximadb_vector::quantization::turboquant::{
-    TurboQuantStore, mask as kernel_mask,
-};
+use proximadb_vector::quantization::turboquant::{TurboQuantStore, mask as kernel_mask};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rand_distr::StandardNormal;
@@ -220,7 +218,10 @@ fn turboquant_tq_plus_lifecycle_persists_calibration() {
         .expect("TqPlus construction must succeed");
     let vectors = random_unit_vectors(n_total, DIM, 5000);
     store.add(&vectors).expect("add must succeed");
-    assert!(store.has_calibration(), "TQ+ should fit on a 1024-vec batch");
+    assert!(
+        store.has_calibration(),
+        "TQ+ should fit on a 1024-vec batch"
+    );
 
     let query = random_unit_vectors(1, DIM, 5001);
     let before = store.search(&query, 5, None).expect("search must succeed");
@@ -274,7 +275,10 @@ fn turboquant_errors_surface_as_typed_results_not_panics() {
     let err = store.add(&v).unwrap_err();
     assert!(matches!(
         err,
-        TurboQuantError::VectorBufferNotMultipleOfDim { vectors_len: 9, dim: 8 }
+        TurboQuantError::VectorBufferNotMultipleOfDim {
+            vectors_len: 9,
+            dim: 8
+        }
     ));
 
     // Wrong-dim query.
@@ -282,7 +286,10 @@ fn turboquant_errors_surface_as_typed_results_not_panics() {
     let err = store.search(&q, 1, None).unwrap_err();
     assert!(matches!(
         err,
-        TurboQuantError::VectorBufferNotMultipleOfDim { vectors_len: 7, dim: 8 }
+        TurboQuantError::VectorBufferNotMultipleOfDim {
+            vectors_len: 7,
+            dim: 8
+        }
     ));
 
     // Loading a nonexistent file.

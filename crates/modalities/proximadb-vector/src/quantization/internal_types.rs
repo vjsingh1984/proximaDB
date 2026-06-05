@@ -804,7 +804,10 @@ mod tests {
         let ds = m.durable_state().expect("TurboQuant has durable state");
         // rotation_seed is tunneled as a hex string for cross-protocol
         // stability. Pinning the format here protects xCatalog round-trip.
-        assert_eq!(ds.seed_or_codebook_id.as_deref(), Some("0xdeadbeefcafebabe"));
+        assert_eq!(
+            ds.seed_or_codebook_id.as_deref(),
+            Some("0xdeadbeefcafebabe")
+        );
         assert_eq!(ds.calibration.as_deref(), Some("tq_plus"));
         assert_eq!(ds.encoded_epoch, 0);
     }

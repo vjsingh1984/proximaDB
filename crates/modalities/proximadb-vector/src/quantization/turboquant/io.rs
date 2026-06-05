@@ -552,7 +552,9 @@ mod tests {
             dim: 8,
             n_vectors: 3,
             encoded_epoch: 7,
-            codes: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC],
+            codes: vec![
+                0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC,
+            ],
             scales: vec![1.0, 0.5, 2.0],
             calibration: None,
         }
@@ -605,8 +607,7 @@ mod tests {
         let store = sample_store_identity();
         let mut buf = Vec::new();
         write_to(&mut buf, &store).unwrap();
-        let codes_offset =
-            u64::from_le_bytes(buf[40..48].try_into().unwrap());
+        let codes_offset = u64::from_le_bytes(buf[40..48].try_into().unwrap());
         assert_eq!(codes_offset, HEADER_LEN as u64);
         assert_eq!(HEADER_LEN, 64);
     }
@@ -638,7 +639,9 @@ mod tests {
         write_to(&mut buf, &store).unwrap();
         buf[0] = b'X';
         let err = read_from(&mut std::io::Cursor::new(buf)).unwrap_err();
-        assert!(matches!(err, TurboQuantError::InvalidFileFormat(ref s) if s.contains("bad magic")));
+        assert!(
+            matches!(err, TurboQuantError::InvalidFileFormat(ref s) if s.contains("bad magic"))
+        );
     }
 
     #[test]

@@ -372,7 +372,13 @@ mod tests {
 
     /// Brute-force FP32 cosine top-k oracle. Same scoring shape as the
     /// kernel: `<v, q>` against unit-normalised database vectors.
-    fn brute_force_top_k(vectors: &[f32], query: &[f32], n: usize, dim: usize, k: usize) -> Vec<u32> {
+    fn brute_force_top_k(
+        vectors: &[f32],
+        query: &[f32],
+        n: usize,
+        dim: usize,
+        k: usize,
+    ) -> Vec<u32> {
         let mut q_unit = query.to_vec();
         let mut sumsq = 0.0f64;
         for &x in query {
@@ -566,8 +572,8 @@ mod tests {
         // LLD's intended fast path; the per-slot mask check still applies
         // when blocks contain mixed bits (e.g., tenant boundary blocks).
 
-        use std::time::Instant;
         use super::super::mask;
+        use std::time::Instant;
 
         let dim = 128;
         let n = 10000;

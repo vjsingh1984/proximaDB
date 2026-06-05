@@ -149,11 +149,7 @@ pub struct HardwarePreferences {
 /// `None` always returns the input unchanged. This is the unconditional
 /// pre-P7 path.
 #[inline]
-fn apply_length_renorm(
-    raw: f32,
-    renorm: Option<f32>,
-    metric: &DistanceMetric,
-) -> f32 {
+fn apply_length_renorm(raw: f32, renorm: Option<f32>, metric: &DistanceMetric) -> f32 {
     match (renorm, metric) {
         (Some(s), DistanceMetric::Cosine) | (Some(s), DistanceMetric::DotProduct) => raw * s,
         _ => raw,
@@ -665,7 +661,11 @@ impl QuantizedDistanceCalculator {
                     int8_data.length_renorm,
                     &self.config.distance_metric,
                 );
-                let quality = if int8_data.length_renorm.is_some() { 0.93 } else { 0.9 };
+                let quality = if int8_data.length_renorm.is_some() {
+                    0.93
+                } else {
+                    0.9
+                };
                 (raw_value, quality, ComputationMethod::INT8Approximation)
             }
 
@@ -692,7 +692,11 @@ impl QuantizedDistanceCalculator {
                     pq_data.length_renorm,
                     &self.config.distance_metric,
                 );
-                let quality = if pq_data.length_renorm.is_some() { 0.9 } else { 0.85 };
+                let quality = if pq_data.length_renorm.is_some() {
+                    0.9
+                } else {
+                    0.85
+                };
                 (raw_value, quality, ComputationMethod::PQApproximation)
             }
         };

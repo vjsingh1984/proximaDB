@@ -249,7 +249,10 @@ impl TurboQuantStore {
     /// is `TqPlus`, the routing plan should surface
     /// `calibration_mode="identity"` (LLD Q7).
     pub fn has_calibration(&self) -> bool {
-        self.inner.lock().map(|i| i.calibration.is_some()).unwrap_or(false)
+        self.inner
+            .lock()
+            .map(|i| i.calibration.is_some())
+            .unwrap_or(false)
     }
 
     /// Read-only access to the rotation matrix cache. Initialises on
@@ -310,7 +313,11 @@ impl TurboQuantStore {
                     for &x in row {
                         sumsq += (x as f64) * (x as f64);
                     }
-                    let inv_norm = if sumsq > 1e-30 { 1.0 / sumsq.sqrt() } else { 0.0 };
+                    let inv_norm = if sumsq > 1e-30 {
+                        1.0 / sumsq.sqrt()
+                    } else {
+                        0.0
+                    };
                     for k in 0..self.dim {
                         let r_row = &rotation[k * self.dim..(k + 1) * self.dim];
                         let mut acc = 0.0f64;
@@ -543,17 +550,16 @@ impl TurboQuantStore {
             }
         };
         let file = std::fs::File::create(path.as_ref()).map_err(|e| {
-            TurboQuantError::InvalidFileFormat(format!(
-                "could not create {:?}: {e}",
-                path.as_ref(),
-            ))
+            TurboQuantError::InvalidFileFormat(
+                format!("could not create {:?}: {e}", path.as_ref(),),
+            )
         })?;
         let mut writer = std::io::BufWriter::new(file);
         io::write_to(&mut writer, &snapshot)?;
         use std::io::Write;
-        writer.flush().map_err(|e| {
-            TurboQuantError::InvalidFileFormat(format!("flush failed: {e}"))
-        })?;
+        writer
+            .flush()
+            .map_err(|e| TurboQuantError::InvalidFileFormat(format!("flush failed: {e}")))?;
         Ok(())
     }
 
@@ -576,15 +582,9 @@ impl TurboQuantStore {
     /// fix-up, batched re-encode) writes a new `.tq` and signals the
     /// running service to pick it up. The service calls `reload_from()`
     /// without dropping any `Arc<TurboQuantStore>` handles.
-    pub fn reload_from(
-        &self,
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<(), TurboQuantError> {
+    pub fn reload_from(&self, path: impl AsRef<std::path::Path>) -> Result<(), TurboQuantError> {
         let file = std::fs::File::open(path.as_ref()).map_err(|e| {
-            TurboQuantError::InvalidFileFormat(format!(
-                "could not open {:?}: {e}",
-                path.as_ref(),
-            ))
+            TurboQuantError::InvalidFileFormat(format!("could not open {:?}: {e}", path.as_ref(),))
         })?;
         let mut reader = std::io::BufReader::new(file);
         let persisted = io::read_from(&mut reader)?;
@@ -642,10 +642,7 @@ impl TurboQuantStore {
     /// caches start empty and re-materialize on first search.
     pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, TurboQuantError> {
         let file = std::fs::File::open(path.as_ref()).map_err(|e| {
-            TurboQuantError::InvalidFileFormat(format!(
-                "could not open {:?}: {e}",
-                path.as_ref(),
-            ))
+            TurboQuantError::InvalidFileFormat(format!("could not open {:?}: {e}", path.as_ref(),))
         })?;
         let mut reader = std::io::BufReader::new(file);
         let persisted = io::read_from(&mut reader)?;
@@ -692,7 +689,11 @@ mod tests {
                 v[i * dim + d] = x as f32;
                 sumsq += x * x;
             }
-            let inv = if sumsq > 1e-30 { (1.0 / sumsq.sqrt()) as f32 } else { 0.0 };
+            let inv = if sumsq > 1e-30 {
+                (1.0 / sumsq.sqrt()) as f32
+            } else {
+                0.0
+            };
             for d in 0..dim {
                 v[i * dim + d] *= inv;
             }
@@ -738,7 +739,10 @@ mod tests {
         let err = s.add(&v).unwrap_err();
         assert!(matches!(
             err,
-            TurboQuantError::VectorBufferNotMultipleOfDim { vectors_len: 9, dim: 8 }
+            TurboQuantError::VectorBufferNotMultipleOfDim {
+                vectors_len: 9,
+                dim: 8
+            }
         ));
     }
 
@@ -983,9 +987,7 @@ mod tests {
 
         let dim = 32;
         let seed = 0x1234;
-        let s = Arc::new(
-            TurboQuantStore::new(dim, 4, CalibrationMode::Identity, seed).unwrap(),
-        );
+        let s = Arc::new(TurboQuantStore::new(dim, 4, CalibrationMode::Identity, seed).unwrap());
         s.add(&random_unit_vectors(5, dim, 100)).unwrap();
 
         // Build two donor files: one with 20 vectors, one with 50.
@@ -1026,9 +1028,7 @@ mod tests {
             handles.push(thread::spawn(move || {
                 let q = random_unit_vectors(1, dim, 300 + r as u64);
                 let mut searches = 0usize;
-                while !stop.load(std::sync::atomic::Ordering::SeqCst)
-                    && Instant::now() < deadline
-                {
+                while !stop.load(std::sync::atomic::Ordering::SeqCst) && Instant::now() < deadline {
                     let len_before = s.len();
                     let hits = s.search(&q, 5, None).unwrap();
                     // Every returned slot must be < the len observed
@@ -1174,7 +1174,10 @@ mod tests {
         let s = TurboQuantStore::new(dim, 4, CalibrationMode::TqPlus, 1).unwrap();
         let v = random_unit_vectors(1024, dim, 100);
         s.add(&v).unwrap();
-        assert!(s.has_calibration(), "TQ+ should be fit after a 1024-vec batch");
+        assert!(
+            s.has_calibration(),
+            "TQ+ should be fit after a 1024-vec batch"
+        );
 
         s.clear();
 
@@ -1315,10 +1318,7 @@ mod tests {
         let expected_scales = 1024 * 4;
         assert_eq!(st.codes_bytes, expected_codes);
         assert_eq!(st.scales_bytes, expected_scales);
-        assert_eq!(
-            st.total_bytes,
-            expected_codes + expected_scales + 512,
-        );
+        assert_eq!(st.total_bytes, expected_codes + expected_scales + 512,);
     }
 
     #[test]

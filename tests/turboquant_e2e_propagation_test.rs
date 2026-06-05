@@ -42,13 +42,13 @@ use proximadb::compute::quantization::turboquant_store_registry::{
     InMemoryTurboQuantStoreRegistry, TurboQuantStoreRegistry,
 };
 use proximadb::core::search::filter_contract::{CandidateMaskSet, CandidateSet, SlotIdResolver};
+use proximadb::core::service_types::IndexStats;
 use proximadb::index::axis::index_factory::AxisVectorIndex;
 use proximadb::index::axis::indexes::{
     TurboQuantAxisIndex, TurboQuantAxisIndexConfig, TurboQuantSlotResolver,
 };
 use proximadb::index::turboquant_bridge::TurboQuantExplainHints;
 use proximadb::observability::predicate_diagnostics;
-use proximadb::core::service_types::IndexStats;
 use proximadb::observability::search_plan_trace::{
     CacheResult, FilterStrategy, IndexRoute, SureSignals,
 };
@@ -67,7 +67,11 @@ fn random_unit_vectors(n: usize, dim: usize, seed: u64) -> Vec<Vec<f32>> {
             .map(|_| rng.sample::<f64, _>(StandardNormal) as f32)
             .collect();
         let sumsq: f32 = v.iter().map(|x| x * x).sum();
-        let inv = if sumsq > 1e-30 { 1.0 / sumsq.sqrt() } else { 0.0 };
+        let inv = if sumsq > 1e-30 {
+            1.0 / sumsq.sqrt()
+        } else {
+            0.0
+        };
         for x in v.iter_mut() {
             *x *= inv;
         }
@@ -176,7 +180,11 @@ async fn axis_trait_dispatch_routes_candidate_mask_through_kernel() {
     }
     impl SlotIdResolver for NoopResolver {
         fn id_for_slot(&self, slot: usize) -> Option<String> {
-            if slot < self.capacity { Some(format!("slot-{slot}")) } else { None }
+            if slot < self.capacity {
+                Some(format!("slot-{slot}"))
+            } else {
+                None
+            }
         }
         fn slot_for_id(&self, id: &str) -> Option<usize> {
             id.strip_prefix("slot-").and_then(|s| s.parse().ok())
@@ -190,10 +198,7 @@ async fn axis_trait_dispatch_routes_candidate_mask_through_kernel() {
         mask.set_slot(slot);
     }
 
-    let q = random_unit_vectors(1, dim, 7)
-        .into_iter()
-        .next()
-        .unwrap();
+    let q = random_unit_vectors(1, dim, 7).into_iter().next().unwrap();
     let hits = index
         .search_with_candidate_set(&q, 5, Some(&mask as &dyn CandidateSet))
         .await
@@ -309,9 +314,18 @@ fn trace_builder_propagates_turboquant_payload_verbatim() {
         .expect("turboquant_explain key present")
         .as_object()
         .expect("payload is an object");
-    assert_eq!(tq.get("quantization").and_then(|x| x.as_str()), Some("turboquant_4bit"));
-    assert_eq!(tq.get("blocks_skipped_by_mask").and_then(|x| x.as_u64()), Some(17));
-    assert_eq!(tq.get("mask_pushed_to_kernel").and_then(|x| x.as_bool()), Some(true));
+    assert_eq!(
+        tq.get("quantization").and_then(|x| x.as_str()),
+        Some("turboquant_4bit")
+    );
+    assert_eq!(
+        tq.get("blocks_skipped_by_mask").and_then(|x| x.as_u64()),
+        Some(17)
+    );
+    assert_eq!(
+        tq.get("mask_pushed_to_kernel").and_then(|x| x.as_bool()),
+        Some(true)
+    );
 }
 
 /// Full chain: build EXPLAIN hints via the bridge, route through the
@@ -324,9 +338,13 @@ async fn full_chain_bridge_hints_to_trace_payload_via_bus() {
 
     // Construct a TurboQuant store directly — same as the bridge
     // construction path used inside `score_turboquant`.
-    let store =
-        TurboQuantStore::new(64, 4, CalibrationMode::Identity, derive_rotation_seed("chain"))
-            .expect("store");
+    let store = TurboQuantStore::new(
+        64,
+        4,
+        CalibrationMode::Identity,
+        derive_rotation_seed("chain"),
+    )
+    .expect("store");
 
     // Build the canonical TurboQuantExplainHints from the bridge's
     // public surface. This is what `score_turboquant` builds at the
@@ -374,9 +392,18 @@ async fn full_chain_bridge_hints_to_trace_payload_via_bus() {
     // Wire-shape spot check: the bridge's invariants must reach the
     // operator-visible structured log.
     let v = trace.turboquant_explain.as_ref().unwrap();
-    assert_eq!(v.get("quantization").and_then(|x| x.as_str()), Some("turboquant_4bit"));
-    assert_eq!(v.get("blocks_skipped_by_mask").and_then(|x| x.as_u64()), Some(13));
-    assert_eq!(v.get("length_renorm_applied").and_then(|x| x.as_bool()), Some(true));
+    assert_eq!(
+        v.get("quantization").and_then(|x| x.as_str()),
+        Some("turboquant_4bit")
+    );
+    assert_eq!(
+        v.get("blocks_skipped_by_mask").and_then(|x| x.as_u64()),
+        Some(13)
+    );
+    assert_eq!(
+        v.get("length_renorm_applied").and_then(|x| x.as_bool()),
+        Some(true)
+    );
 }
 
 /// Reuse the `TurboQuantSlotResolver` adapter type to verify it can be

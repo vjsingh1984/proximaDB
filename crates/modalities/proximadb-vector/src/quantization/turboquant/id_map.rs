@@ -62,7 +62,11 @@ struct IdTable {
 
 impl std::fmt::Debug for IdMapIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let len = self.id_table.read().map(|t| t.slot_to_id.len()).unwrap_or(0);
+        let len = self
+            .id_table
+            .read()
+            .map(|t| t.slot_to_id.len())
+            .unwrap_or(0);
         f.debug_struct("IdMapIndex")
             .field("inner", &self.inner)
             .field("n_ids", &len)
@@ -138,7 +142,10 @@ impl IdMapIndex {
     }
 
     pub fn len(&self) -> usize {
-        self.id_table.read().map(|t| t.slot_to_id.len()).unwrap_or(0)
+        self.id_table
+            .read()
+            .map(|t| t.slot_to_id.len())
+            .unwrap_or(0)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -327,7 +334,8 @@ impl IdMapIndex {
             // This is correct and the cost is bounded by `n × bytes/vec`
             // which already dominates the write anyway.
             let mut buf = Vec::new();
-            self.inner.save_with_epoch_to_writer(&mut buf, encoded_epoch)?;
+            self.inner
+                .save_with_epoch_to_writer(&mut buf, encoded_epoch)?;
             let mut cur = std::io::Cursor::new(buf);
             let persisted = io::read_from(&mut cur)?;
             let n = persisted.n_vectors;
@@ -365,17 +373,16 @@ impl IdMapIndex {
         };
 
         let file = std::fs::File::create(path.as_ref()).map_err(|e| {
-            TurboQuantError::InvalidFileFormat(format!(
-                "could not create {:?}: {e}",
-                path.as_ref(),
-            ))
+            TurboQuantError::InvalidFileFormat(
+                format!("could not create {:?}: {e}", path.as_ref(),),
+            )
         })?;
         let mut writer = std::io::BufWriter::new(file);
         io::write_id_map_to(&mut writer, &persisted)?;
         use std::io::Write;
-        writer.flush().map_err(|e| {
-            TurboQuantError::InvalidFileFormat(format!("flush failed: {e}"))
-        })?;
+        writer
+            .flush()
+            .map_err(|e| TurboQuantError::InvalidFileFormat(format!("flush failed: {e}")))?;
         Ok(())
     }
 
@@ -383,10 +390,7 @@ impl IdMapIndex {
     /// by [`Self::save`].
     pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, TurboQuantError> {
         let file = std::fs::File::open(path.as_ref()).map_err(|e| {
-            TurboQuantError::InvalidFileFormat(format!(
-                "could not open {:?}: {e}",
-                path.as_ref(),
-            ))
+            TurboQuantError::InvalidFileFormat(format!("could not open {:?}: {e}", path.as_ref(),))
         })?;
         let mut reader = std::io::BufReader::new(file);
         let persisted = io::read_id_map_from(&mut reader)?;
@@ -408,15 +412,9 @@ impl IdMapIndex {
     /// the inner store's mutex and the wrapper's ID-table write lock.
     /// Concurrent readers see either the pre-reload state or the
     /// post-reload state, never a partial state.
-    pub fn reload_from(
-        &self,
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<(), TurboQuantError> {
+    pub fn reload_from(&self, path: impl AsRef<std::path::Path>) -> Result<(), TurboQuantError> {
         let file = std::fs::File::open(path.as_ref()).map_err(|e| {
-            TurboQuantError::InvalidFileFormat(format!(
-                "could not open {:?}: {e}",
-                path.as_ref(),
-            ))
+            TurboQuantError::InvalidFileFormat(format!("could not open {:?}: {e}", path.as_ref(),))
         })?;
         let mut reader = std::io::BufReader::new(file);
         let persisted = super::io::read_id_map_from(&mut reader)?;
@@ -510,7 +508,11 @@ mod tests {
                 v[i * dim + d] = x as f32;
                 sumsq += x * x;
             }
-            let inv = if sumsq > 1e-30 { (1.0 / sumsq.sqrt()) as f32 } else { 0.0 };
+            let inv = if sumsq > 1e-30 {
+                (1.0 / sumsq.sqrt()) as f32
+            } else {
+                0.0
+            };
             for d in 0..dim {
                 v[i * dim + d] *= inv;
             }
@@ -611,7 +613,10 @@ mod tests {
         let err = idx.add_with_ids(&v, &[1]).unwrap_err();
         assert!(matches!(
             err,
-            TurboQuantError::VectorBufferNotMultipleOfDim { vectors_len: 9, dim: 8 }
+            TurboQuantError::VectorBufferNotMultipleOfDim {
+                vectors_len: 9,
+                dim: 8
+            }
         ));
         assert_eq!(idx.len(), 0);
     }
@@ -620,7 +625,8 @@ mod tests {
     fn remove_unknown_id_returns_false() {
         let dim = 8;
         let idx = IdMapIndex::new(dim, 4, CalibrationMode::Identity, 1).unwrap();
-        idx.add_with_id(&random_unit_vectors(1, dim, 100), 1).unwrap();
+        idx.add_with_id(&random_unit_vectors(1, dim, 100), 1)
+            .unwrap();
         assert!(!idx.remove(999).unwrap());
         // Original entry survives.
         assert_eq!(idx.len(), 1);
@@ -837,8 +843,7 @@ mod tests {
 
     #[test]
     fn load_rejects_nonexistent_file() {
-        let err =
-            IdMapIndex::load("/tmp/id-map-does-not-exist-test-xyz.tvim").unwrap_err();
+        let err = IdMapIndex::load("/tmp/id-map-does-not-exist-test-xyz.tvim").unwrap_err();
         assert!(matches!(
             err,
             TurboQuantError::InvalidFileFormat(ref s) if s.contains("could not open")
@@ -851,11 +856,8 @@ mod tests {
         let bw = 4;
         let seed = 0x1357u64;
         let idx = IdMapIndex::new(dim, bw, CalibrationMode::Identity, seed).unwrap();
-        idx.add_with_ids(
-            &random_unit_vectors(3, dim, 100),
-            &[100u64, 200, 300],
-        )
-        .unwrap();
+        idx.add_with_ids(&random_unit_vectors(3, dim, 100), &[100u64, 200, 300])
+            .unwrap();
 
         // Donor with completely different IDs and a different count.
         let donor = IdMapIndex::new(dim, bw, CalibrationMode::Identity, seed).unwrap();

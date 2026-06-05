@@ -431,9 +431,7 @@ mod tests {
         // registry from .tq sidecars by calling `insert`. Verify the
         // pre-loaded store is visible via the trait-level `get`.
         let r = InMemoryTurboQuantStoreRegistry::new();
-        let s = Arc::new(
-            TurboQuantStore::new(32, 4, CalibrationMode::Identity, 0xa5a5).unwrap(),
-        );
+        let s = Arc::new(TurboQuantStore::new(32, 4, CalibrationMode::Identity, 0xa5a5).unwrap());
         r.insert("col-preload".to_string(), Arc::clone(&s));
         let fetched = r.get("col-preload").await.unwrap().expect("store visible");
         assert!(Arc::ptr_eq(&s, &fetched));
@@ -446,8 +444,7 @@ mod tests {
         // `Arc<dyn TurboQuantStoreRegistry>` so the registry can be
         // swapped (in-memory, distributed, mmap) without touching call
         // sites.
-        let r: Arc<dyn TurboQuantStoreRegistry> =
-            Arc::new(InMemoryTurboQuantStoreRegistry::new());
+        let r: Arc<dyn TurboQuantStoreRegistry> = Arc::new(InMemoryTurboQuantStoreRegistry::new());
         let s = r
             .get_or_create(
                 "col-dyn",
@@ -536,13 +533,7 @@ mod tests {
         let r = InMemoryTurboQuantStoreRegistry::new();
         // Pre-register a dim=64 store for col-x.
         let _ = r
-            .get_or_create(
-                "col-x",
-                64,
-                4,
-                CalibrationMode::Identity,
-                rng_seed("col-x"),
-            )
+            .get_or_create("col-x", 64, 4, CalibrationMode::Identity, rng_seed("col-x"))
             .await
             .unwrap();
         // Now hydrate with a dim=128 row for col-x (conflict) + a
@@ -560,8 +551,7 @@ mod tests {
     async fn hydration_works_through_dyn_trait_object() {
         // Production wiring will pass `Arc<dyn TurboQuantStoreRegistry>`
         // — verify the helper accepts the trait object the same way.
-        let r: Arc<dyn TurboQuantStoreRegistry> =
-            Arc::new(InMemoryTurboQuantStoreRegistry::new());
+        let r: Arc<dyn TurboQuantStoreRegistry> = Arc::new(InMemoryTurboQuantStoreRegistry::new());
         let rows = vec![row("col-dyn-hydrate", "tq_plus")];
         let n = hydrate_registry_from_policy_rows(r.as_ref(), &rows).await;
         assert_eq!(n, 1);

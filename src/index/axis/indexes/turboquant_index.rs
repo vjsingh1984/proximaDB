@@ -165,10 +165,7 @@ impl TurboQuantAxisIndex {
         let fresh = self.next_id.fetch_add(1, Ordering::Relaxed);
         // DashMap::entry().or_insert_with returns a ref; the inserted
         // value is `fresh` only if no concurrent thread won first.
-        let winner = *self
-            .string_to_u64
-            .entry(id.to_string())
-            .or_insert(fresh);
+        let winner = *self.string_to_u64.entry(id.to_string()).or_insert(fresh);
         // Reverse map mirrors the winner. If `winner != fresh`, our
         // allocation was abandoned; otherwise we register the reverse.
         if winner == fresh {
@@ -182,11 +179,7 @@ impl TurboQuantAxisIndex {
     /// concurrently removed.
     fn translate_hits(&self, hits: Vec<(f32, u64)>) -> Vec<(String, f32)> {
         hits.into_iter()
-            .filter_map(|(score, id)| {
-                self.u64_to_string
-                    .get(&id)
-                    .map(|s| (s.clone(), score))
-            })
+            .filter_map(|(score, id)| self.u64_to_string.get(&id).map(|s| (s.clone(), score)))
             .collect()
     }
 }
@@ -342,8 +335,7 @@ impl AxisVectorIndex for TurboQuantAxisIndex {
         // future divergence is loud.
         let bytes_per_vec = (dim * bit_width as usize).div_ceil(8) + 4;
         let inner_bytes = n * bytes_per_vec;
-        let map_bytes =
-            self.string_to_u64.len() * 64 + self.u64_to_string.len() * 64;
+        let map_bytes = self.string_to_u64.len() * 64 + self.u64_to_string.len() * 64;
         let label = match self.inner.calibration_mode() {
             CalibrationMode::Identity => "identity",
             CalibrationMode::TqPlus => "tq_plus",
@@ -380,7 +372,11 @@ mod tests {
                 .map(|_| rng.sample::<f64, _>(StandardNormal) as f32)
                 .collect();
             let sumsq: f32 = v.iter().map(|x| x * x).sum();
-            let inv = if sumsq > 1e-30 { 1.0 / sumsq.sqrt() } else { 0.0 };
+            let inv = if sumsq > 1e-30 {
+                1.0 / sumsq.sqrt()
+            } else {
+                0.0
+            };
             for x in v.iter_mut() {
                 *x *= inv;
             }

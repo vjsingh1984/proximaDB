@@ -323,7 +323,11 @@ mod tests {
                 v[i * dim + d] = x as f32;
                 sumsq += x * x;
             }
-            let inv = if sumsq > 1e-30 { (1.0 / sumsq.sqrt()) as f32 } else { 0.0 };
+            let inv = if sumsq > 1e-30 {
+                (1.0 / sumsq.sqrt()) as f32
+            } else {
+                0.0
+            };
             for d in 0..dim {
                 v[i * dim + d] *= inv;
             }
@@ -338,7 +342,11 @@ mod tests {
 
     impl SlotIdResolver for TestResolver {
         fn id_for_slot(&self, slot: usize) -> Option<String> {
-            if slot < self.capacity { Some(format!("slot-{slot}")) } else { None }
+            if slot < self.capacity {
+                Some(format!("slot-{slot}"))
+            } else {
+                None
+            }
         }
         fn slot_for_id(&self, id: &str) -> Option<usize> {
             let n: usize = id.strip_prefix("slot-")?.parse().ok()?;
@@ -590,9 +598,8 @@ mod tests {
         use std::time::{Duration, Instant};
 
         let dim = 64;
-        let store = Arc::new(
-            TurboQuantStore::new(dim, 4, CalibrationMode::Identity, 0x5a5a).unwrap(),
-        );
+        let store =
+            Arc::new(TurboQuantStore::new(dim, 4, CalibrationMode::Identity, 0x5a5a).unwrap());
         // Seed with enough data that save() has actual work to do.
         let seed = random_unit_vectors(500, dim, 4000);
         store.add(&seed).unwrap();
@@ -625,9 +632,7 @@ mod tests {
             handles.push(thread::spawn(move || {
                 let q = random_unit_vectors(1, dim, 5000 + r as u64);
                 let mut search_count = 0usize;
-                while !stop.load(std::sync::atomic::Ordering::SeqCst)
-                    && Instant::now() < deadline
-                {
+                while !stop.load(std::sync::atomic::Ordering::SeqCst) && Instant::now() < deadline {
                     let hits = store.search(&q, 5, None).expect("search must succeed");
                     assert_eq!(hits.len(), 5);
                     search_count += 1;
@@ -666,9 +671,7 @@ mod tests {
         use std::time::Duration;
 
         let dim = 32;
-        let s = Arc::new(
-            TurboQuantStore::new(dim, 4, CalibrationMode::Identity, 0xabcd).unwrap(),
-        );
+        let s = Arc::new(TurboQuantStore::new(dim, 4, CalibrationMode::Identity, 0xabcd).unwrap());
         // Seed with an initial batch so search can run from the start.
         s.add(&random_unit_vectors(20, dim, 1)).unwrap();
 
