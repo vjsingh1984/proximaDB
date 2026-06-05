@@ -296,7 +296,10 @@ async fn execute_physical<F: ReaderFactory>(
 /// ([`try_run_select`]) and `EXPLAIN` ([`explain_select_route_with_catalog`]) so
 /// the disclosed plan is exactly the one that runs. `None` = lowering declined
 /// (fall through to legacy); `Some(Err)` = a real planning error.
-fn plan_over_snapshot(sql: &str, snapshot: &SnapshotCatalog) -> Option<Result<PhysicalPlan, String>> {
+fn plan_over_snapshot(
+    sql: &str,
+    snapshot: &SnapshotCatalog,
+) -> Option<Result<PhysicalPlan, String>> {
     let logical = match lower_sql(sql, snapshot) {
         Ok(p) => p,
         Err(e) => {
