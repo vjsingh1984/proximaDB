@@ -201,8 +201,25 @@ fn lower_aggregate(named: &NamedAggregate) -> DFResult<Expr> {
         AggregateExpr::Min { arg } => min(lower_expr(arg)?),
         AggregateExpr::Max { arg } => max(lower_expr(arg)?),
         AggregateExpr::StringAgg { .. } => return Err(unsupported("StringAgg")),
-        AggregateExpr::Custom { name, .. } => {
-            return Err(unsupported(format!("custom aggregate {name}")));
+        // F3b: a registry aggregate (e.g. `product`) binds to its DataFusion AggregateUDF.
+        AggregateExpr::Custom {
+            name,
+            args,
+            distinct,
+            ..
+        } => {
+            if *distinct {
+                return Err(unsupported(format!("{name}(DISTINCT)")));
+            }
+            match proximadb_functions::builtins().lookup_aggregate(name) {
+                Some(def) => {
+                    let udf =
+                        std::sync::Arc::new(super::registry_udf::proxima_aggregate_udf(def));
+                    let lowered = args.iter().map(lower_expr).collect::<DFResult<Vec<_>>>()?;
+                    udf.call(lowered)
+                }
+                None => return Err(unsupported(format!("custom aggregate {name}"))),
+            }
         }
     };
     Ok(expr.alias(&named.name))

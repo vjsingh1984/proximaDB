@@ -19,11 +19,17 @@ use std::sync::Arc;
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
 use datafusion::error::{DataFusionError, Result as DFResult};
-use datafusion::logical_expr::{ColumnarValue, ScalarUDF, Volatility as DFVolatility, create_udf};
+use datafusion::logical_expr::{
+    Accumulator, AggregateUDF, ColumnarValue, ScalarUDF, Volatility as DFVolatility, create_udaf,
+    create_udf,
+};
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use proximadb_data_model::ProximaValue;
-use proximadb_functions::{ProximaFunctionRegistry, ScalarFn, ScalarFunctionDef, Volatility};
+use proximadb_functions::{
+    AggregateAccumulator, AggregateFunctionDef, ProximaFunctionRegistry, ScalarFn,
+    ScalarFunctionDef, Volatility,
+};
 
 use super::logical_lowering::proxima_value_to_scalar;
 
@@ -182,10 +188,144 @@ pub fn register_proxima_scalars(ctx: &SessionContext, reg: &ProximaFunctionRegis
     }
 }
 
+/// Build a typed [`ScalarValue`] for a result/state cell: NULL carries the declared arrow type
+/// (untyped `ScalarValue::Null` would mismatch the UDAF's return/state type), other values map
+/// directly.
+fn typed_scalar(v: &ProximaValue, ty: &DataType) -> DFResult<ScalarValue> {
+    match v {
+        ProximaValue::Null => ScalarValue::try_from(ty)
+            .map_err(|e| DataFusionError::Execution(format!("typed null: {e}"))),
+        other => proxima_value_to_scalar(other),
+    }
+}
+
+/// DataFusion [`Accumulator`] that delegates to an engine-neutral
+/// [`AggregateAccumulator`]. Arrow batches are folded row-wise into the registry kernel;
+/// `state`/`merge_batch` carry partial state across partitions for distributed aggregation.
+struct ProximaDfAccumulator {
+    inner: Box<dyn AggregateAccumulator>,
+    name: String,
+    return_type: DataType,
+    state_types: Vec<DataType>,
+}
+
+impl std::fmt::Debug for ProximaDfAccumulator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProximaDfAccumulator")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Accumulator for ProximaDfAccumulator {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> DFResult<()> {
+        if values.is_empty() {
+            return Ok(());
+        }
+        let num_rows = values[0].len();
+        let mut row = Vec::with_capacity(values.len());
+        for r in 0..num_rows {
+            row.clear();
+            for arr in values {
+                row.push(scalar_value_to_proxima(&ScalarValue::try_from_array(arr, r)?)?);
+            }
+            self.inner
+                .update(&row)
+                .map_err(|e| DataFusionError::Execution(format!("{}: {e}", self.name)))?;
+        }
+        Ok(())
+    }
+
+    fn merge_batch(&mut self, states: &[ArrayRef]) -> DFResult<()> {
+        if states.is_empty() {
+            return Ok(());
+        }
+        let num_rows = states[0].len();
+        let mut st = Vec::with_capacity(states.len());
+        for r in 0..num_rows {
+            st.clear();
+            for arr in states {
+                st.push(scalar_value_to_proxima(&ScalarValue::try_from_array(arr, r)?)?);
+            }
+            self.inner
+                .merge(&st)
+                .map_err(|e| DataFusionError::Execution(format!("{}: {e}", self.name)))?;
+        }
+        Ok(())
+    }
+
+    fn evaluate(&mut self) -> DFResult<ScalarValue> {
+        typed_scalar(&self.inner.finalize(), &self.return_type)
+    }
+
+    fn state(&mut self) -> DFResult<Vec<ScalarValue>> {
+        self.inner
+            .state()
+            .iter()
+            .enumerate()
+            .map(|(i, v)| typed_scalar(v, self.state_types.get(i).unwrap_or(&DataType::Null)))
+            .collect()
+    }
+
+    fn size(&self) -> usize {
+        std::mem::size_of::<Self>()
+    }
+}
+
+/// Wrap a registry aggregate definition as a DataFusion [`AggregateUDF`]. Each partition runs a
+/// [`ProximaDfAccumulator`] over the kernel; DataFusion drives partial aggregation via
+/// `state`/`merge_batch`.
+pub fn proxima_aggregate_udf(def: Arc<AggregateFunctionDef>) -> AggregateUDF {
+    let input_types = def
+        .signature
+        .arg_types
+        .iter()
+        .map(|t| t.to_arrow_type())
+        .collect::<Vec<_>>();
+    let return_type = def.signature.return_ty.to_arrow_type();
+    let state_types = def
+        .kernel
+        .state_types()
+        .iter()
+        .map(|t| t.to_arrow_type())
+        .collect::<Vec<_>>();
+    let volatility = to_df_volatility(def.signature.volatility);
+    let name = def.signature.name.clone();
+    let kernel = def.kernel.clone();
+    let ret = return_type.clone();
+    let st = state_types.clone();
+
+    let factory = Arc::new(move |_args: datafusion::logical_expr::function::AccumulatorArgs| {
+        Ok(Box::new(ProximaDfAccumulator {
+            inner: kernel.new_accumulator(),
+            name: name.clone(),
+            return_type: ret.clone(),
+            state_types: st.clone(),
+        }) as Box<dyn Accumulator>)
+    });
+
+    create_udaf(
+        &def.signature.name,
+        input_types,
+        Arc::new(return_type),
+        volatility,
+        factory,
+        Arc::new(state_types),
+    )
+}
+
+/// Register every registry aggregate as a DataFusion [`AggregateUDF`] on `ctx` (the registry
+/// holds only non-native aggregates — COUNT/SUM/… are DataFusion builtins).
+pub fn register_proxima_aggregates(ctx: &SessionContext, reg: &ProximaFunctionRegistry) {
+    for def in reg.aggregate_defs() {
+        ctx.register_udaf(proxima_aggregate_udf(def));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Array, StringArray};
+    use arrow_array::{Array, Float64Array, StringArray};
 
     fn upper_def() -> Arc<ScalarFunctionDef> {
         proximadb_functions::builtins()
@@ -220,5 +360,58 @@ mod tests {
         for n in ["upper", "lower", "abs", "concat"] {
             assert!(DATAFUSION_NATIVE_SCALARS.contains(&n), "{n} must be excluded");
         }
+    }
+
+    fn product_def() -> Arc<AggregateFunctionDef> {
+        proximadb_functions::builtins()
+            .lookup_aggregate("product")
+            .expect("product builtin")
+    }
+
+    fn product_accumulator() -> ProximaDfAccumulator {
+        let def = product_def();
+        ProximaDfAccumulator {
+            inner: def.kernel.new_accumulator(),
+            name: "product".into(),
+            return_type: def.signature.return_ty.to_arrow_type(),
+            state_types: def
+                .kernel
+                .state_types()
+                .iter()
+                .map(|t| t.to_arrow_type())
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn aggregate_udf_metadata_matches_registry() {
+        let udf = proxima_aggregate_udf(product_def());
+        assert_eq!(udf.name(), "product");
+    }
+
+    #[test]
+    fn df_accumulator_update_and_evaluate() {
+        // product over [2, NULL, 3, 4] = 24 through DataFusion's Accumulator interface.
+        let mut acc = product_accumulator();
+        let col = Arc::new(Float64Array::from(vec![Some(2.0), None, Some(3.0), Some(4.0)]))
+            as ArrayRef;
+        acc.update_batch(&[col]).unwrap();
+        assert_eq!(acc.evaluate().unwrap(), ScalarValue::Float64(Some(24.0)));
+    }
+
+    #[test]
+    fn df_accumulator_state_and_merge_partial() {
+        // Partition A = 2*5 = 10; partition B = 3; coordinator merges B's state into A → 30.
+        let mut a = product_accumulator();
+        a.update_batch(&[Arc::new(Float64Array::from(vec![2.0, 5.0])) as ArrayRef])
+            .unwrap();
+        let mut b = product_accumulator();
+        b.update_batch(&[Arc::new(Float64Array::from(vec![3.0])) as ArrayRef])
+            .unwrap();
+        // b.state() -> [Float64(3)]; build a state batch and merge into a.
+        let b_state = b.state().unwrap();
+        let state_col = b_state[0].to_array().unwrap();
+        a.merge_batch(&[state_col]).unwrap();
+        assert_eq!(a.evaluate().unwrap(), ScalarValue::Float64(Some(30.0)));
     }
 }

@@ -106,7 +106,10 @@ impl std::fmt::Debug for ScalarFunctionDef {
 ///
 /// Single-node Volcano uses only `update` + `finalize` (one accumulator per group, fed every
 /// row); `state`/`merge` are the DataFusion partial-aggregation seam.
-pub trait AggregateAccumulator: Send {
+///
+/// `Send + Sync` so the DataFusion `Accumulator` adapter (which requires both) can wrap it;
+/// accumulators are never shared across threads in practice (one per group).
+pub trait AggregateAccumulator: Send + Sync {
     /// Fold one input row's evaluated argument values into the accumulator.
     fn update(&mut self, args: &[ProximaValue]) -> Result<(), ExprError>;
 
@@ -124,6 +127,11 @@ pub trait AggregateAccumulator: Send {
 pub trait AggregateKernel: Send + Sync {
     /// Create a fresh accumulator for one group.
     fn new_accumulator(&self) -> Box<dyn AggregateAccumulator>;
+
+    /// Canonical types of the partial state exposed by [`AggregateAccumulator::state`], in
+    /// order. DataFusion needs these declared up-front to wire partitioned aggregation; the
+    /// single-node Volcano path ignores them.
+    fn state_types(&self) -> Vec<ProximaType>;
 }
 
 /// A registered aggregate function: its signature (`kind = Aggregate`) + its accumulator
@@ -465,6 +473,10 @@ struct ProductKernel;
 impl AggregateKernel for ProductKernel {
     fn new_accumulator(&self) -> Box<dyn AggregateAccumulator> {
         Box::new(ProductAccumulator { running: None })
+    }
+
+    fn state_types(&self) -> Vec<ProximaType> {
+        vec![ProximaType::Float64] // the running product
     }
 }
 

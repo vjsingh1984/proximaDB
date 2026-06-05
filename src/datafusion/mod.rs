@@ -171,6 +171,8 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
     // vectorized builtins (UPPER/ABS/…) stay the fast path; this covers registry/custom
     // functions DataFusion lacks.
     registry_udf::register_proxima_scalars(&ctx, proximadb_functions::builtins());
+    // F3b: bind every registry aggregate as a DataFusion AggregateUDF (e.g. `product`).
+    registry_udf::register_proxima_aggregates(&ctx, proximadb_functions::builtins());
 
     Ok(ctx)
 }
