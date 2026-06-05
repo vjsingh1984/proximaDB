@@ -1046,8 +1046,14 @@ impl PostgresProtocol {
             // vector-collection path. Lowering failures fall
             // through (e.g. `SELECT current_schema()` and other
             // pg-specific queries the new frontend doesn't accept).
-            if let Some(result) =
-                super::relational_pipeline::try_run_select(query, self.dml_service.as_ref()).await
+            if let Some(result) = super::relational_pipeline::try_run_select(
+                query,
+                self.dml_service.as_ref(),
+                // F4: hand the OLAP route the live vector service so a cross-modal
+                // `... JOIN vector_search('coll','[..]',k)` resolves over pgwire.
+                Some(self.vector_ops.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>),
+            )
+            .await
             {
                 return match result {
                     Ok(pr) => self.emit_pipeline_result(pr).await,

@@ -129,6 +129,7 @@ pub struct PipelineResult {
 pub async fn try_run_select(
     sql: &str,
     dml: Option<&Arc<DmlService>>,
+    vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
 ) -> Option<Result<PipelineResult, String>> {
     // ADR-018 Phase 2: Allow opting out with explicit "0" value
     if std::env::var("PROXIMADB_NEW_RELATIONAL_PIPELINE")
@@ -244,7 +245,7 @@ pub async fn try_run_select(
             .iter()
             .map(|(k, t)| (t.table_name.clone(), parquet_loc_by_key[k].clone()))
             .collect();
-        return Some(run_datafusion_select(sql, &parquet_tables).await);
+        return Some(run_datafusion_select(sql, &parquet_tables, vector_ops).await);
     }
 
     let snapshot = SnapshotCatalog {
@@ -490,8 +491,15 @@ fn record_batches_to_pipeline_result(
 async fn run_datafusion_select(
     sql: &str,
     parquet_tables: &[(String, String)],
+    vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
 ) -> Result<PipelineResult, String> {
-    let ctx = crate::datafusion::create_session_context().map_err(|e| format!("session: {e}"))?;
+    // F4: when the route owns the vector service, register the `vector_search` UDTF so a
+    // cross-modal `... JOIN vector_search('coll','[..]',k)` is expressible over this path.
+    let ctx = match vector_ops {
+        Some(ops) => crate::datafusion::create_session_context_with_vector_ops(ops),
+        None => crate::datafusion::create_session_context(),
+    }
+    .map_err(|e| format!("session: {e}"))?;
     for (name, location) in parquet_tables {
         crate::datafusion::register_object_store_parquet_location(&ctx, name, location)
             .await
@@ -663,6 +671,7 @@ mod datafusion_route_tests {
         let result = run_datafusion_select(
             "SELECT k, count(*) AS c, sum(x) AS s FROM t GROUP BY k ORDER BY k",
             &[("t".to_string(), url)],
+            None,
         )
         .await
         .expect("datafusion select over parquet");
