@@ -33,6 +33,7 @@ members = [
     "crates/foundation/proximadb-quantization-types",
     "crates/foundation/proximadb-records",
     "crates/foundation/proximadb-relational-types",
+    "crates/foundation/proximadb-functions",
     "crates/control/proximadb-catalog",
     "crates/horizontal/proximadb-codec",
     "crates/horizontal/proximadb-compression",
@@ -104,7 +105,7 @@ arrow-array = { version = "57.1", default-features = false }
 bincode = "1.3"
 arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
 arrow-schema = { version = "57.1", default-features = false }
-parquet = { version = "57.1", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
+parquet = { version = "57.1", default-features = false, features = ["arrow", "object_store", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
 object_store = "0.12"
 async-trait = "0.1"
 axum = { version = "0.6", features = ["json", "ws"] }
@@ -121,6 +122,7 @@ proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types"
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
+proximadb-functions = { path = "crates/foundation/proximadb-functions" }
 proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
 proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
 proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
