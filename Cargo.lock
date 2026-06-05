@@ -5901,16 +5901,19 @@ dependencies = [
  "bytes",
  "chrono",
  "flate2",
+ "futures",
  "half",
  "hashbrown 0.16.1",
  "lz4_flex 0.12.2",
  "num-bigint",
  "num-integer",
  "num-traits",
+ "object_store",
  "paste",
  "seq-macro",
  "snap",
  "thrift",
+ "tokio",
  "twox-hash 2.1.2",
  "zstd",
 ]
@@ -6539,6 +6542,7 @@ dependencies = [
  "proximadb-graph-query",
  "proximadb-graph-subset",
  "proximadb-hardware",
+ "proximadb-iceberg-engine",
  "proximadb-kernel",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
@@ -6857,6 +6861,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-functions"
+version = "0.2.0"
+dependencies = [
+ "dashmap",
+ "proximadb-data-model",
+ "proximadb-relational-types",
+]
+
+[[package]]
 name = "proximadb-graph"
 version = "0.2.0"
 dependencies = [
@@ -6918,6 +6931,23 @@ version = "0.2.0"
 dependencies = [
  "num_cpus",
  "sysinfo",
+]
+
+[[package]]
+name = "proximadb-iceberg-engine"
+version = "0.2.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "bytes",
+ "futures",
+ "object_store",
+ "proximadb-kernel",
+ "proximadb-object-store",
+ "proximadb-records",
+ "proximadb-storage-common",
+ "tokio",
 ]
 
 [[package]]
@@ -7268,6 +7298,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "proximadb-data-model",
+ "proximadb-functions",
  "proximadb-relational-algebra",
  "proximadb-relational-planner",
  "proximadb-relational-reader",
@@ -7282,6 +7313,7 @@ name = "proximadb-relational-frontend"
 version = "0.2.0"
 dependencies = [
  "proximadb-data-model",
+ "proximadb-functions",
  "proximadb-relational-algebra",
  "proximadb-relational-types",
  "serde",
@@ -7433,6 +7465,7 @@ dependencies = [
  "parquet",
  "proximadb-block-format",
  "proximadb-compression-types",
+ "proximadb-data-model",
  "proximadb-kernel",
  "proximadb-records",
  "proximadb-runtime-common",

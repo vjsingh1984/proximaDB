@@ -343,6 +343,8 @@ fn catalog_table_is_parquet_backed(
             CatalogAuthorityMode::FederatedRead
                 | CatalogAuthorityMode::ExternalAuthoritative
                 | CatalogAuthorityMode::ImportedSnapshot
+                | CatalogAuthorityMode::ExportedPublication
+                | CatalogAuthorityMode::ProjectionPublication
         );
         if format_ok && authority_ok {
             layout.location.clone()
@@ -451,29 +453,22 @@ fn record_batches_to_pipeline_result(
 }
 
 /// Execute an OLAP `SELECT` through DataFusion over Parquet-backed table(s), each
-/// read via the canonical `FileSystem` trait (course-correction §6 P1). The query is
-/// lowered through the SAME relational frontend the Volcano path uses and then (P4)
-/// into a DataFusion `LogicalPlan` — so both physical engines share one logical plane
-/// (§5). Shapes the shared lowering doesn't cover yet (e.g. JOIN) fall back to
-/// DataFusion's own SQL frontend. Results convert back to a `PipelineResult`.
+/// read through the warehouse object-store bridge (course-correction §6 P3/F5).
+/// The query is lowered through the SAME relational frontend the Volcano path uses
+/// and then (P4) into a DataFusion `LogicalPlan` — so both physical engines share
+/// one logical plane (§5). Shapes the shared lowering doesn't cover yet (e.g. JOIN)
+/// fall back to DataFusion's own SQL frontend. Results convert back to a
+/// `PipelineResult`.
 #[cfg(feature = "datafusion-integration")]
 async fn run_datafusion_select(
     sql: &str,
     parquet_tables: &[(String, String)],
 ) -> Result<PipelineResult, String> {
-    use crate::storage::persistence::filesystem::FilesystemFactory;
-    use datafusion::datasource::TableProvider as _; // for `provider.schema()`
-    let factory = FilesystemFactory::create_default()
-        .await
-        .map_err(|e| format!("filesystem factory: {e}"))?;
     let ctx = crate::datafusion::create_session_context().map_err(|e| format!("session: {e}"))?;
     for (name, location) in parquet_tables {
-        let fs = factory
-            .get_filesystem(location)
-            .map_err(|e| format!("get_filesystem({location}): {e}"))?;
-        crate::datafusion::register_parquet_path(&ctx, fs, name, location)
+        crate::datafusion::register_object_store_parquet_location(&ctx, name, location)
             .await
-            .map_err(|e| format!("register parquet table {name}: {e}"))?;
+            .map_err(|e| format!("register object-store parquet table {name}: {e}"))?;
     }
     // §5 shared logical plane (P4): lower the SQL through the SAME relational
     // frontend the Volcano path uses, then lower that `LogicalNode` to a DataFusion
@@ -664,7 +659,6 @@ mod datafusion_route_tests {
     #[tokio::test]
     async fn datafusion_route_uses_shared_frontend_not_fallback() {
         use datafusion::datasource::MemTable;
-        use datafusion::datasource::TableProvider as _;
 
         let ctx = crate::datafusion::create_session_context().expect("session ctx");
         let schema = Arc::new(Schema::new(vec![

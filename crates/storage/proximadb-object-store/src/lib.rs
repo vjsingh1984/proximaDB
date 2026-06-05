@@ -94,7 +94,7 @@ impl ProximaObjectStore {
     }
 
     /// Join the base prefix with a caller-relative path.
-    fn full(&self, path: &Path) -> Path {
+    pub fn full_path(&self, path: &Path) -> Path {
         let base = self.base.as_ref();
         if base.is_empty() {
             path.clone()
@@ -106,7 +106,7 @@ impl ProximaObjectStore {
     /// Write `bytes` to `path` (atomic for stores that support it). Overwrites.
     pub async fn put(&self, path: &Path, bytes: Bytes) -> Result<(), StorageError> {
         self.store
-            .put(&self.full(path), bytes.into())
+            .put(&self.full_path(path), bytes.into())
             .await
             .map(|_| ())
             .map_err(|e| os_err("put", e))
@@ -116,7 +116,7 @@ impl ProximaObjectStore {
     pub async fn get(&self, path: &Path) -> Result<Bytes, StorageError> {
         let result = self
             .store
-            .get(&self.full(path))
+            .get(&self.full_path(path))
             .await
             .map_err(|e| os_err("get", e))?;
         result.bytes().await.map_err(|e| os_err("get(bytes)", e))
@@ -125,7 +125,7 @@ impl ProximaObjectStore {
     /// Read a byte range of the object at `path` (the warehouse footer/row-group read path).
     pub async fn get_range(&self, path: &Path, range: Range<u64>) -> Result<Bytes, StorageError> {
         self.store
-            .get_range(&self.full(path), range)
+            .get_range(&self.full_path(path), range)
             .await
             .map_err(|e| os_err("get_range", e))
     }
@@ -134,7 +134,7 @@ impl ProximaObjectStore {
     /// the base (NOT the whole store/filesystem root — `file://` parses to root `/`).
     pub async fn list(&self, prefix: Option<&Path>) -> Result<Vec<ObjectMeta>, StorageError> {
         let resolved = match prefix {
-            Some(p) => self.full(p),
+            Some(p) => self.full_path(p),
             None => self.base.clone(),
         };
         let mut stream = self.store.list(Some(&resolved));
@@ -148,7 +148,7 @@ impl ProximaObjectStore {
     /// Delete the object at `path`.
     pub async fn delete(&self, path: &Path) -> Result<(), StorageError> {
         self.store
-            .delete(&self.full(path))
+            .delete(&self.full_path(path))
             .await
             .map_err(|e| os_err("delete", e))
     }

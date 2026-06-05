@@ -48,6 +48,7 @@
 
 pub mod filesystem_parquet_reader;
 pub mod helix_adapter;
+pub mod object_store_parquet_reader;
 pub mod sst_adapter;
 pub mod viper_adapter;
 
@@ -56,6 +57,9 @@ pub use filesystem_parquet_reader::{
     FilesystemParquetSplitReader, FilesystemParquetTable, register_parquet_path,
 };
 pub use helix_adapter::{HelixSplitReader, HelixTableProvider};
+pub use object_store_parquet_reader::{
+    ObjectStoreParquetSplitReader, ObjectStoreParquetTable, register_object_store_parquet_location,
+};
 pub use sst_adapter::{SstSplitReader, SstTableProvider};
 pub use viper_adapter::{ViperSplitReader, ViperTableProvider};
 

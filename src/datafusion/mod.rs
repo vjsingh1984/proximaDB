@@ -123,12 +123,15 @@ pub use engine_adapters::{
     HelixSplitReader,
     // HELIX engine adapter
     HelixTableProvider,
+    ObjectStoreParquetSplitReader,
+    ObjectStoreParquetTable,
     SstSplitReader,
     // SST engine adapter
     SstTableProvider,
     ViperSplitReader,
     // VIPER engine adapter
     ViperTableProvider,
+    register_object_store_parquet_location,
     register_parquet_path,
 };
 

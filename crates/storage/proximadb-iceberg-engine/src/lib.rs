@@ -78,6 +78,12 @@ impl IcebergObjectStoreBridge {
     pub fn object_store(&self) -> &ProximaObjectStore {
         &self.store
     }
+
+    /// Resolve a bridge-relative path to the concrete key used by the wrapped
+    /// object store. Range-based readers use this to avoid a full object GET.
+    pub fn full_object_path(&self, path: &Path) -> Path {
+        self.store.full_path(path)
+    }
 }
 
 #[async_trait]
