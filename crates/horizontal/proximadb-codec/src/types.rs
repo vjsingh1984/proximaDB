@@ -278,7 +278,7 @@ impl ProximaScheme {
     ///
     /// # Examples
     /// ```
-    /// use proximadb::storage::engines::core::ops::proximacodec::types::{ProximaScheme, TypeId};
+    /// use proximadb_codec::types::{ProximaScheme, TypeId};
     ///
     /// // ========== Always Lossless ==========
     /// assert!(!ProximaScheme::Delta { base: 0 }.is_lossy(TypeId::F32));
