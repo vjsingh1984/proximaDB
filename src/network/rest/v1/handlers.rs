@@ -108,9 +108,9 @@ pub struct AppState {
     pub unified_query_port: Option<Arc<dyn proximadb_runtime::UnifiedQueryPort>>,
     /// Port-backed API handler for collection/vector routes (Phase 9.10).
     ///
-    /// `create_router` passes this as `RestAppState.handlers` so
-    /// `create_collection_router` and `create_vector_router` from `proximadb-api`
-    /// go through `CollectionPort`/`VectorOpsPort` trait objects.
+    /// The canonical v2 router (`create_v2_router`) delegates collection and
+    /// record operations through this `ApiHandlersPort`
+    /// (`CollectionPort`/`VectorOpsPort` trait objects).
     ///
     /// TD-104 2(b): non-optional. `AppState::new` defaults it to the concrete
     /// root `UnifiedHandlers` cast to its `ApiHandlersPort` impl (the boot
@@ -1273,8 +1273,6 @@ pub fn create_router(state: AppState) -> axum::Router {
             "/api/v2/progressive/search/:collection_id",
             post(crate::network::rest::progressive_search_handler::progressive_search_handler),
         )
-        // SQL query execution (explain added conditionally below)
-        .route("/api/v1/sql/execute", post(execute_sql))
         .route(
             "/api/v2/catalog/table-routing",
             get(get_catalog_table_routing),
@@ -1378,20 +1376,12 @@ pub fn create_router(state: AppState) -> axum::Router {
         );
     }
 
-    // Collection and vector routes via port-backed handlers (proximadb-api).
-    // `state.api_handlers` is always wired (TD-104 2(b)): the runtime port-based
-    // handler in production (unified/multi-port/cluster), or the root handler
-    // cast to `ApiHandlersPort` as the `AppState::new` default for legacy/dev
-    // paths. The old concrete-`request_handlers` fallback is gone.
-    {
-        let api_rest_state = proximadb_api::rest::RestAppState::new(state.api_handlers.clone());
-        router = router
-            .merge(
-                proximadb_api::rest::create_collection_router().with_state(api_rest_state.clone()),
-            )
-            .merge(proximadb_api::rest::create_vector_router().with_state(api_rest_state));
-    }
-    info!("✅ Collection and Vector API routing via port-backed handlers (proximadb-api)");
+    // Collection and vector CRUD are served exclusively by the canonical v2
+    // router (`create_v2_router`, mounted at `/api/v2` in `server.rs`). The
+    // legacy v1 surfaces (`/api/v1/collections`, `/api/v1/search`,
+    // `/api/v1/vectors/*`) were removed in the API standardization hard-rename;
+    // clients use `/api/v2/collections/*` (records/search). `state.api_handlers`
+    // remains the canonical write/read port the v2 handlers delegate to.
 
     // Document routes — port-backed (always wired in production since Phase 9)
     if let Some(ref dp) = state.doc_port {
@@ -1455,15 +1445,10 @@ pub fn create_router(state: AppState) -> axum::Router {
         info!("✅ Hybrid search at /api/v2/hybrid/* via RestHybridPortImpl (real BM25+vector)");
     }
 
-    // SQL explain — port-backed when unified_query_port is wired (production always)
-    if let Some(ref uq_port) = state.unified_query_port {
-        use proximadb_api::rest::{UnifiedQueryRestState, create_explain_router};
-        let explain_state = UnifiedQueryRestState {
-            unified_query_port: uq_port.clone(),
-        };
-        router = router.merge(create_explain_router().with_state(explain_state));
-        info!("✅ SQL explain at /api/v1/sql/explain via port-backed handler (proximadb-api)");
-    }
+    // SQL execution + explain are served by the canonical v2 query facade
+    // (`/api/v2/query`, `/api/v2/query/explain` in `create_v2_router`). The
+    // legacy `/api/v1/sql/execute` + `/api/v1/sql/explain` routes were removed
+    // in the API standardization hard-rename.
 
     // Optional enterprise catalog endpoints
     #[cfg(feature = "enterprise-catalogs")]
@@ -2481,7 +2466,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/hybrid/search")
+            .uri("/api/v2/hybrid/search")
             .header("content-type", "application/json")
             .body(Body::from(
                 r#"{"collection":"","text_query":"hybrid route test"}"#,
@@ -2495,28 +2480,11 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_vector_search_canonical_production_route_returns_bad_request_not_not_found() {
-        let (state, _temp_dir) = build_test_app_state().await;
-        let router = create_router(state);
-        let mut request = Request::builder()
-            .method("POST")
-            .uri("/api/v1/search")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                r#"{"collection":"","vector":[0.1,0.2,0.3],"top_k":5}"#,
-            ))
-            .expect("failed to build request");
-        request
-            .extensions_mut()
-            .insert(crate::network::middleware::tenant::TenantContext::default_tenant());
-
-        let response = router
-            .oneshot(request)
-            .await
-            .expect("router failed handling canonical vector route request");
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
+    // `test_vector_search_canonical_production_route_*` removed: the legacy
+    // `/api/v1/search` route was deleted in the API standardization hard-rename.
+    // Canonical vector search is `/api/v2/collections/:id/search`, served by
+    // `create_v2_router` (mounted in `server.rs`, not in `create_router`), so it
+    // is exercised by the v2 records/search tests rather than this base-router guard.
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_document_index_canonical_production_route_returns_bad_request_not_not_found() {
