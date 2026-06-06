@@ -1258,19 +1258,24 @@ async fn route_and_plan_select(
 /// Append per-operator actuals to each physical-plan line. Metrics are pre-order
 /// aligned with the lines (both walk the plan parent-first, left-to-right); if the
 /// counts ever disagree, leave the lines unannotated (whole-query metrics still
-/// reported) rather than mislabel.
+/// reported) rather than mislabel. `time` is inclusive of children (Postgres "actual
+/// time"); `self` subtracts the direct children's inclusive time — the operator's own
+/// cost (the headline "which node is actually slow").
 fn annotate_plan_lines(lines: Vec<String>, metrics: &[NodeMetric]) -> Vec<String> {
     if lines.len() != metrics.len() {
         return lines;
     }
+    let self_ns = proximadb_relational_executor::self_times(metrics);
     lines
         .into_iter()
         .zip(metrics)
-        .map(|(line, m)| {
+        .zip(self_ns)
+        .map(|((line, m), self_ns)| {
             format!(
-                "{line} (actual rows={} time={}us)",
+                "{line} (actual rows={} time={}us self={}us)",
                 m.rows,
-                m.elapsed_ns / 1000
+                m.elapsed_ns / 1000,
+                self_ns / 1000
             )
         })
         .collect()
