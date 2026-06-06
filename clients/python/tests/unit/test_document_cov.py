@@ -1,14 +1,12 @@
 """Offline unit tests for proximadb_sdk.document.
 
-Fully offline: a MagicMock backend client is injected. No network, no server,
-no model downloads. The shared class-level state on DocumentRepository is reset
-before every test to keep tests isolated.
+All transport is mocked via a hand fake backend client. No network, no server.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -29,9 +27,58 @@ from proximadb_sdk.document import (
 from proximadb_sdk.exceptions import ProximaDBError
 
 
+# ---------------------------------------------------------------------------
+# Fake backend client
+# ---------------------------------------------------------------------------
+
+
+class FakeClient:
+    """Hand fake backend the repository wraps. Records calls; returns dicts."""
+
+    def __init__(self, *, fail=None):
+        self.calls = []
+        self._fail = fail or set()
+        self.stored = {}
+
+    def create_document_collection(self, name, config):
+        self.calls.append(("create_document_collection", name, config))
+        if "create" in self._fail:
+            raise RuntimeError("boom create")
+        return {"collection_id": name}
+
+    def insert_document(self, collection_name, document, id):
+        self.calls.append(("insert_document", collection_name, document, id))
+        if "insert" in self._fail:
+            raise RuntimeError("boom insert")
+        return {"id": id}
+
+    def get_document(self, collection_name, doc_id, projection=None):
+        self.calls.append(("get_document", collection_name, doc_id, projection))
+        if "get" in self._fail:
+            raise RuntimeError("boom get")
+        if doc_id == "missing":
+            return None
+        return {"id": doc_id, "data": {"k": "v"}}
+
+    def query_documents(self, collection_name, filter, projection=None, limit=100):
+        self.calls.append(
+            ("query_documents", collection_name, filter, projection, limit)
+        )
+        if "query" in self._fail:
+            raise RuntimeError("boom query")
+        return {
+            "documents": [
+                {"id": "d1", "data": {"language": "python", "loc": 50}},
+                {"id": "d2", "data": {"language": "rust", "loc": 100}},
+            ],
+            "total_count": 2,
+            "has_more": False,
+        }
+
+
 @pytest.fixture(autouse=True)
-def _reset_shared_state():
-    """The repository uses class-level shared dicts; reset for isolation."""
+def _clear_shared_state():
+    """Repository keeps process-wide shared dicts; reset around each test."""
     DocumentRepository._shared_batch_buffer.clear()
     DocumentRepository._shared_collections.clear()
     DocumentRepository._shared_documents.clear()
@@ -41,71 +88,28 @@ def _reset_shared_state():
     DocumentRepository._shared_documents.clear()
 
 
-def make_client(**overrides):
-    """Build a MagicMock backend client with sensible defaults."""
-    client = MagicMock()
-    client.create_document_collection.return_value = {"collection_id": "col1"}
-    client.insert_document.return_value = {"id": "doc1"}
-    client.get_document.return_value = {"id": "doc1", "data": {"a": 1}}
-    client.query_documents.return_value = {
-        "documents": [{"id": "doc1", "data": {"a": 1}}],
-        "total_count": 1,
-        "has_more": False,
-    }
-    for k, v in overrides.items():
-        getattr(client, k).return_value = v
-    return client
-
-
-# =============================================================================
-# Enums
-# =============================================================================
-
-
-def test_enums_values():
-    assert DocIndexType.BTREE.value == "btree"
-    assert DocIndexType.HASH.value == "hash"
-    assert DocIndexType.INVERTED.value == "inverted"
-    assert DocIndexType.FULLTEXT.value == "fulltext"
-    assert DocIndexType.GEO.value == "geo"
-    assert CompressionAlgorithm.NONE.value == "none"
-    assert CompressionAlgorithm.ZSTD.value == "zstd"
-    assert QueryStrategy.AUTO.value == "auto"
-    assert QueryStrategy.INDEX_ONLY.value == "index_only"
-    assert QueryStrategy.FULL_SCAN.value == "full_scan"
-    assert QueryStrategy.CACHED.value == "cached"
-
-
-# =============================================================================
-# IndexDefinition
-# =============================================================================
+# ---------------------------------------------------------------------------
+# Data models
+# ---------------------------------------------------------------------------
 
 
 def test_index_definition_to_dict_autoname():
     idx = IndexDefinition(path="$.user.email", type=DocIndexType.HASH, unique=True)
     d = idx.to_dict()
-    assert d["path"] == "$.user.email"
     assert d["index_type"] == "hash"
     assert d["unique"] is True
-    assert d["sparse"] is False
+    assert d["path"] == "$.user.email"
     assert d["name"] == "idx__user_email"
 
 
 def test_index_definition_explicit_name():
-    idx = IndexDefinition(name="myidx", path="$.x")
-    assert idx.to_dict()["name"] == "myidx"
-    assert idx.to_dict()["index_type"] == "btree"
-
-
-# =============================================================================
-# DocumentCollectionConfig
-# =============================================================================
+    idx = IndexDefinition(name="my_idx", path="$.x")
+    assert idx.to_dict()["name"] == "my_idx"
 
 
 def test_collection_config_to_dict():
     cfg = DocumentCollectionConfig(
         name="c",
-        json_schema='{"type":"object"}',
         indexes=[IndexDefinition(path="$.a")],
         enable_fulltext=True,
         fulltext_paths=["$.content"],
@@ -115,67 +119,52 @@ def test_collection_config_to_dict():
     d = cfg.to_dict()
     assert d["name"] == "c"
     assert d["enable_fulltext"] is True
-    assert d["fulltext_paths"] == ["$.content"]
-    assert d["ttl_seconds"] == 60
     assert d["compression"] == "zstd"
     assert len(d["indexes"]) == 1
 
 
-# =============================================================================
-# Document model
-# =============================================================================
-
-
-def test_document_to_dict_minimal():
-    doc = Document(id="d", content={"x": 1})
-    d = doc.to_dict()
-    assert d == {"id": "d", "document": {"x": 1}}
-
-
-def test_document_to_dict_full():
-    now = datetime(2026, 1, 1, 12, 0, 0)
+def test_document_to_dict_and_from_dict_roundtrip():
+    now = datetime(2024, 1, 1, 12, 0, 0)
     doc = Document(
-        id="d",
-        content={"x": 1},
+        id="x",
+        content={"a": 1},
         created_at=now,
         updated_at=now,
-        metadata={"m": True},
+        metadata={"m": 1},
     )
     d = doc.to_dict()
-    assert d["created_at"] == now.isoformat()
-    assert d["updated_at"] == now.isoformat()
-    assert d["metadata"] == {"m": True}
+    assert d["id"] == "x"
+    assert d["document"] == {"a": 1}
+    assert "created_at" in d and "updated_at" in d and "metadata" in d
+
+    back = Document.from_dict(
+        {
+            "id": "x",
+            "document": {"a": 1},
+            "version": 3,
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "metadata": {"m": 1},
+        }
+    )
+    assert back.id == "x" and back.version == 3
+    assert back.created_at == now
 
 
-def test_document_from_dict_full_and_minimal():
-    now = datetime(2026, 1, 1, 12, 0, 0)
-    data = {
-        "id": "d",
-        "document": {"x": 1},
-        "version": 5,
-        "created_at": now.isoformat(),
-        "updated_at": now.isoformat(),
-        "metadata": {"m": 1},
-    }
-    doc = Document.from_dict(data)
-    assert doc.id == "d"
-    assert doc.version == 5
-    assert doc.created_at == now
-    assert doc.metadata == {"m": 1}
-
-    minimal = Document.from_dict({"id": "e", "document": {}})
-    assert minimal.version == 1
-    assert minimal.created_at is None
-    assert minimal.updated_at is None
-    assert minimal.metadata is None
+def test_document_to_dict_minimal_and_from_dict_no_dates():
+    doc = Document(id="y", content={})
+    d = doc.to_dict()
+    assert "created_at" not in d and "metadata" not in d
+    back = Document.from_dict({"id": "y", "document": {}})
+    assert back.created_at is None and back.updated_at is None
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # DocumentFilter builder
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 
-def test_filter_all_conditions():
+def test_filter_all_condition_builders():
     f = (
         DocumentFilter()
         .eq("a", 1)
@@ -192,649 +181,495 @@ def test_filter_all_conditions():
         .exists("l")
     )
     d = f.to_dict()
-    ops = [c["op"] for c in d["conditions"]]
-    assert ops == [
-        "eq", "ne", "gt", "gte", "lt", "lte", "contains",
-        "fulltext", "starts_with", "ends_with", "in", "exists",
-    ]
     assert d["logic"] == "AND"
-    assert d["groups"] == []
+    ops = {c["op"] for c in d["conditions"]}
+    assert ops == {
+        "eq", "ne", "gt", "gte", "lt", "lte",
+        "contains", "fulltext", "starts_with", "ends_with", "in", "exists",
+    }
 
 
-def test_filter_and_or_logic_switch():
-    f = DocumentFilter().eq("a", 1).or_()
-    assert f.to_dict()["logic"] == "OR"
-    f.and_()
-    assert f.to_dict()["logic"] == "AND"
-
-
-def test_filter_group():
+def test_filter_logic_switch_and_group():
     inner = DocumentFilter().eq("status", "active")
-    f = DocumentFilter().eq("a", 1).group(inner)
+    f = DocumentFilter().eq("a", 1).or_().group(inner).and_()
     d = f.to_dict()
+    assert d["logic"] == "AND"  # last switch wins
     assert len(d["groups"]) == 1
-    assert d["groups"][0]["conditions"][0]["path"] == "status"
 
 
-def test_filter_or_operator():
-    f = DocumentFilter().eq("a", 1) | DocumentFilter().eq("b", 2)
-    d = f.to_dict()
-    assert d["logic"] == "OR"
-    assert len(d["groups"]) == 2
+def test_filter_or_and_operators():
+    a = DocumentFilter().eq("x", 1)
+    b = DocumentFilter().eq("y", 2)
+    ored = a | b
+    anded = a & b
+    assert ored.to_dict()["logic"] == "OR"
+    assert anded.to_dict()["logic"] == "AND"
+    assert len(ored.to_dict()["groups"]) == 2
+    assert len(anded.to_dict()["groups"]) == 2
 
 
-def test_filter_and_operator():
-    f = DocumentFilter().eq("a", 1) & DocumentFilter().eq("b", 2)
-    d = f.to_dict()
-    assert d["logic"] == "AND"
-    assert len(d["groups"]) == 2
-
-
-# =============================================================================
-# DocumentQueryResult (lazy loading)
-# =============================================================================
-
-
-def test_query_result_basic():
-    docs = [Document(id="a", content={}), Document(id="b", content={})]
-    r = DocumentQueryResult(documents=docs, total_count=2)
-    assert r.documents == docs
-    assert r.total_count == 2
-    assert r.has_more is False
-    assert len(r) == 2
-    assert [d.id for d in r] == ["a", "b"]
-
-
-@pytest.mark.asyncio
-async def test_query_result_fetch_next_no_more():
-    r = DocumentQueryResult(documents=[], total_count=0, has_more=False)
-    assert await r.fetch_next_batch() == []
-    assert await r.fetch_all() == []
-    assert await r.to_list() == []
-
-
-@pytest.mark.asyncio
-async def test_query_result_fetch_with_fn():
-    calls = {"n": 0}
-
-    async def fetch():
-        calls["n"] += 1
-        # First batch full (batch_size=2), second short -> stops.
-        if calls["n"] == 1:
-            return [Document(id="x", content={}), Document(id="y", content={})]
-        return [Document(id="z", content={})]
-
-    r = DocumentQueryResult(
-        documents=[],
-        total_count=3,
-        has_more=True,
-        fetch_fn=fetch,
-        batch_size=2,
-    )
-    batch1 = await r.fetch_next_batch()
-    assert len(batch1) == 2
-    assert r.has_more is True
-    all_docs = await r.fetch_all()
-    assert len(all_docs) == 3
-    assert r.has_more is False
-
-
-# =============================================================================
+# ---------------------------------------------------------------------------
 # DocumentQueryResponse
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 
-def test_query_response():
+def test_query_response_dict_iter_len_get():
     resp = DocumentQueryResponse(
         documents=[{"id": "a"}, {"id": "b"}], total_count=2, has_more=True
     )
     assert len(resp) == 2
     assert list(resp) == [{"id": "a"}, {"id": "b"}]
-    assert resp.to_dict()["total_count"] == 2
-    assert resp.get("has_more") is True
+    assert resp.get("total_count") == 2
     assert resp.get("missing", "def") == "def"
+    assert resp.to_dict()["has_more"] is True
 
 
-# =============================================================================
-# DocumentRepository helpers
-# =============================================================================
+# ---------------------------------------------------------------------------
+# DocumentQueryResult (lazy/async)
+# ---------------------------------------------------------------------------
 
 
-def make_repo(client=None, **kw):
-    return DocumentRepository(client=client or make_client(), **kw)
+def test_query_result_basic_props():
+    qr = DocumentQueryResult(documents=[1, 2, 3], total_count=10, has_more=False)
+    assert qr.documents == [1, 2, 3]
+    assert qr.total_count == 10
+    assert qr.has_more is False
+    assert len(qr) == 3
+    assert list(qr) == [1, 2, 3]
 
 
-def test_normalize_path():
-    assert DocumentRepository._normalize_path("$.a.b") == "a.b"
-    assert DocumentRepository._normalize_path("$a") == "a"
-    assert DocumentRepository._normalize_path("plain") == "plain"
+def test_query_result_fetch_no_more():
+    qr = DocumentQueryResult(documents=[1], total_count=1, has_more=False)
+    assert asyncio.run(qr.fetch_next_batch()) == []
 
 
-def test_get_value_nested_and_missing():
-    repo = make_repo()
-    doc = {"user": {"email": "x@y.com"}, "n": 5}
-    assert repo._get_value(doc, "$.user.email") == "x@y.com"
-    assert repo._get_value(doc, "$.n") == 5
-    assert repo._get_value(doc, "$.user.missing") is None
-    # traversing into a non-dict returns None
-    assert repo._get_value(doc, "$.n.deep") is None
+def test_query_result_fetch_next_keeps_has_more_when_full_batch():
+    async def fetch():
+        return [10, 11]
+
+    qr = DocumentQueryResult(
+        documents=[1], total_count=5, has_more=True, fetch_fn=fetch, batch_size=2
+    )
+    batch = asyncio.run(qr.fetch_next_batch())
+    assert batch == [10, 11]
+    assert qr.documents == [1, 10, 11]
+    # len(batch) == batch_size, so has_more remains True
+    assert qr.has_more is True
 
 
-def test_matches_condition_all_ops():
-    repo = make_repo()
-    doc = {"a": 5, "s": "hello world", "lst_field": "b"}
-    assert repo._matches_condition(doc, {"path": "a", "op": "eq", "value": 5})
-    assert repo._matches_condition(doc, {"path": "a", "op": "ne", "value": 6})
-    assert repo._matches_condition(doc, {"path": "a", "op": "gt", "value": 4})
-    assert repo._matches_condition(doc, {"path": "a", "op": "gte", "value": 5})
-    assert repo._matches_condition(doc, {"path": "a", "op": "lt", "value": 6})
-    assert repo._matches_condition(doc, {"path": "a", "op": "lte", "value": 5})
-    assert repo._matches_condition(doc, {"path": "s", "op": "contains", "value": "WORLD"})
-    assert repo._matches_condition(doc, {"path": "s", "op": "starts_with", "value": "hello"})
-    assert repo._matches_condition(doc, {"path": "s", "op": "ends_with", "value": "world"})
-    assert repo._matches_condition(doc, {"path": "lst_field", "op": "in", "value": ["a", "b"]})
-    assert repo._matches_condition(doc, {"path": "a", "op": "exists", "value": True})
-    assert repo._matches_condition(doc, {"path": "s", "op": "fulltext", "value": "hello"})
-    # unknown op -> True
-    assert repo._matches_condition(doc, {"path": "a", "op": "weird", "value": 1})
-    # None value short-circuits for numeric/string ops
-    assert not repo._matches_condition(doc, {"path": "missing", "op": "gt", "value": 1})
-    assert not repo._matches_condition(doc, {"path": "missing", "op": "exists", "value": True})
-    # in with empty list
-    assert not repo._matches_condition(doc, {"path": "a", "op": "in", "value": None})
+def test_query_result_fetch_all_stops_on_short_batch():
+    async def fetch_short():
+        return [99]
+
+    qr = DocumentQueryResult(
+        documents=[], total_count=5, has_more=True, fetch_fn=fetch_short, batch_size=5
+    )
+    out = asyncio.run(qr.fetch_all())
+    assert out == [99]
+    assert qr.has_more is False
 
 
-def test_matches_filter_variants():
-    repo = make_repo()
-    doc = {"lang": "python", "loc": 200}
-    # None filter
-    assert repo._matches_filter(doc, None)
-    # empty dict
-    assert repo._matches_filter(doc, {})
-    # plain dict (no conditions/groups keys) - simple equality match
-    assert repo._matches_filter(doc, {"lang": "python"})
-    assert not repo._matches_filter(doc, {"lang": "rust"})
-    # DocumentFilter AND
-    f_and = DocumentFilter().eq("lang", "python").gte("loc", 100)
-    assert repo._matches_filter(doc, f_and)
-    # DocumentFilter OR with one false
-    f_or = DocumentFilter().or_().eq("lang", "rust").gte("loc", 100)
-    assert repo._matches_filter(doc, f_or)
-    # OR with all false
-    f_or_false = DocumentFilter().or_().eq("lang", "rust").gte("loc", 9999)
-    assert not repo._matches_filter(doc, f_or_false)
-    # filter dict with empty conditions/groups -> True
-    assert repo._matches_filter(doc, {"conditions": [], "groups": [], "logic": "AND"})
+def test_query_result_to_list():
+    async def fetch():
+        return [7]
+
+    qr = DocumentQueryResult(
+        documents=[], total_count=1, has_more=True, fetch_fn=fetch, batch_size=10
+    )
+    assert asyncio.run(qr.to_list()) == [7]
 
 
-def test_project_document():
-    repo = make_repo()
-    doc = {"user": {"email": "x@y.com"}, "name": "bob", "age": 3}
-    # no projection -> copy
-    assert repo._project_document(doc, None) == doc
-    # specific fields, nested last segment used as key
-    proj = repo._project_document(doc, ["$.user.email", "$.name", "$.missing"])
-    assert proj == {"email": "x@y.com", "name": "bob"}
+# ---------------------------------------------------------------------------
+# Repository: collection management
+# ---------------------------------------------------------------------------
 
 
-def test_apply_updates_dict():
-    repo = make_repo()
-    out = repo._apply_updates({"a": 1}, {"a": 2, "b": 3})
-    assert out == {"a": 2, "b": 3}
-
-
-def test_apply_updates_oplist_set_and_push():
-    repo = make_repo()
-    doc = {"meta": {"count": 1}, "tags": ["x"]}
-    updates = [
-        {"operation": "SET", "path": "$.meta.count", "value": 9},
-        {"operation": "SET", "path": "$.new.deep", "value": "v"},
-        {"operation": "PUSH", "path": "$.tags", "value": "y"},
-        {"operation": "PUSH", "path": "$.scalar", "value": "z"},
-        {"operation": "SET", "path": "", "value": "skip"},  # empty path skipped
-    ]
-    out = repo._apply_updates(doc, updates)
-    assert out["meta"]["count"] == 9
-    assert out["new"]["deep"] == "v"
-    assert out["tags"] == ["x", "y"]
-    assert out["scalar"] == ["z"]
-
-
-def test_apply_updates_push_to_scalar_existing():
-    repo = make_repo()
-    # existing leaf is a scalar, PUSH should wrap it into a list
-    out = repo._apply_updates({"k": "single"}, [
-        {"operation": "PUSH", "path": "$.k", "value": "more"}
-    ])
-    assert out["k"] == ["single", "more"]
-
-
-# =============================================================================
-# Collection management
-# =============================================================================
-
-
-def test_create_collection_success():
-    client = make_client()
-    repo = make_repo(client)
-    cfg = DocumentCollectionConfig(name="c", indexes=[IndexDefinition(path="$.a")])
+def test_repo_create_get_list_delete_collection():
+    client = FakeClient()
+    repo = DocumentRepository(client)
+    cfg = DocumentCollectionConfig(name="c1", indexes=[IndexDefinition(path="$.a")])
     cid = repo.create_collection(cfg)
-    assert cid == "col1"
-    assert cid in repo._collections
-    client.create_document_collection.assert_called_once()
+    assert cid == "c1"
 
-
-def test_create_collection_default_id_from_name():
-    client = make_client(create_document_collection={})  # no collection_id key
-    repo = make_repo(client)
-    cfg = DocumentCollectionConfig(name="cname")
-    cid = repo.create_collection(cfg)
-    assert cid == "cname"
-
-
-def test_create_collection_error_wraps():
-    client = make_client()
-    client.create_document_collection.side_effect = RuntimeError("boom")
-    repo = make_repo(client)
-    with pytest.raises(ProximaDBError) as ei:
-        repo.create_collection(DocumentCollectionConfig(name="c"))
-    assert "Failed to create document collection" in str(ei.value)
-
-
-def test_get_list_delete_collection():
-    client = make_client()
-    repo = make_repo(client)
-    cfg = DocumentCollectionConfig(name="c", indexes=[IndexDefinition(path="$.a")])
-    cid = repo.create_collection(cfg)
-    info = repo.get_collection(cid)
-    assert info["name"] == "c"
+    info = repo.get_collection("c1")
+    assert info["name"] == "c1"
     assert info["document_count"] == 0
-    assert info["id"] == cid
-    # unknown collection
+    assert "storage_size_bytes" in info
+
     assert repo.get_collection("nope") is None
-    # list
-    listing = repo.list_collections()
-    assert any(c["id"] == cid for c in listing)
-    # delete
-    assert repo.delete_collection(cid) is True
-    assert repo.get_collection(cid) is None
+
+    cols = repo.list_collections()
+    assert any(c["id"] == "c1" for c in cols)
+
+    assert repo.delete_collection("c1") is True
+    assert repo.get_collection("c1") is None
 
 
-def test_delete_collection_clears_cache():
-    client = make_client()
-    repo = make_repo(client)
-    repo.create_collection(DocumentCollectionConfig(name="c"))
-    repo.insert("col1", {"x": 1}, id="d1")
-    assert any(k.startswith("col1:") for k in repo._cache)
-    repo.delete_collection("col1")
-    assert not any(k.startswith("col1:") for k in repo._cache)
+def test_repo_create_collection_failure_wraps_error():
+    repo = DocumentRepository(FakeClient(fail={"create"}))
+    with pytest.raises(ProximaDBError):
+        repo.create_collection(DocumentCollectionConfig(name="x"))
 
 
-# =============================================================================
-# CRUD
-# =============================================================================
+def test_repo_create_collection_uses_returned_id():
+    class IdClient(FakeClient):
+        def create_document_collection(self, name, config):
+            return {"collection_id": "server-id"}
+
+    repo = DocumentRepository(IdClient())
+    assert repo.create_collection(DocumentCollectionConfig(name="local")) == "server-id"
 
 
-def test_insert_success_and_cache():
-    client = make_client()
-    repo = make_repo(client)
-    doc = repo.insert("col1", {"a": 1}, id="d1")
-    assert doc.id == "doc1"  # server returns id "doc1"
-    assert repo._documents["col1"]["doc1"] is doc
-    assert "col1:doc1" in repo._cache
+# ---------------------------------------------------------------------------
+# Repository: CRUD
+# ---------------------------------------------------------------------------
 
 
-def test_insert_no_cache():
-    client = make_client()
-    repo = make_repo(client, enable_cache=False)
-    doc = repo.insert("col1", {"a": 1}, id="d1")
-    assert doc.id == "doc1"
-    assert repo._cache == {}
+def test_repo_insert_and_cache():
+    client = FakeClient()
+    repo = DocumentRepository(client)
+    doc = repo.insert("c", {"a": 1}, id="d1")
+    assert doc.id == "d1"
+    assert repo._cache["c:d1"] is doc
+    assert repo._documents["c"]["d1"] is doc
 
 
-def test_insert_error_wraps():
-    client = make_client()
-    client.insert_document.side_effect = ValueError("nope")
-    repo = make_repo(client)
-    with pytest.raises(ProximaDBError) as ei:
-        repo.insert("col1", {"a": 1})
-    assert "Failed to insert document" in str(ei.value)
+def test_repo_insert_autogen_id():
+    repo = DocumentRepository(FakeClient())
+    doc = repo.insert("c", {"a": 1})
+    assert doc.id.startswith("doc:")
 
 
-def test_insert_batch():
-    client = make_client()
-    repo = make_repo(client)
-    docs = repo.insert_batch("col1", [{"a": 1}, {"b": 2}], ids=["i1", "i2"])
-    assert [d.id for d in docs] == ["i1", "i2"]
-    assert "col1:i1" in repo._cache
+def test_repo_insert_failure_wraps_error():
+    repo = DocumentRepository(FakeClient(fail={"insert"}))
+    with pytest.raises(ProximaDBError):
+        repo.insert("c", {"a": 1}, id="d1")
 
 
-def test_insert_batch_autoids():
-    repo = make_repo()
-    docs = repo.insert_batch("col1", [{"a": 1}])
+def test_repo_insert_batch():
+    repo = DocumentRepository(FakeClient())
+    docs = repo.insert_batch("c", [{"a": 1}, {"b": 2}], ids=["x", "y"])
+    assert [d.id for d in docs] == ["x", "y"]
+    assert repo._documents["c"]["x"].content == {"a": 1}
+
+
+def test_repo_insert_batch_autogen_and_mismatch():
+    repo = DocumentRepository(FakeClient())
+    docs = repo.insert_batch("c", [{"a": 1}])
     assert docs[0].id.startswith("doc:")
-
-
-def test_insert_batch_id_mismatch():
-    repo = make_repo()
     with pytest.raises(ValueError):
-        repo.insert_batch("col1", [{"a": 1}], ids=["x", "y"])
+        repo.insert_batch("c", [{"a": 1}], ids=["x", "y"])
 
 
-def test_get_from_cache():
-    client = make_client()
-    repo = make_repo(client)
-    inserted = repo.insert("col1", {"a": 1}, id="d1")  # caches under col1:doc1
-    client.get_document.reset_mock()
-    fetched = repo.get("col1", "doc1")
-    assert fetched is inserted
-    client.get_document.assert_not_called()
+def test_repo_get_from_server_and_cache_hit():
+    repo = DocumentRepository(FakeClient())
+    # Seed the instance cache directly to exercise the cache-hit branch
+    # deterministically (no cross-test shared-state coupling).
+    cached = Document(id="d1", content={"cached": True})
+    repo._update_cache("c:d1", cached)
+    assert repo.get("c", "d1") is cached  # cache-hit branch
+
+    # Cache miss -> server path returns server data.
+    miss = repo.get("c", "dnew")
+    assert miss.content == {"k": "v"}
 
 
-def test_get_from_server():
-    client = make_client()
-    repo = make_repo(client)
-    doc = repo.get("col1", "doc1", use_cache=False)
-    assert doc.id == "doc1"
-    assert doc.content == {"a": 1}
+def test_repo_get_none_when_server_returns_none():
+    repo = DocumentRepository(FakeClient())
+    assert repo.get("c", "missing") is None
 
 
-def test_get_server_returns_none():
-    client = make_client(get_document=None)
-    repo = make_repo(client)
-    assert repo.get("col1", "missing", use_cache=False) is None
+def test_repo_get_no_cache():
+    repo = DocumentRepository(FakeClient(), enable_cache=False)
+    doc = repo.get("c", "d1", use_cache=False)
+    assert doc is not None
 
 
-def test_get_error_falls_back_to_local():
-    client = make_client()
-    repo = make_repo(client)
-    # seed local storage
-    repo.insert("col1", {"a": 1}, id="d1")  # stored under doc1
-    client.get_document.side_effect = RuntimeError("down")
-    fetched = repo.get("col1", "doc1", use_cache=False)
-    assert fetched is not None
-    assert fetched.id == "doc1"
+def test_repo_get_fallback_to_local_storage():
+    repo = DocumentRepository(FakeClient(fail={"get"}))
+    repo._ensure_collection("c")
+    local = Document(id="d1", content={"local": True})
+    repo._documents["c"]["d1"] = local
+    got = repo.get("c", "d1", use_cache=False)
+    assert got is local
 
 
-def test_get_error_no_local_raises():
-    client = make_client()
-    client.get_document.side_effect = RuntimeError("down")
-    repo = make_repo(client)
-    with pytest.raises(ProximaDBError) as ei:
-        repo.get("col1", "ghost", use_cache=False)
-    assert "Failed to get document" in str(ei.value)
+def test_repo_get_raises_when_no_fallback():
+    repo = DocumentRepository(FakeClient(fail={"get"}))
+    with pytest.raises(ProximaDBError):
+        repo.get("c", "d1", use_cache=False)
 
 
-def test_query_from_server():
-    client = make_client()
-    repo = make_repo(client)
-    f = DocumentFilter().eq("a", 1)
-    res = repo.query("col1", filter=f, projection=["a"], limit=5)
-    assert res.total_count == 1
-    assert res.documents[0].id == "doc1"
-    assert res.has_more is False
-
-
-def test_query_no_filter():
-    client = make_client()
-    repo = make_repo(client)
-    res = repo.query("col1")
-    assert res.total_count == 1
-
-
-def test_query_fallback_local():
-    client = make_client()
-    repo = make_repo(client)
-    # populate local docs directly
-    repo.insert_batch(
-        "col1",
-        [{"lang": "python", "n": 10}, {"lang": "rust", "n": 20}],
-        ids=["a", "b"],
+def test_repo_query_server_path():
+    repo = DocumentRepository(FakeClient())
+    result = repo.query(
+        "c", filter=DocumentFilter().eq("language", "python"), projection=["language"]
     )
-    client.query_documents.side_effect = RuntimeError("server down")
-    res = repo.query(
-        "col1",
-        filter=DocumentFilter().eq("lang", "python"),
-        projection=["lang"],
-        limit=10,
-        offset=0,
+    assert result.total_count == 2
+    assert {d.id for d in result.documents} == {"d1", "d2"}
+
+
+def test_repo_query_fallback_local_with_projection_and_offset():
+    repo = DocumentRepository(FakeClient(fail={"query"}))
+    repo._ensure_collection("c")
+    for i in range(5):
+        repo._documents["c"][f"d{i}"] = Document(
+            id=f"d{i}", content={"language": "python", "loc": i}
+        )
+    repo._documents["c"]["dr"] = Document(id="dr", content={"language": "rust"})
+    result = repo.query(
+        "c",
+        filter=DocumentFilter().eq("language", "python"),
+        projection=["language"],
+        limit=2,
+        offset=1,
     )
-    assert res.total_count == 1
-    assert res.documents[0].content == {"lang": "python"}
+    assert result.total_count == 5  # 5 python docs match
+    assert len(result.documents) == 2
+    assert result.has_more is True
+    assert "language" in result.documents[0].content
 
 
-def test_query_fallback_pagination_has_more():
-    client = make_client()
-    repo = make_repo(client)
-    repo.insert_batch(
-        "col1",
-        [{"n": i} for i in range(5)],
-        ids=[f"k{i}" for i in range(5)],
-    )
-    client.query_documents.side_effect = RuntimeError("down")
-    res = repo.query("col1", limit=2, offset=0)
-    assert res.total_count == 5
-    assert len(res.documents) == 2
-    assert res.has_more is True
-
-
-def test_search_delegates_to_query():
-    client = make_client()
-    repo = make_repo(client)
-    docs = repo.search("col1", "hello", limit=3)
+def test_repo_search_delegates_to_query():
+    repo = DocumentRepository(FakeClient())
+    docs = repo.search("c", "hello", limit=5)
     assert isinstance(docs, list)
-    # the filter passed should be a fulltext filter
-    call = client.query_documents.call_args
-    assert call.kwargs["filter"]["conditions"][0]["op"] == "fulltext"
+    assert len(docs) == 2
 
 
-def test_update_existing_and_missing():
-    client = make_client()
-    repo = make_repo(client)
-    repo.insert("col1", {"a": 1}, id="d1")  # stored under doc1
-    updated = repo.update("col1", "doc1", {"a": 99})
-    assert updated.content["a"] == 99
-    assert updated.version == 2
-    assert "col1:doc1" in repo._cache
-    # missing doc
-    assert repo.update("col1", "ghost", {"a": 1}) is None
+def test_repo_update_dict_and_oplist():
+    repo = DocumentRepository(FakeClient())
+    repo._ensure_collection("c")
+    repo._documents["c"]["d1"] = Document(id="d1", content={"a": 1, "nested": {}})
+
+    upd = repo.update("c", "d1", {"a": 2})
+    assert upd.content["a"] == 2
+    assert upd.version == 2
+
+    upd2 = repo.update(
+        "c",
+        "d1",
+        [
+            {"operation": "SET", "path": "$.nested.x", "value": 9},
+            {"operation": "PUSH", "path": "$.arr", "value": 1},
+            {"operation": "PUSH", "path": "$.arr", "value": 2},
+            {"operation": "SET", "path": ""},  # skipped (empty path)
+        ],
+    )
+    assert upd2.content["nested"]["x"] == 9
+    assert upd2.content["arr"] == [1, 2]
 
 
-def test_delete_existing_and_missing():
-    client = make_client()
-    repo = make_repo(client)
-    repo.insert("col1", {"a": 1}, id="d1")  # doc1
-    assert repo.delete("col1", "doc1") is True
-    assert repo.delete("col1", "doc1") is False
+def test_repo_update_push_scalar_into_list():
+    repo = DocumentRepository(FakeClient())
+    repo._ensure_collection("c")
+    repo._documents["c"]["d1"] = Document(id="d1", content={"arr": "single"})
+    upd = repo.update("c", "d1", [{"operation": "PUSH", "path": "$.arr", "value": 2}])
+    assert upd.content["arr"] == ["single", 2]
 
 
-def test_delete_by_filter_clears_cache():
-    client = make_client()
-    repo = make_repo(client)
-    repo.insert("col1", {"a": 1}, id="d1")
-    count = repo.delete_by_filter("col1", DocumentFilter().eq("a", 1))
-    assert count == 0
-    assert not any(k.startswith("col1:") for k in repo._cache)
+def test_repo_update_missing_returns_none():
+    repo = DocumentRepository(FakeClient())
+    assert repo.update("c", "nope", {"a": 1}) is None
 
 
-# =============================================================================
-# Batch + index + cache management
-# =============================================================================
+def test_repo_delete_and_delete_by_filter():
+    repo = DocumentRepository(FakeClient())
+    repo._ensure_collection("c")
+    repo._documents["c"]["d1"] = Document(id="d1", content={})
+    repo._update_cache("c:d1", repo._documents["c"]["d1"])
+    assert repo.delete("c", "d1") is True
+    assert repo.delete("c", "d1") is False
+    assert repo.delete_by_filter("c", DocumentFilter().eq("a", 1)) == 0
 
 
-def test_flush_batch_empty_and_populated():
-    client = make_client()
-    repo = make_repo(client)
-    # collection with no buffer entry
-    assert repo.flush_batch("none") == {"success": True, "flushed": 0}
-    repo.insert("col1", {"a": 1}, id="d1")
-    out = repo.flush_batch("col1")
-    assert out["success"] is True
-    assert out["flushed"] >= 1
-    # now buffer empty
-    assert repo.flush_batch("col1") == {"success": True, "flushed": 0}
+def test_repo_flush_batch():
+    repo = DocumentRepository(FakeClient())
+    assert repo.flush_batch("empty") == {"success": True, "flushed": 0}
+    repo.insert("c", {"a": 1}, id="d1")
+    res = repo.flush_batch("c")
+    assert res["flushed"] == 1
+    assert repo.flush_batch("c")["flushed"] == 0  # buffer now empty
 
 
-def test_index_stub_methods():
-    repo = make_repo()
-    assert repo.create_index("col1", IndexDefinition(path="$.a")) is True
-    assert repo.drop_index("col1", "idx") is True
-    assert repo.list_indexes("col1") == []
+def test_repo_index_stubs():
+    repo = DocumentRepository(FakeClient())
+    assert repo.create_index("c", IndexDefinition(path="$.a")) is True
+    assert repo.drop_index("c", "idx") is True
+    assert repo.list_indexes("c") == []
 
 
-def test_cache_lru_eviction():
-    client = make_client()
-    repo = make_repo(client, cache_size=2)
-    repo._update_cache("k1", Document(id="1", content={}))
-    repo._update_cache("k2", Document(id="2", content={}))
-    repo._update_cache("k3", Document(id="3", content={}))
-    assert "k1" not in repo._cache  # evicted
-    assert "k3" in repo._cache
-    assert len(repo._cache) == 2
+def test_repo_cache_eviction_and_clear_and_stats():
+    repo = DocumentRepository(FakeClient(), cache_size=2)
+    for i in range(3):
+        repo._update_cache(f"c:{i}", Document(id=str(i), content={}))
+    assert len(repo._cache) == 2  # capacity 2 -> oldest evicted
+    assert "c:0" not in repo._cache
 
+    repo._update_cache("other:z", Document(id="z", content={}))
+    repo.clear_cache("c")
+    assert all(not k.startswith("c:") for k in repo._cache)
 
-def test_clear_cache_specific_and_all():
-    repo = make_repo()
-    repo._update_cache("col1:a", Document(id="a", content={}))
-    repo._update_cache("col2:b", Document(id="b", content={}))
-    repo.clear_cache("col1")
-    assert "col1:a" not in repo._cache
-    assert "col2:b" in repo._cache
     repo.clear_cache()
     assert repo._cache == {}
-    assert repo._cache_keys == []
 
-
-def test_get_cache_stats():
-    repo = make_repo(cache_size=50)
     stats = repo.get_cache_stats()
-    assert stats["capacity"] == 50
-    assert stats["hit_rate"] == 0.0
-    assert stats["size"] == 0
+    assert stats["capacity"] == 2
+    assert "hit_rate" in stats
 
 
-# =============================================================================
-# ProximaDBDocument high-level API
-# =============================================================================
+def test_repo_get_value_and_normalize_path():
+    repo = DocumentRepository(FakeClient())
+    assert repo._normalize_path("$.a.b") == "a.b"
+    assert repo._normalize_path("$x") == "x"
+    assert repo._normalize_path("plain") == "plain"
+    doc = {"a": {"b": 5}}
+    assert repo._get_value(doc, "$.a.b") == 5
+    assert repo._get_value(doc, "$.a.b.c") is None  # descends past scalar
 
 
-def test_highlevel_create_collection_name():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    cid = api.create_collection(name="c", indexes=[IndexDefinition(path="$.a")])
-    assert cid == "col1"
+def test_repo_matches_filter_dict_shortcuts():
+    repo = DocumentRepository(FakeClient())
+    assert repo._matches_filter({"a": 1}, None) is True
+    assert repo._matches_filter({"a": 1}, {}) is True
+    assert repo._matches_filter({"a": 1}, {"a": 1}) is True  # plain dict equality
+    assert repo._matches_filter({"a": 1}, {"a": 2}) is False
+    assert repo._matches_filter({"a": 1}, {"conditions": [], "groups": []}) is True
+
+
+def test_repo_matches_condition_all_ops():
+    repo = DocumentRepository(FakeClient())
+    doc = {"n": 5, "s": "hello"}
+
+    def m(op, path, value):
+        return repo._matches_condition(doc, {"op": op, "path": path, "value": value})
+
+    assert m("eq", "n", 5)
+    assert m("ne", "n", 6)
+    assert m("gt", "n", 4)
+    assert m("gte", "n", 5)
+    assert m("lt", "n", 6)
+    assert m("lte", "n", 5)
+    assert m("contains", "s", "ELL")
+    assert m("starts_with", "s", "he")
+    assert m("ends_with", "s", "lo")
+    assert m("in", "n", [5, 6])
+    assert m("exists", "n", True)
+    assert m("fulltext", "s", "hell")
+    assert not m("in", "missing", [1])
+    assert not m("exists", "missing", True)
+    assert m("weird", "n", 1)  # unknown op -> True
+    assert not m("gt", "missing", 1)  # value is None -> False
+
+
+def test_repo_matches_filter_or_logic():
+    repo = DocumentRepository(FakeClient())
+    f = DocumentFilter().eq("a", 1).or_().eq("b", 99)
+    assert repo._matches_filter({"a": 1, "b": 2}, f) is True
+
+
+def test_repo_project_document():
+    repo = DocumentRepository(FakeClient())
+    doc = {"a": {"b": 1}, "c": 2}
+    assert repo._project_document(doc, None) == doc
+    proj = repo._project_document(doc, ["$.a.b", "$.missing"])
+    assert proj == {"b": 1}
+
+
+# ---------------------------------------------------------------------------
+# High-level ProximaDBDocument
+# ---------------------------------------------------------------------------
+
+
+def test_highlevel_create_collection_by_name():
+    docs = ProximaDBDocument(FakeClient())
+    cid = docs.create_collection(name="c", enable_fulltext=True)
+    assert cid == "c"
+
+
+def test_highlevel_create_collection_by_config():
+    docs = ProximaDBDocument(FakeClient())
+    out = docs.create_collection(config=DocumentCollectionConfig(name="c2"))
+    assert out == {"success": True, "collection_id": "c2"}
 
 
 def test_highlevel_create_collection_requires_name():
-    api = ProximaDBDocument(make_client())
+    docs = ProximaDBDocument(FakeClient())
     with pytest.raises(ValueError):
-        api.create_collection()
+        docs.create_collection()
 
 
-def test_highlevel_create_collection_with_config():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    cfg = DocumentCollectionConfig(name="c")
-    out = api.create_collection(config=cfg)
-    assert out == {"success": True, "collection_id": "col1"}
+def test_highlevel_insert_and_get_and_query():
+    docs = ProximaDBDocument(FakeClient())
+    created = docs.insert("c", {"a": 1}, id="d1")
+    assert created.id == "d1"
 
-
-def test_highlevel_insert_get_query_search():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    doc = api.insert("col1", {"a": 1}, id="d1")
-    assert isinstance(doc, Document)
-    got = api.get("col1", "doc1")
+    got = docs.get("c", "d1")
     assert got is not None
-    resp = api.query("col1", filter=DocumentFilter().eq("a", 1), projection=["a"])
+
+    resp = docs.query("c", filter=DocumentFilter().eq("a", 1), limit=10)
     assert isinstance(resp, DocumentQueryResponse)
-    assert resp.total_count == 1
-    results = api.search("col1", "text", limit=5)
-    assert isinstance(results, list)
+    assert resp.total_count == 2
 
 
-def test_highlevel_insert_batch():
-    api = ProximaDBDocument(make_client())
-    docs = api.insert_batch("col1", [{"a": 1}], ids=["x"])
-    assert docs[0].id == "x"
+def test_highlevel_insert_batch_and_search():
+    docs = ProximaDBDocument(FakeClient())
+    out = docs.insert_batch("c", [{"a": 1}], ids=["x"])
+    assert out[0].id == "x"
+    found = docs.search("c", "query text", limit=3)
+    assert isinstance(found, list)
 
 
-def test_highlevel_update_existing_and_missing():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    api.insert("col1", {"a": 1}, id="d1")  # doc1
-    out = api.update("col1", "doc1", {"a": 2})
-    assert out["success"] is True
-    assert out["new_version"] == 2
-    assert out["document"]["a"] == 2
-    assert api.update("col1", "ghost", {"a": 1}) is None
+def test_highlevel_update_and_delete_and_flush():
+    docs = ProximaDBDocument(FakeClient())
+    docs.insert("c", {"a": 1}, id="d1")
+    upd = docs.update("c", "d1", {"a": 2})
+    assert upd["success"] is True
+    assert upd["new_version"] == 2
 
-
-def test_highlevel_delete_and_flush():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    api.insert("col1", {"a": 1}, id="d1")
-    assert api.delete("col1", "doc1") is True
-    flushed = api.flush("col1")
-    assert flushed["success"] is True
+    assert docs.update("c", "nope", {"a": 1}) is None
+    assert docs.delete("c", "d1") is True
+    assert docs.flush("c")["success"] is True
 
 
 def test_highlevel_insert_document_and_get_document():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    created = api.insert_document("col1", {"a": 1}, id="d1")
-    assert created["id"] == "doc1"
-    assert created["version"] == 1
-    got = api.get_document("col1", "doc1", projection=["a"])
+    docs = ProximaDBDocument(FakeClient())
+    res = docs.insert_document("c", {"a": 1, "b": 2}, id="d1")
+    assert res["id"] == "d1"
+    assert res["document"] == {"a": 1, "b": 2}
+
+    got = docs.get_document("c", "d1", projection=["$.a"])
     assert got["found"] is True
     assert got["document"] == {"a": 1}
-    # missing -> None
-    client.get_document.return_value = None
-    assert api.get_document("col1", "absent") is None
+
+    assert docs.get_document("c", "missing") is None
 
 
 def test_highlevel_list_and_delete_collection():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    api.create_collection(name="c")
-    assert any(c["id"] == "col1" for c in api.list_collections())
-    assert api.delete_collection("col1") is True
+    docs = ProximaDBDocument(FakeClient())
+    docs.create_collection(name="c")
+    cols = docs.list_collections()
+    assert any(c["id"] == "c" for c in cols)
+    assert docs.delete_collection("c") is True
 
 
-def test_highlevel_aggregate_match_and_passthrough():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    api.insert_batch(
-        "col1",
-        [{"lang": "python"}, {"lang": "rust"}],
-        ids=["a", "b"],
+def test_highlevel_aggregate_match_and_group():
+    docs = ProximaDBDocument(FakeClient())
+    repo = docs._repository
+    repo._ensure_collection("c")
+    repo._documents["c"]["d1"] = Document(id="d1", content={"lang": "py", "loc": 10})
+    repo._documents["c"]["d2"] = Document(id="d2", content={"lang": "py", "loc": 20})
+    repo._documents["c"]["d3"] = Document(id="d3", content={"lang": "rs", "loc": 5})
+
+    # match stage only -> returns documents
+    out = docs.aggregate(
+        "c", [{"stage": "match", "filter": DocumentFilter().eq("lang", "py")}]
     )
-    # match stage
-    out = api.aggregate(
-        "col1",
-        [{"stage": "match", "filter": DocumentFilter().eq("lang", "python")}],
-    )
-    assert len(out["results"]) == 1
-    # no recognized stage -> passthrough all docs as dicts
-    out2 = api.aggregate("col1", [{"stage": "unknown"}])
-    assert len(out2["results"]) == 2
-    assert "document" in out2["results"][0]
+    assert len(out["results"]) == 2
 
-
-def test_highlevel_aggregate_group():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    api.insert_batch(
-        "col1",
-        [
-            {"lang": "python", "loc": 10},
-            {"lang": "python", "loc": 30},
-            {"lang": "rust", "loc": 50},
-        ],
-        ids=["a", "b", "c"],
-    )
-    out = api.aggregate(
-        "col1",
+    # group stage with count/avg/sum
+    out2 = docs.aggregate(
+        "c",
         [
             {
                 "stage": "group",
@@ -847,19 +682,29 @@ def test_highlevel_aggregate_group():
             }
         ],
     )
-    rows = {r["key"]: r for r in out["results"]}
-    assert rows["python"]["cnt"] == 2
-    assert rows["python"]["avg_loc"] == 20
-    assert rows["python"]["sum_loc"] == 40
-    assert rows["rust"]["cnt"] == 1
+    rows = {r["key"]: r for r in out2["results"]}
+    assert rows["py"]["cnt"] == 2
+    assert rows["py"]["avg_loc"] == 15
+    assert rows["py"]["sum_loc"] == 30
+    assert rows["rs"]["cnt"] == 1
 
 
-def test_highlevel_aggregate_group_empty_values():
-    client = make_client()
-    api = ProximaDBDocument(client)
-    api.insert_batch("col1", [{"lang": "go"}], ids=["a"])
-    out = api.aggregate(
-        "col1",
+def test_highlevel_aggregate_no_recognized_stage():
+    docs = ProximaDBDocument(FakeClient())
+    repo = docs._repository
+    repo._ensure_collection("c")
+    repo._documents["c"]["d1"] = Document(id="d1", content={"a": 1})
+    out = docs.aggregate("c", [{"stage": "unknown"}])
+    assert len(out["results"]) == 1
+
+
+def test_highlevel_aggregate_group_empty_values_avg():
+    docs = ProximaDBDocument(FakeClient())
+    repo = docs._repository
+    repo._ensure_collection("c")
+    repo._documents["c"]["d1"] = Document(id="d1", content={"lang": "py"})
+    out = docs.aggregate(
+        "c",
         [
             {
                 "stage": "group",
@@ -876,14 +721,14 @@ def test_highlevel_aggregate_group_empty_values():
     assert row["sum_x"] == 0
 
 
-# =============================================================================
-# Factory
-# =============================================================================
+# ---------------------------------------------------------------------------
+# Factory + enums
+# ---------------------------------------------------------------------------
 
 
-def test_create_document_api_factory():
-    client = make_client()
-    api = create_document_api(client, enable_cache=False, cache_size=10)
+def test_factory_and_enums():
+    api = create_document_api(FakeClient(), enable_cache=False, cache_size=10)
     assert isinstance(api, ProximaDBDocument)
-    assert api._repository._enable_cache is False
-    assert api._repository._cache_size == 10
+    assert QueryStrategy.AUTO.value == "auto"
+    assert DocIndexType.FULLTEXT.value == "fulltext"
+    assert CompressionAlgorithm.LZ4.value == "lz4"

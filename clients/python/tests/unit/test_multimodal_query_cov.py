@@ -5,8 +5,11 @@ exercised with hand-built fake clients so RPC methods return plain dicts/objects
 """
 
 import math
+from types import SimpleNamespace
 
 import pytest
+
+assert math is not None  # keep linter from stripping the import
 
 from proximadb_sdk.multimodal_query import (
     CrossModalReranker,
@@ -909,3 +912,99 @@ def test_fit_stump_empty_returns_none():
     lf = LearnedFusion()
     assert lf._fit_stump([], []) is None
     assert lf._fit_stump([[]], [0.0]) is None
+
+
+# ---------------------------------------------------------------------------
+# Extra targeted branches
+# ---------------------------------------------------------------------------
+
+
+class BareClient:
+    """Client missing every optional method the executor probes for."""
+
+    def search(self, **kw):
+        return []
+
+
+def test_executor_components_with_missing_client_methods():
+    # graph/document/logs/metrics all return [] when the client lacks the method
+    q = (
+        MultiModalQueryBuilder()
+        .graph("g")
+        .document("docs")
+        .logs("ns", time_range=(0, 1))
+        .metrics("ns", ["m"], (0, 1))
+        .fuse(FusionStrategy.UNION)
+        .build()
+    )
+    res = MultiModalQueryExecutor(BareClient()).execute(q)
+    assert res.records == []
+
+
+def test_executor_graph_traverse_exception():
+    class GraphBoom:
+        def search(self, **kw):
+            return []
+
+        graph = SimpleNamespace(
+            traverse=lambda **kw: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+
+    q = MultiModalQueryBuilder().graph("g").build()
+    res = MultiModalQueryExecutor(GraphBoom()).execute(q)
+    assert res.records == []
+
+
+def test_learned_fusion_predict_untrained_neural_returns_half():
+    cfg = LearnedFusionConfig(
+        model_type=FusionModelType.NEURAL_NETWORK, num_features=2
+    )
+    lf = LearnedFusion(cfg)
+    # _predict default branch (non-linear, non-gb) -> 0.5
+    out = lf._predict(FusionFeatures(query_features=[0.1, 0.2]), ["a", "b"])
+    assert out == [0.5, 0.5]
+
+
+def test_learned_fusion_train_default_branch_neural():
+    cfg = LearnedFusionConfig(
+        model_type=FusionModelType.NEURAL_NETWORK,
+        num_features=2,
+        min_samples_for_training=1,
+    )
+    lf = LearnedFusion(cfg)
+    lf.add_training_sample(
+        TrainingSample(FusionFeatures(query_features=[0.1, 0.2]), {"r": 1.0})
+    )
+    # NEURAL_NETWORK type falls through to linear training
+    metrics = lf.train()
+    assert lf.is_trained
+    assert metrics.num_samples == 1
+
+
+def test_learned_fusion_gb_feature_importance_no_trees():
+    cfg = LearnedFusionConfig(model_type=FusionModelType.GRADIENT_BOOSTING)
+    lf = LearnedFusion(cfg)
+    lf._is_trained = True  # trained flag set but no trees fitted
+    assert lf.get_feature_importance() is None
+
+
+def test_learned_fusion_maybe_train_swallows_error():
+    cfg = LearnedFusionConfig(
+        model_type=FusionModelType.LINEAR, min_samples_for_training=1
+    )
+    lf = LearnedFusion(cfg)
+    lf.add_training_sample(TrainingSample(FusionFeatures(), {"r": 1.0}))
+
+    # Force train() to raise; _maybe_train must swallow it
+    def boom():
+        raise RuntimeError("train failed")
+
+    lf.train = boom  # type: ignore[assignment]
+    lf._maybe_train()  # should not raise
+    assert lf.is_trained is False
+
+
+def test_fuse_results_single_component_returns_as_is():
+    ex = MultiModalQueryExecutor(FakeClient())
+    comp = [[{"id": "a"}]]
+    assert ex._fuse_results(comp, "rrf", {}) == [{"id": "a"}]

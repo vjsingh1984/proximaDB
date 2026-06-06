@@ -6,6 +6,21 @@ exercise every class, method, branch, and decorator directly.
 
 import logging
 
+# NOTE on coverage: this venv has editable installs (victor / chromadb /
+# opentelemetry) leaking onto sys.path. Under `pytest-cov`, coverage's
+# module-discovery (`should_trace` -> `find_spec`) runs inside a worker thread
+# and can import those packages, whose module-level code spins a
+# ThreadPoolExecutor and joins it while the main thread already holds the
+# import lock -> hard deadlock (observed via faulthandler). We defensively
+# pre-import the heavy chain HERE, before any coverage-driven find_spec, so the
+# modules are already resolved in sys.modules and coverage does not re-import
+# them inside a traced worker thread.
+for _mod in ("opentelemetry", "chromadb"):
+    try:  # pragma: no cover - environment-dependent, best-effort warm import
+        __import__(_mod)
+    except Exception:
+        pass
+
 import pytest
 
 from proximadb_sdk.observability import (
@@ -417,6 +432,20 @@ def test_observability_record_helpers():
     assert metrics["proximadb_vectors_inserted_total"]["collection=col"] == 10
     assert metrics["proximadb_cache_hits_total"]["cache_type=query"] == 1
     assert metrics["proximadb_cache_misses_total"]["cache_type=query"] == 1
+
+
+def test_observability_get_prometheus_and_traces_enabled():
+    obs = Observability()
+    obs.record_cache_hit("query")
+    # enabled-metrics branch (line 770)
+    prom = obs.get_prometheus_metrics()
+    assert "proximadb_cache_hits_total" in prom
+    # enabled-tracer branch (line 776)
+    with obs.trace_operation("op"):
+        pass
+    traces = obs.get_traces()
+    assert len(traces) == 1
+    assert traces[0]["name"] == "op"
 
 
 def test_observability_trace_operation_with_tracer():

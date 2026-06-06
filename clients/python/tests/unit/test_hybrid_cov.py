@@ -12,7 +12,29 @@ import warnings
 from datetime import datetime
 from unittest.mock import MagicMock
 
+import asyncio
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _fresh_event_loop():
+    """Give each test a fresh event loop.
+
+    The sync wrappers in hybrid.py use ``asyncio.get_event_loop()``; once a
+    sibling test (or a pytest-asyncio STRICT-mode async test elsewhere in the
+    suite) closes the default loop, that call returns a *closed* loop and the
+    sync repository/search methods raise. Isolating the loop per test removes
+    the suite-order fragility.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        yield
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+
 
 from proximadb_sdk.hybrid import (
     CascadeFusion,
