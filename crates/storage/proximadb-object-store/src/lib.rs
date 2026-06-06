@@ -49,14 +49,23 @@ fn url_err(url: &str, e: impl std::fmt::Display) -> StorageError {
 
 /// Build an object store backend + base `Path` from a URL.
 ///
-/// `file://` and `memory://` always work. `s3://`/`gs://`/`az://` require the matching
-/// crate feature (`aws`/`gcp`/`azure`); without it `object_store::parse_url` returns an
-/// error (no panic), and credentials come from the standard `object_store` environment
-/// variables (aligned with `FilesystemFactory`'s env conventions).
+/// `file://` and `memory://` always work. `s3://`/`gs://`/`az://` (incl. `adls://`/`abfs://`)
+/// require the matching crate feature (`aws`/`gcp`/`azure`); without it the underlying
+/// `object_store` builder returns an error (no panic).
+///
+/// Credentials come from the standard `object_store` environment variables. We forward the
+/// process environment (lower-cased so the upper-case `AZURE_*` / `AWS_*` / `GOOGLE_*` names
+/// the deployment sets match `object_store`'s lower-case config keys) into `parse_url_opts`;
+/// `object_store` applies the keys it recognises for the URL's scheme and silently ignores the
+/// rest. This is what makes **secret-less cloud auth** work here: e.g. the AKS workload-identity
+/// trio `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_FEDERATED_TOKEN_FILE`, or AWS web-identity
+/// (`AWS_ROLE_ARN` / `AWS_WEB_IDENTITY_TOKEN_FILE`), authenticate ADLS/S3 with no static key —
+/// matching the `FileSystem` Azure backend's posture. `file://`/`memory://` ignore the options.
 pub fn store_for_url(url: &str) -> Result<(Arc<dyn ObjectStore>, Path), StorageError> {
     let parsed = Url::parse(url).map_err(|e| url_err(url, e))?;
-    let (store, path) =
-        object_store::parse_url(&parsed).map_err(|e| os_err(&format!("parse_url({url})"), e))?;
+    let env_opts = std::env::vars().map(|(k, v)| (k.to_ascii_lowercase(), v));
+    let (store, path) = object_store::parse_url_opts(&parsed, env_opts)
+        .map_err(|e| os_err(&format!("parse_url({url})"), e))?;
     Ok((Arc::from(store), path))
 }
 
