@@ -1058,6 +1058,14 @@ impl FilesystemFactory {
                 .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
                 .unwrap_or(false),
             endpoint: std::env::var("AZURE_STORAGE_ENDPOINT").ok(),
+            // Secret-less auth: the AKS workload-identity webhook projects these
+            // three env vars into the pod, so an MVP deployment with a federated
+            // identity authenticates to ADLS with no storage key in config.
+            // `AZURE_CLIENT_ID` alone (no tenant/token) selects a user-assigned
+            // Managed Identity; absent entirely, the system-assigned MI is used.
+            client_id: std::env::var("AZURE_CLIENT_ID").ok(),
+            tenant_id: std::env::var("AZURE_TENANT_ID").ok(),
+            federated_token_file: std::env::var("AZURE_FEDERATED_TOKEN_FILE").ok(),
         }
     }
 

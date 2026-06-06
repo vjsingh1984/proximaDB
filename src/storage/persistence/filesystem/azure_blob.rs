@@ -28,19 +28,41 @@ use super::{
     DirEntry, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsFileMetadata, FsResult,
 };
 
-/// Configuration for [`AzureBlobFileSystem`]. `use_emulator` targets Azurite
-/// (well-known `devstoreaccount1` creds); otherwise supply `account` +
-/// `access_key` (and optionally a custom `endpoint`).
+/// Configuration for [`AzureBlobFileSystem`].
+///
+/// Auth precedence (delegated to `object_store`'s `MicrosoftAzureBuilder`):
+/// 1. `use_emulator` → Azurite (well-known `devstoreaccount1` creds).
+/// 2. `access_key` → shared-key (a long-lived secret — least preferred; avoid
+///    in cloud where a workload/managed identity is available).
+/// 3. `client_id` + `tenant_id` + `federated_token_file` → **AKS Workload
+///    Identity** (OIDC federation; no secret material — the recommended posture
+///    for the Azure MVP on AKS).
+/// 4. `client_id` alone → **user-assigned Managed Identity** (IMDS).
+/// 5. none of the above → **system-assigned Managed Identity** (IMDS) — the
+///    secret-less default when the pod has an attached identity.
+///
+/// The identity fields are normally populated from the standard env vars the
+/// AKS workload-identity webhook injects (`AZURE_CLIENT_ID` / `AZURE_TENANT_ID`
+/// / `AZURE_FEDERATED_TOKEN_FILE`) — see `FilesystemFactory::azure_config_from_env`.
 #[derive(Debug, Clone)]
 pub struct AzureBlobConfig {
     /// Storage account name (ignored in emulator mode).
     pub account: String,
-    /// Shared-key access key (not needed when `use_emulator`).
+    /// Shared-key access key (not needed when `use_emulator` or when an
+    /// identity is configured).
     pub access_key: Option<String>,
     /// Use the Azurite emulator (object_store fills in the well-known creds + host).
     pub use_emulator: bool,
     /// Optional custom blob endpoint (non-emulator).
     pub endpoint: Option<String>,
+    /// AAD client (application/managed-identity) id. With `tenant_id` +
+    /// `federated_token_file` selects Workload Identity; alone selects a
+    /// user-assigned Managed Identity.
+    pub client_id: Option<String>,
+    /// AAD tenant id (Workload Identity).
+    pub tenant_id: Option<String>,
+    /// Path to the projected federated token file (Workload Identity, AKS).
+    pub federated_token_file: Option<String>,
 }
 
 impl Default for AzureBlobConfig {
@@ -50,6 +72,9 @@ impl Default for AzureBlobConfig {
             access_key: None,
             use_emulator: true,
             endpoint: None,
+            client_id: None,
+            tenant_id: None,
+            federated_token_file: None,
         }
     }
 }
@@ -106,8 +131,25 @@ impl AzureBlobFileSystem {
             builder = builder.with_use_emulator(true);
         } else {
             builder = builder.with_account(self.config.account.clone());
+            // Shared key (a secret) — only when explicitly supplied.
             if let Some(key) = &self.config.access_key {
                 builder = builder.with_access_key(key.clone());
+            }
+            // Secret-less identity. object_store's build() resolves credentials
+            // in this order: access_key → (client_id + tenant_id +
+            // federated_token_file) Workload Identity → client-secret → Azure
+            // CLI → IMDS Managed Identity. Setting just `client_id` selects a
+            // user-assigned MI; setting nothing here leaves the system-assigned
+            // MI (IMDS) as the default — so an AKS pod with an attached identity
+            // needs no secret in config.
+            if let Some(client_id) = &self.config.client_id {
+                builder = builder.with_client_id(client_id.clone());
+            }
+            if let Some(tenant_id) = &self.config.tenant_id {
+                builder = builder.with_tenant_id(tenant_id.clone());
+            }
+            if let Some(token_file) = &self.config.federated_token_file {
+                builder = builder.with_federated_token_file(token_file.clone());
             }
             if let Some(ep) = &self.config.endpoint {
                 builder = builder.with_endpoint(ep.clone());
@@ -319,5 +361,40 @@ mod tests {
         assert!(Arc::ptr_eq(&a, &b));
         let _ = fs.store_for("c2").unwrap();
         assert_eq!(fs.stores.len(), 2);
+    }
+
+    /// Azure-MVP hardening: an AKS Workload Identity config (no shared key,
+    /// just client/tenant/federated-token) must build a usable store — proving
+    /// ADLS can be reached secret-lessly.
+    #[tokio::test]
+    async fn store_for_builds_with_workload_identity_no_secret() {
+        let cfg = AzureBlobConfig {
+            account: "anvaiopsmvp".to_string(),
+            access_key: None,
+            use_emulator: false,
+            endpoint: None,
+            client_id: Some("00000000-0000-0000-0000-000000000001".to_string()),
+            tenant_id: Some("00000000-0000-0000-0000-000000000002".to_string()),
+            federated_token_file: Some("/var/run/secrets/azure/tokens/azure-identity-token".to_string()),
+        };
+        let fs = AzureBlobFileSystem::new(cfg).await.unwrap();
+        // Builds the credential provider (token file is read lazily per-request,
+        // so no file needs to exist here) — i.e. workload identity is wired.
+        assert!(fs.store_for("warehouse").is_ok());
+    }
+
+    /// A user-assigned Managed Identity config (client_id only, no key) must
+    /// also build — the IMDS fallback path.
+    #[tokio::test]
+    async fn store_for_builds_with_user_assigned_managed_identity() {
+        let cfg = AzureBlobConfig {
+            account: "anvaiopsmvp".to_string(),
+            access_key: None,
+            use_emulator: false,
+            client_id: Some("00000000-0000-0000-0000-000000000003".to_string()),
+            ..Default::default()
+        };
+        let fs = AzureBlobFileSystem::new(cfg).await.unwrap();
+        assert!(fs.store_for("warehouse").is_ok());
     }
 }
