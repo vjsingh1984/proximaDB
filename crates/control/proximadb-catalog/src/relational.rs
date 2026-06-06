@@ -509,13 +509,111 @@ fn validate_check_expression(
     row: &CatalogRow,
     expression: &str,
 ) -> Result<()> {
-    match evaluate_simple_check_expression(schema, row, expression)? {
+    match evaluate_check_expression(schema, row, expression)? {
         CheckOutcome::Pass | CheckOutcome::Unknown => Ok(()),
         CheckOutcome::Fail => Err(anyhow!(
             "CHECK constraint '{}' failed for table '{}'",
             expression,
             schema.name
         )),
+    }
+}
+
+/// Evaluate a CHECK expression that may combine simple comparisons with `AND` / `OR`
+/// (e.g. `CHECK (a > 0 AND b < 100)`, `CHECK (status = 'ok' OR status = 'pending')`).
+/// SQL precedence: `OR` binds looser than `AND`, so we split on the top-level `OR` first, then
+/// `AND`; parentheses group sub-expressions. Leaves are single comparisons handled by
+/// [`evaluate_simple_check_expression`]. Combination uses SQL three-valued logic.
+fn evaluate_check_expression(
+    schema: &CatalogTableSchema,
+    row: &CatalogRow,
+    expression: &str,
+) -> Result<CheckOutcome> {
+    let expr = strip_outer_parens(expression.trim());
+    if let Some((left, right)) = split_top_level_once(expr, "OR") {
+        let l = evaluate_check_expression(schema, row, &left)?;
+        let r = evaluate_check_expression(schema, row, &right)?;
+        return Ok(combine_or(l, r));
+    }
+    if let Some((left, right)) = split_top_level_once(expr, "AND") {
+        let l = evaluate_check_expression(schema, row, &left)?;
+        let r = evaluate_check_expression(schema, row, &right)?;
+        return Ok(combine_and(l, r));
+    }
+    evaluate_simple_check_expression(schema, row, expr)
+}
+
+/// Strip one balanced pair of outer parentheses wrapping the whole expression
+/// (`(a AND b)` → `a AND b`), but leave `(a) AND (b)` untouched.
+fn strip_outer_parens(s: &str) -> &str {
+    let t = s.trim();
+    if let Some(inner) = t.strip_prefix('(').and_then(|x| x.strip_suffix(')')) {
+        let mut depth = 0i32;
+        for c in inner.chars() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return t; // the opening paren closes before the end → not a wrapper
+                    }
+                }
+                _ => {}
+            }
+        }
+        if depth == 0 {
+            return inner.trim();
+        }
+    }
+    t
+}
+
+/// Split `s` on the FIRST top-level (paren-depth 0) ` <keyword> ` connective (case-insensitive).
+/// Recursion handles chains; the rest of the chain stays in `right`.
+fn split_top_level_once(s: &str, keyword: &str) -> Option<(String, String)> {
+    let kw = format!(" {keyword} ");
+    // `to_ascii_uppercase` keeps byte length (non-ASCII passes through), so byte indices align.
+    let upper = s.to_ascii_uppercase();
+    let bytes = upper.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {
+                if depth == 0 && upper[i..].starts_with(&kw) {
+                    return Some((
+                        s[..i].trim().to_string(),
+                        s[i + kw.len()..].trim().to_string(),
+                    ));
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn combine_or(left: CheckOutcome, right: CheckOutcome) -> CheckOutcome {
+    use CheckOutcome::*;
+    if left == Pass || right == Pass {
+        Pass
+    } else if left == Unknown || right == Unknown {
+        Unknown
+    } else {
+        Fail
+    }
+}
+
+fn combine_and(left: CheckOutcome, right: CheckOutcome) -> CheckOutcome {
+    use CheckOutcome::*;
+    if left == Fail || right == Fail {
+        Fail
+    } else if left == Unknown || right == Unknown {
+        Unknown
+    } else {
+        Pass
     }
 }
 
@@ -1169,6 +1267,72 @@ mod tests {
         values.insert("hi".to_string(), ProximaValue::Null);
         CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
             .expect("NULL operand → UNKNOWN → row allowed");
+    }
+
+    fn ab_schema_with_check(expression: &str) -> CatalogTableSchema {
+        CatalogTableSchema::new("ab")
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "a", ProximaType::Float64))
+            .with_column(CatalogColumn::new(3, "b", ProximaType::Float64))
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["id".to_string()],
+                constraints: vec![ColumnConstraint::Check {
+                    expression: expression.to_string(),
+                }],
+                ..Default::default()
+            })
+    }
+
+    fn ab_row(a: f64, b: f64) -> HashMap<String, ProximaValue> {
+        HashMap::from([
+            ("id".to_string(), ProximaValue::Int64(1)),
+            ("a".to_string(), ProximaValue::Float64(a)),
+            ("b".to_string(), ProximaValue::Float64(b)),
+        ])
+    }
+
+    #[test]
+    fn enforces_compound_and_check() {
+        // TD-110 Slice B: CHECK with AND.
+        let schema = ab_schema_with_check("a > 0 AND b < 100");
+        CatalogRow::validate(&schema, ab_row(5.0, 10.0), &RelationalWriteProfile::oltp())
+            .expect("a>0 AND b<100 holds");
+        let err = CatalogRow::validate(&schema, ab_row(5.0, 200.0), &RelationalWriteProfile::oltp())
+            .expect_err("b>=100 fails the AND");
+        assert!(
+            err.to_string()
+                .contains("CHECK constraint 'a > 0 AND b < 100' failed")
+        );
+    }
+
+    #[test]
+    fn enforces_compound_or_check() {
+        let schema = ab_schema_with_check("a > 100 OR b > 100");
+        CatalogRow::validate(&schema, ab_row(1.0, 200.0), &RelationalWriteProfile::oltp())
+            .expect("b>100 satisfies the OR");
+        CatalogRow::validate(&schema, ab_row(1.0, 1.0), &RelationalWriteProfile::oltp())
+            .expect_err("neither side holds → OR fails");
+    }
+
+    #[test]
+    fn compound_check_respects_and_over_or_precedence() {
+        // `a > 0 OR b > 0 AND b < 0` == `a > 0 OR (b > 0 AND b < 0)`; the AND is unsatisfiable,
+        // so the row passes iff a > 0.
+        let schema = ab_schema_with_check("a > 0 OR b > 0 AND b < 0");
+        CatalogRow::validate(&schema, ab_row(5.0, 5.0), &RelationalWriteProfile::oltp())
+            .expect("a>0 satisfies the OR");
+        CatalogRow::validate(&schema, ab_row(-1.0, 5.0), &RelationalWriteProfile::oltp())
+            .expect_err("a<=0 and (b>0 AND b<0) is false");
+    }
+
+    #[test]
+    fn compound_check_with_parens_groups_correctly() {
+        // `(a > 0 OR a < -10) AND b > 0` — the parenthesized OR binds before the AND.
+        let schema = ab_schema_with_check("(a > 0 OR a < -10) AND b > 0");
+        CatalogRow::validate(&schema, ab_row(5.0, 5.0), &RelationalWriteProfile::oltp())
+            .expect("a>0 and b>0");
+        CatalogRow::validate(&schema, ab_row(-5.0, 5.0), &RelationalWriteProfile::oltp())
+            .expect_err("a in [-10,0] fails the parenthesized OR");
     }
 
     #[test]
