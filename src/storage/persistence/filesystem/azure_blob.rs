@@ -124,11 +124,12 @@ impl AzureBlobFileSystem {
         if let Some(s) = self.stores.get(container) {
             return Ok(s.clone());
         }
-        let mut builder = MicrosoftAzureBuilder::new()
-            .with_container_name(container)
-            .with_allow_http(true);
+        let mut builder = MicrosoftAzureBuilder::new().with_container_name(container);
         if self.config.use_emulator {
-            builder = builder.with_use_emulator(true);
+            // Azurite speaks plaintext HTTP; allow it ONLY for the emulator.
+            // Real ADLS keeps the object_store default (HTTPS enforced) so MVP
+            // traffic is never downgraded to cleartext.
+            builder = builder.with_allow_http(true).with_use_emulator(true);
         } else {
             builder = builder.with_account(self.config.account.clone());
             // Shared key (a secret) — only when explicitly supplied.
