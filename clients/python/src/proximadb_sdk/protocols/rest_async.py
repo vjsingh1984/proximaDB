@@ -28,6 +28,7 @@ class ProximaDBAsyncClient:
         k: int | None = None,
         enable_prefetch: bool | None = None,
         prefetch_budget: int | None = None,
+        graph_id: str = "default",
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "start_node_id": start_node_id,
@@ -54,7 +55,7 @@ class ProximaDBAsyncClient:
             body["prefetch_budget"] = int(prefetch_budget)
 
         resp = await self._client.post(
-            "/api/v1/graph/shortest_path", json=body, headers=headers
+            f"/api/v2/graphs/{graph_id}/shortest_path", json=body, headers=headers
         )
         resp.raise_for_status()
         return resp.json()
@@ -70,6 +71,7 @@ class ProximaDBAsyncClient:
         max_frontier: int | None = None,
         enable_prefetch: bool | None = None,
         prefetch_budget: int | None = None,
+        graph_id: str = "default",
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "start_node_id": start_node_id,
@@ -98,7 +100,7 @@ class ProximaDBAsyncClient:
             body["prefetch_budget"] = int(prefetch_budget)
 
         resp = await self._client.post(
-            "/api/v1/graph/traverse", json=body, headers=headers
+            f"/api/v2/graphs/{graph_id}/traverse", json=body, headers=headers
         )
         resp.raise_for_status()
         return resp.json()

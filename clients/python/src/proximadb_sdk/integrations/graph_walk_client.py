@@ -24,8 +24,8 @@ Robustness contract:
   unknown tool) propagate as ``ValueError`` -- they indicate a caller
   bug and the message names the offending argument.
 - Trailing slashes on ``base_url`` are normalized so URLs are always
-  well-formed (``http://x:5678/`` + ``/api/v1/...`` →
-  ``http://x:5678/api/v1/...``, not ``http://x:5678//api/v1/...``).
+  well-formed (``http://x:5678/`` + ``/api/v2/...`` →
+  ``http://x:5678/api/v2/...``, not ``http://x:5678//api/v2/...``).
 """
 
 from __future__ import annotations

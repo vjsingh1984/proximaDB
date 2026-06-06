@@ -532,7 +532,7 @@ def server_info(ctx: click.Context) -> None:
     import httpx
 
     try:
-        url = f"http://{ctx.obj['host']}:{ctx.obj['rest_port']}/api/v1/info"
+        url = f"http://{ctx.obj['host']}:{ctx.obj['rest_port']}/api/v2/info"
         response = httpx.get(url, timeout=ctx.obj["timeout"])
 
         if ctx.obj["json_output"]:

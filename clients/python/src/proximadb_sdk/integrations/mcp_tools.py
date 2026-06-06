@@ -6,8 +6,8 @@ ProximaDB graph-traversal *tools* an LLM agent registers — currently
 neighbors of a single node, called repeatedly when the agent needs to
 drive traversal). It is paired with the REST endpoints
 
-    POST /api/v1/graph/graphs/{graph_id}/walk
-    POST /api/v1/graph/graphs/{graph_id}/step
+    POST /api/v2/graphs/{graph_id}/walk
+    POST /api/v2/graphs/{graph_id}/step
 
 The schemas use the Anthropic / OpenAI ``function``-style spec
 (``name`` + ``description`` + ``input_schema`` JSON Schema). MCP
@@ -182,7 +182,7 @@ def render_invocation(
 
     graph_id = arguments["graph_id"]
     suffix = "walk" if tool_name == "graph_walk" else "step"
-    path = f"/api/v1/graph/graphs/{graph_id}/{suffix}"
+    path = f"/api/v2/graphs/{graph_id}/{suffix}"
 
     # Filter the body: only include declared fields, and drop graph_id
     # (it lives in the path).

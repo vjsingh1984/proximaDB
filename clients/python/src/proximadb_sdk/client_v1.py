@@ -678,14 +678,15 @@ class ProximaDBClientV1:
     def _execute_sql_rest(
         self, query: str, parameters: list[Any] | None = None
     ) -> dict[str, Any]:
-        """Execute SQL via REST"""
-        payload = {
+        """Execute SQL via REST (canonical v2 query facade, language="uql")."""
+        payload: dict[str, Any] = {
+            "language": "uql",
             "query": query,
         }
         if parameters:
             payload["parameters"] = parameters
 
-        url = urljoin(self.base_url, "/api/v1/sql/execute")
+        url = urljoin(self.base_url, "/api/v2/query")
         try:
             response = requests.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
@@ -822,7 +823,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/graph/nodes"),
+                urljoin(self.base_url, "/api/v2/graphs/default/nodes"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -907,7 +908,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/graph/edges"),
+                urljoin(self.base_url, "/api/v2/graphs/default/edges"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -1009,7 +1010,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/graph/traverse"),
+                urljoin(self.base_url, "/api/v2/graphs/default/traverse"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -1086,7 +1087,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/graph/nodes/query"),
+                urljoin(self.base_url, "/api/v2/graphs/default/query/nodes"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -1247,7 +1248,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/hybrid/search"),
+                urljoin(self.base_url, "/api/v2/hybrid/search"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},

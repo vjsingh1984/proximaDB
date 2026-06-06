@@ -645,7 +645,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/documents/collections",
+                f"{self._url}/api/v2/document-collections",
                 json={"name": name, **(config or {})},
                 timeout=self._client._timeout,
             )
@@ -666,7 +666,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents",
                 json={"id": id, "document": document},
                 timeout=self._client._timeout,
             )
@@ -690,7 +690,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             if projection:
                 params["projection"] = ",".join(projection)
             response = self._client._session.get(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 params=params,
                 timeout=self._client._timeout,
             )
@@ -720,7 +720,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
                 body["projection"] = projection
             body["limit"] = limit
             response = self._client._session.post(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents",
                 json=body,
                 timeout=self._client._timeout,
             )
@@ -737,7 +737,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.put(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 json={"updates": updates},
                 timeout=self._client._timeout,
             )
@@ -752,7 +752,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.delete(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -767,7 +767,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.get(
-                f"{self._url}/api/v1/documents/collections",
+                f"{self._url}/api/v2/document-collections",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -781,7 +781,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.delete(
-                f"{self._url}/api/v1/documents/collections/{collection_name}",
+                f"{self._url}/api/v2/document-collections/{collection_name}",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -808,7 +808,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/hybrid/search",
+                f"{self._url}/api/v2/hybrid/search",
                 json={
                     "collection": collection,
                     "text_query": text_query,
@@ -835,7 +835,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/timeseries/collections",
+                f"{self._url}/api/v2/timeseries/collections",
                 json={"name": name, **(config or {})},
                 timeout=self._client._timeout,
             )
@@ -852,7 +852,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/timeseries/collections/{collection_name}/ingest",
+                f"{self._url}/api/v2/timeseries/collections/{collection_name}/ingest",
                 json={"points": points},
                 timeout=self._client._timeout,
             )
@@ -885,7 +885,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             if tag_filters:
                 body["tag_filters"] = tag_filters
             response = self._client._session.post(
-                f"{self._url}/api/v1/timeseries/collections/{collection_name}/query",
+                f"{self._url}/api/v2/timeseries/collections/{collection_name}/query",
                 json=body,
                 timeout=self._client._timeout,
             )
@@ -900,7 +900,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.get(
-                f"{self._url}/api/v1/timeseries/collections",
+                f"{self._url}/api/v2/timeseries/collections",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -914,7 +914,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
 
             response = self._client._session.delete(
-                f"{self._url}/api/v1/timeseries/collections/{collection_name}",
+                f"{self._url}/api/v2/timeseries/collections/{collection_name}",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()

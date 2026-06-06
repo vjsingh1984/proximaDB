@@ -3766,9 +3766,14 @@ class ProximaDBClient:
         parameters: list[Any] | None = None,
         collection: str | None = None,
     ) -> dict[str, Any]:
-        """Execute SQL query via REST API"""
+        """Execute SQL query via the canonical v2 query facade.
+
+        The legacy /api/v1/sql/execute route was removed in the API
+        standardization hard-rename; raw SQL is submitted via the unified
+        query language ("uql") on /api/v2/query.
+        """
         # Build request payload
-        payload = {"query": query}
+        payload = {"language": "uql", "query": query}
         if parameters is not None:
             payload["parameters"] = parameters
         if collection is not None:
@@ -3778,7 +3783,7 @@ class ProximaDBClient:
         if hasattr(self._client, "_session"):
             # Using REST client directly
             response = self._client._session.post(
-                f"{self._client._base_url}/api/v1/sql/execute", json=payload
+                f"{self._client._base_url}/api/v2/query", json=payload
             )
             response.raise_for_status()
             return response.json()
@@ -3794,7 +3799,7 @@ class ProximaDBClient:
                 self._client, "_base_url", "http://localhost:5678"
             )
             response = requests.post(
-                f"{base_url}/api/v1/sql/execute", json=payload, headers=headers
+                f"{base_url}/api/v2/query", json=payload, headers=headers
             )
             if not response.ok:
                 # Try to get error details from response

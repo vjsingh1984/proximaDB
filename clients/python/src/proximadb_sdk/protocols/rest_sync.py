@@ -1804,6 +1804,7 @@ class ProximaDBClient:
         enable_prefetch: bool | None = None,
         prefetch_budget: int | None = None,
         timeout: float | None = None,
+        graph_id: str = "default",
     ) -> dict[str, Any]:
         """Compute shortest path via REST with optional prefetch overrides.
 
@@ -1836,7 +1837,7 @@ class ProximaDBClient:
 
         resp = self._make_request(
             "POST",
-            "/api/v1/graph/shortest_path",
+            f"/api/v2/graphs/{graph_id}/shortest_path",
             json=body,
             headers=headers,
             timeout=timeout or self.config.timeout,
@@ -1855,6 +1856,7 @@ class ProximaDBClient:
         enable_prefetch: bool | None = None,
         prefetch_budget: int | None = None,
         timeout: float | None = None,
+        graph_id: str = "default",
     ) -> dict[str, Any]:
         """Perform graph traversal via REST with optional prefetch overrides.
 
@@ -1888,7 +1890,7 @@ class ProximaDBClient:
 
         resp = self._make_request(
             "POST",
-            "/api/v1/graph/traverse",
+            f"/api/v2/graphs/{graph_id}/traverse",
             json=body,
             headers=headers,
             timeout=timeout or self.config.timeout,
@@ -1920,7 +1922,7 @@ class ProximaDBClient:
         try:
             resp = self._make_request(
                 "POST",
-                f"/api/v1/search/{collection_id}?cursor={cursor}",
+                f"/api/v2/collections/{collection_id}/search?cursor={cursor}",
                 json={
                     "include_vector": include_vectors,
                     "include_metadata": include_metadata,
@@ -2740,7 +2742,7 @@ class ProximaDBClient:
         payload = {"node": node_data}
 
         response = self._http_client.post(
-            f"/api/v1/graph/graphs/{graph_id}/nodes", json=payload
+            f"/api/v2/graphs/{graph_id}/nodes", json=payload
         )
         response.raise_for_status()
         return response.json()
@@ -2782,7 +2784,7 @@ class ProximaDBClient:
         payload = {"edge": edge_data}
 
         response = self._http_client.post(
-            f"/api/v1/graph/graphs/{graph_id}/edges", json=payload
+            f"/api/v2/graphs/{graph_id}/edges", json=payload
         )
         response.raise_for_status()
         return response.json()
@@ -2823,7 +2825,7 @@ class ProximaDBClient:
             payload["limit"] = limit
 
         response = self._http_client.post(
-            f"/api/v1/graph/graphs/{graph_id}/traverse", json=payload
+            f"/api/v2/graphs/{graph_id}/traverse", json=payload
         )
         response.raise_for_status()
         result = response.json()
@@ -2876,7 +2878,7 @@ class ProximaDBClient:
             payload["offset"] = offset
 
         response = self._http_client.post(
-            f"/api/v1/graph/graphs/{graph_id}/query/nodes", json=payload
+            f"/api/v2/graphs/{graph_id}/query/nodes", json=payload
         )
         response.raise_for_status()
         result = response.json()
@@ -2916,7 +2918,7 @@ class ProximaDBClient:
             payload["offset"] = offset
 
         response = self._http_client.post(
-            f"/api/v1/graph/graphs/{graph_id}/query/edges", json=payload
+            f"/api/v2/graphs/{graph_id}/query/edges", json=payload
         )
         response.raise_for_status()
         result = response.json()
@@ -2934,7 +2936,7 @@ class ProximaDBClient:
     ) -> dict[str, Any] | None:
         """Get a graph node by ID via REST."""
         response = self._http_client.get(
-            f"/api/v1/graph/graphs/{graph_id}/nodes/{node_id}"
+            f"/api/v2/graphs/{graph_id}/nodes/{node_id}"
         )
         response.raise_for_status()
         result = response.json()
@@ -2985,7 +2987,7 @@ class ProximaDBClient:
     ) -> dict[str, Any]:
         """Delete a graph node by ID via REST."""
         response = self._http_client.delete(
-            f"/api/v1/graph/graphs/{graph_id}/nodes/{node_id}"
+            f"/api/v2/graphs/{graph_id}/nodes/{node_id}"
         )
         response.raise_for_status()
         result = response.json()
@@ -3023,7 +3025,7 @@ class ProximaDBClient:
         if schema is not None:
             payload["schema"] = schema
 
-        response = self._http_client.post("/api/v1/graph/graphs", json=payload)
+        response = self._http_client.post("/api/v2/graphs", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -3039,7 +3041,7 @@ class ProximaDBClient:
         Example:
             >>> result = client.delete_graph("social_network")
         """
-        response = self._http_client.delete(f"/api/v1/graph/graphs/{graph_id}")
+        response = self._http_client.delete(f"/api/v2/graphs/{graph_id}")
         response.raise_for_status()
         return response.json()
 
@@ -3056,7 +3058,7 @@ class ProximaDBClient:
             >>> graph = client.get_graph("social_network")
             >>> print(graph["name"])
         """
-        response = self._http_client.get(f"/api/v1/graph/graphs/{graph_id}")
+        response = self._http_client.get(f"/api/v2/graphs/{graph_id}")
         response.raise_for_status()
         return response.json()
 
@@ -3071,7 +3073,7 @@ class ProximaDBClient:
             >>> for graph in graphs.get("graphs", []):
             ...     print(graph["graph_id"])
         """
-        response = self._http_client.get("/api/v1/graph/graphs")
+        response = self._http_client.get("/api/v2/graphs")
         response.raise_for_status()
         return response.json()
 
@@ -3088,7 +3090,7 @@ class ProximaDBClient:
             >>> stats = client.get_graph_stats("social_network")
             >>> print(f"Nodes: {stats['node_count']}, Edges: {stats['edge_count']}")
         """
-        response = self._http_client.get(f"/api/v1/graph/graphs/{graph_id}/stats")
+        response = self._http_client.get(f"/api/v2/graphs/{graph_id}/stats")
         response.raise_for_status()
         return response.json()
 
@@ -3217,7 +3219,10 @@ class ProximaDBClient:
             >>> for row in result['rows']:
             ...     print(row)
         """
-        payload: dict[str, Any] = {"query": query}
+        # Canonical v2 query facade. Raw SQL is submitted via the unified query
+        # language ("uql"); the legacy /api/v1/sql/execute route was removed in
+        # the API standardization hard-rename.
+        payload: dict[str, Any] = {"language": "uql", "query": query}
 
         if parameters:
             payload["parameters"] = parameters
@@ -3226,7 +3231,7 @@ class ProximaDBClient:
             payload["collection"] = collection
 
         try:
-            response = self._http_client.post("/api/v1/sql/execute", json=payload)
+            response = self._http_client.post("/api/v2/query", json=payload)
             response.raise_for_status()
             result = response.json()
 

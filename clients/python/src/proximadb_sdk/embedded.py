@@ -927,7 +927,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.rest_url}/api/v1/collections",
+                f"{self.rest_url}/api/v2/collections",
                 json={
                     "operation": 1,  # CREATE
                     "collection_id": name,
@@ -969,7 +969,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.rest_url}/api/v1/collections/{name}",
+                f"{self.rest_url}/api/v2/collections/{name}",
                 timeout=10.0,
             )
 
@@ -999,7 +999,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.delete(
-                f"{self.rest_url}/api/v1/collections/{name}",
+                f"{self.rest_url}/api/v2/collections/{name}",
                 timeout=30.0,
             )
 
@@ -1021,7 +1021,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.rest_url}/api/v1/collections",
+                f"{self.rest_url}/api/v2/collections",
                 timeout=10.0,
             )
 
@@ -1170,9 +1170,8 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.rest_url}/api/v1/search",
+                f"{self.rest_url}/api/v2/collections/{collection_name}/search",
                 json={
-                    "collection_id": collection_name,
                     "queries": [query],
                     "top_k": top_k,
                 },
@@ -1209,7 +1208,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.rest_url}/api/v1/collections/{collection_name}",
+                f"{self.rest_url}/api/v2/collections/{collection_name}",
                 timeout=10.0,
             )
 
@@ -1278,7 +1277,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.rest_url}/api/v1/documents/collections",
+                f"{self.rest_url}/api/v2/document-collections",
                 json=payload,
                 timeout=30.0,
             )
@@ -1311,7 +1310,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents",
+                f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents",
                 json=payload,
                 timeout=30.0,
             )
@@ -1338,7 +1337,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 timeout=10.0,
             )
 
@@ -1381,7 +1380,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents",
+                f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents",
                 params=params,
                 timeout=30.0,
             )
@@ -1412,7 +1411,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.patch(
-                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 json=payload,
                 timeout=30.0,
             )
@@ -1439,7 +1438,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.delete(
-                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 timeout=30.0,
             )
             return response.status_code in (200, 204)
@@ -1463,7 +1462,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.delete(
-                f"{self.rest_url}/api/v1/documents/collections/{collection_name}",
+                f"{self.rest_url}/api/v2/document-collections/{collection_name}",
                 timeout=30.0,
             )
             return response.status_code in (200, 204)
@@ -1508,7 +1507,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.rest_url}/api/v1/timeseries/collections",
+                f"{self.rest_url}/api/v2/timeseries/collections",
                 json=payload,
                 timeout=30.0,
             )
@@ -1540,7 +1539,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.rest_url}/api/v1/timeseries/{collection_name}/ingest",
+                f"{self.rest_url}/api/v2/timeseries/{collection_name}/ingest",
                 json=payload,
                 timeout=60.0,
             )
@@ -1590,7 +1589,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.rest_url}/api/v1/timeseries/{collection_name}/query",
+                f"{self.rest_url}/api/v2/timeseries/{collection_name}/query",
                 json=payload,
                 timeout=30.0,
             )
@@ -1628,7 +1627,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.rest_url}/api/v1/timeseries/{collection_name}/aggregate",
+                f"{self.rest_url}/api/v2/timeseries/{collection_name}/aggregate",
                 json=payload,
                 timeout=60.0,
             )
@@ -1653,7 +1652,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.delete(
-                f"{self.rest_url}/api/v1/timeseries/collections/{collection_name}",
+                f"{self.rest_url}/api/v2/timeseries/collections/{collection_name}",
                 timeout=30.0,
             )
             return response.status_code in (200, 204)
@@ -1706,7 +1705,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.rest_url}/api/v1/hybrid/search",
+                f"{self.rest_url}/api/v2/hybrid/search",
                 json=payload,
                 timeout=30.0,
             )
@@ -1725,7 +1724,7 @@ prefetch_budget = 4
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.rest_url}/api/v1/hybrid/strategies",
+                f"{self.rest_url}/api/v2/hybrid/strategies",
                 timeout=10.0,
             )
 
@@ -2016,7 +2015,7 @@ class EmbeddedMultiModalQueryExecutor:
                 # Query nodes by label via REST API
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
-                        f"{self._db.rest_url}/api/v1/graphs/{graph_id}/nodes/query",
+                        f"{self._db.rest_url}/api/v2/graphs/{graph_id}/nodes/query",
                         json={"labels": [start_label]},
                         timeout=30.0,
                     )
@@ -2042,7 +2041,7 @@ class EmbeddedMultiModalQueryExecutor:
 
                     # Get node info
                     response = await client.get(
-                        f"{self._db.rest_url}/api/v1/graphs/{graph_id}/nodes/{node_id}",
+                        f"{self._db.rest_url}/api/v2/graphs/{graph_id}/nodes/{node_id}",
                         timeout=10.0,
                     )
 
@@ -2062,7 +2061,7 @@ class EmbeddedMultiModalQueryExecutor:
                         # Get outgoing edges for further traversal
                         if depth < max_depth:
                             edge_response = await client.get(
-                                f"{self._db.rest_url}/api/v1/graphs/{graph_id}/nodes/{node_id}/edges/outgoing",
+                                f"{self._db.rest_url}/api/v2/graphs/{graph_id}/nodes/{node_id}/edges/outgoing",
                                 timeout=10.0,
                             )
 
@@ -2110,7 +2109,7 @@ class EmbeddedMultiModalQueryExecutor:
             # Query documents via REST API
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self._db.rest_url}/api/v1/documents/{collection}/query",
+                    f"{self._db.rest_url}/api/v2/document-collections/{collection}/query",
                     json={
                         "filter": filter_str,
                         "text_query": text_query,
