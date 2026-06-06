@@ -2323,10 +2323,18 @@ impl PostgresProtocol {
         collection_name: &str,
         _query: &str,
     ) -> Result<()> {
-        // Check if collection exists
+        // TD-064 S3 (read-side): scope collection resolution by the connection's
+        // catalog/tenant so a plain `SELECT * FROM <collection>` cannot reveal
+        // another tenant's collection metadata (name/dimension/vector_count).
+        // Mirrors the vector-search gate (S2): a cross-tenant or missing
+        // collection resolves to `Ok(None)` → empty result (single-tenant
+        // deployments stay unscoped, so no behavior change there).
+        let tenant_id = self.pgwire_resolve_read_tenant().await;
+        let tenant_scope = (!tenant_id.is_empty()).then_some(tenant_id.as_str());
+        // Check if collection exists (tenant-scoped)
         match self
             .collection_port
-            .get_collection(collection_name, None)
+            .get_collection(collection_name, tenant_scope)
             .await
         {
             Ok(Some(collection)) => {
