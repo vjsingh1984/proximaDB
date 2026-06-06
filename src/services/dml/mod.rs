@@ -1795,6 +1795,42 @@ impl DmlService {
             records.push(record);
         }
 
+        // TD-110 Slice B: enforce PRIMARY KEY uniqueness on INSERT — reject a key that repeats
+        // within this statement OR already exists as a committed row. Uses the point `get_by_key`
+        // lookup (no full scan). Single-column PK; multi-column PK and non-PK UNIQUE constraints
+        // still fail-closed in `CatalogRow::validate` pending the index-backed slice.
+        if let Some(pk_column) = Self::primary_key_column(&table_schema) {
+            let mut batch_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for record in &records {
+                let key = record.oid.clone();
+                if !batch_keys.insert(key.clone()) {
+                    return Err(anyhow!(
+                        "duplicate key value violates primary key '{}' on table '{}': '{}' appears more than once in this INSERT",
+                        pk_column, table_schema.name, key
+                    ));
+                }
+                let existing = self
+                    .record_store
+                    .get_by_key(
+                        &table_schema,
+                        TableRecordGetRequest {
+                            table_id: table_id.name.clone(),
+                            key: key.clone(),
+                            include_vector: false,
+                            include_props: false,
+                        },
+                        None,
+                    )
+                    .await?;
+                if existing.is_some() {
+                    return Err(anyhow!(
+                        "duplicate key value violates primary key '{}' on table '{}': '{}' already exists",
+                        pk_column, table_schema.name, key
+                    ));
+                }
+            }
+        }
+
         // Compute per-column min/max and NDV from the canonical record props before moving records
         // into mutations. Only orderable types (String, integers) tracked for min/max; floats and
         // booleans are additionally included in the NDV pass.
@@ -4406,6 +4442,94 @@ mod tests {
             1,
             "replayed memtable must hold the record"
         );
+    }
+
+    #[tokio::test]
+    async fn insert_rejects_duplicate_primary_key() {
+        // TD-110 Slice B: a second INSERT with the same primary key (and a duplicate within one
+        // INSERT) is rejected; a distinct key still succeeds.
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE users (id TEXT NOT NULL, email TEXT NOT NULL, PRIMARY KEY (id));")
+            .expect("parse create")
+            .expect("ddl");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("pk.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let insert = |sql: &'static str| {
+            let p = &parser;
+            let stmt = p.parse_dml(sql).expect("parse dml").expect("dml");
+            stmt
+        };
+
+        // First insert succeeds.
+        dml.execute(insert(
+            "INSERT INTO users (id, email) VALUES ('u1', 'a@x.com');",
+        ))
+        .await
+        .expect("first insert");
+
+        // Re-inserting the same PK is rejected against the committed row.
+        let err = dml
+            .execute(insert(
+                "INSERT INTO users (id, email) VALUES ('u1', 'b@x.com');",
+            ))
+            .await
+            .expect_err("duplicate PK must be rejected");
+        assert!(
+            err.to_string().contains("duplicate key value violates primary key"),
+            "unexpected error: {err}"
+        );
+
+        // A duplicate PK within a single INSERT is also rejected.
+        let err = dml
+            .execute(insert(
+                "INSERT INTO users (id, email) VALUES ('u2', 'c@x.com'), ('u2', 'd@x.com');",
+            ))
+            .await
+            .expect_err("within-batch duplicate PK must be rejected");
+        assert!(
+            err.to_string().contains("appears more than once"),
+            "unexpected error: {err}"
+        );
+
+        // A distinct key still inserts.
+        dml.execute(insert(
+            "INSERT INTO users (id, email) VALUES ('u3', 'e@x.com');",
+        ))
+        .await
+        .expect("distinct key insert");
     }
 
     /// SQL UPDATE and DELETE through `DirectWalTableRecordStore` — T9 conformance.
