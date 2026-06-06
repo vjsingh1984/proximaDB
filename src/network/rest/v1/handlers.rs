@@ -1360,6 +1360,10 @@ pub fn create_router(state: AppState) -> axum::Router {
     // `/api/v2` (canonical v2 mount added 2026-05-29 to align with the
     // v2 OpenAPI document — the spec paths are `/api/v2/graphs/...`).
     // New SDK code should target the v2 mount.
+    //
+    // NOTE: dropping the legacy `/api/v1/graph` mount + kebab-casing
+    // `shortest_path` is deferred to the graph slice — `graph.rs` currently
+    // carries another session's in-flight refactor of `create_graph_router`.
     if let Some(ref gp) = state.graph_port {
         use proximadb_api::rest::{GraphRestState, create_graph_router};
         let graph_state = GraphRestState {
