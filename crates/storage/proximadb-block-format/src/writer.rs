@@ -851,9 +851,20 @@ fn select_f64_scheme(role: ColumnRole, _nullable: bool, values: &[Option<f64>]) 
     profile.workload_profile = WorkloadProfile::Htap;
 
     let hints = context.layout_hints();
-    StrategyRegistry::default()
+    // `encode_f64_with_scheme` / `decode_f64_with_encoding` only support Raw and
+    // Gorilla. Constrain the registry's decision to that set (mirrors
+    // `select_str_scheme`). Anything else the strategy registry picks — e.g.
+    // RunLength or Dictionary, which it may favor for run-heavy / low-cardinality
+    // f64 columns — falls back to Raw: losslessly correct, just uncompressed.
+    // Returning an unencodable scheme here previously made `flush()` bail with
+    // "unsupported PAX f64 scheme: RunLength".
+    match StrategyRegistry::default()
         .select_decision(&analysis, &context, &profile, &hints)
         .scheme
+    {
+        ProximaScheme::Gorilla => ProximaScheme::Gorilla,
+        _ => ProximaScheme::Raw,
+    }
 }
 
 fn select_str_scheme(role: ColumnRole, nullable: bool, values: &[Option<&str>]) -> ProximaScheme {
@@ -1040,6 +1051,32 @@ mod tests {
             created_at_ns: ts,
             updated_at_ns: ts,
             ..Default::default()
+        }
+    }
+
+    /// Regression: `select_f64_scheme` used to return `RunLength` for run-heavy /
+    /// low-cardinality f64 columns, which `encode_f64_with_scheme` cannot encode
+    /// (flush bailed "unsupported PAX f64 scheme: RunLength"). Whatever the
+    /// strategy registry favors, the chosen scheme MUST be encodable.
+    #[test]
+    fn select_f64_scheme_only_returns_encodable_schemes() {
+        let cases: Vec<Vec<Option<f64>>> = vec![
+            vec![Some(1.0); 64],                              // constant run
+            (0..64).map(|i| Some((i % 4) as f64)).collect(),  // low cardinality / runs
+            (0..64).map(|i| Some(i as f64 * 0.5)).collect(),  // monotone
+            vec![Some(0.5), None, Some(0.5), None, Some(0.5)],// nulls + repeats
+        ];
+        // Edge → General domain; UserDefined → TimeSeries domain (the path that
+        // previously selected RunLength for an f64 user column).
+        for vals in &cases {
+            for role in [ColumnRole::Edge, ColumnRole::UserDefined] {
+                let scheme = select_f64_scheme(role, true, vals);
+                let raw: Vec<f64> = vals.iter().flatten().copied().collect();
+                assert!(
+                    encode_f64_with_scheme(&raw, &scheme).is_ok(),
+                    "select_f64_scheme({role:?}) returned non-encodable {scheme:?}"
+                );
+            }
         }
     }
 
