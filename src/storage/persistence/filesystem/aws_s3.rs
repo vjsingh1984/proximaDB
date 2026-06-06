@@ -98,7 +98,13 @@ impl AwsS3FileSystem {
         if let Some(s) = self.stores.get(bucket) {
             return Ok(s.clone());
         }
-        let mut builder = AmazonS3Builder::new()
+        // Base on the environment so secret-less credential chains engage when
+        // no static key is configured: EKS IRSA / web-identity (AWS_ROLE_ARN +
+        // AWS_WEB_IDENTITY_TOKEN_FILE), EC2/ECS instance profile (IMDS), or
+        // AWS_ACCESS_KEY_ID/SECRET from env. Explicit config below overrides.
+        // (Parity with the Azure backend's Workload/Managed Identity support;
+        // GCS already authenticates via Application Default Credentials.)
+        let mut builder = AmazonS3Builder::from_env()
             .with_bucket_name(bucket)
             .with_region(self.config.region.clone());
         if let Some(ep) = &self.config.endpoint_url {
