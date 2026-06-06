@@ -23,7 +23,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures::StreamExt;
 use object_store::path::Path;
-use object_store::{ObjectMeta, ObjectStore};
+use object_store::{ObjectMeta, ObjectStore, PutMode, PutOptions};
 use proximadb_kernel::error::StorageError;
 use url::Url;
 
@@ -110,6 +110,29 @@ impl ProximaObjectStore {
             .await
             .map(|_| ())
             .map_err(|e| os_err("put", e))
+    }
+
+    /// Atomically write `bytes` to `path` ONLY if no object already exists there
+    /// (`PutMode::Create`). Returns [`StorageError::AlreadyExists`] if the object
+    /// is already present, and never overwrites it.
+    ///
+    /// This is the optimistic-concurrency primitive for Iceberg-style manifest
+    /// commits (the warehouse base tier): a committer writes a new
+    /// manifest/metadata object under a fresh name with create-only semantics,
+    /// so two concurrent committers cannot clobber each other's commit — the
+    /// loser gets `AlreadyExists` and retries against the winner's snapshot.
+    /// (Supported by the `memory` and local-file backends; cloud backends need
+    /// conditional-put support.)
+    pub async fn put_if_absent(&self, path: &Path, bytes: Bytes) -> Result<(), StorageError> {
+        self.store
+            .put_opts(
+                &self.full_path(path),
+                bytes.into(),
+                PutOptions::from(PutMode::Create),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| os_err("put_if_absent", e))
     }
 
     /// Read the whole object at `path`.
@@ -278,6 +301,32 @@ mod tests {
         assert!(
             os.get_suffix(&Path::from("missing.parquet"), 4).await.is_err(),
             "missing object errors"
+        );
+    }
+
+    /// `put_if_absent` creates a new object but rejects (and does not overwrite)
+    /// an existing one — the Iceberg-style commit-atomicity primitive.
+    #[tokio::test]
+    async fn put_if_absent_is_create_only() {
+        let os = ProximaObjectStore::new(Arc::new(object_store::memory::InMemory::new()));
+        let p = Path::from("manifest/v1.json");
+
+        // First create succeeds.
+        os.put_if_absent(&p, Bytes::from_static(b"first"))
+            .await
+            .unwrap();
+        assert_eq!(&os.get(&p).await.unwrap()[..], b"first");
+
+        // Second create is rejected and leaves the existing object untouched.
+        let err = os.put_if_absent(&p, Bytes::from_static(b"second")).await;
+        assert!(
+            matches!(err, Err(StorageError::AlreadyExists(_))),
+            "create-only must reject an existing key, got {err:?}"
+        );
+        assert_eq!(
+            &os.get(&p).await.unwrap()[..],
+            b"first",
+            "rejected create must not overwrite"
         );
     }
 
