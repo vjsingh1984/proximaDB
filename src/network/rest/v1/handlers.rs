@@ -407,7 +407,8 @@ impl AppState {
     /// Create health-check state from the same explicit REST capability view.
     pub fn health_state(&self) -> health::HealthState {
         health::HealthState::new(
-            self.request_handlers.clone(),
+            self.vector_operations_service.clone(),
+            self.request_handlers.collection_service.clone(),
             self.graph_execution_service.clone(),
         )
     }

@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::debug;
 
-use crate::api_handlers::UnifiedHandlers;
 use crate::errors::ApiResult;
+use crate::services::{CollectionService, VectorOperationsService};
 
 /// Health check query parameters
 #[derive(Debug, Deserialize)]
@@ -100,8 +100,12 @@ pub struct ReadinessResponse {
 /// Shared state for health checks
 #[derive(Clone)]
 pub struct HealthState {
-    /// Shared unified handlers for checking service availability
-    pub request_handlers: Arc<UnifiedHandlers>,
+    /// Vector-ops service for storage-engine / WAL / index health probes.
+    /// Held directly rather than reached through the root `UnifiedHandlers`
+    /// (TD-104 S3-e — ROOT decoupling); same `Arc` the root handler holds.
+    pub vector_operations_service: Arc<VectorOperationsService>,
+    /// Collection service for listing collections in disk/connectivity probes.
+    pub collection_service: Arc<CollectionService>,
     /// Extracted graph execution capability for graph stats/health probes
     pub graph_execution_service: Arc<dyn GraphExecutionService>,
     /// Server startup timestamp for uptime calculation
@@ -111,11 +115,13 @@ pub struct HealthState {
 impl HealthState {
     /// Create a new health state recording the current time as startup
     pub fn new(
-        request_handlers: Arc<UnifiedHandlers>,
+        vector_operations_service: Arc<VectorOperationsService>,
+        collection_service: Arc<CollectionService>,
         graph_execution_service: Arc<dyn GraphExecutionService>,
     ) -> Self {
         Self {
-            request_handlers,
+            vector_operations_service,
+            collection_service,
             graph_execution_service,
             startup_time: SystemTime::now(),
         }
@@ -312,7 +318,6 @@ async fn check_storage_health(state: &HealthState, timeout: Duration) -> Compone
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Try to get storage engine status
         if let Err(e) = state
-            .request_handlers
             .vector_operations_service
             .unified_engine()
             .collect_engine_metrics()
@@ -328,22 +333,12 @@ async fn check_storage_health(state: &HealthState, timeout: Duration) -> Compone
         let mut storage_metrics = HashMap::new();
 
         // Check WAL status
-        if let Ok(wal_status) = state
-            .request_handlers
-            .vector_operations_service
-            .get_wal_status()
-            .await
-        {
+        if let Ok(wal_status) = state.vector_operations_service.get_wal_status().await {
             storage_metrics.insert("wal_status".to_string(), serde_json::json!(wal_status));
         }
 
         // Check available disk space (basic estimation)
-        if let Ok(collections) = state
-            .request_handlers
-            .collection_service
-            .list_collections()
-            .await
-        {
+        if let Ok(collections) = state.collection_service.list_collections().await {
             storage_metrics.insert(
                 "active_collections".to_string(),
                 serde_json::json!(collections.len()),
@@ -441,12 +436,7 @@ async fn check_indexing_health(state: &HealthState, timeout: Duration) -> Compon
     // Enhanced indexing health checks
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Check AXIS manager status if available
-        match state
-            .request_handlers
-            .vector_operations_service
-            .get_index_status()
-            .await
-        {
+        match state.vector_operations_service.get_index_status().await {
             Ok(index_stats) => {
                 // Extract active_indexes field from the JSON response, or default to 1
                 let active_count = index_stats
@@ -508,13 +498,7 @@ async fn check_network_health(state: &HealthState, timeout: Duration) -> Compone
         server_health.push("rest_server_active");
 
         // Check gRPC server connectivity through internal health
-        if state
-            .request_handlers
-            .collection_service
-            .list_collections()
-            .await
-            .is_ok()
-        {
+        if state.collection_service.list_collections().await.is_ok() {
             server_health.push("grpc_server_active");
         }
 
@@ -560,7 +544,6 @@ async fn quick_storage_check(state: &HealthState) -> Result<(), String> {
     // Basic storage engine availability check
     tokio::time::timeout(Duration::from_millis(1000), async {
         state
-            .request_handlers
             .vector_operations_service
             .unified_engine()
             .format_name();
