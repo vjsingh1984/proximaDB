@@ -1452,7 +1452,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             bm25_port: Some(bm25_port),
         };
         router = router.merge(create_hybrid_search_router().with_state(hybrid_state));
-        info!("✅ Hybrid search at /api/v1/hybrid/* via RestHybridPortImpl (real BM25+vector)");
+        info!("✅ Hybrid search at /api/v2/hybrid/* via RestHybridPortImpl (real BM25+vector)");
     }
 
     // SQL explain — port-backed when unified_query_port is wired (production always)

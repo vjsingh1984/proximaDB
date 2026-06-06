@@ -64,7 +64,7 @@ impl Default for ProgressiveSearchHandler {
 
 // ── Hybrid search request/response types ──────────────────────────────────────
 
-/// Request body for `POST /api/v1/hybrid/search`.
+/// Request body for `POST /api/v2/hybrid/search`.
 #[derive(Debug, Deserialize)]
 pub struct HybridSearchRestRequest {
     pub collection: String,
@@ -82,7 +82,7 @@ fn default_top_k() -> u32 {
     10
 }
 
-/// Request body for `POST /api/v1/hybrid/index`.
+/// Request body for `POST /api/v2/hybrid/index`.
 #[derive(Debug, Deserialize)]
 pub struct HybridIndexRestRequest {
     pub collection: String,
@@ -96,7 +96,7 @@ pub struct HybridDocumentBody {
     pub text: String,
 }
 
-/// Response for `POST /api/v1/hybrid/index`.
+/// Response for `POST /api/v2/hybrid/index`.
 #[derive(Debug, Serialize)]
 pub struct HybridIndexRestResponse {
     pub success: bool,
@@ -150,7 +150,7 @@ pub fn sql_value_to_json(v: &SqlValue) -> serde_json::Value {
 
 // ── Handler functions ──────────────────────────────────────────────────────────
 
-/// `POST /api/v1/hybrid/search` — BM25 + vector hybrid search.
+/// `POST /api/v2/hybrid/search` — BM25 + vector hybrid search.
 ///
 /// Delegates to `HybridPort::hybrid_search`.
 pub async fn hybrid_search(
@@ -301,7 +301,7 @@ fn json_to_prost_value(value: serde_json::Value) -> prost_types::Value {
     prost_types::Value { kind: Some(kind) }
 }
 
-/// `POST /api/v1/hybrid/index` — index documents for BM25 full-text search.
+/// `POST /api/v2/hybrid/index` — index documents for BM25 full-text search.
 ///
 /// Delegates to `BM25IndexPort::index_documents` when the port is wired;
 /// returns 501 otherwise.
@@ -454,8 +454,8 @@ pub async fn readiness_check(State(_state): State<RestAppState>) -> impl IntoRes
 pub fn create_hybrid_search_router() -> Router<HybridRestState> {
     super::with_v1_compatibility_headers(
         Router::new()
-            .route("/api/v1/hybrid/search", post(hybrid_search))
-            .route("/api/v1/hybrid/index", post(hybrid_index)),
+            .route("/api/v2/hybrid/search", post(hybrid_search))
+            .route("/api/v2/hybrid/index", post(hybrid_index)),
     )
 }
 
