@@ -1387,7 +1387,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     if let Some(ref dp) = state.doc_port {
         use proximadb_api::rest::{DocumentRestState, create_document_router};
         router = router.nest(
-            "/api/v1/documents",
+            "/api/v2/document-collections",
             create_document_router().with_state(DocumentRestState {
                 document_port: dp.clone(),
             }),
@@ -2492,7 +2492,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/documents/collections/ws1_docs/indexes")
+            .uri("/api/v2/document-collections/ws1_docs/indexes")
             .header("content-type", "application/json")
             .body(Body::from(
                 r#"{"path":"content","index_type":"fulltext","unique":false}"#,

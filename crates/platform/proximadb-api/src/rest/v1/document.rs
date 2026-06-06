@@ -168,36 +168,34 @@ pub struct AggregateResponse {
 pub fn create_document_router() -> Router<DocumentRestState> {
     super::with_v1_compatibility_headers(
         Router::new()
+            // Mounted at `/api/v2/document-collections` (see handlers.rs). The
+            // resource word is supplied by the mount prefix, so internal routes
+            // start at the collection id — no `documents/collections/.../documents`
+            // doubling, and no Elasticsearch `_batch`/`_aggregate` underscores.
+            .route("/", post(create_collection).get(list_collections))
             .route(
-                "/collections",
-                post(create_collection).get(list_collections),
-            )
-            .route(
-                "/collections/:collection",
+                "/:collection",
                 get(get_collection_info).delete(delete_collection),
             )
             .route(
-                "/collections/:collection/documents",
+                "/:collection/documents",
                 post(insert_document).get(query_documents),
             )
             .route(
-                "/collections/:collection/documents/:id",
+                "/:collection/documents/:id",
                 get(get_document)
                     .delete(delete_document)
                     .patch(update_document),
             )
             .route(
-                "/collections/:collection/documents/_batch",
+                "/:collection/documents/batch",
                 post(batch_insert_documents),
             )
             .route(
-                "/collections/:collection/documents/_aggregate",
+                "/:collection/documents/aggregate",
                 post(aggregate_documents),
             )
-            .route(
-                "/collections/:collection/indexes",
-                post(create_index).get(list_indexes),
-            ),
+            .route("/:collection/indexes", post(create_index).get(list_indexes)),
     )
 }
 
