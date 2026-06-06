@@ -151,6 +151,27 @@ impl ProximaObjectStore {
         Ok(self.head(path).await?.size)
     }
 
+    /// Read the last `n` bytes of the object at `path` — the Parquet-footer read
+    /// pattern (a reader fetches the trailing bytes to locate the footer length,
+    /// then the footer itself).
+    ///
+    /// Implemented as a metadata [`head`] (to learn the size) followed by a
+    /// bounded [`get_range`]. `n` is clamped to the object size, so requesting
+    /// more bytes than the object holds returns the whole object; `n == 0`
+    /// returns empty without any request. (A future optimization could use the
+    /// object store's native suffix range to save the `head` round-trip.)
+    pub async fn get_suffix(&self, path: &Path, n: u64) -> Result<Bytes, StorageError> {
+        if n == 0 {
+            return Ok(Bytes::new());
+        }
+        let size = self.object_size(path).await?;
+        if size == 0 {
+            return Ok(Bytes::new());
+        }
+        let start = size.saturating_sub(n);
+        self.get_range(path, start..size).await
+    }
+
     /// List objects under an optional caller-relative prefix. A `None` prefix lists under
     /// the base (NOT the whole store/filesystem root — `file://` parses to root `/`).
     pub async fn list(&self, prefix: Option<&Path>) -> Result<Vec<ObjectMeta>, StorageError> {
@@ -233,6 +254,31 @@ mod tests {
 
         // Metadata on a missing object surfaces an error, not a panic.
         assert!(os.head(&Path::from("missing.parquet")).await.is_err());
+    }
+
+    /// `get_suffix` reads the trailing N bytes (the Parquet-footer pattern),
+    /// clamps N to the object size, treats N==0 as empty, and errors on a
+    /// missing object.
+    #[tokio::test]
+    async fn get_suffix_reads_trailing_bytes() {
+        let os = ProximaObjectStore::new(Arc::new(object_store::memory::InMemory::new()));
+        let p = Path::from("t/data.parquet");
+        os.put(&p, Bytes::from_static(b"0123456789")).await.unwrap(); // 10 bytes
+
+        assert_eq!(&os.get_suffix(&p, 4).await.unwrap()[..], b"6789"); // last 4
+        assert_eq!(
+            &os.get_suffix(&p, 100).await.unwrap()[..],
+            b"0123456789",
+            "n >= size returns the whole object"
+        );
+        assert!(
+            os.get_suffix(&p, 0).await.unwrap().is_empty(),
+            "n == 0 returns empty"
+        );
+        assert!(
+            os.get_suffix(&Path::from("missing.parquet"), 4).await.is_err(),
+            "missing object errors"
+        );
     }
 
     #[test]
