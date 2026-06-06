@@ -128,14 +128,14 @@ pub struct AppState {
     /// deployments wire this from `apps/proximadb-server` startup.
     pub queue_client: Option<Arc<proximadb_queue::QueueClient>>,
     /// Optional ranking framework services (R-7c). When `Some`, the
-    /// `/api/v1/rank/search` route routes through the multi-phase
+    /// `/api/v2/rank/search` route routes through the multi-phase
     /// pipeline; when `None`, the route returns 503. See
     /// `src/network/rest/v1/rank.rs` and
     /// `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md`.
     pub rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
 
     /// Optional durable rank-profile catalog (R-7c.3 production wiring).
-    /// When `Some`, the `/api/v1/rank/profiles` REST routes can install,
+    /// When `Some`, the `/api/v2/rank/profiles` REST routes can install,
     /// fetch, and remove profiles end-to-end. When `None`, those routes
     /// return 503. Should always be wired alongside `rank_services` so
     /// installs reach both the catalog and the live registry.
@@ -1270,21 +1270,21 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     let mut router = axum::Router::new()
         .route(
-            "/api/v1/progressive/search/:collection_id",
+            "/api/v2/progressive/search/:collection_id",
             post(crate::network::rest::progressive_search_handler::progressive_search_handler),
         )
         // SQL query execution (explain added conditionally below)
         .route("/api/v1/sql/execute", post(execute_sql))
         .route(
-            "/api/v1/catalog/table_routing",
+            "/api/v2/catalog/table-routing",
             get(get_catalog_table_routing),
         )
         .route(
-            "/api/v1/catalog/table_write/explain",
+            "/api/v2/catalog/table-write/explain",
             post(explain_table_write_route),
         )
         .route(
-            "/api/v1/collections/:collection/branches/:branch/merge",
+            "/api/v2/collections/:collection_id/branches/:branch/merge",
             post(merge_graph_branch),
         )
         // Multi-phase ranking pipeline (R-7c.1).
@@ -1298,7 +1298,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         //   501 — RankServices not injected at startup
         //   500 — pipeline failure (model load, expression compile, …)
         .route(
-            "/api/v1/rank/search",
+            "/api/v2/rank/search",
             post(|State(state): State<AppState>, Json(req): Json<crate::network::rest::v1::rank::RankSearchRequest>| async move {
                 crate::network::rest::v1::rank::rank_search_dispatch(state, req)
                     .await
@@ -1310,24 +1310,24 @@ pub fn create_router(state: AppState) -> axum::Router {
         // honors the override on its next evaluation. See
         // src/storage/collection_pinning.rs for the control/data plane split.
         .route(
-            "/api/v1/collections/:collection_id/pin",
+            "/api/v2/collections/:collection_id/pin",
             axum::routing::patch(crate::network::rest::v1::pinning::patch_pin)
                 .get(crate::network::rest::v1::pinning::get_pin),
         )
         .route(
-            "/api/v1/collections/pinning",
+            "/api/v2/collections/pinning",
             get(crate::network::rest::v1::pinning::list_pins),
         )
         // Phase 7.2.4: per-collection cache-affinity inspect/invalidate.
         // Operators read or drop the affinity hint for routing
         // re-evaluation. See src/cluster/cache_affinity.rs.
         .route(
-            "/api/v1/collections/:collection_id/affinity",
+            "/api/v2/collections/:collection_id/affinity",
             get(crate::network::rest::v1::affinity::get_affinity)
                 .delete(crate::network::rest::v1::affinity::delete_affinity),
         )
         .route(
-            "/api/v1/collections/affinity",
+            "/api/v2/collections/affinity",
             get(crate::network::rest::v1::affinity::list_affinity),
         )
         // Slice 3 of tenant-pod-affinity: per-(tenant, collection)
@@ -1339,13 +1339,13 @@ pub fn create_router(state: AppState) -> axum::Router {
         // `authorize_operator` then checks for the operator-level
         // permission.
         .route(
-            "/api/v1/primary-pod/:tenant_id/:collection_id",
+            "/api/v2/primary-pod/:tenant_id/:collection_id",
             get(crate::network::rest::v1::primary_pod::get_primary_pod)
                 .put(crate::network::rest::v1::primary_pod::put_primary_pod)
                 .delete(crate::network::rest::v1::primary_pod::delete_primary_pod),
         )
         .route(
-            "/api/v1/primary-pod",
+            "/api/v2/primary-pod",
             get(crate::network::rest::v1::primary_pod::list_primary_pods),
         )
         // Health check endpoints
@@ -1409,7 +1409,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     if let Some(ref op) = state.obs_port {
         use proximadb_api::rest::{ObservabilityRestState, create_observability_router};
         router = router.nest(
-            "/api/v1/observability",
+            "/api/v2/observability",
             create_observability_router().with_state(ObservabilityRestState {
                 observability_port: op.clone(),
             }),
@@ -1424,10 +1424,10 @@ pub fn create_router(state: AppState) -> axum::Router {
             unified_query_port: uq_port.clone(),
         };
         router = router.nest(
-            "/api/v1/unified",
+            "/api/v2/unified",
             proximadb_api::rest::create_multimodal_router().with_state(uq_state),
         );
-        info!("✅ Unified Query API enabled at /api/v1/unified (port-backed)");
+        info!("✅ Unified Query API enabled at /api/v2/unified (port-backed)");
     }
 
     // Hybrid search — port-backed via RestHybridPortImpl (real BM25+vector fusion).
@@ -1507,8 +1507,8 @@ pub fn create_router(state: AppState) -> axum::Router {
         let analytics_state = AnalyticsApiState::new(Some(state.vector_operations_service.clone()));
         analytics::create_router().with_state(analytics_state)
     };
-    router = router.nest("/api/v1/analytics", analytics_router);
-    info!("✅ Analytics API endpoints enabled at /api/v1/analytics");
+    router = router.nest("/api/v2/analytics", analytics_router);
+    info!("✅ Analytics API endpoints enabled at /api/v2/analytics");
 
     // Agentic Query Language (RUBICON / AQL) — TD-050
     let aql_router = {
@@ -1569,10 +1569,10 @@ pub fn create_router(state: AppState) -> axum::Router {
         let aql_state = AqlApiState::new(executor);
         aql::create_router().with_state(aql_state)
     };
-    router = router.nest("/api/v1/aql", aql_router);
-    info!("✅ AQL (RUBICON) API endpoints enabled at /api/v1/aql");
+    router = router.nest("/api/v2/aql", aql_router);
+    info!("✅ AQL (RUBICON) API endpoints enabled at /api/v2/aql");
 
-    // Agent-memory write surface (TD-101) — POST /api/v1/memory/ingest.
+    // Agent-memory write surface (TD-101) — POST /api/v2/memory/ingest.
     // Always mounted; the engine is built only when an LLM backend is present
     // (extraction + consolidation need it). Reuses VectorOperationsService +
     // the in-process EmbeddingService — no new storage path (ADR-022).
@@ -1607,14 +1607,14 @@ pub fn create_router(state: AppState) -> axum::Router {
         // any audit trail it already recorded.
         let memory_state = MemoryApiState::new(memory_engine, state.event_log.clone());
         router = router.nest(
-            "/api/v1/memory",
+            "/api/v2/memory",
             memory::create_router().with_state(memory_state),
         );
         if mounted {
-            info!("✅ Agent-memory write endpoint at /api/v1/memory/ingest (TD-101)");
+            info!("✅ Agent-memory write endpoint at /api/v2/memory/ingest (TD-101)");
         } else {
             info!(
-                "✅ Agent-memory write endpoint mounted at /api/v1/memory/ingest but inactive (no LLM backend)"
+                "✅ Agent-memory write endpoint mounted at /api/v2/memory/ingest but inactive (no LLM backend)"
             );
         }
     }
@@ -1623,8 +1623,8 @@ pub fn create_router(state: AppState) -> axum::Router {
     if let Some(llm) = &state.llm_engine {
         let nl_state = NlApiState::new(llm.clone());
         let nl_router = nl::create_router().with_state(nl_state);
-        router = router.nest("/api/v1/nl", nl_router);
-        info!("✅ Natural Language (AV-SQL) API endpoints enabled at /api/v1/nl");
+        router = router.nest("/api/v2/nl", nl_router);
+        info!("✅ Natural Language (AV-SQL) API endpoints enabled at /api/v2/nl");
     } else {
         warn!("⚠️ LLM engine not available; Natural Language (AV-SQL) endpoints disabled");
     }
