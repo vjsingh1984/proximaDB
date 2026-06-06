@@ -100,12 +100,15 @@ pub struct PostgresServer {
     running: Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// Bundle of the rank-pipeline handles pgwire threads into every
-/// `DdlService` it constructs. Cloning is cheap (two `Arc`s).
+/// Bundle of the rank-pipeline + function-catalog handles pgwire threads into
+/// every `DdlService` it constructs. Cloning is cheap (three `Arc`s).
 #[derive(Clone)]
 pub struct PgwireRankPipeline {
     pub services: Arc<crate::network::rest::v1::rank::RankServices>,
     pub store: Arc<dyn crate::services::RankProfileStore>,
+    /// Durable SQL user-function catalog (UDF F5) so `CREATE FUNCTION` over
+    /// pgwire persists into the same store boot recovery replays.
+    pub function_store: Arc<dyn crate::services::FunctionStore>,
 }
 
 impl PostgresServer {
@@ -158,8 +161,13 @@ impl PostgresServer {
         mut self,
         services: Arc<crate::network::rest::v1::rank::RankServices>,
         store: Arc<dyn crate::services::RankProfileStore>,
+        function_store: Arc<dyn crate::services::FunctionStore>,
     ) -> Self {
-        self.rank_pipeline = Some(PgwireRankPipeline { services, store });
+        self.rank_pipeline = Some(PgwireRankPipeline {
+            services,
+            store,
+            function_store,
+        });
         self
     }
 
@@ -287,7 +295,11 @@ impl PostgresServer {
             protocol.with_catalog_manager(catalog_manager)
         };
         if let Some(pipeline) = rank_pipeline {
-            protocol = protocol.with_rank_pipeline(pipeline.services, pipeline.store);
+            protocol = protocol.with_rank_pipeline(
+                pipeline.services,
+                pipeline.store,
+                pipeline.function_store,
+            );
         }
         // Slice 6.3: pair-wise wiring — only apply the gate when both
         // sides are present so a partial wiring fails closed (no

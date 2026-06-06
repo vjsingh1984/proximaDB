@@ -720,6 +720,7 @@ impl MultiServer {
             let observability_service = Some(services.observability_service.clone());
             let rank_services = services.rank_services.clone();
             let rank_profile_store = services.rank_profile_store.clone();
+            let function_store = services.function_store.clone();
             let direct_write_services = self.build_direct_pgwire_write_services().await?;
             // Slice 6.3 capture: clone the same registry + pod id
             // pair the REST / gRPC v2 / Arrow Flight surfaces hold.
@@ -740,7 +741,11 @@ impl MultiServer {
                 if let Some(direct_write_services) = direct_write_services {
                     server = server.with_direct_write_services(direct_write_services);
                 }
-                server = server.with_rank_pipeline(rank_services, rank_profile_store);
+                server = server.with_rank_pipeline(
+                    rank_services,
+                    rank_profile_store,
+                    function_store,
+                );
                 server = server.with_primary_pod_gate(primary_pod_registry, self_pod_id);
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
@@ -1101,6 +1106,7 @@ impl MultiServer {
                 server = server.with_rank_pipeline(
                     services.rank_services.clone(),
                     services.rank_profile_store.clone(),
+                    services.function_store.clone(),
                 );
                 // Slice 6.3: same gate the REST / gRPC v2 / Arrow
                 // Flight surfaces hold — pgwire DML uses the

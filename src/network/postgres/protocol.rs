@@ -520,6 +520,7 @@ impl PostgresProtocol {
         mut self,
         services: Arc<crate::network::rest::v1::rank::RankServices>,
         store: Arc<dyn crate::services::RankProfileStore>,
+        function_store: Arc<dyn crate::services::FunctionStore>,
     ) -> Self {
         let Some(catalog_manager) = self.catalog_manager.clone() else {
             return self;
@@ -527,7 +528,8 @@ impl PostgresProtocol {
         self.ddl_service = Some(Arc::new(
             DdlService::new(catalog_manager)
                 .with_rank_profile_store(store)
-                .with_rank_services(services),
+                .with_rank_services(services)
+                .with_function_store(function_store),
         ));
         self
     }

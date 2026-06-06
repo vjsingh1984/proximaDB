@@ -256,6 +256,16 @@ pub struct SharedServices {
     /// appender that does not survive restart.
     pub rank_profile_store: Arc<dyn crate::services::RankProfileStore>,
 
+    /// Durable SQL user-function catalog backed by the canonical WAL spine
+    /// (UDF F5). `CREATE FUNCTION` DDL persists definitions here through the
+    /// per-connection `DdlService`, and at boot every persisted entry is
+    /// replayed + re-registered into the engine-neutral
+    /// `proximadb_functions::builtins()` registry so user functions are live
+    /// on both engines again after a restart. When `canonical_wal_appender`
+    /// is `None` (some test paths) this store is backed by an in-memory
+    /// appender that does not survive restart.
+    pub function_store: Arc<dyn crate::services::FunctionStore>,
+
     /// Phase 8 (F1) snapshot-publish coordinator: pins canonical WAL snapshots
     /// and atomically republishes refined snapshots via the per-collection
     /// `discovery_active` projection freshness state machine. Shared by the
@@ -1454,6 +1464,14 @@ impl SharedServices {
             rank_services.profile_registry.len()
         );
 
+        // UDF F5 (5b-ii) boot recovery: build the durable function catalog over
+        // the SAME canonical WAL spine the rank-profile store uses, replay every
+        // persisted `CREATE FUNCTION`, and re-register each into the shared
+        // `proximadb_functions::builtins()` registry so user functions survive a
+        // restart on both engines. Threaded into every per-connection
+        // `DdlService` (pgwire) so new `CREATE FUNCTION` statements persist here.
+        let function_store = build_function_store(canonical_wal_appender.clone()).await;
+
         // Create FederatedQueryContext for SQL with multi-model extensions
         debug!("🔧 SharedServices::new - Creating FederatedQueryContext...");
         let federated_context = Arc::new(
@@ -1823,6 +1841,10 @@ impl SharedServices {
                 // FederatedQueryContext so SQL RERANK shares the registry.
                 rank_services,
                 rank_profile_store,
+                // UDF F5 (5b-ii): durable function catalog, replayed +
+                // re-registered into builtins() above so user functions
+                // survive restart.
+                function_store,
                 // Phase 8 (F1): snapshot-publish coordinator + Continuous
                 // Discovery service. The background executor was spawned above.
                 snapshot_coordinator,
@@ -2109,6 +2131,84 @@ async fn build_rank_services(
     .await
 }
 
+/// Construct the durable SQL user-function catalog (UDF F5) and re-register
+/// every persisted definition into the shared `proximadb_functions::builtins()`
+/// registry so user functions are live on both engines after a restart.
+///
+/// Mirrors [`build_rank_services`]: when a canonical WAL appender is supplied
+/// the store is durable and its `__proxima_functions__` slice is replayed;
+/// otherwise it falls back to an in-memory appender (tests / embedded boot).
+/// Re-registration failures (e.g. a body that no longer lowers) are logged but
+/// never fail the boot — operators can repair or drop the offending entry.
+async fn build_function_store(
+    canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
+) -> Arc<dyn crate::services::FunctionStore> {
+    use crate::services::record_store::TableWalAppender;
+    use crate::services::{
+        CanonicalWalFunctionStore, FramedTableWalAppender, MemoryTableWalAppender,
+    };
+
+    let (store_appender, recovered_entries): (Arc<dyn TableWalAppender>, _) =
+        if let Some(appender) = canonical_wal_appender {
+            let path = appender.path().to_path_buf();
+            let entries = match FramedTableWalAppender::read_entries_from_path(&path).await {
+                Ok(entries) => entries,
+                Err(err) => {
+                    warn!(
+                        "SharedServices: failed to replay function-catalog WAL at {}: {} — starting with empty function catalog",
+                        path.display(),
+                        err
+                    );
+                    Vec::new()
+                }
+            };
+            (appender as Arc<dyn TableWalAppender>, entries)
+        } else {
+            (
+                Arc::new(MemoryTableWalAppender::new()) as Arc<dyn TableWalAppender>,
+                Vec::new(),
+            )
+        };
+
+    let store: Arc<dyn crate::services::FunctionStore> = Arc::new(
+        CanonicalWalFunctionStore::from_wal_entries(store_appender, &recovered_entries),
+    );
+
+    let recovered = match store.list_all().await {
+        Ok(functions) => functions,
+        Err(err) => {
+            warn!(
+                "SharedServices: function-catalog recovery list_all failed: {} — starting with empty function registry",
+                err
+            );
+            Vec::new()
+        }
+    };
+    let mut recovered_count = 0usize;
+    for function in &recovered {
+        match crate::services::function_store::register_stored_function(function) {
+            Ok(()) => {
+                recovered_count += 1;
+                debug!(
+                    "SharedServices: recovered SQL function '{}' ({} params)",
+                    function.name,
+                    function.params.len()
+                );
+            }
+            Err(err) => warn!(
+                "SharedServices: failed to re-register SQL function '{}': {}",
+                function.name, err
+            ),
+        }
+    }
+    info!(
+        "✅ SharedServices: function catalog ready (recovered={})",
+        recovered_count
+    );
+
+    store
+}
+
 /// Inner builder that takes a pre-resolved appender + recovered entries. Split
 /// out so tests can drive it with an in-memory appender without a temp-dir
 /// round-trip.
@@ -2369,5 +2469,74 @@ heap_size = 50
         // But both still exist in the durable store — operators repair, not
         // the boot path.
         assert_eq!(store.list_all().await.unwrap().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod function_store_wiring_tests {
+    use super::*;
+    use crate::services::canonical_wal::FramedTableWalAppender;
+    use crate::services::{CanonicalWalFunctionStore, FunctionStore, StoredFunction};
+    use proximadb_data_model::{ProximaType, ProximaValue};
+    use tempfile::tempdir;
+
+    /// UDF F5 (5b-ii): `build_function_store` is the boot-recovery entry point.
+    /// It must replay the persisted `CREATE FUNCTION` catalog from the canonical
+    /// WAL AND re-register every definition into the shared
+    /// `proximadb_functions::builtins()` registry so user functions are live on
+    /// both engines after a restart.
+    #[tokio::test]
+    async fn build_function_store_replays_and_reregisters_on_boot() {
+        let dir = tempdir().unwrap();
+        let wal_path = dir.path().join("functions.wal");
+
+        // First boot: persist a CREATE FUNCTION definition into the canonical WAL.
+        {
+            let appender = Arc::new(FramedTableWalAppender::open(&wal_path).await.unwrap());
+            let store = CanonicalWalFunctionStore::new(appender);
+            store
+                .put(StoredFunction {
+                    name: "boot_recovered_triple".to_string(),
+                    params: vec![("x".to_string(), ProximaType::Int64)],
+                    return_ty: ProximaType::Int64,
+                    body: "x * 3".to_string(),
+                    created_at_ms: 0,
+                })
+                .await
+                .unwrap();
+        }
+
+        // Precondition: the fresh-named function is NOT yet in the process-wide
+        // registry (it has never been registered in this test binary).
+        assert!(
+            proximadb_functions::builtins()
+                .lookup_scalar("boot_recovered_triple")
+                .is_none(),
+            "precondition: function must not already be registered"
+        );
+
+        // "Restart": re-open the same WAL and run boot recovery.
+        let reopened = Arc::new(FramedTableWalAppender::open(&wal_path).await.unwrap());
+        let store = build_function_store(Some(reopened)).await;
+
+        // The durable catalog lists the recovered function.
+        let all = store.list_all().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "boot_recovered_triple");
+
+        // And it is live on the shared registry — callable on both engines.
+        let def = proximadb_functions::builtins()
+            .lookup_scalar("boot_recovered_triple")
+            .expect("function should be re-registered after boot recovery");
+        let out = (def.kernel)(&[ProximaValue::Int64(7)]).expect("recovered fn eval");
+        assert_eq!(out, ProximaValue::Int64(21));
+    }
+
+    /// A `None` appender (test / embedded boot path without a canonical WAL)
+    /// yields an empty, in-memory-backed catalog instead of panicking.
+    #[tokio::test]
+    async fn build_function_store_without_wal_is_empty() {
+        let store = build_function_store(None).await;
+        assert_eq!(store.list_all().await.unwrap().len(), 0);
     }
 }
