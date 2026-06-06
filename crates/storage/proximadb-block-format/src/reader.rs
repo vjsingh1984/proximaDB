@@ -118,6 +118,19 @@ impl<'a> PaxBlockReader<'a> {
             .unwrap_or(true) // unknown column → cannot prune
     }
 
+    /// Returns `false` if this block provably has no rows with `column_id` in the
+    /// inclusive f64 range `[lo, hi]`, based on the column's min/max zone map —
+    /// the f64 analog of [`column_range_overlaps_i64`], for f64 range predicates.
+    /// An unknown column (or one without statistics) conservatively returns
+    /// `true` (cannot prune).
+    pub fn column_range_overlaps_f64(&self, column_id: i32, lo: f64, hi: f64) -> bool {
+        self.columns
+            .iter()
+            .find(|m| m.column_id == column_id)
+            .map(|m| m.f64_range_overlaps(lo, hi))
+            .unwrap_or(true) // unknown column → cannot prune
+    }
+
     /// Returns `false` if string hash bounds or bloom metadata exclude `value`.
     pub fn column_may_contain_str(&self, column_id: i32, value: &str) -> bool {
         let Some(meta) = self.columns.iter().find(|m| m.column_id == column_id) else {
@@ -479,7 +492,25 @@ mod tests {
         writer::PaxBlockWriter,
     };
     use proximadb_codec::{ProximaScheme, functions};
-    use proximadb_records::{EmbeddingCell, ProximaRecord};
+    use proximadb_records::{EdgeShape, EmbeddingCell, ProximaRecord};
+
+    /// A record carrying an edge with a concrete f64 weight, so the EDGE_WEIGHT
+    /// f64 column gets a populated zone map for range-pruning tests.
+    fn make_edge_record(oid: &str, weight: f64) -> ProximaRecord {
+        ProximaRecord {
+            oid: oid.into(),
+            tenant_id: "tenant_a".into(),
+            created_at_ns: 1,
+            updated_at_ns: 1,
+            edge: Some(EdgeShape {
+                source_id: "a".into(),
+                target_id: "b".into(),
+                edge_type: "knows".into(),
+                weight: Some(weight),
+            }),
+            ..Default::default()
+        }
+    }
 
     fn make_record(oid: &str, tenant: &str, ts: i64) -> ProximaRecord {
         ProximaRecord {
@@ -548,6 +579,21 @@ mod tests {
         assert!(!reader.column_range_overlaps_i64(col_id::CREATED_AT, 3001, 9999)); // above max → skip
         assert!(!reader.column_range_overlaps_i64(col_id::CREATED_AT, 2000, 1000)); // empty range → skip
         assert!(reader.column_range_overlaps_i64(987654, 0, 10)); // unknown column → cannot prune
+
+        // f64 zone-map RANGE pruning on the EDGE_WEIGHT column.
+        // Write a separate block with edge weights {1.0, 3.0} → zone map [1.0,3.0].
+        let mut fw = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0);
+        fw.add_record(&make_edge_record("e1", 1.0)).unwrap();
+        fw.add_record(&make_edge_record("e2", 3.0)).unwrap();
+        let fblock = fw.flush().unwrap();
+        let freader = PaxBlockReader::open(&fblock).unwrap();
+        assert!(freader.column_range_overlaps_f64(col_id::EDGE_WEIGHT, 0.5, 1.5)); // straddles min
+        assert!(freader.column_range_overlaps_f64(col_id::EDGE_WEIGHT, 2.5, 4.0)); // straddles max
+        assert!(freader.column_range_overlaps_f64(col_id::EDGE_WEIGHT, 1.5, 2.5)); // inside [min,max]
+        assert!(!freader.column_range_overlaps_f64(col_id::EDGE_WEIGHT, 0.0, 0.9)); // below min → skip
+        assert!(!freader.column_range_overlaps_f64(col_id::EDGE_WEIGHT, 3.1, 9.9)); // above max → skip
+        assert!(!freader.column_range_overlaps_f64(col_id::EDGE_WEIGHT, 2.0, 1.0)); // empty range → skip
+        assert!(freader.column_range_overlaps_f64(54321, 0.0, 1.0)); // unknown column → cannot prune
 
         let stats = BlockStats::from_metas(
             reader.row_count(),

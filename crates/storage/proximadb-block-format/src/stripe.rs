@@ -195,6 +195,33 @@ impl ColumnMeta {
         lo <= max && hi >= min
     }
 
+    /// Zone-map RANGE pruning for an f64 column: returns `false` only when this
+    /// column's `[min, max]` provably cannot overlap the inclusive query range
+    /// `[lo, hi]` — so the block can be skipped for an f64 range predicate
+    /// (`BETWEEN` / `<` / `<=` / `>` / `>=`). The f64 analog of
+    /// [`i64_range_overlaps`].
+    ///
+    /// The min/max are populated from the column's non-NaN values; a NaN row
+    /// never satisfies a range predicate, so excluding NaN is sound. `lo > hi`
+    /// is an empty range and prunes everything (`false`); a column with no
+    /// statistics (`distinct_hint == 0`) — or NaN bounds, which should not occur
+    /// — conservatively returns `true` (cannot prune).
+    pub fn f64_range_overlaps(&self, lo: f64, hi: f64) -> bool {
+        if lo > hi {
+            return false;
+        }
+        if self.distinct_hint == 0 {
+            return true;
+        }
+        let min = f64::from_le_bytes(self.min_val[0..8].try_into().unwrap_or([0; 8]));
+        let max = f64::from_le_bytes(self.max_val[0..8].try_into().unwrap_or([0; 8]));
+        if min.is_nan() || max.is_nan() {
+            return true;
+        }
+        // [lo, hi] overlaps [min, max] iff lo <= max AND hi >= min.
+        lo <= max && hi >= min
+    }
+
     /// Check whether a 64-bit hash could fall within this column's hash bounds.
     /// Returns `true` conservatively if hash stats are absent.
     pub fn hash64_in_range(&self, hash: u64) -> bool {

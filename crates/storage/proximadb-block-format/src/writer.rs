@@ -544,7 +544,7 @@ impl PaxBlockWriter {
         let (raw_values, null_count) = flatten_f64_values(vals);
         let scheme = select_f64_scheme(role, nullable, vals);
         let data = encode_f64_with_scheme(&raw_values, &scheme)?;
-        let meta = ColumnMeta {
+        let mut meta = ColumnMeta {
             column_id: id,
             role,
             data_type_id: 0x07, // F64
@@ -561,6 +561,24 @@ impl PaxBlockWriter {
             bloom_offset: 0,
             bloom_len: 0,
         };
+        // Populate the f64 zone map (min/max) so range predicates can prune the
+        // block. NaN is skipped: a range predicate never matches NaN, so leaving
+        // it out of the bounds causes no false skips. ±inf IS kept so that open
+        // `>`/`<` bounds stay correct.
+        let mut bounds: Option<(f64, f64)> = None;
+        for &v in vals.iter().flatten() {
+            if v.is_nan() {
+                continue;
+            }
+            bounds = Some(match bounds {
+                Some((mn, mx)) => (mn.min(v), mx.max(v)),
+                None => (v, v),
+            });
+        }
+        if let Some((mn, mx)) = bounds {
+            meta.min_val[0..8].copy_from_slice(&mn.to_le_bytes());
+            meta.max_val[0..8].copy_from_slice(&mx.to_le_bytes());
+        }
         Ok(ColumnStripe::new(meta, data))
     }
 
