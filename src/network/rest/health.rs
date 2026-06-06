@@ -541,7 +541,7 @@ async fn check_network_health(state: &HealthState, timeout: Duration) -> Compone
 // Quick health checks for readiness endpoint
 
 async fn quick_storage_check(state: &HealthState) -> Result<(), String> {
-    // Basic storage engine availability check
+    // 1. Storage engine present (cheap, in-process).
     tokio::time::timeout(Duration::from_millis(1000), async {
         state
             .vector_operations_service
@@ -550,6 +550,21 @@ async fn quick_storage_check(state: &HealthState) -> Result<(), String> {
     })
     .await
     .map_err(|_| "Storage engine timeout".to_string())?;
+
+    // 2. Durable object-store reachability. Listing collections reads the
+    //    metadata backend, which in cloud deployments is ADLS/S3/GCS — so a
+    //    broken workload/managed identity, a wrong account, or an unreachable
+    //    bucket surfaces HERE rather than on the first write. Failing the k8s
+    //    readiness probe keeps the pod out of the load-balancer rotation until
+    //    durable storage is actually reachable. Time-boxed so a hung backend
+    //    reports not-ready instead of blocking the probe.
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        state.collection_service.list_collections(),
+    )
+    .await
+    .map_err(|_| "Object store probe timed out (metadata backend unreachable)".to_string())?
+    .map_err(|e| format!("Object store unreachable: {e}"))?;
 
     Ok(())
 }
