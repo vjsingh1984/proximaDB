@@ -104,6 +104,20 @@ impl<'a> PaxBlockReader<'a> {
             .unwrap_or(true) // unknown column → cannot prune
     }
 
+    /// Returns `false` if this block provably has no rows with `column_id` in
+    /// the inclusive range `[lo, hi]`, based on the column's min/max zone map —
+    /// the range-predicate complement to [`column_may_contain_i64`] (a point
+    /// `== value` check). Lets a scan skip whole blocks for `BETWEEN` / `<` /
+    /// `<=` / `>` / `>=` predicates. An unknown column (or one without
+    /// statistics) conservatively returns `true` (cannot prune).
+    pub fn column_range_overlaps_i64(&self, column_id: i32, lo: i64, hi: i64) -> bool {
+        self.columns
+            .iter()
+            .find(|m| m.column_id == column_id)
+            .map(|m| m.i64_range_overlaps(lo, hi))
+            .unwrap_or(true) // unknown column → cannot prune
+    }
+
     /// Returns `false` if string hash bounds or bloom metadata exclude `value`.
     pub fn column_may_contain_str(&self, column_id: i32, value: &str) -> bool {
         let Some(meta) = self.columns.iter().find(|m| m.column_id == column_id) else {
@@ -519,11 +533,21 @@ mod tests {
         assert!(!reader.time_overlaps(0, 999));
         assert!(!reader.time_overlaps(3001, 9999));
 
-        // Column-stat pruning
+        // Column-stat pruning (point `== value`)
         assert!(reader.column_may_contain_i64(col_id::CREATED_AT, 1000));
         assert!(!reader.column_may_contain_i64(col_id::CREATED_AT, 4000));
         assert!(reader.column_may_contain_str(col_id::TENANT_ID, "tenant_a"));
         assert!(!reader.column_may_contain_str(col_id::TENANT_ID, "tenant_b"));
+
+        // Column-stat RANGE pruning (zone-map overlap for BETWEEN / < / >).
+        // The CREATED_AT zone map is [1000, 3000] (the two written records).
+        assert!(reader.column_range_overlaps_i64(col_id::CREATED_AT, 500, 1500)); // straddles min
+        assert!(reader.column_range_overlaps_i64(col_id::CREATED_AT, 2500, 4000)); // straddles max
+        assert!(reader.column_range_overlaps_i64(col_id::CREATED_AT, 1500, 2500)); // inside [min,max]
+        assert!(!reader.column_range_overlaps_i64(col_id::CREATED_AT, 0, 999)); // below min → skip
+        assert!(!reader.column_range_overlaps_i64(col_id::CREATED_AT, 3001, 9999)); // above max → skip
+        assert!(!reader.column_range_overlaps_i64(col_id::CREATED_AT, 2000, 1000)); // empty range → skip
+        assert!(reader.column_range_overlaps_i64(987654, 0, 10)); // unknown column → cannot prune
 
         let stats = BlockStats::from_metas(
             reader.row_count(),

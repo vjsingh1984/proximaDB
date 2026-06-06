@@ -173,6 +173,28 @@ impl ColumnMeta {
         value >= min && value <= max
     }
 
+    /// Zone-map RANGE pruning: returns `false` only when this column's
+    /// `[min, max]` provably cannot overlap the inclusive query range
+    /// `[lo, hi]` — so the block can be skipped for a range predicate
+    /// (`BETWEEN`, `<`, `<=`, `>`, `>=`). This is the range complement to
+    /// [`i64_in_range`] (a point `== value` check).
+    ///
+    /// `lo > hi` is an empty range and prunes everything (`false`). Like
+    /// [`i64_in_range`], a column with no statistics (`distinct_hint == 0`)
+    /// conservatively returns `true` (cannot prune).
+    pub fn i64_range_overlaps(&self, lo: i64, hi: i64) -> bool {
+        if lo > hi {
+            return false;
+        }
+        if self.distinct_hint == 0 {
+            return true;
+        }
+        let min = i64::from_le_bytes(self.min_val[0..8].try_into().unwrap_or([0; 8]));
+        let max = i64::from_le_bytes(self.max_val[0..8].try_into().unwrap_or([0; 8]));
+        // [lo, hi] overlaps [min, max] iff lo <= max AND hi >= min.
+        lo <= max && hi >= min
+    }
+
     /// Check whether a 64-bit hash could fall within this column's hash bounds.
     /// Returns `true` conservatively if hash stats are absent.
     pub fn hash64_in_range(&self, hash: u64) -> bool {
