@@ -42,7 +42,7 @@
 use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_relational_algebra::{
     AggregateExpr, AlgebraError, JoinKind, JoinSide, JoinStrategy, LogicalNode, NamedAggregate,
-    NamedExpr, SortKey, TableId,
+    NamedExpr, SetOpKind, SortKey, TableId,
 };
 use proximadb_relational_reader::ReaderCapabilities;
 use proximadb_relational_types::{
@@ -180,6 +180,13 @@ pub enum PhysicalPlan {
         inputs: Vec<PhysicalPlan>,
         all: bool,
     },
+    /// `INTERSECT [ALL]` / `EXCEPT [ALL]`. Output schema = left's.
+    SetOp {
+        op: SetOpKind,
+        left: Box<PhysicalPlan>,
+        right: Box<PhysicalPlan>,
+        all: bool,
+    },
     Values {
         rows: Vec<Vec<Expr>>,
         output_schema: RelationalSchema,
@@ -244,6 +251,7 @@ impl PhysicalPlan {
                 .first()
                 .map(|i| i.output_schema())
                 .unwrap_or_default(),
+            PhysicalPlan::SetOp { left, .. } => left.output_schema(),
             PhysicalPlan::Values { output_schema, .. } => output_schema.clone(),
         }
     }
@@ -379,6 +387,13 @@ fn render_explain_node(plan: &PhysicalPlan, depth: usize, lines: &mut Vec<String
             for input in inputs {
                 render_explain_node(input, depth + 1, lines);
             }
+        }
+        PhysicalPlan::SetOp {
+            op, left, right, all,
+        } => {
+            lines.push(format!("{indent}SetOp op={op:?} all={all}"));
+            render_explain_node(left, depth + 1, lines);
+            render_explain_node(right, depth + 1, lines);
         }
         PhysicalPlan::Values { rows, .. } => {
             lines.push(format!("{indent}Values rows={}", rows.len()));
@@ -775,6 +790,17 @@ pub fn lower_to_physical(node: LogicalNode) -> PhysicalPlan {
                 output_schema: RelationalSchema::default(),
             }
         }
+        LogicalNode::SetOp {
+            op,
+            left,
+            right,
+            all,
+        } => PhysicalPlan::SetOp {
+            op,
+            left: Box::new(lower_to_physical(*left)),
+            right: Box::new(lower_to_physical(*right)),
+            all,
+        },
     }
 }
 
@@ -1078,6 +1104,17 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
                 .into_iter()
                 .map(|i| push_predicates(i, resolver))
                 .collect(),
+            all,
+        },
+        PhysicalPlan::SetOp {
+            op,
+            left,
+            right,
+            all,
+        } => PhysicalPlan::SetOp {
+            op,
+            left: Box::new(push_predicates(*left, resolver)),
+            right: Box::new(push_predicates(*right, resolver)),
             all,
         },
         leaf @ (PhysicalPlan::Scan { .. } | PhysicalPlan::Values { .. }) => leaf,
@@ -1846,6 +1883,34 @@ fn push_projections_inner(
                 .collect::<Result<_, _>>()?;
             Ok(PhysicalPlan::Union {
                 inputs: new_inputs,
+                all,
+            })
+        }
+        PhysicalPlan::SetOp {
+            op,
+            left,
+            right,
+            all,
+        } => {
+            // Set ops compare ALL columns for membership, so they're a projection
+            // barrier: each child keeps its full column set (narrowing would change
+            // which rows count as equal). Any narrowing stays above the SetOp.
+            let left_cols: Vec<String> = left
+                .output_schema()
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            let right_cols: Vec<String> = right
+                .output_schema()
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            Ok(PhysicalPlan::SetOp {
+                op,
+                left: Box::new(push_projections_inner(*left, &left_cols)?),
+                right: Box::new(push_projections_inner(*right, &right_cols)?),
                 all,
             })
         }

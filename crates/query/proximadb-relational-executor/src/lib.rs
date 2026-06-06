@@ -28,7 +28,7 @@ use async_trait::async_trait;
 use proximadb_data_model::{ProximaType, ProximaValue, TimeUnit};
 use proximadb_functions::builtins;
 use proximadb_relational_algebra::{
-    AggregateExpr, JoinKind, JoinStrategy, NamedAggregate, NamedExpr, SortKey, TableId,
+    AggregateExpr, JoinKind, JoinStrategy, NamedAggregate, NamedExpr, SetOpKind, SortKey, TableId,
 };
 use proximadb_relational_planner::{
     AggregateStrategy, DistinctStrategy, PhysicalPlan, ScanAccess, SortStrategy,
@@ -332,6 +332,16 @@ pub fn build_executor<F: ReaderFactory>(
             rows,
             output_schema,
         } => Box::new(ValuesExec::new(rows, output_schema)),
+        PhysicalPlan::SetOp {
+            op,
+            left,
+            right,
+            all,
+        } => {
+            let l = build_executor(*left, factory, ctx)?;
+            let r = build_executor(*right, factory, ctx)?;
+            Box::new(SetOpExec::new(l, r, op, all))
+        }
     };
     let _ = (DistinctStrategy::Hash, SortStrategy::InMemory); // silence "imported but only matched in path"
     Ok(match metric {
@@ -355,6 +365,7 @@ fn plan_label(plan: &PhysicalPlan) -> &'static str {
         PhysicalPlan::Distinct { .. } => "Distinct",
         PhysicalPlan::Union { .. } => "Union",
         PhysicalPlan::Values { .. } => "Values",
+        PhysicalPlan::SetOp { .. } => "SetOp",
     }
 }
 
@@ -372,6 +383,7 @@ fn plan_arity(plan: &PhysicalPlan) -> usize {
         | PhysicalPlan::Distinct { .. } => 1,
         PhysicalPlan::Join { .. } => 2,
         PhysicalPlan::Union { inputs, .. } => inputs.len(),
+        PhysicalPlan::SetOp { .. } => 2,
     }
 }
 
@@ -873,6 +885,106 @@ impl ExecNode for UnionExec {
                 self.opened[i] = false;
             }
         }
+        Ok(())
+    }
+}
+
+// =========================================================================
+// SetOpExec (INTERSECT / EXCEPT)
+// =========================================================================
+
+/// Binary set operation. Materialises the RIGHT input as a per-row-key count
+/// map at `open`, then streams the LEFT input deciding emission per row. Output
+/// schema = left's. Set membership uses the same full-row [`GroupKey`] as
+/// `DISTINCT`/`UNION`, so the same nested-type limitation applies.
+///
+/// Semantics:
+/// - `INTERSECT`      → distinct left rows whose key is present on the right.
+/// - `INTERSECT ALL`  → multiset: `min(left_count, right_count)` per key.
+/// - `EXCEPT`         → distinct left rows whose key is absent on the right.
+/// - `EXCEPT ALL`     → multiset: `max(0, left_count − right_count)` per key.
+pub struct SetOpExec {
+    left: Box<dyn ExecNode>,
+    right: Box<dyn ExecNode>,
+    op: SetOpKind,
+    all: bool,
+    schema: RelationalSchema,
+    /// Per-key occurrence count on the right (built at `open`).
+    right_counts: HashMap<GroupKey, u64>,
+    /// Distinct cases: keys already emitted (emit each at most once).
+    emitted: HashSet<GroupKey>,
+    /// ALL (multiset) cases: how many left rows of each key we've seen so far.
+    left_seen: HashMap<GroupKey, u64>,
+}
+
+impl SetOpExec {
+    fn new(left: Box<dyn ExecNode>, right: Box<dyn ExecNode>, op: SetOpKind, all: bool) -> Self {
+        let schema = left.schema().clone();
+        Self {
+            left,
+            right,
+            op,
+            all,
+            schema,
+            right_counts: HashMap::new(),
+            emitted: HashSet::new(),
+            left_seen: HashMap::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl ExecNode for SetOpExec {
+    fn schema(&self) -> &RelationalSchema {
+        &self.schema
+    }
+
+    async fn open(&mut self) -> Result<(), ExecError> {
+        self.right_counts.clear();
+        self.emitted.clear();
+        self.left_seen.clear();
+        // Drain the RIGHT input into a per-key count map, then close it.
+        self.right.open().await?;
+        while let Some(row) = self.right.next_row().await? {
+            let key = GroupKey::from_row(&row)?;
+            *self.right_counts.entry(key).or_insert(0) += 1;
+        }
+        let _ = self.right.close().await;
+        // Stream the LEFT input.
+        self.left.open().await
+    }
+
+    async fn next_row(&mut self) -> Result<Option<RelationalRow>, ExecError> {
+        loop {
+            let Some(row) = self.left.next_row().await? else {
+                return Ok(None);
+            };
+            let key = GroupKey::from_row(&row)?;
+            let right_count = self.right_counts.get(&key).copied().unwrap_or(0);
+            let emit = match (self.op, self.all) {
+                // Distinct: emit each qualifying key at most once.
+                (SetOpKind::Intersect, false) => right_count > 0 && self.emitted.insert(key),
+                (SetOpKind::Except, false) => right_count == 0 && self.emitted.insert(key),
+                // Multiset: count left occurrences and compare against the right count.
+                (SetOpKind::Intersect, true) => {
+                    let c = self.left_seen.entry(key).or_insert(0);
+                    *c += 1;
+                    *c <= right_count // emit up to min(left, right)
+                }
+                (SetOpKind::Except, true) => {
+                    let c = self.left_seen.entry(key).or_insert(0);
+                    *c += 1;
+                    *c > right_count // suppress the first `right_count`, emit the rest
+                }
+            };
+            if emit {
+                return Ok(Some(row));
+            }
+        }
+    }
+
+    async fn close(&mut self) -> Result<(), ExecError> {
+        let _ = self.left.close().await;
         Ok(())
     }
 }
@@ -2693,6 +2805,57 @@ mod tests {
         let noisy = vec![nm("Filter", 1, 5), nm("Scan", 0, 9)];
         assert_eq!(self_times(&noisy), vec![0, 9]);
         assert_eq!(self_times(&[]), Vec::<u128>::new());
+    }
+
+    async fn run_setop(op: SetOpKind, all: bool, left: &[i64], right: &[i64]) -> Vec<i64> {
+        let int_schema =
+            || RelationalSchema::new(vec![ColumnInfo::new("v", ProximaType::Int64, false)]);
+        let int_rows =
+            |vals: &[i64]| vals.iter().map(|v| vec![ProximaValue::Int64(*v)]).collect();
+        let f = VecReaderFactory::new();
+        f.register("lft", int_schema(), int_rows(left), vec![0]);
+        f.register("rgt", int_schema(), int_rows(right), vec![0]);
+        let scan = |t: &str| PhysicalPlan::Scan {
+            table: TableId::new(t),
+            output_schema: int_schema(),
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: ScanAccess::FullScan,
+        };
+        let plan = PhysicalPlan::SetOp {
+            op,
+            left: Box::new(scan("lft")),
+            right: Box::new(scan("rgt")),
+            all,
+        };
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        let mut out: Vec<i64> = rows
+            .iter()
+            .map(|r| match &r[0] {
+                ProximaValue::Int64(v) => *v,
+                other => panic!("expected Int64, got {other:?}"),
+            })
+            .collect();
+        out.sort(); // set-op output order is unspecified
+        out
+    }
+
+    #[tokio::test]
+    async fn setop_intersect_except_distinct_and_all() {
+        // left = {1, 2, 2, 3}, right = {2, 3, 3, 4}
+        let l = [1, 2, 2, 3];
+        let r = [2, 3, 3, 4];
+        // INTERSECT (distinct): keys in both → {2, 3}.
+        assert_eq!(run_setop(SetOpKind::Intersect, false, &l, &r).await, vec![2, 3]);
+        // INTERSECT ALL: min(count_l, count_r) → 2×min(2,1)=1, 3×min(1,2)=1 → [2,3].
+        assert_eq!(run_setop(SetOpKind::Intersect, true, &l, &r).await, vec![2, 3]);
+        // EXCEPT (distinct): left keys absent on right → {1}.
+        assert_eq!(run_setop(SetOpKind::Except, false, &l, &r).await, vec![1]);
+        // EXCEPT ALL: max(0, count_l − count_r) → 1×1, 2×(2−1)=1, 3×0 → [1,2].
+        assert_eq!(run_setop(SetOpKind::Except, true, &l, &r).await, vec![1, 2]);
     }
 
     #[tokio::test]

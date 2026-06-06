@@ -532,6 +532,33 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "NOT EXISTS over empty subquery → Anti join keeps all rows"
     );
 
+    // (3l) INTERSECT: dept ids that are used as some emp's dept_id. dept = {1,2,3};
+    // emp dept_ids = {1,1,2,99} → intersection {1,2} (hr=3 has no employee).
+    let rows = client
+        .simple_query(&format!(
+            "SELECT id FROM {dept} INTERSECT SELECT dept_id FROM {emp}"
+        ))
+        .await
+        .expect("SELECT INTERSECT");
+    assert_eq!(
+        col_set(&rows, "id"),
+        set(&["1", "2"]),
+        "INTERSECT → dept ids used by some employee"
+    );
+
+    // (3m) EXCEPT: dept ids NOT used by any employee → {3} (hr).
+    let rows = client
+        .simple_query(&format!(
+            "SELECT id FROM {dept} EXCEPT SELECT dept_id FROM {emp}"
+        ))
+        .await
+        .expect("SELECT EXCEPT");
+    assert_eq!(
+        col_set(&rows, "id"),
+        set(&["3"]),
+        "EXCEPT → dept ids with no employee"
+    );
+
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
     // (the gate keeps it on the hardened legacy path, not PATH B).
     let rows = client

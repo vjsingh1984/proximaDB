@@ -441,6 +441,16 @@ impl AlgebraExpr {
 // LogicalNode
 // =========================================================================
 
+/// Binary set operation. `UNION` is represented separately by the n-ary
+/// [`LogicalNode::Union`]; `INTERSECT`/`EXCEPT` are binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SetOpKind {
+    /// Rows present in BOTH inputs.
+    Intersect,
+    /// Rows present in the left input but NOT the right (a.k.a. MINUS).
+    Except,
+}
+
 /// Logical relational-algebra node. Each variant carries the
 /// information needed to compute its output schema and to validate
 /// its expressions; physical strategy is set by the planner.
@@ -501,6 +511,15 @@ pub enum LogicalNode {
     Distinct { input: Box<LogicalNode> },
     /// `UNION [ALL]`. All inputs must produce matching schemas.
     Union { inputs: Vec<LogicalNode>, all: bool },
+    /// `INTERSECT [ALL]` / `EXCEPT [ALL]` — binary set ops. Both inputs must
+    /// produce matching schemas; output schema = the left input's. `all`
+    /// preserves duplicates (multiset semantics) when set.
+    SetOp {
+        op: SetOpKind,
+        left: Box<LogicalNode>,
+        right: Box<LogicalNode>,
+        all: bool,
+    },
     /// `VALUES (...), (...), ...` — inline literal rows.
     Values {
         rows: Vec<Vec<Expr>>,
@@ -622,6 +641,8 @@ impl LogicalNode {
                     .map(|i| i.output_schema())
                     .unwrap_or_default()
             }
+            // Set ops produce the LEFT input's schema (validated equal to right).
+            LogicalNode::SetOp { left, .. } => left.output_schema(),
             LogicalNode::Values { output_schema, .. } => output_schema.clone(),
             LogicalNode::CteBind { usages, .. } => usages.output_schema(),
             LogicalNode::CteRef { output_schema, .. } => output_schema.clone(),
@@ -798,6 +819,30 @@ impl LogicalNode {
                 }
                 Ok(())
             }
+            LogicalNode::SetOp {
+                left, right, ..
+            } => {
+                left.validate()?;
+                right.validate()?;
+                let l = left.output_schema();
+                let r = right.output_schema();
+                if l.len() != r.len() {
+                    return Err(AlgebraError::UnionArityMismatch {
+                        left_count: l.len(),
+                        right_count: r.len(),
+                    });
+                }
+                for (i, (lc, rc)) in l.columns.iter().zip(r.columns.iter()).enumerate() {
+                    if lc.ty != rc.ty {
+                        return Err(AlgebraError::UnionSchemaMismatch {
+                            ordinal: i,
+                            left: lc.ty.clone(),
+                            right: rc.ty.clone(),
+                        });
+                    }
+                }
+                Ok(())
+            }
             LogicalNode::Values {
                 rows,
                 output_schema,
@@ -911,6 +956,10 @@ fn walk_inner<F: FnMut(&LogicalNode) -> bool>(node: &LogicalNode, visit: &mut F)
             walk_inner(body, visit);
             walk_inner(usages, visit);
         }
+        LogicalNode::SetOp { left, right, .. } => {
+            walk_inner(left, visit);
+            walk_inner(right, visit);
+        }
         // Leaves: no children.
         LogicalNode::Scan { .. } | LogicalNode::Values { .. } | LogicalNode::CteRef { .. } => {}
     }
@@ -978,6 +1027,17 @@ fn transform_inner<F: FnMut(LogicalNode) -> LogicalNode>(
         },
         LogicalNode::Union { inputs, all } => LogicalNode::Union {
             inputs: inputs.into_iter().map(|i| transform_inner(i, f)).collect(),
+            all,
+        },
+        LogicalNode::SetOp {
+            op,
+            left,
+            right,
+            all,
+        } => LogicalNode::SetOp {
+            op,
+            left: Box::new(transform_inner(*left, f)),
+            right: Box::new(transform_inner(*right, f)),
             all,
         },
         LogicalNode::CteBind { name, body, usages } => LogicalNode::CteBind {

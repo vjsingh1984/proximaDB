@@ -29,7 +29,8 @@
 
 use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_relational_algebra::{
-    AggregateExpr, JoinKind, JoinStrategy, LogicalNode, NamedAggregate, NamedExpr, SortKey, TableId,
+    AggregateExpr, JoinKind, JoinStrategy, LogicalNode, NamedAggregate, NamedExpr, SetOpKind,
+    SortKey, TableId,
 };
 use proximadb_relational_types::{
     BinaryOp, ColumnInfo, ColumnRef, Expr, RelationalSchema, UnaryOp,
@@ -174,16 +175,28 @@ fn lower_set_expr(
             left,
             right,
         } => {
-            if !matches!(op, SetOperator::Union) {
-                return Err(FrontendError::Unsupported(format!("set operator {:?}", op)));
-            }
             let l = lower_set_expr(left, catalog)?;
             let r = lower_set_expr(right, catalog)?;
             let all = matches!(set_quantifier, SetQuantifier::All);
-            Ok(LogicalNode::Union {
-                inputs: vec![l, r],
-                all,
-            })
+            match op {
+                SetOperator::Union => Ok(LogicalNode::Union {
+                    inputs: vec![l, r],
+                    all,
+                }),
+                SetOperator::Intersect => Ok(LogicalNode::SetOp {
+                    op: SetOpKind::Intersect,
+                    left: Box::new(l),
+                    right: Box::new(r),
+                    all,
+                }),
+                SetOperator::Except => Ok(LogicalNode::SetOp {
+                    op: SetOpKind::Except,
+                    left: Box::new(l),
+                    right: Box::new(r),
+                    all,
+                }),
+                other => Err(FrontendError::Unsupported(format!("set operator {:?}", other))),
+            }
         }
         other => Err(FrontendError::Unsupported(format!(
             "set-expr {:?}",
@@ -1766,6 +1779,25 @@ mod tests {
                 assert_eq!(inputs.len(), 2);
             }
             _ => panic!("expected Union, got {plan:?}"),
+        }
+    }
+
+    #[test]
+    fn intersect_and_except_lower_to_setop() {
+        // INTERSECT → SetOp{Intersect}; EXCEPT ALL → SetOp{Except, all}.
+        match lower("SELECT id FROM users INTERSECT SELECT oid FROM orders") {
+            LogicalNode::SetOp { op, all, .. } => {
+                assert_eq!(op, SetOpKind::Intersect);
+                assert!(!all);
+            }
+            other => panic!("expected SetOp(Intersect), got {other:?}"),
+        }
+        match lower("SELECT id FROM users EXCEPT ALL SELECT oid FROM orders") {
+            LogicalNode::SetOp { op, all, .. } => {
+                assert_eq!(op, SetOpKind::Except);
+                assert!(all);
+            }
+            other => panic!("expected SetOp(Except, all), got {other:?}"),
         }
     }
 
