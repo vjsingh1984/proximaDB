@@ -130,6 +130,27 @@ impl ProximaObjectStore {
             .map_err(|e| os_err("get_range", e))
     }
 
+    /// Fetch object metadata (size, last-modified, e-tag) for `path` WITHOUT
+    /// reading the body.
+    ///
+    /// This is the prerequisite for the footer/row-group range-read path
+    /// ([`get_range`]): a Parquet reader must know the object length to compute
+    /// the trailing footer's byte range before it can range-read it. `head` is a
+    /// metadata-only request (cheap on cloud stores — an HTTP HEAD), so callers
+    /// avoid a full-object GET just to learn the size.
+    pub async fn head(&self, path: &Path) -> Result<ObjectMeta, StorageError> {
+        self.store
+            .head(&self.full_path(path))
+            .await
+            .map_err(|e| os_err("head", e))
+    }
+
+    /// The byte length of the object at `path` (metadata-only; see [`head`]).
+    /// Returns the value that bounds a `get_range` over the whole object.
+    pub async fn object_size(&self, path: &Path) -> Result<u64, StorageError> {
+        Ok(self.head(path).await?.size)
+    }
+
     /// List objects under an optional caller-relative prefix. A `None` prefix lists under
     /// the base (NOT the whole store/filesystem root — `file://` parses to root `/`).
     pub async fn list(&self, prefix: Option<&Path>) -> Result<Vec<ObjectMeta>, StorageError> {
@@ -190,6 +211,28 @@ mod tests {
         assert_eq!(os.list(None).await.unwrap().len(), 1);
         // The write landed under the URL's directory (base prefix honored).
         assert!(dir.path().join("sub/x.parquet").exists());
+    }
+
+    /// `head`/`object_size` report the object length without a body GET, and
+    /// that length is exactly what bounds a trailing-footer `get_range` — the
+    /// warehouse Parquet-footer read pattern. A missing object errors (no panic).
+    #[tokio::test]
+    async fn head_reports_size_and_enables_footer_range_read() {
+        let os = ProximaObjectStore::new(Arc::new(object_store::memory::InMemory::new()));
+        let p = Path::from("t/data.parquet");
+        os.put(&p, Bytes::from_static(b"0123456789")).await.unwrap();
+
+        let meta = os.head(&p).await.unwrap();
+        assert_eq!(meta.size, 10, "head reports the exact byte length");
+        assert_eq!(os.object_size(&p).await.unwrap(), 10);
+
+        // The size drives a "last 4 bytes" footer-style range read.
+        let n = os.object_size(&p).await.unwrap();
+        let footer = os.get_range(&p, (n - 4)..n).await.unwrap();
+        assert_eq!(&footer[..], b"6789");
+
+        // Metadata on a missing object surfaces an error, not a panic.
+        assert!(os.head(&Path::from("missing.parquet")).await.is_err());
     }
 
     #[test]
