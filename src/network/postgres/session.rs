@@ -157,6 +157,32 @@ impl Session {
         self.parameters.get(name)
     }
 
+    /// TD-064 S1: the connection's effective schema == ProximaDB namespace.
+    ///
+    /// `SET search_path TO <schema>[, ...]` is captured into `parameters`; we
+    /// take the first (primary) entry, stripping quotes/whitespace, and default
+    /// to `public` exactly like PostgreSQL when the client never set one.
+    pub fn current_schema(&self) -> String {
+        self.parameters
+            .get("search_path")
+            .and_then(|raw| raw.split(',').next())
+            .map(|s| s.trim().trim_matches('"').to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "public".to_string())
+    }
+
+    /// TD-064 S1: the connection's catalog == account == tenant.
+    ///
+    /// Per the `catalog.schema.table` model the startup `database` name is the
+    /// connection's catalog/tenant boundary. Empty (client sent no database)
+    /// → `None`, so callers fall back to the legacy `proximadb.write.tenant_id`
+    /// session var during the read/write-binding migration (S1 read-half;
+    /// the write path is migrated separately).
+    pub fn catalog_tenant(&self) -> Option<String> {
+        let database = self.database.trim();
+        (!database.is_empty()).then(|| database.to_string())
+    }
+
     /// Start a transaction
     pub fn begin_transaction(&mut self) {
         self.transaction_state = TransactionState::InTransaction;
@@ -263,5 +289,50 @@ mod tests {
 
         session.rollback_transaction();
         assert_eq!(session.transaction_state, TransactionState::Idle);
+    }
+
+    fn blank_session() -> Session {
+        Session {
+            id: "test".to_string(),
+            process_id: 1,
+            secret_key: 123,
+            user: String::new(),
+            database: String::new(),
+            client_addr: "127.0.0.1:5432".parse().unwrap(),
+            state: SessionState::Ready,
+            transaction_state: TransactionState::Idle,
+            parameters: HashMap::new(),
+            created_at: std::time::Instant::now(),
+            last_activity: std::time::Instant::now(),
+        }
+    }
+
+    #[test]
+    fn current_schema_defaults_to_public_and_honors_search_path() {
+        let mut session = blank_session();
+        // No search_path set → PostgreSQL default.
+        assert_eq!(session.current_schema(), "public");
+
+        // First entry of a comma list, quote/space-stripped, wins.
+        session.set_parameter("search_path", "\"sales\" , public");
+        assert_eq!(session.current_schema(), "sales");
+
+        // Empty value falls back to the default.
+        session.set_parameter("search_path", "");
+        assert_eq!(session.current_schema(), "public");
+    }
+
+    #[test]
+    fn catalog_tenant_is_database_or_none() {
+        let mut session = blank_session();
+        // No database on startup → None (callers fall back to the write var).
+        assert_eq!(session.catalog_tenant(), None);
+
+        session.database = "acme".to_string();
+        assert_eq!(session.catalog_tenant().as_deref(), Some("acme"));
+
+        // Whitespace-only is treated as unset.
+        session.database = "   ".to_string();
+        assert_eq!(session.catalog_tenant(), None);
     }
 }

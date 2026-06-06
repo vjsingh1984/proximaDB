@@ -996,16 +996,29 @@ impl PostgresProtocol {
             return self.send_single_value_result("timezone", "UTC").await;
         }
         if upper.contains("AS SEARCH_PATH") {
-            return self.send_single_value_result("search_path", "public").await;
+            // TD-064 S1: reflect the connection's effective schema (namespace),
+            // honoring `SET search_path`, rather than a hardcoded `public`.
+            let schema = self.session.read().await.current_schema();
+            return self.send_single_value_result("search_path", &schema).await;
         }
         if upper.starts_with("SELECT") && upper.contains("CURRENT_SCHEMA()") {
+            let schema = self.session.read().await.current_schema();
             return self
-                .send_single_value_result("current_schema", "public")
+                .send_single_value_result("current_schema", &schema)
                 .await;
         }
         if upper.starts_with("SELECT") && upper.contains("CURRENT_DATABASE()") {
+            // TD-064 S1: reflect the connection's catalog (`database` == account
+            // == tenant). Fall back to the conventional `postgres` default when
+            // the client sent no database on startup.
+            let database = {
+                let session = self.session.read().await;
+                session
+                    .catalog_tenant()
+                    .unwrap_or_else(|| "postgres".to_string())
+            };
             return self
-                .send_single_value_result("current_database", "benchbase")
+                .send_single_value_result("current_database", &database)
                 .await;
         }
         if upper.starts_with("SELECT")
@@ -1548,6 +1561,19 @@ impl PostgresProtocol {
             .unwrap_or_default()
     }
 
+    /// TD-064 S1 (read-half): resolve the tenant/catalog scope used to authorize
+    /// READ/search collection resolution. Per the `catalog.schema.table` model
+    /// the connection's catalog (startup `database` name) is the tenant/account
+    /// boundary, so it takes precedence; clients that sent no database fall back
+    /// to the legacy `proximadb.write.tenant_id` session var so they keep working
+    /// until the write path is migrated onto the same catalog binding.
+    async fn pgwire_resolve_read_tenant(&self) -> String {
+        if let Some(catalog) = self.session.read().await.catalog_tenant() {
+            return catalog;
+        }
+        self.pgwire_resolve_tenant_id().await
+    }
+
     fn write_intent_overrides_from_params(
         params: &HashMap<String, String>,
     ) -> WriteIntentOverrides {
@@ -1702,15 +1728,15 @@ impl PostgresProtocol {
         // catalog BEFORE searching, so a pgwire client cannot read another
         // tenant's collection by naming it. The collection service compares the
         // caller's tenant against the collection's owning tenant and returns
-        // `None` on mismatch (the same enforcement REST v2 / gRPC v2 use). Reads
-        // scope by the same `pgwire_resolve_tenant_id()` signal the write path
-        // tags with, keeping read/write tenant-consistent (S1 will migrate both
-        // onto the `database`→catalog binding). Behavior by mode:
+        // `None` on mismatch (the same enforcement REST v2 / gRPC v2 use). S1
+        // read-half: the read scope is the connection's catalog (`database` ==
+        // account == tenant), falling back to the legacy `proximadb.write.tenant_id`
+        // var for clients that sent no database. Behavior by mode:
         //   * single-tenant (no tenant manager): unscoped → no behavior change.
         //   * multi-tenant: missing/unknown tenant → Err, cross-tenant → Ok(None);
         //     both fail closed below as an indistinguishable "relation does not
         //     exist" so cross-tenant existence cannot be probed.
-        let tenant_id = self.pgwire_resolve_tenant_id().await;
+        let tenant_id = self.pgwire_resolve_read_tenant().await;
         let tenant_scope = (!tenant_id.is_empty()).then_some(tenant_id.as_str());
         match self
             .collection_port
