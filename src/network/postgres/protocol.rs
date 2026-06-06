@@ -1697,6 +1697,42 @@ impl PostgresProtocol {
         let metadata_filter =
             crate::network::postgres::pgvector_params::extract_metadata_filter_from_where(query);
 
+        // TD-064 S2: structural tenant/namespace isolation at the search routing
+        // boundary. Resolve the target collection through the tenant-scoped
+        // catalog BEFORE searching, so a pgwire client cannot read another
+        // tenant's collection by naming it. The collection service compares the
+        // caller's tenant against the collection's owning tenant and returns
+        // `None` on mismatch (the same enforcement REST v2 / gRPC v2 use). Reads
+        // scope by the same `pgwire_resolve_tenant_id()` signal the write path
+        // tags with, keeping read/write tenant-consistent (S1 will migrate both
+        // onto the `database`→catalog binding). Behavior by mode:
+        //   * single-tenant (no tenant manager): unscoped → no behavior change.
+        //   * multi-tenant: missing/unknown tenant → Err, cross-tenant → Ok(None);
+        //     both fail closed below as an indistinguishable "relation does not
+        //     exist" so cross-tenant existence cannot be probed.
+        let tenant_id = self.pgwire_resolve_tenant_id().await;
+        let tenant_scope = (!tenant_id.is_empty()).then_some(tenant_id.as_str());
+        match self
+            .collection_port
+            .get_collection(&table_name, tenant_scope)
+            .await
+        {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => {
+                warn!(
+                    "🚨 pgwire vector search denied: collection '{}' not accessible for tenant scope '{}'",
+                    table_name, tenant_id
+                );
+                return self
+                    .send_error(
+                        "ERROR",
+                        "42P01",
+                        &format!("relation \"{}\" does not exist", table_name),
+                    )
+                    .await;
+            }
+        }
+
         debug!(
             "Executing vector search on {} with top_k={} filter={}",
             table_name,
