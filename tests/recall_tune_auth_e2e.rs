@@ -215,17 +215,9 @@ impl Drop for AuthTestServer {
     }
 }
 
-// IGNORED by the API-standardization hard-rename (2026-06): this test created
-// its IVF collection via `POST /api/v1/collections` with a proto-shaped
-// `collection_config { index_configs:[{algorithm:IVF, ivf_config}], tags }`.
-// The v1 collections route was removed; the canonical v2 create
-// (`CreateCollectionV2Request`) exposes neither per-index `index_configs` nor
-// `tags`, so an IVF collection cannot be created over REST, and the downstream
-// `report.algorithm == "ivf"` assertion can no longer be satisfied. Re-enable
-// once v2 collection-create gains IVF index-config (+ tag) parity — tracked as
-// a follow-up to the hard rename. The auth-convergence coverage it provided
-// should be reconstructed on a v2-creatable engine in the meantime.
-#[ignore = "needs v2 create_collection IVF index-config + tags parity (v1 collections removed in API standardization)"]
+// Creates its IVF collection via the canonical `POST /api/v2/collections`
+// (WS1 restored `index_configs` + `tags` parity to CreateCollectionV2Request),
+// then proves auth-converged recall-tune dispatches to the IVF arm.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unified_port_auth_converged_recall_tune_e2e() {
     let server = AuthTestServer::start().await.expect("server start");
@@ -287,26 +279,20 @@ async fn unified_port_auth_converged_recall_tune_e2e() {
     //
     // Drive an explicit IVF index_config so `active_algorithm_for`
     // resolves to "ivf" and recall-tune dispatches to the IVF arm.
+    // Canonical v2 create with an explicit IVF index + recall tags (WS1 parity).
     let create_body = serde_json::json!({
-        "operation": 1,
-        "collection_id": "ivf_auth_e2e",
-        "collection_config": {
-            "name": "ivf_auth_e2e",
-            "dimension": 32,
-            "distance_metric": 0,
-            "tags": ["recall_target:0.70", "target_vector_count:1000"],
-            "description": "auth-converged recall-tune e2e",
-            "index_configs": [{
-                "index_name": "ivf_primary",
-                "algorithm": 2,
-                "parameters": {},
-                "use_cases": [],
-                "ivf_config": {"n_lists": 100, "n_probe": 50}
-            }]
-        }
+        "name": "ivf_auth_e2e",
+        "dimension": 32,
+        "distance_metric": "cosine",
+        "tags": ["recall_target:0.70", "target_vector_count:1000"],
+        "index_configs": [{
+            "index_name": "ivf_primary",
+            "algorithm": "ivf",
+            "ivf_config": {"n_lists": 100, "n_probe": 50}
+        }]
     });
     let resp = http
-        .post(server.url("/api/v1/collections"))
+        .post(server.url("/api/v2/collections"))
         .header("Authorization", "Api-Key dev-key")
         .json(&create_body)
         .send()
@@ -317,16 +303,17 @@ async fn unified_port_auth_converged_recall_tune_e2e() {
     assert_eq!(
         status.as_u16(),
         200,
-        "v1 collection create with admin Api-Key must succeed; got {} body={}",
+        "v2 collection create with admin Api-Key must succeed; got {} body={}",
         status,
         body_text
     );
     let create_json: serde_json::Value =
         serde_json::from_str(&body_text).expect("create json parse");
+    // v2 CreateCollectionV2Response echoes the collection_id on success.
     assert_eq!(
-        create_json.get("success").and_then(|v| v.as_bool()),
-        Some(true),
-        "create.success must be true: {:?}",
+        create_json.get("collection_id").and_then(|v| v.as_str()),
+        Some("ivf_auth_e2e"),
+        "v2 create response must echo collection_id: {:?}",
         create_json
     );
 

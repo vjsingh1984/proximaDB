@@ -138,6 +138,47 @@ pub struct CreateCollectionV2Request {
     /// service applies the same normalisation, so SDKs and pgwire
     /// converge on the same enum discriminant.
     pub canonical_embedding_precision: Option<String>,
+    /// Index configurations (e.g. an explicit IVF or HNSW index).
+    ///
+    /// Restores v1 parity: the v1 proto create accepted `index_configs`, which
+    /// drive `active_algorithm_for` (e.g. an IVF index → recall-tune dispatches
+    /// to the IVF arm). When omitted, the engine selects a default (HNSW).
+    pub index_configs: Option<Vec<IndexConfigInput>>,
+    /// Operator metadata tags, e.g. `"recall_target:0.95"`,
+    /// `"target_vector_count:1000"`, `"modalities:text,image"`. Consumed by the
+    /// recall advisor / route-health (`services/collection/recall_target.rs`).
+    pub tags: Option<Vec<String>>,
+}
+
+/// REST input for a single index config (mirrors proto `IndexConfig`).
+#[derive(Debug, Deserialize)]
+pub struct IndexConfigInput {
+    /// Optional index name (defaults to `index_<n>`).
+    pub index_name: Option<String>,
+    /// Algorithm: "hnsw", "ivf", "pq", "flat", "annoy", "lsh".
+    pub algorithm: String,
+    /// Free-form algorithm parameters.
+    #[serde(default)]
+    pub parameters: std::collections::HashMap<String, String>,
+    /// HNSW tuning (when algorithm == "hnsw").
+    pub hnsw_config: Option<HnswConfigInput>,
+    /// IVF tuning (when algorithm == "ivf").
+    pub ivf_config: Option<IvfConfigInput>,
+}
+
+/// REST input for HNSW index params (mirrors proto `HnswConfig`).
+#[derive(Debug, Deserialize)]
+pub struct HnswConfigInput {
+    pub m: Option<u32>,
+    pub ef_construction: Option<u32>,
+    pub ef_search: Option<u32>,
+}
+
+/// REST input for IVF index params (mirrors proto `IvfConfig`).
+#[derive(Debug, Deserialize)]
+pub struct IvfConfigInput {
+    pub n_lists: Option<u32>,
+    pub n_probe: Option<u32>,
 }
 
 /// Schema definition for a collection
@@ -340,7 +381,7 @@ pub struct CreateCollectionV2Response {
 pub async fn create_collection_v2(
     Extension(tenant): Extension<TenantContext>,
     State(state): State<AppState>,
-    Json(request): Json<CreateCollectionV2Request>,
+    Json(mut request): Json<CreateCollectionV2Request>,
 ) -> ApiResult<Json<CreateCollectionV2Response>> {
     info!(
         "V2 API: Creating collection '{}' with dimension {}",
@@ -466,12 +507,60 @@ pub async fn create_collection_v2(
         })
         .map(|p| p as i32);
 
+    // v1-parity: convert REST index_configs → proto IndexConfig so an explicit
+    // IVF/HNSW index is persisted and read back by `active_algorithm_for`.
+    let index_configs = match request.index_configs.take() {
+        None => Vec::new(),
+        Some(inputs) => {
+            use crate::proto::proximadb_v1::{HnswConfig, IndexConfig, IndexingAlgorithm, IvfConfig};
+            let mut out = Vec::with_capacity(inputs.len());
+            for (idx, cfg) in inputs.into_iter().enumerate() {
+                let algorithm = match cfg.algorithm.trim().to_ascii_lowercase().as_str() {
+                    "hnsw" => IndexingAlgorithm::Hnsw,
+                    "ivf" => IndexingAlgorithm::Ivf,
+                    "pq" => IndexingAlgorithm::Pq,
+                    "flat" => IndexingAlgorithm::Flat,
+                    "annoy" => IndexingAlgorithm::Annoy,
+                    "lsh" => IndexingAlgorithm::Lsh,
+                    other => {
+                        return Err(ApiError::InvalidArgument(format!(
+                            "unknown index algorithm '{}' (expected hnsw|ivf|pq|flat|annoy|lsh)",
+                            other
+                        )));
+                    }
+                };
+                out.push(IndexConfig {
+                    index_name: cfg
+                        .index_name
+                        .unwrap_or_else(|| format!("index_{}", idx)),
+                    algorithm: algorithm as i32,
+                    parameters: cfg.parameters,
+                    hnsw_config: cfg.hnsw_config.map(|h| HnswConfig {
+                        m: h.m,
+                        ef_construction: h.ef_construction,
+                        ef_search: h.ef_search,
+                        ..Default::default()
+                    }),
+                    ivf_config: cfg.ivf_config.map(|i| IvfConfig {
+                        n_lists: i.n_lists,
+                        n_probe: i.n_probe,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+            }
+            out
+        }
+    };
+
     let collection_config = CollectionConfig {
         name: request.name.clone(),
         dimension: request.dimension,
         storage_engine: Some(storage_engine_value),
         distance_metric: distance_metric_value,
         canonical_embedding_precision,
+        index_configs,
+        tags: request.tags.take().unwrap_or_default(),
         ..Default::default()
     };
 
