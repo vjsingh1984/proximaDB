@@ -4544,16 +4544,17 @@ impl AxisManager {
         if self.is_hmgi_enabled(collection_id).await {
             return Ok(());
         }
-        // No-op for un-opted-in collections. Operators or background
-        // tasks opt in explicitly when HMGI's per-modality benefits
-        // apply.
-        tracing::trace!(
-            target: "axis_diag",
-            site = "ensure_hmgi_collection_enabled",
-            collection_id = collection_id,
-            "HMGI not enabled and no auto-enable triggered (insert path); falling through to legacy HNSW"
-        );
-        Ok(())
+        // HMGI is the canonical dense vector index path for AXIS: any
+        // collection that receives a dense vector is enabled here so the
+        // insert routes through `insert_hmgi` and queries route through
+        // `search_hmgi`. Single-modality collections land in a single
+        // modality partition (no per-partition penalty beyond one
+        // partition); multi-modality collections fan out automatically as
+        // new modality tags appear. The earlier distance/similarity
+        // sort-direction hazard that motivated disabling this was fixed in
+        // commit b3985b59c, so enabling on insert is safe again.
+        let oid = self.hmgi_oid_for_collection(collection_id).await;
+        self.enable_hmgi(collection_id, None, oid).await
     }
 
     fn is_hmgi_routable_query(&self, query: &AxisHybridQuery) -> bool {
