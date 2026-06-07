@@ -559,6 +559,48 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "EXCEPT → dept ids with no employee"
     );
 
+    // (3n) CASE in a projection (over an engaging JOIN): searched CASE classifies
+    // each matched employee's department. ann/bob (dept_id 1) → 'eng-dept'; cas → 'other'
+    // (dan dropped by the inner join).
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename, CASE WHEN dept_id = 1 THEN 'eng-dept' ELSE 'other' END AS d \
+             FROM {emp} JOIN {dept} ON {emp}.dept_id = {dept}.id"
+        ))
+        .await
+        .expect("SELECT CASE over join");
+    assert_eq!(
+        pair_set(&rows, "ename", "d"),
+        [("ann", "eng-dept"), ("bob", "eng-dept"), ("cas", "other")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect(),
+        "CASE projection classifies joined rows"
+    );
+
+    // (3o) COALESCE over a LEFT JOIN: dan (dept_id 99) has no dept → dname is NULL →
+    // COALESCE substitutes 'none'. Proves end-to-end NULL-aware evaluation.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename, COALESCE(dname, 'none') AS d \
+             FROM {emp} LEFT JOIN {dept} ON {emp}.dept_id = {dept}.id"
+        ))
+        .await
+        .expect("SELECT COALESCE over left join");
+    assert_eq!(
+        pair_set(&rows, "ename", "d"),
+        [
+            ("ann", "eng"),
+            ("bob", "eng"),
+            ("cas", "sales"),
+            ("dan", "none"),
+        ]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect(),
+        "COALESCE substitutes a default for the NULL (unmatched) side"
+    );
+
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
     // (the gate keeps it on the hardened legacy path, not PATH B).
     let rows = client

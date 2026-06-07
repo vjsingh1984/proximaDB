@@ -756,6 +756,35 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
             case_insensitive: true,
         }),
         SqlExpr::Function(f) => lower_scalar_function(f, scope),
+        // CASE — both the searched form (`CASE WHEN cond THEN r ...`) and the simple
+        // form (`CASE op WHEN v THEN r ...`, lowered to `op = v` branch conditions).
+        SqlExpr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            let mut branches = Vec::with_capacity(conditions.len());
+            for cw in conditions {
+                let cond = match operand {
+                    Some(op) => Expr::bin(
+                        BinaryOp::Eq,
+                        lower_expr(op, scope)?,
+                        lower_expr(&cw.condition, scope)?,
+                    ),
+                    None => lower_expr(&cw.condition, scope)?,
+                };
+                branches.push((cond, lower_expr(&cw.result, scope)?));
+            }
+            let otherwise = match else_result {
+                Some(e) => Some(Box::new(lower_expr(e, scope)?)),
+                None => None,
+            };
+            Ok(Expr::Case {
+                branches,
+                otherwise,
+            })
+        }
         SqlExpr::Subquery(_) | SqlExpr::Exists { .. } | SqlExpr::InSubquery { .. } => {
             Err(FrontendError::Unsupported("subqueries".into()))
         }
@@ -992,6 +1021,23 @@ fn lower_scalar_function(
             ));
         }
     };
+
+    // COALESCE / NULLIF have NULL-aware semantics (short-circuit / equality-to-NULL)
+    // that a generic eager `FuncCall` can't express, so lower them to their dedicated
+    // `Expr` variants (the evaluator handles the three-valued logic natively).
+    match raw_name.to_uppercase().as_str() {
+        "COALESCE" => return Ok(Expr::Coalesce(args)),
+        "NULLIF" => {
+            let [left, right] = <[Expr; 2]>::try_from(args).map_err(|_| {
+                FrontendError::Unsupported("NULLIF requires exactly 2 arguments".into())
+            })?;
+            return Ok(Expr::NullIf {
+                left: Box::new(left),
+                right: Box::new(right),
+            });
+        }
+        _ => {}
+    }
 
     // Resolve the declared return type from the shared registry; unknown functions get a
     // permissive placeholder (the evaluator ignores `return_ty`, and the DataFusion path
@@ -1780,6 +1826,36 @@ mod tests {
             }
             _ => panic!("expected Union, got {plan:?}"),
         }
+    }
+
+    #[test]
+    fn case_coalesce_nullif_lower_to_expr_variants() {
+        fn proj0(sql: &str) -> Expr {
+            match lower(sql) {
+                LogicalNode::Project { outputs, .. } => outputs[0].expr.clone(),
+                other => panic!("expected Project, got {other:?}"),
+            }
+        }
+        // Searched CASE and simple CASE both lower to Expr::Case.
+        assert!(matches!(
+            proj0("SELECT CASE WHEN age > 30 THEN 1 ELSE 0 END FROM users"),
+            Expr::Case { .. }
+        ));
+        assert!(matches!(
+            proj0("SELECT CASE age WHEN 30 THEN 1 ELSE 0 END FROM users"),
+            Expr::Case { .. }
+        ));
+        // COALESCE / NULLIF lower to their dedicated NULL-aware variants, not FuncCall.
+        assert!(matches!(
+            proj0("SELECT COALESCE(name, 'x') FROM users"),
+            Expr::Coalesce(_)
+        ));
+        assert!(matches!(
+            proj0("SELECT NULLIF(age, 0) FROM users"),
+            Expr::NullIf { .. }
+        ));
+        // NULLIF arity is enforced.
+        assert!(lower_sql("SELECT NULLIF(age) FROM users", &catalog()).is_err());
     }
 
     #[test]
