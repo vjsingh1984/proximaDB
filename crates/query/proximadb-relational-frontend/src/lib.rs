@@ -983,41 +983,221 @@ fn lowered_no_hoist(expr: Expr, ctx: &LoweringCtx) -> Result<Expr, FrontendError
     }
 }
 
-/// Lower an uncorrelated scalar subquery `(SELECT col FROM …)` appearing inside
-/// an expression. Hoists it into `ctx` as an `AssertMaxOneRow`-guarded relation
-/// (the caller `LEFT JOIN`s it ON TRUE) and returns a `ColumnRef` to its single
-/// output column. A correlated subquery fails to resolve its outer column in
-/// isolation (the inner scope is built from the subquery's own FROM only) →
-/// `Err` → the whole query declines to the legacy path. Stage 3 adds correlated
-/// handling here.
-fn lower_scalar_subquery(q: &SqlQuery, ctx: &mut LoweringCtx) -> Result<Expr, FrontendError> {
+/// Lower a scalar subquery `(SELECT col FROM …)` appearing inside an expression.
+///
+/// - **Uncorrelated** — lowers in isolation; hoisted into `ctx` as an
+///   `AssertMaxOneRow`-guarded relation that the caller `LEFT JOIN`s ON TRUE
+///   (zero rows → NULL, one row → value, two+ → error). Returns a `ColumnRef` to
+///   its single output column.
+/// - **Correlated** — when isolation lowering fails, [`lower_correlated_scalar_aggregate`]
+///   decorrelates a single-key aggregate subquery to a `LEFT JOIN` over a `GROUP BY`.
+fn lower_scalar_subquery(
+    q: &SqlQuery,
+    outer_scope: &Scope,
+    ctx: &mut LoweringCtx,
+) -> Result<Expr, FrontendError> {
     let Some(catalog) = ctx.catalog else {
         return Err(FrontendError::Unsupported(
             "subquery not allowed in this position".into(),
         ));
     };
-    let sub_plan = lower_query(q, catalog)?;
-    let sub_schema = sub_plan.output_schema();
-    if sub_schema.columns.len() != 1 {
-        return Err(FrontendError::Unsupported(
-            "scalar subquery must return exactly one column".into(),
-        ));
+    // Uncorrelated: lowers from its own FROM only.
+    if let Ok(sub_plan) = lower_query(q, catalog) {
+        let sub_schema = sub_plan.output_schema();
+        if sub_schema.columns.len() != 1 {
+            return Err(FrontendError::Unsupported(
+                "scalar subquery must return exactly one column".into(),
+            ));
+        }
+        let col = sub_schema.columns[0].clone();
+        let ordinal = ctx.next_ordinal();
+        ctx.hoisted.push(HoistedSub {
+            plan: LogicalNode::AssertMaxOneRow {
+                input: Box::new(sub_plan),
+            },
+            on: None,
+        });
+        return Ok(Expr::column(ColumnRef {
+            name: col.name,
+            ordinal,
+            ty: col.ty,
+            // Empty subquery → LEFT JOIN null-pads → the value is always possibly NULL.
+            nullable: true,
+        }));
     }
-    let col = sub_schema.columns[0].clone();
-    let ordinal = ctx.next_ordinal();
-    ctx.hoisted.push(HoistedSub {
-        plan: LogicalNode::AssertMaxOneRow {
-            input: Box::new(sub_plan),
+    // Correlated scalar aggregate → LEFT JOIN + GROUP BY.
+    lower_correlated_scalar_aggregate(q, outer_scope, ctx, catalog)
+}
+
+/// Decorrelate a correlated scalar aggregate subquery
+/// (`(SELECT max(t) FROM o WHERE o.k = u.k)`) into a `LEFT JOIN` over a `GROUP BY`:
+/// `u LEFT JOIN (SELECT k, max(t) FROM o [WHERE inner-local] GROUP BY k) agg ON u.k = agg.k`.
+/// A non-matching outer row gets a NULL aggregate, which is the correct SQL result
+/// for `max/min/sum/avg` over an empty set. `COUNT` is declined (its empty-set result
+/// is 0, not NULL — the LEFT JOIN can't express that). Any non-conforming shape
+/// (multiple/zero correlation keys, non-equi or non-column correlation, non-aggregate
+/// projection, joins/grouping/etc.) returns `Unsupported` → the query declines to legacy.
+fn lower_correlated_scalar_aggregate(
+    q: &SqlQuery,
+    outer_scope: &Scope,
+    ctx: &mut LoweringCtx,
+    catalog: &dyn CatalogLookup,
+) -> Result<Expr, FrontendError> {
+    let unsupported = || FrontendError::Unsupported("correlated scalar subquery".into());
+    if q.with.is_some() || q.order_by.is_some() || q.limit_clause.is_some() {
+        return Err(unsupported());
+    }
+    let SetExpr::Select(select) = q.body.as_ref() else {
+        return Err(unsupported());
+    };
+    if select.from.len() != 1 || !select.from[0].joins.is_empty() {
+        return Err(unsupported());
+    }
+    let has_group_by = match &select.group_by {
+        GroupByExpr::All(_) => true,
+        GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
+    };
+    if has_group_by || select.having.is_some() || select.distinct.is_some() {
+        return Err(unsupported());
+    }
+    let Some(where_expr) = &select.selection else {
+        return Err(unsupported());
+    };
+    // Projection must be exactly one aggregate call.
+    let [item] = select.projection.as_slice() else {
+        return Err(unsupported());
+    };
+    let (agg_sql, alias) = match item {
+        SelectItem::UnnamedExpr(e) => (e, None),
+        SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.clone())),
+        _ => return Err(unsupported()),
+    };
+    let SqlExpr::Function(f) = agg_sql else {
+        return Err(unsupported());
+    };
+    if !is_aggregate_function_name(&f.name) {
+        return Err(unsupported());
+    }
+    let (inner_plan, inner_scope) = lower_table_factor(&select.from[0].relation, catalog)?;
+    let agg = lower_aggregate_call(f, &inner_scope)?;
+    // The count-bug: COUNT over an empty correlated group must be 0, but the
+    // LEFT JOIN + GROUP BY rewrite yields NULL. Decline COUNT.
+    if matches!(agg, AggregateExpr::Count { .. }) {
+        return Err(unsupported());
+    }
+    // Split WHERE: inner-local predicates → Filter; exactly one correlation equi
+    // `inner_col = outer_col` → the GROUP BY key / join key.
+    let mut inner_local: Option<Expr> = None;
+    let mut group_key: Option<(ColumnRef, ColumnRef)> = None; // (inner_key, outer_key)
+    for conj in flatten_sql_and(where_expr) {
+        if let Ok(local) = lower_expr_sealed(conj, &inner_scope) {
+            inner_local = Some(match inner_local {
+                Some(prev) => Expr::bin(BinaryOp::And, prev, local),
+                None => local,
+            });
+            continue;
+        }
+        // Correlation conjunct — must be a column-to-column equality with one side
+        // in the inner scope and the other in the outer scope.
+        let SqlExpr::BinaryOp {
+            left,
+            op: BinaryOperator::Eq,
+            right,
+        } = strip_nested(conj)
+        else {
+            return Err(unsupported());
+        };
+        let pair = resolve_correlation_pair(left, right, &inner_scope, outer_scope)?;
+        if group_key.is_some() {
+            return Err(unsupported()); // single correlation key only (MVP)
+        }
+        group_key = Some(pair);
+    }
+    let Some((inner_key, outer_key)) = group_key else {
+        return Err(unsupported());
+    };
+    let inner = match inner_local {
+        Some(predicate) => LogicalNode::Filter {
+            input: Box::new(inner_plan),
+            predicate,
         },
-        on: None,
+        None => inner_plan,
+    };
+    // GROUP BY the inner correlation key; the aggregate is the scalar value. The
+    // aggregate output schema is [group_key, agg_value].
+    let agg_name = alias.unwrap_or_else(|| f.name.to_string().to_lowercase());
+    let plan = LogicalNode::Aggregate {
+        input: Box::new(inner),
+        group_by: vec![NamedExpr {
+            name: inner_key.name.clone(),
+            expr: Expr::column(inner_key.clone()),
+        }],
+        aggregates: vec![NamedAggregate {
+            name: agg_name.clone(),
+            agg: agg.clone(),
+        }],
+        having: None,
+    };
+    // In the combined row after the LEFT JOIN, the group key sits at `base` and the
+    // aggregate value at `base + 1` (group keys precede aggregate slots).
+    let base = ctx.next_ordinal();
+    let on = Expr::bin(
+        BinaryOp::Eq,
+        Expr::column(outer_key),
+        Expr::column(ColumnRef {
+            name: inner_key.name.clone(),
+            ordinal: base,
+            ty: inner_key.ty.clone(),
+            nullable: true,
+        }),
+    );
+    let value_ty = agg.result_type();
+    ctx.hoisted.push(HoistedSub {
+        plan,
+        on: Some(on),
     });
     Ok(Expr::column(ColumnRef {
-        name: col.name,
-        ordinal,
-        ty: col.ty,
-        // Empty subquery → LEFT JOIN null-pads → the value is always possibly NULL.
+        name: agg_name,
+        ordinal: base + 1,
+        ty: value_ty,
         nullable: true,
     }))
+}
+
+/// Resolve a correlation equality's two operands into `(inner_key, outer_key)`
+/// column refs: one side must be a plain column of the inner scope, the other a
+/// plain column of the outer scope. Errors otherwise (non-column side, or both
+/// sides on the same side).
+fn resolve_correlation_pair(
+    a: &SqlExpr,
+    b: &SqlExpr,
+    inner_scope: &Scope,
+    outer_scope: &Scope,
+) -> Result<(ColumnRef, ColumnRef), FrontendError> {
+    let unsupported = || FrontendError::Unsupported("correlated scalar subquery key".into());
+    let as_col = |e: &SqlExpr, scope: &Scope| -> Option<ColumnRef> {
+        match lower_expr_sealed(e, scope) {
+            Ok(Expr::Column(c)) => Some(c),
+            _ => None,
+        }
+    };
+    // a ∈ inner, b ∈ outer
+    if let (Some(inner), Some(outer)) = (as_col(a, inner_scope), as_col(b, outer_scope)) {
+        return Ok((inner, outer));
+    }
+    // a ∈ outer, b ∈ inner
+    if let (Some(outer), Some(inner)) = (as_col(a, outer_scope), as_col(b, inner_scope)) {
+        return Ok((inner, outer));
+    }
+    Err(unsupported())
+}
+
+/// Strip parenthesised `Nested` wrappers from an expression.
+fn strip_nested(expr: &SqlExpr) -> &SqlExpr {
+    match expr {
+        SqlExpr::Nested(inner) => strip_nested(inner),
+        other => other,
+    }
 }
 
 fn lower_expr(
@@ -1141,7 +1321,7 @@ fn lower_expr(
                 otherwise,
             })
         }
-        SqlExpr::Subquery(q) => lower_scalar_subquery(q, ctx),
+        SqlExpr::Subquery(q) => lower_scalar_subquery(q, scope, ctx),
         SqlExpr::Exists { .. } | SqlExpr::InSubquery { .. } => Err(FrontendError::Unsupported(
             "EXISTS / IN subquery in expression position".into(),
         )),
@@ -2098,12 +2278,56 @@ mod tests {
     }
 
     #[test]
-    fn correlated_scalar_subquery_in_projection_declines() {
-        // Stage 1 is uncorrelated only: the inner query references the outer
-        // `users.id`, fails to resolve in isolation → declines to legacy.
+    fn correlated_scalar_aggregate_lowers_to_left_join_over_group_by() {
+        // `SELECT name, (SELECT max(total) FROM orders WHERE orders.uid = users.id) AS m`
+        // → Project over `u LEFT JOIN (orders GROUP BY uid → [uid, max]) ON u.id = agg.uid`.
+        // users width 3 → agg key at ordinal 3, agg value (m) at ordinal 4.
+        let plan = lower(
+            "SELECT name, (SELECT max(total) FROM orders WHERE orders.uid = users.id) AS m FROM users",
+        );
+        let LogicalNode::Project { input, outputs } = plan else {
+            panic!("expected Project");
+        };
+        let m = outputs.iter().find(|o| o.name == "m").expect("m output");
+        assert!(
+            matches!(&m.expr, Expr::Column(c) if c.ordinal == 4),
+            "m references the aggregate value at ordinal 4, got {:?}",
+            m.expr
+        );
+        match *input {
+            LogicalNode::Join {
+                kind: JoinKind::Left,
+                on: Some(Expr::BinaryOp { op: BinaryOp::Eq, .. }),
+                right,
+                ..
+            } => assert!(
+                matches!(*right, LogicalNode::Aggregate { .. }),
+                "right side is the GROUP BY aggregate, got {right:?}"
+            ),
+            other => panic!("expected LEFT JOIN with equi ON over Aggregate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn correlated_scalar_count_declines_count_bug() {
+        // COUNT over an empty correlated group must be 0, but the LEFT JOIN + GROUP
+        // BY rewrite yields NULL — so correlated COUNT declines to legacy.
         assert!(
             lower_sql(
-                "SELECT (SELECT max(total) FROM orders WHERE uid = users.id) FROM users",
+                "SELECT (SELECT count(*) FROM orders WHERE orders.uid = users.id) FROM users",
+                &catalog()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn correlated_scalar_non_aggregate_declines() {
+        // A correlated scalar subquery that is NOT a single aggregate (a plain
+        // column with LIMIT-style semantics) is out of scope → declines.
+        assert!(
+            lower_sql(
+                "SELECT (SELECT total FROM orders WHERE orders.uid = users.id) FROM users",
                 &catalog()
             )
             .is_err()

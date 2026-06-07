@@ -450,6 +450,26 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "correlated NOT EXISTS keeps only the employee-less dept"
     );
 
+    // (3f-corr3) Stage 3 — correlated SCALAR aggregate (self-correlated). For each
+    // emp, the subquery `(SELECT max(e2.id) FROM emp e2 WHERE e2.dept_id = emp.dept_id)`
+    // decorrelates to `emp LEFT JOIN (emp GROUP BY dept_id → max(id)) ON dept_id`,
+    // and the WHERE keeps only the highest-id employee in each dept: bob(11,dept1),
+    // cas(12,dept2), dan(13,dept99). ann(10) loses dept1 to bob.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename FROM {emp} WHERE id = \
+             (SELECT max(e2.id) FROM {emp} e2 WHERE e2.dept_id = {emp}.dept_id)"
+        ))
+        .await
+        .expect("SELECT correlated scalar aggregate");
+    assert_eq!(
+        col_set(&rows, "ename"),
+        ["bob".to_string(), "cas".to_string(), "dan".to_string()]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        "correlated scalar max(id) per dept keeps the top-id employee of each dept"
+    );
+
     // (3g) RIGHT JOIN ON-predicate pushdown to the null-supplying (left) side:
     // the left-only ON conjunct `emp.ename = 'ann'` is pushed into emp's scan
     // (emp is null-supplying under RIGHT), residual ON = the equi (→ Hash). All
