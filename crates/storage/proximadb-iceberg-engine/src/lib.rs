@@ -109,11 +109,19 @@ impl IcebergObjectStoreBridge {
     ///
     /// The trait [`ObjectStoreBridge::write_records_to_parquet`] delegates here
     /// after inferring a schema from the records.
+    ///
+    /// `tenant_id` carries the [`TenantContext`](proximadb_records) owner of this
+    /// write to the I/O boundary so the billing follow-up can attribute
+    /// `proximadb_object_store_ops_total` / `proximadb_storage_bytes_seconds` to a
+    /// tenant. It is threaded through both write entry points (this schema-explicit
+    /// one and the trait's schema-less one) so no write path is tenant-blind; the
+    /// metric emission itself is a follow-up (no telemetry sink is wired here yet).
     pub async fn write_records_to_parquet_with_schema(
         &self,
         path: &Path,
         records: &[ProximaRecord],
         schema: &ProximaSchema,
+        _tenant_id: Option<&str>,
     ) -> Result<(), StorageError> {
         let bytes = proxima_records_to_parquet_bytes(records, schema, None)?;
         self.store.put(path, Bytes::from(bytes)).await
@@ -178,13 +186,13 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         &self,
         path: &Path,
         records: &[ProximaRecord],
-        _tenant_id: Option<&str>,
+        tenant_id: Option<&str>,
     ) -> Result<(), StorageError> {
         // Schema-less entry point: infer the schema from the records, then
         // delegate to the schema-explicit writer so both paths share one
-        // implementation.
+        // implementation. The tenant flows through to the single I/O boundary.
         let schema = infer_proxima_schema(records);
-        self.write_records_to_parquet_with_schema(path, records, &schema)
+        self.write_records_to_parquet_with_schema(path, records, &schema, tenant_id)
             .await
     }
 
@@ -480,7 +488,7 @@ mod tests {
 
         // Schema-explicit write: `score` must survive as an all-null column.
         let explicit = Path::from("wh/explicit.parquet");
-        b.write_records_to_parquet_with_schema(&explicit, &[r0.clone(), r1.clone()], &schema)
+        b.write_records_to_parquet_with_schema(&explicit, &[r0.clone(), r1.clone()], &schema, None)
             .await
             .unwrap();
         let batch = read_first_batch(&b, &explicit).await;
