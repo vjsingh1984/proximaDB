@@ -1,4 +1,4 @@
-//! TD-101 sub-slice e2e — `POST /api/v1/memory/ingest` over the real REST
+//! TD-101 sub-slice e2e — `POST /api/v2/memory/ingest` over the real REST
 //! transport. Boots an in-process ProximaDB with a free REST port, creates a
 //! collection, and posts an agent turn.
 //!
@@ -123,7 +123,7 @@ async fn memory_ingest_route_is_mounted_and_guarded() {
         .await;
 
     let resp = http
-        .post(format!("{}/api/v1/memory/ingest", server.base()))
+        .post(format!("{}/api/v2/memory/ingest", server.base()))
         .json(&json!({
             "collection": collection,
             "tenant_id": "default",

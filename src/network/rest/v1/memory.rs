@@ -1,6 +1,6 @@
 //! Agent-memory WRITE REST endpoint (TD-101 sub-slice).
 //!
-//! `POST /api/v1/memory/ingest` drives the `MemoryWriteEngine`
+//! `POST /api/v2/memory/ingest` drives the `MemoryWriteEngine`
 //! (`crate::services::agent_memory`) — extract → retrieve → consolidate →
 //! apply — for one agent turn. Reuses the existing engine, the in-process
 //! `EmbeddingService`, and `VectorOperationsService`; no new storage path.
@@ -170,7 +170,7 @@ fn clamp_audit_limit(requested: Option<usize>) -> usize {
     }
 }
 
-/// `GET /api/v1/memory/consolidation/{session_id}` — list the consolidation
+/// `GET /api/v2/memory/consolidation/{session_id}` — list the consolidation
 /// decisions (ADD/UPDATE/DELETE/NOOP) recorded for a session, in append order.
 ///
 /// The tenant is taken from the AUTHENTICATED request context (NOT a path/body
