@@ -564,14 +564,14 @@ def test_health_check_grpc_unavailable(monkeypatch):
 # --------------------------------------------------------------------------
 def test_execute_sql(monkeypatch):
     c = make_client(monkeypatch)
-    resp = v1_types.ExecuteSqlResponse(
+    resp = v1_types.ExecuteQueryResponse(
         rows_scanned=10, rows_returned=1, execution_time_ms=2, columns=["a"], column_types=["INT"]
     )
     row = resp.rows.add()
     field = row.fields.add()
     field.key = "a"
     field.value.int64_value = 99
-    _StubInstaller(monkeypatch).install("v1_sql_pb2_grpc", "SqlServiceStub", {"ExecuteSql": resp})
+    _StubInstaller(monkeypatch).install("v1_sql_pb2_grpc", "QueryServiceStub", {"ExecuteQuery": resp})
     out = c.execute_sql("SELECT 1", parameters=[1, "x"], collection="col")
     assert out["row_count"] == 1
     assert out["rows"][0]["a"] == 99
@@ -584,7 +584,7 @@ def test_execute_sql_rpc_error(monkeypatch):
     def boom(req, timeout=None, metadata=None):
         raise FakeRpcError(gs.grpc.StatusCode.INTERNAL, "syntax")
 
-    _StubInstaller(monkeypatch).install("v1_sql_pb2_grpc", "SqlServiceStub", {"ExecuteSql": boom})
+    _StubInstaller(monkeypatch).install("v1_sql_pb2_grpc", "QueryServiceStub", {"ExecuteQuery": boom})
     with pytest.raises(ProximaDBError, match="execute_sql RPC failed"):
         c.execute_sql("BAD")
 
@@ -595,7 +595,7 @@ def test_execute_sql_generic_error(monkeypatch):
     def boom(req, timeout=None, metadata=None):
         raise RuntimeError("oops")
 
-    _StubInstaller(monkeypatch).install("v1_sql_pb2_grpc", "SqlServiceStub", {"ExecuteSql": boom})
+    _StubInstaller(monkeypatch).install("v1_sql_pb2_grpc", "QueryServiceStub", {"ExecuteQuery": boom})
     with pytest.raises(ProximaDBError, match="execute_sql failed"):
         c.execute_sql("X")
 
