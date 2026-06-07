@@ -124,6 +124,7 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         path: &Path,
         _schema: Arc<ArrowSchema>,
         batch_size: usize,
+        _tenant_id: Option<&str>,
     ) -> Result<BoxStream<'static, Result<RecordBatch, StorageError>>, StorageError> {
         let bytes = self.store.get(path).await?;
         let batches = parquet_bytes_to_record_batches_with_batch_size(bytes, batch_size)?;
@@ -134,6 +135,7 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         &self,
         path: &Path,
         records: &[ProximaRecord],
+        _tenant_id: Option<&str>,
     ) -> Result<(), StorageError> {
         // Schema-less entry point: infer the schema from the records, then
         // delegate to the schema-explicit writer so both paths share one
@@ -143,11 +145,11 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
             .await
     }
 
-    async fn fetch_vector_segment(&self, path: &Path) -> Result<Vec<u8>, StorageError> {
+    async fn fetch_vector_segment(&self, path: &Path, _tenant_id: Option<&str>) -> Result<Vec<u8>, StorageError> {
         Ok(self.store.get(path).await?.to_vec())
     }
 
-    async fn persist_vector_segment(&self, path: &Path, data: &[u8]) -> Result<(), StorageError> {
+    async fn persist_vector_segment(&self, path: &Path, data: &[u8], _tenant_id: Option<&str>) -> Result<(), StorageError> {
         self.store.put(path, Bytes::copy_from_slice(data)).await
     }
 
@@ -223,10 +225,10 @@ mod tests {
             ],
         );
 
-        b.write_records_to_parquet(&path, &[r0, r1]).await.unwrap();
+        b.write_records_to_parquet(&path, &[r0, r1], None).await.unwrap();
 
         let mut stream = b
-            .read_parquet_batches(&path, Arc::new(ArrowSchema::empty()), 1024)
+            .read_parquet_batches(&path, Arc::new(ArrowSchema::empty()), 1024, None)
             .await
             .unwrap();
 
@@ -267,6 +269,7 @@ mod tests {
                 &Path::from("nope.parquet"),
                 Arc::new(ArrowSchema::empty()),
                 64,
+                None,
             )
             .await;
         assert!(res.is_err());
@@ -279,8 +282,8 @@ mod tests {
         let path = Path::from("warehouse/vec/seg_000.pax");
         let payload: Vec<u8> = (0u8..200).collect();
 
-        b.persist_vector_segment(&path, &payload).await.unwrap();
-        let got = b.fetch_vector_segment(&path).await.unwrap();
+        b.persist_vector_segment(&path, &payload, None).await.unwrap();
+        let got = b.fetch_vector_segment(&path, None).await.unwrap();
         assert_eq!(got, payload);
     }
 
@@ -297,7 +300,7 @@ mod tests {
 
         let path = Path::from("t/data/part-0.parquet");
         let r0 = record("r0", vec![("name", ProximaValue::String("alice".into()))]);
-        b.write_records_to_parquet(&path, &[r0]).await.unwrap();
+        b.write_records_to_parquet(&path, &[r0], None).await.unwrap();
 
         let listed = b.list_objects(&Path::from("t/data")).await.unwrap();
         assert_eq!(listed.len(), 1, "the written object must be discoverable");
@@ -309,7 +312,7 @@ mod tests {
 
         // The listed key must be directly readable (the bridge re-applies the base).
         let mut stream = b
-            .read_parquet_batches(&listed[0], Arc::new(ArrowSchema::empty()), 1024)
+            .read_parquet_batches(&listed[0], Arc::new(ArrowSchema::empty()), 1024, None)
             .await
             .unwrap();
         let mut rows = 0usize;
@@ -321,7 +324,7 @@ mod tests {
 
     async fn read_first_batch(b: &IcebergObjectStoreBridge, path: &Path) -> RecordBatch {
         let mut stream = b
-            .read_parquet_batches(path, Arc::new(ArrowSchema::empty()), 1024)
+            .read_parquet_batches(path, Arc::new(ArrowSchema::empty()), 1024, None)
             .await
             .unwrap();
         stream.next().await.expect("at least one batch").unwrap()
@@ -388,7 +391,7 @@ mod tests {
 
         // Schema-less (inferred) write: `score` is omitted (no record carries it).
         let inferred = Path::from("wh/inferred.parquet");
-        b.write_records_to_parquet(&inferred, &[r0, r1]).await.unwrap();
+        b.write_records_to_parquet(&inferred, &[r0, r1], None).await.unwrap();
         let batch = read_first_batch(&b, &inferred).await;
         assert!(
             batch.column_by_name("score").is_none(),

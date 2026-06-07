@@ -344,8 +344,6 @@ pub enum FormatType {
     Swift,
     Raptor,
     Orion,
-    Pulsar,
-    Quasar,
     // Open table formats
     DeltaLake,
     Iceberg,

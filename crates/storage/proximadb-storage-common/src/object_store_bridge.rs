@@ -31,22 +31,26 @@ pub trait ObjectStoreBridge: Send + Sync {
         path: &Path,
         schema: Arc<ArrowSchema>,
         batch_size: usize,
+        tenant_id: Option<&str>,
     ) -> Result<BoxStream<'static, Result<RecordBatch, StorageError>>, StorageError>;
 
     /// Writes a stream of `ProximaRecord`s into a Parquet file on object storage.
     /// This is the primary output path for DML/Analytics operations.
+    /// Implementers MUST emit `proximadb_object_store_ops_total` and `proximadb_storage_bytes_seconds` for billing.
     async fn write_records_to_parquet(
         &self,
         path: &Path,
         records: &[ProximaRecord],
+        tenant_id: Option<&str>,
     ) -> Result<(), StorageError>;
 
     /// Fetches a specialized PAX block or Segment (SST, HELIX, etc.) from object storage
     /// into memory for high-performance Vector SIMD scans.
-    async fn fetch_vector_segment(&self, path: &Path) -> Result<Vec<u8>, StorageError>;
+    async fn fetch_vector_segment(&self, path: &Path, tenant_id: Option<&str>) -> Result<Vec<u8>, StorageError>;
 
     /// Persists a specialized PAX block or Segment to decoupled object storage.
-    async fn persist_vector_segment(&self, path: &Path, data: &[u8]) -> Result<(), StorageError>;
+    /// Implementers MUST emit `proximadb_object_store_ops_total` and `proximadb_storage_bytes_seconds` for billing.
+    async fn persist_vector_segment(&self, path: &Path, data: &[u8], tenant_id: Option<&str>) -> Result<(), StorageError>;
 
     /// Enumerate the object keys under `prefix`, returned as paths that are
     /// directly consumable by this bridge's read methods (`read_parquet_batches`
