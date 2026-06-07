@@ -446,16 +446,21 @@ fn flatten_sql_and(expr: &SqlExpr) -> Vec<&SqlExpr> {
     out
 }
 
-/// If `conj` is a liftable uncorrelated subquery predicate, lower it to the parts of a
-/// Semi/Anti join `(kind, on, right_plan)` to wrap the current plan. Returns `Ok(None)`
-/// when `conj` is not a liftable subquery (a normal predicate, `NOT IN`, a multi-column
-/// `IN`, or a subquery that fails to lower in isolation — i.e. correlated/unsupported);
-/// the caller then leaves it in the `Filter` predicate (where `lower_expr` decides).
+/// If `conj` is a liftable subquery predicate, lower it to the parts of a Semi/Anti
+/// join `(kind, on, right_plan)` to wrap the current plan. Returns `Ok(None)` when
+/// `conj` is not a liftable subquery (a normal predicate, or a subquery shape we
+/// don't decorrelate); the caller then leaves it in the `Filter` predicate.
 ///
-/// Uncorrelated is enforced for free: `lower_query` builds the subquery's scope from its
-/// OWN `FROM` only, so a reference to an outer column fails to resolve → `Err` → not
-/// lifted. Supported: `expr IN (single-column SELECT)` → Semi; `EXISTS` → Semi;
-/// `NOT EXISTS` → Anti. (`scope` resolves the outer operand of `IN`.)
+/// Two paths:
+/// - **Uncorrelated** — `lower_query` builds the subquery's scope from its OWN `FROM`
+///   only, so the subquery lowers in isolation. `expr IN (SELECT …)` (single- and
+///   multi-column) → Semi/AntiNullAware with an equi ON; `EXISTS` → keyless Semi;
+///   `NOT EXISTS` → keyless Anti.
+/// - **Correlated** — when isolation lowering fails (the subquery references an outer
+///   column), [`decorrelate_subquery`] lifts the correlation/outer predicate into the
+///   join ON (evaluated over the combined outer++inner row) and keeps inner-local
+///   predicates as the inner Filter. Correlated `EXISTS`/`NOT EXISTS` and single-column
+///   `IN`/`NOT IN` are supported; any other shape declines to legacy.
 fn lower_subquery_join_parts(
     conj: &SqlExpr,
     scope: &Scope,
@@ -467,9 +472,17 @@ fn lower_subquery_join_parts(
             subquery,
             negated,
         } => {
-            // Lower the subquery in isolation; correlated/unsupported → decline (None).
+            // IN → Semi; NOT IN → AntiNullAware (NULL-correct via the executor's
+            // three-valued ON evaluation).
+            let kind = if *negated {
+                JoinKind::AntiNullAware
+            } else {
+                JoinKind::Semi
+            };
+            // Lower the subquery in isolation; correlated/unsupported → fall through
+            // to the correlated path below.
             let Ok(sub) = lower_query(subquery, catalog) else {
-                return Ok(None);
+                return lower_correlated_in(expr, subquery, kind, scope, catalog);
             };
             let sub_schema = sub.output_schema();
             // Outer operands: a row constructor `(a, b, …) [NOT] IN (…)` is a tuple;
@@ -502,30 +515,187 @@ fn lower_subquery_join_parts(
                     None => eq,
                 });
             }
-            // IN → Semi; NOT IN → AntiNullAware (NULL-correct via the executor's
-            // three-valued ON evaluation — the AND of column equalities yields NULL
-            // when any compared value is NULL).
-            let kind = if *negated {
-                JoinKind::AntiNullAware
-            } else {
-                JoinKind::Semi
-            };
             Ok(Some((kind, on, sub)))
         }
         SqlExpr::Exists { subquery, negated } => {
-            let Ok(sub) = lower_query(subquery, catalog) else {
-                return Ok(None);
-            };
-            // EXISTS has no join key (any matching row qualifies); the planner routes
-            // the keyless Semi/Anti join to NestedLoop.
+            // EXISTS → Semi; NOT EXISTS → Anti.
             let kind = if *negated {
                 JoinKind::Anti
             } else {
                 JoinKind::Semi
             };
-            Ok(Some((kind, None, sub)))
+            // Uncorrelated: the subquery lowers in isolation; keyless Semi/Anti
+            // (any matching inner row qualifies the outer row).
+            if let Ok(sub) = lower_query(subquery, catalog) {
+                return Ok(Some((kind, None, sub)));
+            }
+            // Correlated: decorrelate — lift the correlation/outer predicate to the
+            // join ON (evaluated over the combined outer++inner row), keep inner-local
+            // predicates as the inner Filter. Unsupported shape → decline to legacy.
+            match decorrelate_subquery(subquery, scope, catalog)? {
+                Some(d) => Ok(Some((kind, Some(d.correlation), d.inner))),
+                None => Ok(None),
+            }
         }
         // Everything else is a normal predicate handled by the Filter.
+        _ => Ok(None),
+    }
+}
+
+/// A correlated subquery rewritten for a Semi/Anti join: the inner relation
+/// (Scan + inner-local Filter) and the correlation predicate lifted to the join
+/// `ON` (resolved over the COMBINED `outer ++ inner` row).
+struct DecorrelatedSubquery {
+    /// Inner relation with any inner-local WHERE predicates applied. Its rows are
+    /// the subquery table's full columns (no projection — Semi/Anti emit the left
+    /// side only, and `lower_correlated_in` resolves the IN column by ordinal).
+    inner: LogicalNode,
+    /// Inner table scope (ordinals 0..inner_width, standalone).
+    inner_scope: Scope,
+    /// Correlation predicate over the combined `outer ++ inner` row (outer columns
+    /// at `0..outer_width`, inner columns at `outer_width..`).
+    correlation: Expr,
+}
+
+/// Attempt to decorrelate a simple correlated subquery against `outer_scope`.
+/// Returns `Ok(None)` when the subquery isn't a shape we can safely decorrelate
+/// (the caller declines to the legacy path).
+///
+/// Supported shape: `SELECT … FROM <one table> WHERE <AND-conjuncts>` with NO
+/// joins / GROUP BY / HAVING / DISTINCT / set-op / ORDER BY / LIMIT, where at
+/// least one WHERE conjunct references an outer column (the correlation) and
+/// every conjunct resolves against either the inner table alone (→ inner Filter)
+/// or the combined outer+inner scope (→ join ON). Correlation under OR, or an
+/// unresolvable conjunct, declines.
+fn decorrelate_subquery(
+    subquery: &SqlQuery,
+    outer_scope: &Scope,
+    catalog: &dyn CatalogLookup,
+) -> Result<Option<DecorrelatedSubquery>, FrontendError> {
+    // Reject query-level decoration we can't reason about under decorrelation.
+    if subquery.with.is_some() || subquery.order_by.is_some() || subquery.limit_clause.is_some() {
+        return Ok(None);
+    }
+    let SetExpr::Select(select) = subquery.body.as_ref() else {
+        return Ok(None);
+    };
+    // A single base table, no grouping/having/distinct, and a WHERE to split.
+    if select.from.len() != 1 || !select.from[0].joins.is_empty() {
+        return Ok(None);
+    }
+    let has_group_by = match &select.group_by {
+        GroupByExpr::All(_) => true,
+        GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
+    };
+    if has_group_by || select.having.is_some() || select.distinct.is_some() {
+        return Ok(None);
+    }
+    let Some(where_expr) = &select.selection else {
+        return Ok(None);
+    };
+    let (inner_plan, inner_scope) = lower_table_factor(&select.from[0].relation, catalog)?;
+    let combined = outer_scope.concat(&inner_scope);
+
+    // Split the WHERE conjuncts: those that resolve against the inner table alone
+    // stay as the inner Filter; those that need the outer scope are correlation
+    // predicates lifted to the join ON. An unresolvable conjunct declines.
+    let mut inner_local: Option<Expr> = None;
+    let mut correlation: Option<Expr> = None;
+    for conj in flatten_sql_and(where_expr) {
+        if let Ok(local) = lower_expr_sealed(conj, &inner_scope) {
+            inner_local = Some(match inner_local {
+                Some(prev) => Expr::bin(BinaryOp::And, prev, local),
+                None => local,
+            });
+        } else if let Ok(corr) = lower_expr_sealed(conj, &combined) {
+            correlation = Some(match correlation {
+                Some(prev) => Expr::bin(BinaryOp::And, prev, corr),
+                None => corr,
+            });
+        } else {
+            // References neither resolvable inner nor combined columns (or is
+            // ambiguous across them) → don't risk a wrong rewrite.
+            return Ok(None);
+        }
+    }
+    // No correlation conjunct → not actually correlated (and `lower_query` already
+    // failed for some other reason) → decline.
+    let Some(correlation) = correlation else {
+        return Ok(None);
+    };
+    let inner = match inner_local {
+        Some(predicate) => LogicalNode::Filter {
+            input: Box::new(inner_plan),
+            predicate,
+        },
+        None => inner_plan,
+    };
+    Ok(Some(DecorrelatedSubquery {
+        inner,
+        inner_scope,
+        correlation,
+    }))
+}
+
+/// Lower a correlated `expr [NOT] IN (SELECT col FROM … WHERE <correlation>)` to a
+/// Semi/AntiNullAware join. The subquery must project exactly one plain column and
+/// the outer operand must be scalar (not a row constructor); otherwise decline.
+fn lower_correlated_in(
+    expr: &SqlExpr,
+    subquery: &SqlQuery,
+    kind: JoinKind,
+    outer_scope: &Scope,
+    catalog: &dyn CatalogLookup,
+) -> Result<Option<(JoinKind, Option<Expr>, LogicalNode)>, FrontendError> {
+    // Correlated multi-column IN is out of scope for MVP.
+    if matches!(expr, SqlExpr::Tuple(_)) {
+        return Ok(None);
+    }
+    let Some(d) = decorrelate_subquery(subquery, outer_scope, catalog)? else {
+        return Ok(None);
+    };
+    // The subquery must project exactly one plain column; resolve it against the
+    // inner scope, then offset into the combined row.
+    let Some(in_col) = single_projected_column(subquery, &d.inner_scope)? else {
+        return Ok(None);
+    };
+    let combined_in_col = ColumnRef {
+        ordinal: outer_scope.columns.len() + in_col.ordinal,
+        ..in_col
+    };
+    let outer = lower_expr_sealed(expr, outer_scope)?;
+    let in_eq = Expr::bin(BinaryOp::Eq, outer, Expr::column(combined_in_col));
+    // ON = correlation AND (outer = inner_col).
+    let on = Expr::bin(BinaryOp::And, d.correlation, in_eq);
+    Ok(Some((kind, Some(on), d.inner)))
+}
+
+/// If a subquery's SELECT list is exactly one plain column reference, resolve it
+/// against `inner_scope` and return its `ColumnRef`. Returns `Ok(None)` for any
+/// other projection shape (wildcard, expression, multiple items, aggregate).
+fn single_projected_column(
+    subquery: &SqlQuery,
+    inner_scope: &Scope,
+) -> Result<Option<ColumnRef>, FrontendError> {
+    let SetExpr::Select(select) = subquery.body.as_ref() else {
+        return Ok(None);
+    };
+    let [item] = select.projection.as_slice() else {
+        return Ok(None);
+    };
+    let col_expr = match item {
+        SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => e,
+        _ => return Ok(None),
+    };
+    match col_expr {
+        SqlExpr::Identifier(_) | SqlExpr::CompoundIdentifier(_) => {
+            Ok(Some(lower_expr_sealed(col_expr, inner_scope).and_then(
+                |e| match e {
+                    Expr::Column(c) => Ok(c),
+                    _ => Err(FrontendError::Unsupported("non-column IN projection".into())),
+                },
+            )?))
+        }
         _ => Ok(None),
     }
 }
@@ -1776,14 +1946,25 @@ mod tests {
     }
 
     #[test]
-    fn correlated_subquery_is_declined() {
-        // The subquery references the outer table (users.age) → fails to lower in
-        // isolation → not lifted → rejected (correlated subqueries unsupported).
-        assert!(lower_sql(
+    fn correlated_in_subquery_is_decorrelated() {
+        // (Was `correlated_subquery_is_declined` before Stage 3.) The subquery
+        // references the outer `users.age` → can't lower in isolation → the
+        // decorrelator lifts `total = users.age` and the IN-equality into the Semi
+        // join ON. Correlated IN is now supported rather than declined.
+        let plan = under_project(lower(
             "SELECT name FROM users WHERE id IN (SELECT uid FROM orders WHERE total = users.age)",
-            &catalog()
-        )
-        .is_err());
+        ));
+        assert!(
+            matches!(
+                plan,
+                LogicalNode::Join {
+                    kind: JoinKind::Semi,
+                    on: Some(Expr::BinaryOp { op: BinaryOp::And, .. }),
+                    ..
+                }
+            ),
+            "correlated IN decorrelates to a Semi join with AND ON, got {plan:?}"
+        );
     }
 
     #[test]
@@ -1979,6 +2160,147 @@ mod tests {
         // The WHERE scalar's join sits below the Filter, the projection scalar's
         // above it — two nested LEFT JOINs total.
         assert!(matches!(*input, LogicalNode::Join { kind: JoinKind::Left, .. }));
+    }
+
+    // --- Stage 3: correlated subqueries via decorrelation ----------------------
+
+    #[test]
+    fn correlated_exists_lowers_to_semi_with_correlation_on() {
+        // `EXISTS (SELECT 1 FROM orders WHERE orders.uid = users.id)` → Semi join
+        // with the correlation lifted to ON. users width 3, so orders.uid sits at
+        // combined ordinal 4 (3 + uid's inner ordinal 1) and users.id at 0.
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE EXISTS \
+             (SELECT 1 FROM orders WHERE orders.uid = users.id)",
+        ));
+        match plan {
+            LogicalNode::Join {
+                kind: JoinKind::Semi,
+                on: Some(Expr::BinaryOp { op: BinaryOp::Eq, left, right }),
+                right: inner,
+                ..
+            } => {
+                let ords = [
+                    match *left {
+                        Expr::Column(c) => c.ordinal,
+                        _ => usize::MAX,
+                    },
+                    match *right {
+                        Expr::Column(c) => c.ordinal,
+                        _ => usize::MAX,
+                    },
+                ];
+                assert!(
+                    ords.contains(&0) && ords.contains(&4),
+                    "correlation references outer users.id(0) and inner orders.uid(4): {ords:?}"
+                );
+                assert!(matches!(*inner, LogicalNode::Scan { .. }), "right is the bare inner Scan");
+            }
+            other => panic!("expected correlated Semi join with equi ON, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn correlated_exists_splits_inner_local_predicate_into_filter() {
+        // `total > 100` is inner-local (→ inner Filter); `orders.uid = users.id` is
+        // the correlation (→ join ON).
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE EXISTS \
+             (SELECT 1 FROM orders WHERE total > 100 AND orders.uid = users.id)",
+        ));
+        match plan {
+            LogicalNode::Join {
+                kind: JoinKind::Semi,
+                on: Some(_),
+                right: inner,
+                ..
+            } => assert!(
+                matches!(*inner, LogicalNode::Filter { .. }),
+                "inner-local predicate becomes a Filter, got {inner:?}"
+            ),
+            other => panic!("expected Semi join over inner Filter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn correlated_not_exists_lowers_to_anti() {
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE NOT EXISTS \
+             (SELECT 1 FROM orders WHERE orders.uid = users.id)",
+        ));
+        assert!(matches!(
+            plan,
+            LogicalNode::Join {
+                kind: JoinKind::Anti,
+                on: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn correlated_in_lowers_to_semi_with_correlation_and_in_equality() {
+        // `id IN (SELECT uid FROM orders WHERE orders.total > users.age)` → Semi
+        // join, ON = (orders.total > users.age) AND (users.id = orders.uid).
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE id IN \
+             (SELECT uid FROM orders WHERE orders.total > users.age)",
+        ));
+        assert!(
+            matches!(
+                plan,
+                LogicalNode::Join {
+                    kind: JoinKind::Semi,
+                    on: Some(Expr::BinaryOp { op: BinaryOp::And, .. }),
+                    ..
+                }
+            ),
+            "expected Semi join with AND ON (correlation AND in-equality)"
+        );
+    }
+
+    #[test]
+    fn correlated_not_in_lowers_to_null_aware_anti() {
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE id NOT IN \
+             (SELECT uid FROM orders WHERE orders.total > users.age)",
+        ));
+        assert!(matches!(
+            plan,
+            LogicalNode::Join {
+                kind: JoinKind::AntiNullAware,
+                on: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn correlated_subquery_with_inner_join_declines() {
+        // The subquery is not a single-table shape → decorrelation declines → the
+        // whole query falls through to legacy (errors here).
+        assert!(
+            lower_sql(
+                "SELECT name FROM users WHERE EXISTS \
+                 (SELECT 1 FROM orders JOIN users u2 ON orders.uid = u2.id \
+                  WHERE orders.uid = users.id)",
+                &catalog()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn correlated_multi_column_in_declines() {
+        // Correlated multi-column IN is out of scope → decline.
+        assert!(
+            lower_sql(
+                "SELECT name FROM users WHERE (id, age) IN \
+                 (SELECT uid, oid FROM orders WHERE orders.total > users.age)",
+                &catalog()
+            )
+            .is_err()
+        );
     }
 
     #[test]

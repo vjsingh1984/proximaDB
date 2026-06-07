@@ -417,6 +417,39 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "FULL join emits unmatched right (hr)"
     );
 
+    // (3f-corr) Stage 3 — correlated EXISTS. `dept` rows that have at least one
+    // matching `emp` (dept_id = dept.id). The correlation `emp.dept_id = dept.id`
+    // is lifted to the Semi-join ON: depts 1(eng) and 2(sales) have employees;
+    // 3(hr) has none.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT dname FROM {dept} WHERE EXISTS \
+             (SELECT 1 FROM {emp} WHERE {emp}.dept_id = {dept}.id)"
+        ))
+        .await
+        .expect("SELECT correlated EXISTS");
+    assert_eq!(
+        col_set(&rows, "dname"),
+        ["eng".to_string(), "sales".to_string()]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        "correlated EXISTS keeps only depts with a matching employee"
+    );
+
+    // (3f-corr2) Correlated NOT EXISTS → the complement: only 'hr' has no employee.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT dname FROM {dept} WHERE NOT EXISTS \
+             (SELECT 1 FROM {emp} WHERE {emp}.dept_id = {dept}.id)"
+        ))
+        .await
+        .expect("SELECT correlated NOT EXISTS");
+    assert_eq!(
+        col_set(&rows, "dname"),
+        ["hr".to_string()].into_iter().collect::<BTreeSet<_>>(),
+        "correlated NOT EXISTS keeps only the employee-less dept"
+    );
+
     // (3g) RIGHT JOIN ON-predicate pushdown to the null-supplying (left) side:
     // the left-only ON conjunct `emp.ename = 'ann'` is pushed into emp's scan
     // (emp is null-supplying under RIGHT), residual ON = the equi (→ Hash). All
