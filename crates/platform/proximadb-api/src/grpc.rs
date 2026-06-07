@@ -9,7 +9,7 @@ pub mod v2;
 // Re-export v1 services
 pub use v1::{
     CollectionServiceImpl, DocumentServiceImpl, EntityServiceImpl, GraphServiceImpl,
-    HybridSearchServiceImpl, ObservabilityServiceImpl, SecurityServiceImpl, SqlServiceImpl,
+    HybridSearchServiceImpl, ObservabilityServiceImpl, SecurityServiceImpl, QueryServiceImpl,
     StreamingServiceImpl, VectorServiceImpl,
 };
 

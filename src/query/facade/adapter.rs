@@ -759,7 +759,7 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
 ///
 /// Columns and their coarse types are derived from the first record's object
 /// keys, mirroring the ROOT handler's `convert_query_result_to_sql_response`
-/// so the port path shapes an identical `ExecuteSqlResponse`. This is the
+/// so the port path shapes an identical `ExecuteQueryResponse`. This is the
 /// contract that was previously broken — the adapter emitted `{ "rows": … }`,
 /// which the runtime handler does not read (TD-104 / seam S1).
 fn shape_sql_records(records: Vec<serde_json::Value>) -> serde_json::Value {

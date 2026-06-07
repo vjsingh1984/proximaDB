@@ -57,7 +57,7 @@ pub struct SqlRow {
     pub similarity: ::core::option::Option<f32>,
 }
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
-pub struct ExecuteSqlRequest {
+pub struct ExecuteQueryRequest {
     #[prost(string, tag = "1")]
     pub query: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "2")]
@@ -73,7 +73,7 @@ pub struct ExecuteSqlRequest {
     pub offset: ::core::option::Option<u32>,
 }
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
-pub struct ExecuteSqlResponse {
+pub struct ExecuteQueryResponse {
     #[prost(message, repeated, tag = "1")]
     pub rows: ::prost::alloc::vec::Vec<SqlRow>,
     #[prost(uint64, tag = "2")]
@@ -7187,7 +7187,7 @@ pub mod collection_service_server {
     }
 }
 /// Generated client implementations.
-pub mod sql_service_client {
+pub mod query_service_client {
     #![allow(
         unused_variables,
         dead_code,
@@ -7199,10 +7199,10 @@ pub mod sql_service_client {
     use tonic::codegen::*;
     /// SQL execution service (v1, versioned namespace)
     #[derive(Debug, Clone)]
-    pub struct SqlServiceClient<T> {
+    pub struct QueryServiceClient<T> {
         inner: tonic::client::Grpc<T>,
     }
-    impl SqlServiceClient<tonic::transport::Channel> {
+    impl QueryServiceClient<tonic::transport::Channel> {
         /// Attempt to create a new client by connecting to a given endpoint.
         pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
         where
@@ -7213,7 +7213,7 @@ pub mod sql_service_client {
             Ok(Self::new(conn))
         }
     }
-    impl<T> SqlServiceClient<T>
+    impl<T> QueryServiceClient<T>
     where
         T: tonic::client::GrpcService<tonic::body::Body>,
         T::Error: Into<StdError>,
@@ -7231,7 +7231,7 @@ pub mod sql_service_client {
         pub fn with_interceptor<F>(
             inner: T,
             interceptor: F,
-        ) -> SqlServiceClient<InterceptedService<T, F>>
+        ) -> QueryServiceClient<InterceptedService<T, F>>
         where
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
@@ -7244,7 +7244,7 @@ pub mod sql_service_client {
             <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
                 Into<StdError> + std::marker::Send + std::marker::Sync,
         {
-            SqlServiceClient::new(InterceptedService::new(inner, interceptor))
+            QueryServiceClient::new(InterceptedService::new(inner, interceptor))
         }
         /// Compress requests with the given encoding.
         ///
@@ -7277,25 +7277,25 @@ pub mod sql_service_client {
             self.inner = self.inner.max_encoding_message_size(limit);
             self
         }
-        pub async fn execute_sql(
+        pub async fn execute_query(
             &mut self,
-            request: impl tonic::IntoRequest<super::ExecuteSqlRequest>,
-        ) -> std::result::Result<tonic::Response<super::ExecuteSqlResponse>, tonic::Status>
+            request: impl tonic::IntoRequest<super::ExecuteQueryRequest>,
+        ) -> std::result::Result<tonic::Response<super::ExecuteQueryResponse>, tonic::Status>
         {
             self.inner.ready().await.map_err(|e| {
                 tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
             })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/proximadb.v1.SqlService/ExecuteSql");
+            let path = http::uri::PathAndQuery::from_static("/proximadb.v1.QueryService/ExecuteQuery");
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("proximadb.v1.SqlService", "ExecuteSql"));
+                .insert(GrpcMethod::new("proximadb.v1.QueryService", "ExecuteQuery"));
             self.inner.unary(req, path, codec).await
         }
     }
 }
 /// Generated server implementations.
-pub mod sql_service_server {
+pub mod query_service_server {
     #![allow(
         unused_variables,
         dead_code,
@@ -7304,24 +7304,24 @@ pub mod sql_service_server {
         clippy::let_unit_value
     )]
     use tonic::codegen::*;
-    /// Generated trait containing gRPC methods that should be implemented for use with SqlServiceServer.
+    /// Generated trait containing gRPC methods that should be implemented for use with QueryServiceServer.
     #[async_trait]
-    pub trait SqlService: std::marker::Send + std::marker::Sync + 'static {
-        async fn execute_sql(
+    pub trait QueryService: std::marker::Send + std::marker::Sync + 'static {
+        async fn execute_query(
             &self,
-            request: tonic::Request<super::ExecuteSqlRequest>,
-        ) -> std::result::Result<tonic::Response<super::ExecuteSqlResponse>, tonic::Status>;
+            request: tonic::Request<super::ExecuteQueryRequest>,
+        ) -> std::result::Result<tonic::Response<super::ExecuteQueryResponse>, tonic::Status>;
     }
     /// SQL execution service (v1, versioned namespace)
     #[derive(Debug)]
-    pub struct SqlServiceServer<T> {
+    pub struct QueryServiceServer<T> {
         inner: Arc<T>,
         accept_compression_encodings: EnabledCompressionEncodings,
         send_compression_encodings: EnabledCompressionEncodings,
         max_decoding_message_size: Option<usize>,
         max_encoding_message_size: Option<usize>,
     }
-    impl<T> SqlServiceServer<T> {
+    impl<T> QueryServiceServer<T> {
         pub fn new(inner: T) -> Self {
             Self::from_arc(Arc::new(inner))
         }
@@ -7369,9 +7369,9 @@ pub mod sql_service_server {
             self
         }
     }
-    impl<T, B> tonic::codegen::Service<http::Request<B>> for SqlServiceServer<T>
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for QueryServiceServer<T>
     where
-        T: SqlService,
+        T: QueryService,
         B: Body + std::marker::Send + 'static,
         B::Error: Into<StdError> + std::marker::Send + 'static,
     {
@@ -7386,19 +7386,19 @@ pub mod sql_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/proximadb.v1.SqlService/ExecuteSql" => {
+                "/proximadb.v1.QueryService/ExecuteQuery" => {
                     #[allow(non_camel_case_types)]
-                    struct ExecuteSqlSvc<T: SqlService>(pub Arc<T>);
-                    impl<T: SqlService> tonic::server::UnaryService<super::ExecuteSqlRequest> for ExecuteSqlSvc<T> {
-                        type Response = super::ExecuteSqlResponse;
+                    struct ExecuteQuerySvc<T: QueryService>(pub Arc<T>);
+                    impl<T: QueryService> tonic::server::UnaryService<super::ExecuteQueryRequest> for ExecuteQuerySvc<T> {
+                        type Response = super::ExecuteQueryResponse;
                         type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::ExecuteSqlRequest>,
+                            request: tonic::Request<super::ExecuteQueryRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as SqlService>::execute_sql(&inner, request).await
+                                <T as QueryService>::execute_query(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -7409,7 +7409,7 @@ pub mod sql_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = ExecuteSqlSvc(inner);
+                        let method = ExecuteQuerySvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -7441,7 +7441,7 @@ pub mod sql_service_server {
             }
         }
     }
-    impl<T> Clone for SqlServiceServer<T> {
+    impl<T> Clone for QueryServiceServer<T> {
         fn clone(&self) -> Self {
             let inner = self.inner.clone();
             Self {
@@ -7454,8 +7454,8 @@ pub mod sql_service_server {
         }
     }
     /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "proximadb.v1.SqlService";
-    impl<T> tonic::server::NamedService for SqlServiceServer<T> {
+    pub const SERVICE_NAME: &str = "proximadb.v1.QueryService";
+    impl<T> tonic::server::NamedService for QueryServiceServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }
 }

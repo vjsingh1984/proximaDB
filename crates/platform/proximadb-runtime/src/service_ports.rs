@@ -115,7 +115,7 @@ pub trait QueryAdapterPort: Send + Sync {
     /// Execute a SQL statement through the unified facade.
     ///
     /// Returns rows as protocol-neutral JSON so the protocol layer can convert
-    /// to v1 `ExecuteSqlResponse`, v2 `ProximaValue` rows, or any wire format
+    /// to v1 `ExecuteQueryResponse`, v2 `ProximaValue` rows, or any wire format
     /// without the port accumulating v1 surface debt.
     async fn execute_sql(&self, query: String, collection: Option<String>) -> Result<JsonValue>;
 }

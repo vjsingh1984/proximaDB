@@ -46,9 +46,9 @@ pub struct RestCollectionInfo {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// REST-compatible wrapper for ExecuteSqlResponse
+/// REST-compatible wrapper for ExecuteQueryResponse
 #[derive(Debug, Serialize, Deserialize)]
-pub struct RestExecuteSqlResponse {
+pub struct RestExecuteQueryResponse {
     pub success: bool,
     pub message: String,
     pub rows: Vec<HashMap<String, serde_json::Value>>,
@@ -108,8 +108,8 @@ impl From<proximadb_v1::CollectionInfo> for RestCollectionInfo {
     }
 }
 
-impl From<proximadb_v1::ExecuteSqlResponse> for RestExecuteSqlResponse {
-    fn from(proto: proximadb_v1::ExecuteSqlResponse) -> Self {
+impl From<proximadb_v1::ExecuteQueryResponse> for RestExecuteQueryResponse {
+    fn from(proto: proximadb_v1::ExecuteQueryResponse) -> Self {
         Self {
             success: proto.success,
             message: proto.message,

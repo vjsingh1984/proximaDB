@@ -44,7 +44,7 @@ message SqlRow {
   optional float similarity = 2;
 }
 
-message ExecuteSqlRequest {
+message ExecuteQueryRequest {
   string query = 1;
   repeated SqlValue parameters = 2;
   optional string collection = 3;  // Optional collection context
@@ -52,7 +52,7 @@ message ExecuteSqlRequest {
   optional uint32 offset = 5;       // Optional offset override
 }
 
-message ExecuteSqlResponse {
+message ExecuteQueryResponse {
   repeated SqlRow rows = 1;
   uint64 rows_scanned = 2;
   uint64 rows_returned = 3;

@@ -385,7 +385,7 @@ impl UnifiedHandlers {
         self.record_ops.clone()
     }
 
-    /// Wire a `DmlService` for EXPLAIN routing through the gRPC `ExecuteSql` RPC.
+    /// Wire a `DmlService` for EXPLAIN routing through the gRPC `ExecuteQuery` RPC.
     /// Callable post-initialization; thread-safe. Delegated to the shared
     /// `RecordOpsService` so the record-batch path (REST/gRPC/Arrow Flight) and
     /// ROOT's EXPLAIN/DML routing observe the same handle (TD-104 S3-c).
@@ -1967,7 +1967,7 @@ impl UnifiedHandlers {
         }))
     }
 
-    /// Execute SQL and return v1 ExecuteSqlResponse directly (typed rows and params)
+    /// Execute SQL and return v1 ExecuteQueryResponse directly (typed rows and params)
     ///
     /// When the `unified-facade-routing` feature is enabled and a query adapter is set,
     /// SQL queries are routed through the UnifiedQueryFacade for consistent metrics
@@ -1977,7 +1977,7 @@ impl UnifiedHandlers {
         query: String,
         parameters: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         collection: Option<String>,
-    ) -> Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
+    ) -> Result<crate::proto::proximadb_v1::ExecuteQueryResponse> {
         let start_time = std::time::Instant::now();
 
         // EXPLAIN detection: route EXPLAIN [ANALYZE] <DML> through DmlService before any other path.
@@ -1997,7 +1997,7 @@ impl UnifiedHandlers {
                         Ok(explanation) => {
                             let json = serde_json::to_string_pretty(&explanation)
                                 .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
-                            return Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+                            return Ok(crate::proto::proximadb_v1::ExecuteQueryResponse {
                                     rows: vec![crate::proto::proximadb_v1::SqlRow {
                                         fields: vec![crate::proto::proximadb_v1::SqlRowField {
                                             key: "QUERY PLAN".to_string(),
@@ -2039,7 +2039,7 @@ impl UnifiedHandlers {
             // Execute through the facade
             let query_result = adapter.sql_query(&query).await?;
 
-            // Convert QueryResult to ExecuteSqlResponse
+            // Convert QueryResult to ExecuteQueryResponse
             return self.convert_query_result_to_sql_response(query_result, start_time);
         }
 
@@ -2049,7 +2049,7 @@ impl UnifiedHandlers {
             .execute_sql_frontend(query.clone(), parameters.clone(), collection.clone())
             .await?;
 
-        // Convert SqlQueryResult (JSON rows) to v1 ExecuteSqlResponse (typed rows)
+        // Convert SqlQueryResult (JSON rows) to v1 ExecuteQueryResponse (typed rows)
         use crate::proto::proximadb_v1::{SqlRow, SqlRowField};
         let mut rows: Vec<SqlRow> = Vec::new();
         for row in result.rows {
@@ -2069,7 +2069,7 @@ impl UnifiedHandlers {
             });
         }
 
-        Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+        Ok(crate::proto::proximadb_v1::ExecuteQueryResponse {
             rows,
             rows_scanned: 0,
             rows_returned: result.row_count as u64,
@@ -2079,13 +2079,13 @@ impl UnifiedHandlers {
         })
     }
 
-    /// Convert QueryResult from unified facade to ExecuteSqlResponse
+    /// Convert QueryResult from unified facade to ExecuteQueryResponse
     #[cfg(feature = "unified-facade-routing")]
     fn convert_query_result_to_sql_response(
         &self,
         query_result: crate::query::QueryResult,
         start_time: std::time::Instant,
-    ) -> Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
+    ) -> Result<crate::proto::proximadb_v1::ExecuteQueryResponse> {
         use crate::proto::proximadb_v1::{SqlRow, SqlRowField};
         use crate::query::QueryResultData;
 
@@ -2150,7 +2150,7 @@ impl UnifiedHandlers {
 
         let row_count = rows.len() as u64;
 
-        Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+        Ok(crate::proto::proximadb_v1::ExecuteQueryResponse {
             rows,
             rows_scanned: 0,
             rows_returned: row_count,
@@ -3714,7 +3714,7 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
         query: String,
         parameters: Option<Vec<proximadb_data_model::ProximaValue>>,
         collection: Option<String>,
-    ) -> anyhow::Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ExecuteQueryResponse> {
         let legacy_parameters = parameters.map(|values| {
             values
                 .iter()

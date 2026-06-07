@@ -22,7 +22,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use proximadb_data_model::ProximaValue;
 use proximadb_proto::v1::{
-    CollectionOperation, CollectionRequest, CollectionResponse, ExecuteSqlResponse,
+    CollectionOperation, CollectionRequest, CollectionResponse, ExecuteQueryResponse,
     HybridSearchRequest, HybridSearchResponse, SqlRow, SqlRowField, SqlValue, VectorBatchRequest,
     VectorOperationResponse, VectorSearchRequest, sql_value,
 };
@@ -291,7 +291,7 @@ impl ApiHandlersPort for UnifiedHandlers {
         query: String,
         _parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-    ) -> Result<ExecuteSqlResponse> {
+    ) -> Result<ExecuteQueryResponse> {
         let adapter = self
             .query_adapter
             .as_ref()
@@ -356,7 +356,7 @@ impl ApiHandlersPort for UnifiedHandlers {
             .and_then(|v| v.as_u64())
             .unwrap_or(rows_returned);
 
-        Ok(ExecuteSqlResponse {
+        Ok(ExecuteQueryResponse {
             rows,
             rows_scanned,
             rows_returned,

@@ -4935,7 +4935,7 @@ impl EmbeddedProximaDB {
     }
 
     fn sql_response_to_embedded(
-        response: crate::proto::proximadb_v1::ExecuteSqlResponse,
+        response: crate::proto::proximadb_v1::ExecuteQueryResponse,
     ) -> EmbeddedSqlQueryResult {
         let rows = response
             .rows

@@ -41,7 +41,7 @@ pub use rest::{RestApiHandler, RestRequest, RestResponse};
 // Re-export v1 handlers
 pub use grpc::v1::{
     CollectionServiceImpl, DocumentServiceImpl, EntityServiceImpl, GraphServiceImpl,
-    HybridSearchServiceImpl, ObservabilityServiceImpl, SecurityServiceImpl, SqlServiceImpl,
+    HybridSearchServiceImpl, ObservabilityServiceImpl, SecurityServiceImpl, QueryServiceImpl,
     StreamingServiceImpl, VectorServiceImpl,
 };
 pub use rest::v1::{
@@ -78,7 +78,7 @@ pub(crate) mod test_support {
     use async_trait::async_trait;
     use proximadb_data_model::ProximaValue;
     use proximadb_proto::v1::{
-        Collection, CollectionConfig, CollectionRequest, CollectionResponse, ExecuteSqlResponse,
+        Collection, CollectionConfig, CollectionRequest, CollectionResponse, ExecuteQueryResponse,
         HybridSearchRequest, HybridSearchResponse, VectorBatchRequest, VectorOperationResponse,
         VectorSearchRequest,
     };
@@ -123,7 +123,7 @@ pub(crate) mod test_support {
         calls: Mutex<Vec<ApiCall>>,
         pub(crate) collection_response: Mutex<CollectionResponse>,
         pub(crate) vector_response: Mutex<VectorOperationResponse>,
-        pub(crate) sql_response: Mutex<ExecuteSqlResponse>,
+        pub(crate) sql_response: Mutex<ExecuteQueryResponse>,
     }
 
     impl RecordingApiPort {
@@ -132,7 +132,7 @@ pub(crate) mod test_support {
                 calls: Mutex::new(Vec::new()),
                 collection_response: Mutex::new(CollectionResponse::default()),
                 vector_response: Mutex::new(VectorOperationResponse::default()),
-                sql_response: Mutex::new(ExecuteSqlResponse::default()),
+                sql_response: Mutex::new(ExecuteQueryResponse::default()),
             })
         }
 
@@ -225,7 +225,7 @@ pub(crate) mod test_support {
             query: String,
             parameters: Option<Vec<ProximaValue>>,
             collection: Option<String>,
-        ) -> Result<ExecuteSqlResponse> {
+        ) -> Result<ExecuteQueryResponse> {
             self.calls.lock().unwrap().push(ApiCall::Sql {
                 query,
                 parameter_count: parameters.as_ref().map(Vec::len),

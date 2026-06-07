@@ -13,7 +13,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_data_model::ProximaValue;
 use proximadb_proto::v1::{
-    CollectionRequest, CollectionResponse, ExecuteSqlResponse, HybridSearchRequest,
+    CollectionRequest, CollectionResponse, ExecuteQueryResponse, HybridSearchRequest,
     HybridSearchResponse, VectorBatchRequest, VectorOperationResponse, VectorSearchRequest,
 };
 
@@ -74,5 +74,5 @@ pub trait ApiHandlersPort: Send + Sync {
         query: String,
         parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
-    ) -> Result<ExecuteSqlResponse>;
+    ) -> Result<ExecuteQueryResponse>;
 }

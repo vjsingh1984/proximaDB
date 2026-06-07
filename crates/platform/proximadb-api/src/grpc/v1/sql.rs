@@ -7,33 +7,33 @@
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use proximadb_proto::v1::sql_service_server::{SqlService, SqlServiceServer};
+use proximadb_proto::v1::query_service_server::{QueryService, QueryServiceServer};
 use proximadb_proto::v1::{self as v1};
 use proximadb_runtime::ApiHandlersPort;
 
-/// gRPC implementation of the SqlService for executing SQL queries.
-pub struct SqlServiceImpl {
+/// gRPC implementation of the QueryService for executing SQL queries.
+pub struct QueryServiceImpl {
     port: Arc<dyn ApiHandlersPort>,
 }
 
-impl SqlServiceImpl {
+impl QueryServiceImpl {
     /// Create a new SQL service backed by the given port.
     pub fn new(port: Arc<dyn ApiHandlersPort>) -> Self {
         Self { port }
     }
 
     /// Convert this implementation into a tonic gRPC server.
-    pub fn into_server(self) -> SqlServiceServer<Self> {
-        SqlServiceServer::new(self)
+    pub fn into_server(self) -> QueryServiceServer<Self> {
+        QueryServiceServer::new(self)
     }
 }
 
 #[tonic::async_trait]
-impl SqlService for SqlServiceImpl {
-    async fn execute_sql(
+impl QueryService for QueryServiceImpl {
+    async fn execute_query(
         &self,
-        request: Request<v1::ExecuteSqlRequest>,
-    ) -> Result<Response<v1::ExecuteSqlResponse>, Status> {
+        request: Request<v1::ExecuteQueryRequest>,
+    ) -> Result<Response<v1::ExecuteQueryResponse>, Status> {
         let req = request.into_inner();
         let parameters = if req.parameters.is_empty() {
             None
@@ -64,17 +64,17 @@ mod tests {
     async fn execute_sql_lowers_wire_parameters_to_canonical_port_values() {
         let port = RecordingApiPort::new();
         port.sql_response.lock().unwrap().rows_returned = 3;
-        let service = SqlServiceImpl::new(port.clone());
-        let _server = SqlServiceImpl::new(port.clone()).into_server();
+        let service = QueryServiceImpl::new(port.clone());
+        let _server = QueryServiceImpl::new(port.clone()).into_server();
 
         let response = service
-            .execute_sql(Request::new(v1::ExecuteSqlRequest {
+            .execute_query(Request::new(v1::ExecuteQueryRequest {
                 query: "select * from docs where id = $1".to_string(),
                 parameters: vec![v1::SqlValue {
                     value: Some(v1::sql_value::Value::StringValue("doc-1".to_string())),
                 }],
                 collection: Some("docs".to_string()),
-                ..v1::ExecuteSqlRequest::default()
+                ..v1::ExecuteQueryRequest::default()
             }))
             .await
             .unwrap()
@@ -94,14 +94,14 @@ mod tests {
     #[tokio::test]
     async fn execute_sql_omits_empty_parameter_list_at_runtime_port_boundary() {
         let port = RecordingApiPort::new();
-        let service = SqlServiceImpl::new(port.clone());
+        let service = QueryServiceImpl::new(port.clone());
 
         service
-            .execute_sql(Request::new(v1::ExecuteSqlRequest {
+            .execute_query(Request::new(v1::ExecuteQueryRequest {
                 query: "select 1".to_string(),
                 parameters: Vec::new(),
                 collection: None,
-                ..v1::ExecuteSqlRequest::default()
+                ..v1::ExecuteQueryRequest::default()
             }))
             .await
             .unwrap();

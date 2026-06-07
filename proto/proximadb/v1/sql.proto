@@ -5,6 +5,6 @@ package proximadb.v1;
 import "proximadb/v1/types.proto";
 
 // SQL execution service (v1, versioned namespace)
-service SqlService {
-  rpc ExecuteSql(ExecuteSqlRequest) returns (ExecuteSqlResponse);
+service QueryService {
+  rpc ExecuteQuery(ExecuteQueryRequest) returns (ExecuteQueryResponse);
 }

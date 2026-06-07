@@ -595,7 +595,7 @@ fn filter_canonical_wal_for_collection(
 }
 
 // SQL query response structure
-// For REST, we now return proximadb.v1 ExecuteSqlResponse directly, wrapped by ProtoApiResponse
+// For REST, we now return proximadb.v1 ExecuteQueryResponse directly, wrapped by ProtoApiResponse
 /// Column information in SQL results
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SqlColumnInfo {
@@ -789,7 +789,7 @@ pub async fn execute_sql(
             let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
             // Convert SQL response to JSON value for now
-            // Deferred: Create proper JsonExecuteSqlResponse wrapper if needed
+            // Deferred: Create proper JsonExecuteQueryResponse wrapper if needed
             let json_data = serde_json::json!({
                 "rows": v1_resp.rows.iter().map(|row| {
                     // Convert fields to a JSON object instead of list of key/value pairs

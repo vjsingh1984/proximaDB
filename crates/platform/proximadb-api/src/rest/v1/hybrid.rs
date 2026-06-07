@@ -707,7 +707,7 @@ mod tests {
         use proximadb_proto::v1::sql_value::Value;
 
         let port = RecordingApiPort::new();
-        *port.sql_response.lock().unwrap() = proximadb_proto::v1::ExecuteSqlResponse {
+        *port.sql_response.lock().unwrap() = proximadb_proto::v1::ExecuteQueryResponse {
             rows: vec![SqlRow {
                 fields: vec![SqlRowField {
                     key: "answer".to_string(),

@@ -108,7 +108,7 @@
 //! Federated queries are available via:
 //!
 //! - **REST**: `POST /api/v1/unified/federated` with `{ "query": "SELECT ..." }`
-//! - **gRPC**: `SqlService.ExecuteSql` with federated SQL
+//! - **gRPC**: `QueryService.ExecuteQuery` with federated SQL
 //! - **PostgreSQL Wire Protocol**: Connect with psql and run queries directly
 //!
 //! ## Example Usage (REST)

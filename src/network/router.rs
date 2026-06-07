@@ -7,7 +7,7 @@ use crate::api_handlers::UnifiedHandlers;
 use crate::metrics::InternalMetricsUpdater;
 use crate::proto::proximadb_v1::{
     CollectionRequest, CollectionResponse, VectorBatchRequest, VectorOperationResponse,
-    VectorSearchRequest, HybridSearchRequest, HybridSearchResponse, ExecuteSqlResponse, SqlValue,
+    VectorSearchRequest, HybridSearchRequest, HybridSearchResponse, ExecuteQueryResponse, SqlValue,
 };
 
 // --- CustomerRouter Struct ---
@@ -228,8 +228,8 @@ impl CustomerRouter {
 
     pub async fn execute_sql_v1(
         &self,
-        request: Request<proximadb_v1::ExecuteSqlRequest>,
-    ) -> Result<Response<ExecuteSqlResponse>, Status> {
+        request: Request<proximadb_v1::ExecuteQueryRequest>,
+    ) -> Result<Response<ExecuteQueryResponse>, Status> {
         let tenant_id = self.extract_tenant_id_grpc(&request);
         let start_time = std::time::Instant::now();
         let req_size = request.get_ref().encoded_len() as u64;

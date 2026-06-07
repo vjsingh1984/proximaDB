@@ -64,6 +64,6 @@ pub use graph::GraphServiceImpl;
 pub use hybrid::HybridSearchServiceImpl;
 pub use observability::ObservabilityServiceImpl;
 pub use security::SecurityServiceImpl;
-pub use sql::SqlServiceImpl;
+pub use sql::QueryServiceImpl;
 pub use streaming::StreamingServiceImpl;
 pub use vector::VectorServiceImpl;

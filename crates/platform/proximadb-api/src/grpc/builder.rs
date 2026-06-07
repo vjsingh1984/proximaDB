@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::grpc::v1::{
     collection::CollectionServiceImpl, document::DocumentServiceImpl, entity::EntityServiceImpl,
     graph::GraphServiceImpl, hybrid::HybridSearchServiceImpl,
-    observability::ObservabilityServiceImpl, security::SecurityServiceImpl, sql::SqlServiceImpl,
+    observability::ObservabilityServiceImpl, security::SecurityServiceImpl, sql::QueryServiceImpl,
     streaming::StreamingServiceImpl, vector::VectorServiceImpl,
 };
 use proximadb_proto::streaming::v1::streaming_service_server::StreamingServiceServer;
@@ -21,7 +21,7 @@ use proximadb_proto::v1::{
     graph_service_server::GraphServiceServer,
     hybrid_search_service_server::HybridSearchServiceServer,
     observability_service_server::ObservabilityServiceServer,
-    security_service_server::SecurityServiceServer, sql_service_server::SqlServiceServer,
+    security_service_server::SecurityServiceServer, query_service_server::QueryServiceServer,
     vector_service_server::VectorServiceServer,
 };
 use proximadb_runtime::{
@@ -203,11 +203,11 @@ impl GrpcServiceBuilder {
     }
 
     /// Build SQL service
-    pub fn build_sql_service(
+    pub fn build_query_service(
         &self,
         port: Arc<dyn ApiHandlersPort>,
-    ) -> SqlServiceServer<SqlServiceImpl> {
-        let server = SqlServiceServer::new(SqlServiceImpl::new(port));
+    ) -> QueryServiceServer<QueryServiceImpl> {
+        let server = QueryServiceServer::new(QueryServiceImpl::new(port));
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -386,7 +386,7 @@ impl GrpcServiceFactory {
             entity: builder.build_entity_service(self.entity_port.clone()),
             graph: builder.build_graph_service(self.graph_port.clone()),
             hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
-            sql: builder.build_sql_service(self.port.clone()),
+            sql: builder.build_query_service(self.port.clone()),
             streaming: builder.build_streaming_service(self.streaming_port.clone()),
             observability: builder.build_observability_service(self.observability_port.clone()),
             security: builder.build_security_service(self.security_port.clone()),
@@ -406,7 +406,7 @@ impl GrpcServiceFactory {
             entity: builder.build_entity_service(self.entity_port.clone()),
             graph: builder.build_graph_service(self.graph_port.clone()),
             hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
-            sql: builder.build_sql_service(self.port.clone()),
+            sql: builder.build_query_service(self.port.clone()),
             streaming: builder.build_streaming_service(self.streaming_port.clone()),
             observability: builder.build_observability_service(self.observability_port.clone()),
             security: builder.build_security_service(self.security_port.clone()),
@@ -426,7 +426,7 @@ pub struct GrpcServices {
     pub entity: EntityServiceServer<EntityServiceImpl>,
     pub graph: GraphServiceServer<GraphServiceImpl>,
     pub hybrid_search: HybridSearchServiceServer<HybridSearchServiceImpl>,
-    pub sql: SqlServiceServer<SqlServiceImpl>,
+    pub sql: QueryServiceServer<QueryServiceImpl>,
     pub streaming: StreamingServiceServer<StreamingServiceImpl>,
     pub observability: ObservabilityServiceServer<ObservabilityServiceImpl>,
     pub security: SecurityServiceServer<SecurityServiceImpl>,
@@ -494,7 +494,7 @@ mod tests {
         let _entity = builder.build_entity_service(None);
         let _graph = builder.build_graph_service(None);
         let _hybrid = builder.build_hybrid_search_service(None);
-        let _sql = builder.build_sql_service(port);
+        let _sql = builder.build_query_service(port);
         let _streaming = builder.build_streaming_service(None);
         let _observability = builder.build_observability_service(None);
         let _security = builder.build_security_service(None);
