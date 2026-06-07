@@ -214,7 +214,7 @@ fn lower_values(values: &sqlparser::ast::Values) -> Result<LogicalNode, Frontend
     for (i, row) in values.rows.iter().enumerate() {
         let mut lowered = Vec::with_capacity(row.len());
         for (j, e) in row.iter().enumerate() {
-            let expr = lower_expr(e, &empty_scope)?;
+            let expr = lower_expr_sealed(e, &empty_scope)?;
             if i == 0 {
                 col_types.push(expr.result_type());
             }
@@ -284,9 +284,11 @@ fn lower_select(
             }
         }
         if let Some((first, rest)) = filter_conjuncts.split_first() {
-            let mut predicate = lower_expr(first, &scope)?;
+            // Stage 1: WHERE expressions are sealed against scalar subqueries
+            // (Stage 2 un-seals this to hoist `WHERE a > (SELECT …)`).
+            let mut predicate = lower_expr_sealed(first, &scope)?;
             for conj in rest {
-                predicate = Expr::bin(BinaryOp::And, predicate, lower_expr(conj, &scope)?);
+                predicate = Expr::bin(BinaryOp::And, predicate, lower_expr_sealed(conj, &scope)?);
             }
             plan = LogicalNode::Filter {
                 input: Box::new(plan),
@@ -317,7 +319,7 @@ fn lower_select(
         let group_by: Vec<NamedExpr> = group_keys
             .iter()
             .map(|g| -> Result<NamedExpr, FrontendError> {
-                let expr = lower_expr(g, &scope)?;
+                let expr = lower_expr_sealed(g, &scope)?;
                 let name = projection_alias_for_expr(g);
                 Ok(NamedExpr {
                     name: name.unwrap_or_else(|| "group_key".into()),
@@ -341,7 +343,7 @@ fn lower_select(
             }
             Some(expr) => {
                 let post_agg_scope = post_aggregate_scope(&group_by, &aggregates);
-                Some(lower_expr(expr, &post_agg_scope)?)
+                Some(lower_expr_sealed(expr, &post_agg_scope)?)
             }
             None => None,
         };
@@ -356,7 +358,27 @@ fn lower_select(
             outputs: post_agg_outputs,
         };
     } else {
-        let projection_items = lower_projection_items(&select.projection, &scope)?;
+        // Lower the projection through a hoisting context so a scalar subquery in
+        // an output expression (e.g. `SELECT name, (SELECT max(t) FROM o) FROM u`)
+        // is rewritten to a `LEFT JOIN ON TRUE` over an `AssertMaxOneRow`-guarded
+        // subplan. `base_width` is frozen to the current relation width BEFORE
+        // lowering, so hoisted columns append after the base columns and existing
+        // ordinals never shift.
+        let base_width = scope.columns.len();
+        let mut ctx = LoweringCtx::new(catalog, base_width);
+        let projection_items = lower_projection_items(&select.projection, &scope, &mut ctx)?;
+        // Append each hoisted subquery as a LEFT JOIN onto the base plan, in
+        // allocation order, BEFORE the Project — the projection's column refs
+        // point at the post-join ordinals.
+        for hoisted in ctx.hoisted.drain(..) {
+            plan = LogicalNode::Join {
+                left: Box::new(plan),
+                right: Box::new(hoisted.plan),
+                kind: JoinKind::Left,
+                on: hoisted.on,
+                strategy: JoinStrategy::Auto,
+            };
+        }
         plan = LogicalNode::Project {
             input: Box::new(plan),
             outputs: projection_items,
@@ -451,7 +473,7 @@ fn lower_subquery_join_parts(
             let base = scope.columns.len();
             let mut on: Option<Expr> = None;
             for (i, oexpr) in outer_exprs.iter().enumerate() {
-                let outer = lower_expr(oexpr, scope)?;
+                let outer = lower_expr_sealed(oexpr, scope)?;
                 let sub_col = &sub_schema.columns[i];
                 let sub_ref = ColumnRef {
                     name: sub_col.name.clone(),
@@ -575,7 +597,7 @@ fn lower_table_with_joins(
             | JoinOperator::RightOuter(c)
             | JoinOperator::Right(c)
             | JoinOperator::FullOuter(c) => match c {
-                JoinConstraint::On(expr) => Some(lower_expr(expr, &combined)?),
+                JoinConstraint::On(expr) => Some(lower_expr_sealed(expr, &combined)?),
                 JoinConstraint::Using(_) => {
                     return Err(FrontendError::Unsupported("USING constraint".into()));
                 }
@@ -648,25 +670,29 @@ fn lower_table_factor(
 fn lower_projection_items(
     items: &[SelectItem],
     scope: &Scope,
+    ctx: &mut LoweringCtx,
 ) -> Result<Vec<NamedExpr>, FrontendError> {
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         match item {
             SelectItem::UnnamedExpr(e) => {
-                let expr = lower_expr(e, scope)?;
+                let expr = lower_expr(e, scope, ctx)?;
                 let name =
                     projection_alias_for_expr(e).unwrap_or_else(|| auto_column_name(out.len()));
                 out.push(NamedExpr { name, expr });
             }
             SelectItem::ExprWithAlias { expr, alias } => {
-                let e = lower_expr(expr, scope)?;
+                let e = lower_expr(expr, scope, ctx)?;
                 out.push(NamedExpr {
                     name: alias.value.clone(),
                     expr: e,
                 });
             }
             SelectItem::Wildcard(_) => {
-                // SELECT * → expand to every column in scope.
+                // SELECT * → expand to every column in the BASE scope only.
+                // `scope` reflects the base relation (hoisted scalar-subquery
+                // columns are appended AFTER projection lowering), so `*` never
+                // exposes them.
                 for col in scope.all_columns() {
                     out.push(NamedExpr {
                         name: col.name.clone(),
@@ -690,9 +716,132 @@ fn auto_column_name(idx: usize) -> String {
 // Expression lowering
 // =========================================================================
 
-fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
+/// Threaded through expression lowering to collect scalar subqueries that must
+/// be hoisted into `LEFT JOIN ON TRUE` relations. The caller (e.g.
+/// [`lower_projection_items`]) drains [`LoweringCtx::hoisted`] after lowering and
+/// appends each as a `LEFT JOIN` onto the outer plan.
+///
+/// In positions where a subquery is not supported (VALUES rows, ORDER BY,
+/// HAVING, JOIN ON, function arguments, the GROUP BY/aggregate projection path,
+/// `CREATE FUNCTION` bodies) the position is *sealed* — `catalog` is `None` and a
+/// subquery errors with [`FrontendError::Unsupported`]. Those callers use the
+/// [`lower_expr_sealed`] wrapper.
+struct LoweringCtx<'a> {
+    /// `Some` when scalar subqueries are allowed here; `None` seals the position.
+    catalog: Option<&'a dyn CatalogLookup>,
+    /// Column width of the base relation, frozen BEFORE any hoist. Hoisted
+    /// subquery columns are appended AFTER these, so base ordinals never shift.
+    base_width: usize,
+    /// Subquery relations to `LEFT JOIN` onto the base relation, in allocation
+    /// order. Each is an `AssertMaxOneRow`-guarded plan (uncorrelated scalar).
+    hoisted: Vec<HoistedSub>,
+}
+
+/// A scalar subquery hoisted out of an expression, to be `LEFT JOIN`ed onto the
+/// outer plan.
+struct HoistedSub {
+    /// The relation to join (an `AssertMaxOneRow` for an uncorrelated scalar).
+    plan: LogicalNode,
+    /// Join predicate. `None` = ON TRUE (uncorrelated scalar: zero rows → NULL,
+    /// one row → value).
+    on: Option<Expr>,
+}
+
+impl<'a> LoweringCtx<'a> {
+    fn new(catalog: &'a dyn CatalogLookup, base_width: usize) -> Self {
+        Self {
+            catalog: Some(catalog),
+            base_width,
+            hoisted: Vec::new(),
+        }
+    }
+
+    /// A position where subqueries are disallowed.
+    fn sealed() -> Self {
+        Self {
+            catalog: None,
+            base_width: 0,
+            hoisted: Vec::new(),
+        }
+    }
+
+    /// Ordinal the NEXT hoisted column will occupy in the combined row: base
+    /// width plus the total width of all subqueries hoisted so far.
+    fn next_ordinal(&self) -> usize {
+        self.base_width
+            + self
+                .hoisted
+                .iter()
+                .map(|h| h.plan.output_schema().columns.len())
+                .sum::<usize>()
+    }
+}
+
+/// Lower an expression in a position where subqueries are not allowed. Builds a
+/// sealed [`LoweringCtx`]; a subquery encountered here errors `Unsupported`.
+fn lower_expr_sealed(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
+    let mut ctx = LoweringCtx::sealed();
+    let lowered = lower_expr(expr, scope, &mut ctx)?;
+    debug_assert!(ctx.hoisted.is_empty(), "sealed lowering must not hoist");
+    lowered_no_hoist(lowered, &ctx)
+}
+
+/// Guard: a sealed context must never have accumulated a hoist (the subquery arm
+/// rejects before pushing). Returns the expression unchanged.
+fn lowered_no_hoist(expr: Expr, ctx: &LoweringCtx) -> Result<Expr, FrontendError> {
+    if ctx.hoisted.is_empty() {
+        Ok(expr)
+    } else {
+        Err(FrontendError::Unsupported(
+            "subquery not allowed in this position".into(),
+        ))
+    }
+}
+
+/// Lower an uncorrelated scalar subquery `(SELECT col FROM …)` appearing inside
+/// an expression. Hoists it into `ctx` as an `AssertMaxOneRow`-guarded relation
+/// (the caller `LEFT JOIN`s it ON TRUE) and returns a `ColumnRef` to its single
+/// output column. A correlated subquery fails to resolve its outer column in
+/// isolation (the inner scope is built from the subquery's own FROM only) →
+/// `Err` → the whole query declines to the legacy path. Stage 3 adds correlated
+/// handling here.
+fn lower_scalar_subquery(q: &SqlQuery, ctx: &mut LoweringCtx) -> Result<Expr, FrontendError> {
+    let Some(catalog) = ctx.catalog else {
+        return Err(FrontendError::Unsupported(
+            "subquery not allowed in this position".into(),
+        ));
+    };
+    let sub_plan = lower_query(q, catalog)?;
+    let sub_schema = sub_plan.output_schema();
+    if sub_schema.columns.len() != 1 {
+        return Err(FrontendError::Unsupported(
+            "scalar subquery must return exactly one column".into(),
+        ));
+    }
+    let col = sub_schema.columns[0].clone();
+    let ordinal = ctx.next_ordinal();
+    ctx.hoisted.push(HoistedSub {
+        plan: LogicalNode::AssertMaxOneRow {
+            input: Box::new(sub_plan),
+        },
+        on: None,
+    });
+    Ok(Expr::column(ColumnRef {
+        name: col.name,
+        ordinal,
+        ty: col.ty,
+        // Empty subquery → LEFT JOIN null-pads → the value is always possibly NULL.
+        nullable: true,
+    }))
+}
+
+fn lower_expr(
+    expr: &SqlExpr,
+    scope: &Scope,
+    ctx: &mut LoweringCtx,
+) -> Result<Expr, FrontendError> {
     match expr {
-        SqlExpr::Nested(inner) => lower_expr(inner, scope),
+        SqlExpr::Nested(inner) => lower_expr(inner, scope, ctx),
         SqlExpr::Identifier(id) => scope.resolve_unqualified(&id.value).map(Expr::column),
         SqlExpr::CompoundIdentifier(parts) => {
             if parts.len() < 2 {
@@ -713,23 +862,23 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
             Err(FrontendError::Unsupported("typed string literal".into()))
         }
         SqlExpr::BinaryOp { left, op, right } => {
-            let l = lower_expr(left, scope)?;
-            let r = lower_expr(right, scope)?;
+            let l = lower_expr(left, scope, ctx)?;
+            let r = lower_expr(right, scope, ctx)?;
             Ok(Expr::bin(lower_binary_op(op)?, l, r))
         }
         SqlExpr::UnaryOp { op, expr } => {
-            let inner = lower_expr(expr, scope)?;
+            let inner = lower_expr(expr, scope, ctx)?;
             match lower_unary_op(op)? {
                 Some(uop) => Ok(Expr::unary(uop, inner)),
                 None => Ok(inner), // unary +
             }
         }
         SqlExpr::IsNull(e) => Ok(Expr::IsNull {
-            expr: Box::new(lower_expr(e, scope)?),
+            expr: Box::new(lower_expr(e, scope, ctx)?),
             not: false,
         }),
         SqlExpr::IsNotNull(e) => Ok(Expr::IsNull {
-            expr: Box::new(lower_expr(e, scope)?),
+            expr: Box::new(lower_expr(e, scope, ctx)?),
             not: true,
         }),
         SqlExpr::Between {
@@ -738,9 +887,9 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
             high,
             negated,
         } => Ok(Expr::Between {
-            expr: Box::new(lower_expr(expr, scope)?),
-            low: Box::new(lower_expr(low, scope)?),
-            high: Box::new(lower_expr(high, scope)?),
+            expr: Box::new(lower_expr(expr, scope, ctx)?),
+            low: Box::new(lower_expr(low, scope, ctx)?),
+            high: Box::new(lower_expr(high, scope, ctx)?),
             not: *negated,
         }),
         SqlExpr::InList {
@@ -748,10 +897,10 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
             list,
             negated,
         } => Ok(Expr::In {
-            expr: Box::new(lower_expr(expr, scope)?),
+            expr: Box::new(lower_expr(expr, scope, ctx)?),
             list: list
                 .iter()
-                .map(|e| lower_expr(e, scope))
+                .map(|e| lower_expr(e, scope, ctx))
                 .collect::<Result<Vec<_>, _>>()?,
             not: *negated,
         }),
@@ -761,8 +910,8 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
             negated,
             ..
         } => Ok(Expr::Like {
-            expr: Box::new(lower_expr(expr, scope)?),
-            pattern: Box::new(lower_expr(pattern, scope)?),
+            expr: Box::new(lower_expr(expr, scope, ctx)?),
+            pattern: Box::new(lower_expr(pattern, scope, ctx)?),
             not: *negated,
             case_insensitive: false,
         }),
@@ -772,12 +921,12 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
             negated,
             ..
         } => Ok(Expr::Like {
-            expr: Box::new(lower_expr(expr, scope)?),
-            pattern: Box::new(lower_expr(pattern, scope)?),
+            expr: Box::new(lower_expr(expr, scope, ctx)?),
+            pattern: Box::new(lower_expr(pattern, scope, ctx)?),
             not: *negated,
             case_insensitive: true,
         }),
-        SqlExpr::Function(f) => lower_scalar_function(f, scope),
+        SqlExpr::Function(f) => lower_scalar_function(f, scope, ctx),
         // CASE — both the searched form (`CASE WHEN cond THEN r ...`) and the simple
         // form (`CASE op WHEN v THEN r ...`, lowered to `op = v` branch conditions).
         SqlExpr::Case {
@@ -791,15 +940,15 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
                 let cond = match operand {
                     Some(op) => Expr::bin(
                         BinaryOp::Eq,
-                        lower_expr(op, scope)?,
-                        lower_expr(&cw.condition, scope)?,
+                        lower_expr(op, scope, ctx)?,
+                        lower_expr(&cw.condition, scope, ctx)?,
                     ),
-                    None => lower_expr(&cw.condition, scope)?,
+                    None => lower_expr(&cw.condition, scope, ctx)?,
                 };
-                branches.push((cond, lower_expr(&cw.result, scope)?));
+                branches.push((cond, lower_expr(&cw.result, scope, ctx)?));
             }
             let otherwise = match else_result {
-                Some(e) => Some(Box::new(lower_expr(e, scope)?)),
+                Some(e) => Some(Box::new(lower_expr(e, scope, ctx)?)),
                 None => None,
             };
             Ok(Expr::Case {
@@ -807,9 +956,10 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
                 otherwise,
             })
         }
-        SqlExpr::Subquery(_) | SqlExpr::Exists { .. } | SqlExpr::InSubquery { .. } => {
-            Err(FrontendError::Unsupported("subqueries".into()))
-        }
+        SqlExpr::Subquery(q) => lower_scalar_subquery(q, ctx),
+        SqlExpr::Exists { .. } | SqlExpr::InSubquery { .. } => Err(FrontendError::Unsupported(
+            "EXISTS / IN subquery in expression position".into(),
+        )),
         other => Err(FrontendError::Unsupported(format!(
             "expression {:?}",
             std::mem::discriminant(other)
@@ -937,7 +1087,10 @@ fn lower_projection_with_aggregates(
                 });
             }
             _ => {
-                let expr = lower_expr(&sql_expr, scope)?;
+                // Aggregate-path projection: scalar subqueries here would need to
+                // hoist a join under the Aggregate, which is out of scope for MVP
+                // (a GROUP BY query with a scalar subquery declines to legacy).
+                let expr = lower_expr_sealed(&sql_expr, scope)?;
                 let name = alias
                     .or_else(|| projection_alias_for_expr(&sql_expr))
                     .unwrap_or_else(|| auto_column_name(outputs.len()));
@@ -1014,6 +1167,7 @@ fn post_aggregate_scope(group_by: &[NamedExpr], aggregates: &[NamedAggregate]) -
 fn lower_scalar_function(
     f: &sqlparser::ast::Function,
     scope: &Scope,
+    ctx: &mut LoweringCtx,
 ) -> Result<Expr, FrontendError> {
     let raw_name = f.name.to_string();
     if matches!(
@@ -1030,7 +1184,7 @@ fn lower_scalar_function(
             .args
             .iter()
             .map(|fa| match fa {
-                FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => lower_expr(e, scope),
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => lower_expr(e, scope, ctx),
                 _ => Err(FrontendError::Unsupported(
                     "unsupported scalar function argument".into(),
                 )),
@@ -1093,7 +1247,7 @@ fn lower_aggregate_call(
                 .iter()
                 .map(|fa| match fa {
                     FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => {
-                        Ok(Some(lower_expr(e, scope)?))
+                        Ok(Some(lower_expr_sealed(e, scope)?))
                     }
                     FunctionArg::Unnamed(FunctionArgExpr::Wildcard) => Ok(None),
                     FunctionArg::Unnamed(FunctionArgExpr::QualifiedWildcard(_)) => Ok(None),
@@ -1215,7 +1369,7 @@ fn apply_order_by(
     let scope = Scope::from_schema(&plan.output_schema());
     let mut keys = Vec::with_capacity(exprs.len());
     for o in exprs {
-        let expr = lower_expr(&o.expr, &scope)?;
+        let expr = lower_expr_sealed(&o.expr, &scope)?;
         let descending = matches!(o.options.asc, Some(false));
         let nulls_first = match o.options.nulls_first {
             Some(b) => b,
@@ -1463,7 +1617,7 @@ pub fn lower_function_body(
     let expr = parser
         .parse_expr()
         .map_err(|e| FrontendError::Parse(format!("function body: {e}")))?;
-    lower_expr(&expr, &scope)
+    lower_expr_sealed(&expr, &scope)
 }
 
 // =========================================================================
@@ -1658,6 +1812,119 @@ mod tests {
             } => {}
             other => panic!("expected AntiNullAware join with AND ON, got {other:?}"),
         }
+    }
+
+    // --- Stage 1: uncorrelated scalar subquery in projection -------------------
+
+    #[test]
+    fn scalar_subquery_in_projection_lowers_to_left_join_over_assert() {
+        // `SELECT name, (SELECT max(total) FROM orders) AS m FROM users`
+        // → Project over `LEFT JOIN ON TRUE` whose right is an AssertMaxOneRow.
+        // users width = 3, so the hoisted scalar column sits at ordinal 3.
+        let plan = lower("SELECT name, (SELECT max(total) FROM orders) AS m FROM users");
+        let LogicalNode::Project { input, outputs } = plan else {
+            panic!("expected outer Project");
+        };
+        // The `m` output references the hoisted column at ordinal 3.
+        let m = outputs.iter().find(|o| o.name == "m").expect("m output");
+        assert!(
+            matches!(&m.expr, Expr::Column(c) if c.ordinal == 3),
+            "m should reference ordinal 3, got {:?}",
+            m.expr
+        );
+        match *input {
+            LogicalNode::Join {
+                kind: JoinKind::Left,
+                on: None,
+                left,
+                right,
+                ..
+            } => {
+                assert!(matches!(*left, LogicalNode::Scan { .. }), "left is base Scan");
+                assert!(
+                    matches!(*right, LogicalNode::AssertMaxOneRow { .. }),
+                    "right is AssertMaxOneRow, got {right:?}"
+                );
+            }
+            other => panic!("expected LEFT JOIN ON TRUE over AssertMaxOneRow, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn select_star_does_not_expose_scalar_subquery_column() {
+        // `SELECT *, (SELECT …) AS m` → the `*` expands ONLY the 3 base columns
+        // (ordinals 0,1,2); the hoisted column is appended after lowering and is
+        // never enumerated by the wildcard. Total outputs = 3 base + 1 explicit.
+        let LogicalNode::Project { outputs, .. } =
+            lower("SELECT *, (SELECT max(total) FROM orders) AS m FROM users")
+        else {
+            panic!("expected Project");
+        };
+        assert_eq!(outputs.len(), 4, "3 base columns + 1 explicit subquery column");
+        // The wildcard-expanded columns keep base ordinals 0,1,2.
+        let base: Vec<usize> = outputs
+            .iter()
+            .take(3)
+            .filter_map(|o| match &o.expr {
+                Expr::Column(c) => Some(c.ordinal),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(base, vec![0, 1, 2], "star expands base columns only");
+    }
+
+    #[test]
+    fn two_scalar_subqueries_get_distinct_appended_ordinals() {
+        // Two scalar subqueries in one SELECT append left-to-right at ordinals
+        // 3 and 4 (after the 3 base columns). Guards the ordinal accounting.
+        let LogicalNode::Project { outputs, .. } = lower(
+            "SELECT (SELECT max(total) FROM orders) AS a, \
+                    (SELECT min(total) FROM orders) AS b FROM users",
+        ) else {
+            panic!("expected Project");
+        };
+        let a = outputs.iter().find(|o| o.name == "a").expect("a");
+        let b = outputs.iter().find(|o| o.name == "b").expect("b");
+        assert!(matches!(&a.expr, Expr::Column(c) if c.ordinal == 3));
+        assert!(matches!(&b.expr, Expr::Column(c) if c.ordinal == 4));
+    }
+
+    #[test]
+    fn scalar_subquery_with_multiple_columns_declines() {
+        // A scalar subquery must return exactly one column.
+        assert!(
+            lower_sql(
+                "SELECT (SELECT oid, uid FROM orders) FROM users",
+                &catalog()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn correlated_scalar_subquery_in_projection_declines() {
+        // Stage 1 is uncorrelated only: the inner query references the outer
+        // `users.id`, fails to resolve in isolation → declines to legacy.
+        assert!(
+            lower_sql(
+                "SELECT (SELECT max(total) FROM orders WHERE uid = users.id) FROM users",
+                &catalog()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn scalar_subquery_in_where_is_sealed_in_stage1() {
+        // Stage 1 seals WHERE against scalar subqueries (Stage 2 un-seals). A
+        // `WHERE a > (SELECT …)` declines to legacy for now.
+        assert!(
+            lower_sql(
+                "SELECT name FROM users WHERE age > (SELECT max(total) FROM orders)",
+                &catalog()
+            )
+            .is_err()
+        );
     }
 
     #[test]

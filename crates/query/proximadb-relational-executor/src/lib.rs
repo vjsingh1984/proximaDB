@@ -64,6 +64,9 @@ pub enum ExecError {
     #[error("aggregate function not supported by MVP executor: {0}")]
     UnsupportedAggregate(String),
 
+    #[error("scalar subquery returned more than one row")]
+    ScalarSubqueryCardinality,
+
     #[error("internal executor error: {0}")]
     Internal(String),
 }
@@ -321,6 +324,10 @@ pub fn build_executor<F: ReaderFactory>(
             let child = build_executor(*input, factory, ctx)?;
             Box::new(DistinctExec::new(child))
         }
+        PhysicalPlan::AssertMaxOneRow { input } => {
+            let child = build_executor(*input, factory, ctx)?;
+            Box::new(AssertMaxOneRowExec::new(child))
+        }
         PhysicalPlan::Union { inputs, all } => {
             let mut built = Vec::with_capacity(inputs.len());
             for i in inputs {
@@ -363,6 +370,7 @@ fn plan_label(plan: &PhysicalPlan) -> &'static str {
         PhysicalPlan::Sort { .. } => "Sort",
         PhysicalPlan::Limit { .. } => "Limit",
         PhysicalPlan::Distinct { .. } => "Distinct",
+        PhysicalPlan::AssertMaxOneRow { .. } => "AssertMaxOneRow",
         PhysicalPlan::Union { .. } => "Union",
         PhysicalPlan::Values { .. } => "Values",
         PhysicalPlan::SetOp { .. } => "SetOp",
@@ -380,7 +388,8 @@ fn plan_arity(plan: &PhysicalPlan) -> usize {
         | PhysicalPlan::Aggregate { .. }
         | PhysicalPlan::Sort { .. }
         | PhysicalPlan::Limit { .. }
-        | PhysicalPlan::Distinct { .. } => 1,
+        | PhysicalPlan::Distinct { .. }
+        | PhysicalPlan::AssertMaxOneRow { .. } => 1,
         PhysicalPlan::Join { .. } => 2,
         PhysicalPlan::Union { inputs, .. } => inputs.len(),
         PhysicalPlan::SetOp { .. } => 2,
@@ -789,6 +798,61 @@ impl ExecNode for DistinctExec {
                         return Ok(Some(row));
                     }
                 }
+            }
+        }
+    }
+
+    async fn close(&mut self) -> Result<(), ExecError> {
+        self.child.close().await
+    }
+}
+
+// =========================================================================
+// AssertMaxOneRowExec — scalar-subquery cardinality guard
+// =========================================================================
+
+/// Passes its child through unchanged, but errors if the child yields MORE
+/// than one row. Used to enforce SQL's "a scalar subquery returns at most one
+/// row" rule: the subquery plan is wrapped in this node and `LEFT JOIN`ed (ON
+/// TRUE) onto the outer relation, so zero rows → NULL, one row → its value,
+/// two+ rows → [`ExecError::ScalarSubqueryCardinality`].
+pub struct AssertMaxOneRowExec {
+    child: Box<dyn ExecNode>,
+    seen: bool,
+    schema: RelationalSchema,
+}
+
+impl AssertMaxOneRowExec {
+    fn new(child: Box<dyn ExecNode>) -> Self {
+        let schema = child.schema().clone();
+        Self {
+            child,
+            seen: false,
+            schema,
+        }
+    }
+}
+
+#[async_trait]
+impl ExecNode for AssertMaxOneRowExec {
+    fn schema(&self) -> &RelationalSchema {
+        &self.schema
+    }
+
+    async fn open(&mut self) -> Result<(), ExecError> {
+        self.seen = false;
+        self.child.open().await
+    }
+
+    async fn next_row(&mut self) -> Result<Option<RelationalRow>, ExecError> {
+        match self.child.next_row().await? {
+            None => Ok(None),
+            Some(row) => {
+                if self.seen {
+                    return Err(ExecError::ScalarSubqueryCardinality);
+                }
+                self.seen = true;
+                Ok(Some(row))
             }
         }
     }
@@ -2566,6 +2630,81 @@ mod tests {
         exec.open().await.unwrap();
         let rows = collect(&mut *exec).await.unwrap();
         assert_eq!(rows.len(), 2);
+    }
+
+    // ----- AssertMaxOneRow (scalar-subquery cardinality guard) ---------
+
+    fn one_col_scan(f: &VecReaderFactory, name: &str, rows: Vec<Vec<ProximaValue>>) -> PhysicalPlan {
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("v", ProximaType::Int64, true)]);
+        f.register(name, schema.clone(), rows, vec![]);
+        PhysicalPlan::Scan {
+            table: TableId::new(name),
+            output_schema: schema,
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: ScanAccess::FullScan,
+        }
+    }
+
+    #[tokio::test]
+    async fn assert_max_one_row_passes_single_row() {
+        let f = VecReaderFactory::new();
+        let plan = PhysicalPlan::AssertMaxOneRow {
+            input: Box::new(one_col_scan(&f, "sq", vec![vec![ProximaValue::Int64(7)]])),
+        };
+        let ctx = ExecutionContext::default();
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        assert_eq!(rows, vec![vec![ProximaValue::Int64(7)]]);
+    }
+
+    #[tokio::test]
+    async fn assert_max_one_row_errors_on_second_row() {
+        let f = VecReaderFactory::new();
+        let plan = PhysicalPlan::AssertMaxOneRow {
+            input: Box::new(one_col_scan(
+                &f,
+                "sq",
+                vec![vec![ProximaValue::Int64(1)], vec![ProximaValue::Int64(2)]],
+            )),
+        };
+        let ctx = ExecutionContext::default();
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        let err = collect(&mut *exec).await.unwrap_err();
+        assert!(
+            matches!(err, ExecError::ScalarSubqueryCardinality),
+            "expected ScalarSubqueryCardinality, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn left_join_on_true_over_empty_scalar_yields_null() {
+        // The full scalar-subquery shape: base LEFT JOIN ON TRUE an empty
+        // AssertMaxOneRow → base rows survive, null-padded on the right.
+        let f = VecReaderFactory::new();
+        f.register("users", users_schema(), users_rows(), vec![0]);
+        let right = PhysicalPlan::AssertMaxOneRow {
+            input: Box::new(one_col_scan(&f, "sq", vec![])), // empty subquery
+        };
+        let plan = PhysicalPlan::Join {
+            left: Box::new(scan_users()),
+            right: Box::new(right),
+            kind: JoinKind::Left,
+            on: None,
+            strategy: JoinStrategy::NestedLoop,
+        };
+        let ctx = ExecutionContext::default();
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        // Every user row survives; the appended scalar column (last) is NULL.
+        assert_eq!(rows.len(), 3);
+        for r in &rows {
+            assert_eq!(*r.last().unwrap(), ProximaValue::Null);
+        }
     }
 
     // ----- Sort --------------------------------------------------------

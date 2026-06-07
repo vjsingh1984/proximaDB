@@ -176,6 +176,12 @@ pub enum PhysicalPlan {
         input: Box<PhysicalPlan>,
         strategy: DistinctStrategy,
     },
+    /// Cardinality guard for an uncorrelated scalar subquery: passes its input
+    /// through unchanged, erroring at execution if the input yields >1 row.
+    /// One input, same output schema.
+    AssertMaxOneRow {
+        input: Box<PhysicalPlan>,
+    },
     Union {
         inputs: Vec<PhysicalPlan>,
         all: bool,
@@ -246,7 +252,8 @@ impl PhysicalPlan {
             }
             PhysicalPlan::Sort { input, .. }
             | PhysicalPlan::Limit { input, .. }
-            | PhysicalPlan::Distinct { input, .. } => input.output_schema(),
+            | PhysicalPlan::Distinct { input, .. }
+            | PhysicalPlan::AssertMaxOneRow { input } => input.output_schema(),
             PhysicalPlan::Union { inputs, .. } => inputs
                 .first()
                 .map(|i| i.output_schema())
@@ -380,6 +387,10 @@ fn render_explain_node(plan: &PhysicalPlan, depth: usize, lines: &mut Vec<String
         }
         PhysicalPlan::Distinct { input, strategy } => {
             lines.push(format!("{indent}Distinct strategy={strategy:?}"));
+            render_explain_node(input, depth + 1, lines);
+        }
+        PhysicalPlan::AssertMaxOneRow { input } => {
+            lines.push(format!("{indent}AssertMaxOneRow"));
             render_explain_node(input, depth + 1, lines);
         }
         PhysicalPlan::Union { inputs, all } => {
@@ -763,6 +774,9 @@ pub fn lower_to_physical(node: LogicalNode) -> PhysicalPlan {
             input: Box::new(lower_to_physical(*input)),
             strategy: DistinctStrategy::Hash,
         },
+        LogicalNode::AssertMaxOneRow { input } => PhysicalPlan::AssertMaxOneRow {
+            input: Box::new(lower_to_physical(*input)),
+        },
         LogicalNode::Union { inputs, all } => PhysicalPlan::Union {
             inputs: inputs.into_iter().map(lower_to_physical).collect(),
             all,
@@ -1011,6 +1025,9 @@ pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) 
         PhysicalPlan::Distinct { input, strategy } => PhysicalPlan::Distinct {
             input: Box::new(push_predicates(*input, resolver)),
             strategy,
+        },
+        PhysicalPlan::AssertMaxOneRow { input } => PhysicalPlan::AssertMaxOneRow {
+            input: Box::new(push_predicates(*input, resolver)),
         },
         PhysicalPlan::Aggregate {
             input,
@@ -1796,6 +1813,20 @@ fn push_projections_inner(
             input: Box::new(push_projections_inner(*input, required)?),
             strategy,
         }),
+        PhysicalPlan::AssertMaxOneRow { input } => {
+            // The wrapped scalar subquery is self-contained — its columns are
+            // independent of the outer query's `required` set. Recurse with its
+            // OWN full schema so no outer-driven narrowing leaks in.
+            let full: Vec<String> = input
+                .output_schema()
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            Ok(PhysicalPlan::AssertMaxOneRow {
+                input: Box::new(push_projections_inner(*input, &full)?),
+            })
+        }
         PhysicalPlan::Aggregate {
             input,
             group_by,

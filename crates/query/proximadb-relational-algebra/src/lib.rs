@@ -517,6 +517,12 @@ pub enum LogicalNode {
     },
     /// `SELECT DISTINCT`.
     Distinct { input: Box<LogicalNode> },
+    /// Cardinality guard for an uncorrelated scalar subquery: passes its
+    /// input through unchanged, but errors at execution if the input yields
+    /// MORE than one row (SQL requires a scalar subquery to return at most
+    /// one row). Empty input is allowed — the surrounding `LEFT JOIN ON TRUE`
+    /// turns "no row" into a NULL value. One input, same output schema.
+    AssertMaxOneRow { input: Box<LogicalNode> },
     /// `UNION [ALL]`. All inputs must produce matching schemas.
     Union { inputs: Vec<LogicalNode>, all: bool },
     /// `INTERSECT [ALL]` / `EXCEPT [ALL]` — binary set ops. Both inputs must
@@ -647,6 +653,7 @@ impl LogicalNode {
             LogicalNode::Sort { input, .. } => input.output_schema(),
             LogicalNode::Limit { input, .. } => input.output_schema(),
             LogicalNode::Distinct { input } => input.output_schema(),
+            LogicalNode::AssertMaxOneRow { input } => input.output_schema(),
             LogicalNode::Union { inputs, .. } => {
                 // Caller ensures schemas match; return the first.
                 inputs
@@ -797,6 +804,7 @@ impl LogicalNode {
             }
             LogicalNode::Limit { input, .. } => input.validate(),
             LogicalNode::Distinct { input } => input.validate(),
+            LogicalNode::AssertMaxOneRow { input } => input.validate(),
             LogicalNode::Union { inputs, .. } => {
                 if inputs.is_empty() {
                     return Ok(());
@@ -955,6 +963,7 @@ fn walk_inner<F: FnMut(&LogicalNode) -> bool>(node: &LogicalNode, visit: &mut F)
         | LogicalNode::Sort { input, .. }
         | LogicalNode::Limit { input, .. }
         | LogicalNode::Distinct { input }
+        | LogicalNode::AssertMaxOneRow { input }
         | LogicalNode::Aggregate { input, .. } => walk_inner(input, visit),
         LogicalNode::Join { left, right, .. } => {
             walk_inner(left, visit);
@@ -1012,6 +1021,9 @@ fn transform_inner<F: FnMut(LogicalNode) -> LogicalNode>(
             offset,
         },
         LogicalNode::Distinct { input } => LogicalNode::Distinct {
+            input: Box::new(transform_inner(*input, f)),
+        },
+        LogicalNode::AssertMaxOneRow { input } => LogicalNode::AssertMaxOneRow {
             input: Box::new(transform_inner(*input, f)),
         },
         LogicalNode::Aggregate {
