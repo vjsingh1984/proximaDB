@@ -957,8 +957,14 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
                 "Euclidean score should be > 0 for identical vectors"
             ),
             DistanceMetric::DotProduct => assert!(
-                score > 0.99,
-                "Dot product score should be ~1 for identical vectors"
+                // Soft-sign normalization (commit 3bf384e37) maps the raw
+                // inner product `v` to `0.5 + 0.5*v/(1+|v|)` to preserve
+                // magnitude for unnormalized vectors. Identical unit vectors
+                // here have dot product 1.0 → 0.5 + 0.5*0.5 = 0.75, well above
+                // the orthogonal anchor of 0.5. (The old `((v+1)/2).clamp`
+                // formula returned ~1.0 but collapsed all v>1 to 1.0.)
+                score > 0.7,
+                "Dot product score should be > 0.7 (soft-sign) for identical vectors, got {score}"
             ),
             _ => {} // Other metrics not tested in this specific test
         }

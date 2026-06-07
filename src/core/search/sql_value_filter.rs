@@ -359,8 +359,8 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
                 (Some(ProximaTreeNode::Value(pv)), op) => {
                     let json_val = proxima_value_to_json(pv);
                     match op {
-                        ComparisonOperator::Equals => json_val == *value,
-                        ComparisonOperator::NotEquals => json_val != *value,
+                        ComparisonOperator::Equals => json_eq(&json_val, value),
+                        ComparisonOperator::NotEquals => !json_eq(&json_val, value),
                         ComparisonOperator::LessThan => compare_json_lt(&json_val, value),
                         ComparisonOperator::LessThanOrEqual => compare_json_lte(&json_val, value),
                         ComparisonOperator::GreaterThan => compare_json_gt(&json_val, value),
@@ -369,10 +369,10 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
                         }
                         ComparisonOperator::In => value
                             .as_array()
-                            .is_some_and(|values| values.iter().any(|v| v == &json_val)),
+                            .is_some_and(|values| values.iter().any(|v| json_eq(&json_val, v))),
                         ComparisonOperator::NotIn => value
                             .as_array()
-                            .is_none_or(|values| values.iter().all(|v| v != &json_val)),
+                            .is_none_or(|values| values.iter().all(|v| !json_eq(&json_val, v))),
                         ComparisonOperator::Contains => json_val
                             .as_str()
                             .zip(value.as_str())
@@ -413,6 +413,21 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
                 _ => false,
             }
         }
+    }
+}
+
+/// Numeric-aware equality for JSON values.
+///
+/// `serde_json::Value`'s derived `PartialEq` compares numbers by their internal
+/// representation, so an integer `2` and a float `2.0` are NOT equal. Metadata
+/// stored as `ProximaValue::Float64` serialises to a float-typed JSON number,
+/// while a filter literal like `batch == 2` arrives as an integer-typed number.
+/// Compare numbers by value (via `as_f64`) and fall back to structural equality
+/// for non-numeric values.
+fn json_eq(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av == bv,
+        _ => a == b,
     }
 }
 
