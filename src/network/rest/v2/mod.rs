@@ -196,4 +196,30 @@ pub fn create_v2_router() -> Router<AppState> {
             "/collections/:collection_id/resume",
             post(collections::post_collection_resume_v2),
         )
+        // Capability negotiation: SDKs call this once to discover the server's
+        // supported features + limits instead of hard-coding assumptions.
+        .route("/_meta/capabilities", get(capabilities))
+}
+
+/// `GET /api/v2/_meta/capabilities` — advertise API version, features, and
+/// limits so clients can negotiate behaviour. Static today; feature flags can
+/// be threaded from `AppState` as they become conditional.
+pub async fn capabilities() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "api_version": env!("CARGO_PKG_VERSION"),
+        "surface": "v2",
+        "features": [
+            "collections", "records", "typed_search", "query_uql", "query_explain",
+            "graphs", "hybrid_search", "document_collections", "observability",
+            "index_configs", "tags", "request_id"
+        ],
+        "limits": {
+            "max_batch_records": 10000,
+            "max_request_size_mb": 64
+        },
+        "error_envelope": {
+            "shape": "{ error: { type, message, code, request_id? } }",
+            "request_id_header": "X-Request-ID"
+        }
+    }))
 }

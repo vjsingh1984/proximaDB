@@ -42,6 +42,7 @@
 pub mod auth;
 pub mod backpressure;
 pub mod cors;
+pub mod metrics;
 pub mod rate_limit;
 pub mod request_id;
 pub mod tenant;

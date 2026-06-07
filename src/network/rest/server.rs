@@ -502,6 +502,10 @@ impl RestServer {
         base_router = base_router.nest("/api/v3", v3_router);
         tracing::info!("✅ V3 API enabled at /api/v3 (native server-side embedding)");
 
+        // Unmatched routes (incl. the removed v1 surfaces) return the canonical
+        // error envelope with a migration hint pointing at the v2 replacement.
+        base_router = base_router.fallback(not_found_fallback);
+
         // Add WebSocket streaming routes
         let ws_state = super::websocket::WebSocketState::new();
         let ws_routes = super::websocket::websocket_routes(ws_state);
@@ -565,6 +569,13 @@ impl RestServer {
 
         // Add request ID middleware for tracing and correlation
         let base_router = base_router.layer(middleware::from_fn(request_id_middleware));
+
+        // Per-route REST metrics. `route_layer` runs post-routing so the
+        // matched-path label is available (bounded cardinality); unmatched
+        // requests fall through to the 404 fallback and are not metered here.
+        let base_router = base_router.route_layer(middleware::from_fn(
+            crate::network::middleware::metrics::metrics_middleware,
+        ));
 
         let mut router = if compression {
             // Create compression layer with support for multiple algorithms
@@ -786,6 +797,9 @@ impl RestServer {
         let v3_router = super::v3::create_v3_router().with_state(state_for_v3);
         base_router = base_router.nest("/api/v3", v3_router);
         tracing::info!("✅ V3 API enabled at /api/v3 (native embedding, unified mode)");
+
+        // Unmatched routes (incl. removed v1 surfaces) → canonical 404 + hint.
+        base_router = base_router.fallback(not_found_fallback);
 
         // Add WebSocket streaming routes
         let ws_state = super::websocket::WebSocketState::new();
@@ -1029,6 +1043,64 @@ impl RestServer {
 }
 
 /// Dashboard handler - serves a comprehensive professional dashboard
+/// Router fallback for unmatched paths. Returns the canonical error envelope
+/// and, for paths under the removed `/api/v1/*` surfaces, a migration hint
+/// pointing at the v2 replacement.
+async fn not_found_fallback(uri: axum::http::Uri) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = uri.path();
+
+    let mut error = serde_json::json!({
+        "type": "not_found",
+        "code": 404u16,
+    });
+    if let Some(replacement) = v1_replacement_for(path) {
+        error["message"] = serde_json::json!(format!(
+            "{} was removed in the /api/v2 API standardization; use {}",
+            path, replacement
+        ));
+        error["details"] = serde_json::json!({
+            "removed_endpoint": path,
+            "replacement_endpoint": replacement,
+            "docs": "https://docs.proximadb.io/api/v2",
+        });
+    } else {
+        error["message"] = serde_json::json!(format!("No route for {}", path));
+    }
+    if let Some(rid) = proximadb_api::rest::errors::current_request_id() {
+        error["request_id"] = serde_json::json!(rid);
+    }
+
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        axum::Json(serde_json::json!({ "error": error })),
+    )
+        .into_response()
+}
+
+/// Coarse old→new map for the v1 surfaces removed in the API standardization.
+fn v1_replacement_for(path: &str) -> Option<&'static str> {
+    let table: &[(&str, &str)] = &[
+        ("/api/v1/collections", "/api/v2/collections"),
+        ("/api/v1/search", "/api/v2/collections/{id}/search"),
+        ("/api/v1/vectors", "/api/v2/collections/{id}/records"),
+        ("/api/v1/sql", "/api/v2/query"),
+        ("/api/v1/documents", "/api/v2/document-collections"),
+        ("/api/v1/hybrid", "/api/v2/hybrid"),
+        ("/api/v1/observability", "/api/v2/observability"),
+        ("/api/v1/graph", "/api/v2/graphs"),
+    ];
+    for (prefix, replacement) in table {
+        if path.starts_with(prefix) {
+            return Some(replacement);
+        }
+    }
+    if path.starts_with("/api/v1/") {
+        return Some("/api/v2");
+    }
+    None
+}
+
 async fn dashboard_handler() -> axum::response::Html<&'static str> {
     axum::response::Html(
         r#"<!DOCTYPE html>
