@@ -178,17 +178,12 @@ async fn rest_create_fp16_collection_round_trips_canonical_precision() {
     // distance_metric / storage_engine / canonical_embedding_precision
     // (we exercise the string-label form in a sibling assertion below).
     let create_body = serde_json::json!({
-        "operation": 1, // CollectionOperation::CollectionCreate
-        "collection_id": collection_name,
-        "collection_config": {
-            "name": collection_name,
-            "dimension": 64,
-            // EmbeddingPrecision::Fp16 = 2 (proto discriminant).
-            "canonical_embedding_precision": 2,
-        }
+        "name": collection_name,
+        "dimension": 64,
+        "canonical_embedding_precision": "fp16",
     });
 
-    let create_url = format!("{}/api/v1/collections", server.rest_base_url());
+    let create_url = format!("{}/api/v2/collections", server.rest_base_url());
     let resp = client
         .post(&create_url)
         .json(&create_body)
@@ -207,7 +202,7 @@ async fn rest_create_fp16_collection_round_trips_canonical_precision() {
     // `config.canonical_embedding_precision` should reflect what we
     // sent (as a string label or the underlying integer — accept either).
     let get_url = format!(
-        "{}/api/v1/collections/{}",
+        "{}/api/v2/collections/{}",
         server.rest_base_url(),
         collection_name
     );
@@ -215,7 +210,7 @@ async fn rest_create_fp16_collection_round_trips_canonical_precision() {
         .get(&get_url)
         .send()
         .await
-        .expect("REST GET /v1/collections/{name}");
+        .expect("REST GET /v2/collections/{name}");
     let get_status = get_resp.status();
     let get_body: serde_json::Value = get_resp.json().await.unwrap_or(serde_json::Value::Null);
     assert!(
@@ -223,19 +218,24 @@ async fn rest_create_fp16_collection_round_trips_canonical_precision() {
         "REST GET failed: status={get_status}, body={get_body}"
     );
 
-    // Response shape (from catalog GET): the handler wraps the
-    // collection in an envelope — `collection.config` is where the
-    // proto CollectionConfig fields surface. Accept the bare `config`
-    // shape too as a forward-compat fallback in case the envelope
-    // changes.
-    let cfg = get_body
-        .get("collection")
-        .and_then(|c| c.get("config"))
-        .or_else(|| get_body.get("config"))
-        .expect("response has collection.config (or top-level config)");
-    let precision = cfg
+    // v2 GET response shape: CollectionV2Response surfaces
+    // `canonical_embedding_precision` as a top-level field (the v2 handler
+    // maps the proto config discriminant to a stable string label). Accept
+    // the legacy nested `collection.config` / `config` shapes too for
+    // forward-compat.
+    let precision = get_body
         .get("canonical_embedding_precision")
-        .or_else(|| cfg.get("canonicalEmbeddingPrecision"));
+        .or_else(|| get_body.get("canonicalEmbeddingPrecision"))
+        .or_else(|| {
+            get_body
+                .get("collection")
+                .and_then(|c| c.get("config"))
+                .or_else(|| get_body.get("config"))
+                .and_then(|cfg| {
+                    cfg.get("canonical_embedding_precision")
+                        .or_else(|| cfg.get("canonicalEmbeddingPrecision"))
+                })
+        });
     assert!(
         precision.is_some(),
         "canonical_embedding_precision missing from GET response: {get_body}"
@@ -324,16 +324,12 @@ async fn rest_insert_into_fp16_collection_increments_canonical_bytes_metric() {
 
     // 1. Create fp16 collection via REST.
     let create_body = serde_json::json!({
-        "operation": 1,
-        "collection_id": collection_name,
-        "collection_config": {
-            "name": collection_name,
-            "dimension": dim,
-            "canonical_embedding_precision": 2, // Fp16
-        }
+        "name": collection_name,
+        "dimension": dim,
+        "canonical_embedding_precision": "fp16",
     });
     let create_resp = client
-        .post(format!("{}/api/v1/collections", server.rest_base_url()))
+        .post(format!("{}/api/v2/collections", server.rest_base_url()))
         .json(&create_body)
         .send()
         .await
@@ -345,10 +341,10 @@ async fn rest_insert_into_fp16_collection_increments_canonical_bytes_metric() {
         create_resp.text().await.unwrap_or_default()
     );
 
-    // 2. Insert records via POST /api/v1/vectors/batch. The v1 wire
-    // payload uses Vec<f32>; the bridge coerces to the collection's
-    // canonical fp16 at write time.
-    let vectors: Vec<serde_json::Value> = (0..num_records)
+    // 2. Insert records via POST /api/v2/collections/{collection}/records/batch.
+    // The v2 records payload carries Vec<f32> vectors per ProximaRecord; the
+    // bridge coerces to the collection's canonical fp16 at write time.
+    let records: Vec<serde_json::Value> = (0..num_records)
         .map(|i| {
             let v: Vec<f32> = (0..dim)
                 .map(|j| (i as f32) * 0.1 + (j as f32) * 0.01)
@@ -356,16 +352,18 @@ async fn rest_insert_into_fp16_collection_increments_canonical_bytes_metric() {
             serde_json::json!({
                 "id": format!("rec-{:03}", i),
                 "vector": v,
-                "metadata": {},
             })
         })
         .collect();
     let insert_body = serde_json::json!({
-        "collection": collection_name,
-        "vectors": vectors,
+        "records": records,
     });
     let insert_resp = client
-        .post(format!("{}/api/v1/vectors/batch", server.rest_base_url()))
+        .post(format!(
+            "{}/api/v2/collections/{}/records/batch",
+            server.rest_base_url(),
+            collection_name
+        ))
         .json(&insert_body)
         .send()
         .await

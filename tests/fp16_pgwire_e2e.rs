@@ -203,7 +203,7 @@ async fn pgwire_create_table_with_canonical_embedding_precision_fp16() {
         .build()
         .unwrap();
     let get_url = format!(
-        "{}/api/v1/collections/{}",
+        "{}/api/v2/collections/{}",
         server.rest_base_url(),
         table_name
     );
@@ -219,19 +219,22 @@ async fn pgwire_create_table_with_canonical_embedding_precision_fp16() {
         "REST GET after pgwire CREATE TABLE failed: status={status}, body={body}"
     );
 
-    let cfg = body
-        .get("collection")
-        .and_then(|c| c.get("config"))
-        .or_else(|| body.get("config"))
+    // v2 GET surfaces `canonical_embedding_precision` as a top-level field;
+    // accept the legacy nested `collection.config` / `config` shapes too.
+    let precision = body
+        .get("canonical_embedding_precision")
+        .or_else(|| {
+            body.get("collection")
+                .and_then(|c| c.get("config"))
+                .or_else(|| body.get("config"))
+                .and_then(|cfg| cfg.get("canonical_embedding_precision"))
+        })
         .unwrap_or_else(|| {
             panic!(
-                "expected response to expose collection.config or config; \
+                "expected response to expose canonical_embedding_precision; \
                  actual body shape: {body}"
             )
         });
-    let precision = cfg
-        .get("canonical_embedding_precision")
-        .expect("collection.config has canonical_embedding_precision after pgwire CREATE TABLE");
 
     // proto-serde renders the enum as either the SCREAMING string or
     // the numeric discriminant. Fp16 = 2.

@@ -65,6 +65,21 @@ fn non_negative_stat(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
 }
 
+/// Map a proto `EmbeddingPrecision` discriminant (carried on
+/// `CollectionConfig.canonical_embedding_precision`) to its stable string
+/// label. Reuses the proto enum's `as_str_name()` so the REST surface emits
+/// the same canonical labels ("EMBEDDING_PRECISION_FP16", …) as the gRPC /
+/// Arrow Flight surfaces. Returns `None` for the unset / Unspecified default
+/// so the JSON field is omitted when no explicit precision was chosen.
+fn collection_embedding_precision_label(precision: Option<i32>) -> Option<String> {
+    use crate::proto::proximadb_v1::EmbeddingPrecision;
+    let raw = precision?;
+    match EmbeddingPrecision::try_from(raw) {
+        Ok(EmbeddingPrecision::Unspecified) | Err(_) => None,
+        Ok(p) => Some(p.as_str_name().to_string()),
+    }
+}
+
 /// Request to create a collection with schema support
 ///
 /// ## Example JSON
@@ -524,6 +539,12 @@ pub struct CollectionV2Response {
     pub distance_metric: String,
     /// Whether ProximaRecord is enabled
     pub proxima_record_enabled: bool,
+    /// Canonical embedding precision label for stored vectors.
+    ///
+    /// Stable string matching the proto `EmbeddingPrecision::as_str_name()`
+    /// (e.g. "EMBEDDING_PRECISION_FP16"). `None` when the collection didn't
+    /// set a non-default (Unspecified/Fp32) precision.
+    pub canonical_embedding_precision: Option<String>,
     /// Schema definition (if defined)
     pub schema: Option<SchemaDefinition>,
     /// Collection statistics
@@ -607,7 +628,10 @@ pub async fn get_collection_v2(
                 engine: engine_str.to_string(),
                 distance_metric: distance_metric_str.to_string(),
                 proxima_record_enabled: false, // Would be stored in metadata
-                schema: None,                  // Would be loaded from metadata
+                canonical_embedding_precision: collection_embedding_precision_label(
+                    config.canonical_embedding_precision,
+                ),
+                schema: None, // Would be loaded from metadata
                 stats: CollectionStatsV2 {
                     record_count: non_negative_stat(stats.vector_count),
                     storage_size_bytes: non_negative_stat(stats.data_size_bytes),

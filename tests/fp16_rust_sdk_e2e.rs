@@ -132,7 +132,7 @@ async fn rust_sdk_create_collection_with_fp16_precision_round_trips() {
         .build()
         .unwrap();
     let resp = http_client
-        .get(format!("{}/api/v1/collections/{}", server.base_url(), name))
+        .get(format!("{}/api/v2/collections/{}", server.base_url(), name))
         .send()
         .await
         .expect("REST GET");
@@ -143,14 +143,17 @@ async fn rust_sdk_create_collection_with_fp16_precision_round_trips() {
     );
     let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
 
-    let cfg = body
-        .get("collection")
-        .and_then(|c| c.get("config"))
-        .or_else(|| body.get("config"))
-        .unwrap_or_else(|| panic!("missing collection.config in body: {body}"));
-    let precision = cfg
+    // v2 GET surfaces `canonical_embedding_precision` as a top-level field;
+    // accept the legacy nested `collection.config` / `config` shapes too.
+    let precision = body
         .get("canonical_embedding_precision")
-        .expect("collection.config has canonical_embedding_precision after Rust SDK create");
+        .or_else(|| {
+            body.get("collection")
+                .and_then(|c| c.get("config"))
+                .or_else(|| body.get("config"))
+                .and_then(|cfg| cfg.get("canonical_embedding_precision"))
+        })
+        .unwrap_or_else(|| panic!("missing canonical_embedding_precision in body: {body}"));
 
     let matches_fp16 = match precision {
         serde_json::Value::String(s) => {
