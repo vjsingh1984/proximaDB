@@ -7,9 +7,8 @@
 use std::collections::HashMap;
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Extension, Path, Query, State},
-    routing::{get, post},
 };
 use proximadb_proto::v1::{SearchQuery, VectorBatchRequest, VectorRecord, VectorSearchRequest};
 use serde::{Deserialize, Serialize};

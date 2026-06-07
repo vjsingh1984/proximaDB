@@ -182,11 +182,17 @@ impl AgenticApiError {
 
 impl IntoResponse for AgenticApiError {
     fn into_response(self) -> Response {
-        let body = AgenticErrorBody {
-            error: self.error,
-            message: self.message,
-        };
-        (self.status, Json(body)).into_response()
+        // Canonical error envelope shared with `RestError`:
+        // `{ "error": { "type", "message", "code", "request_id"? } }`.
+        let mut error_obj = serde_json::json!({
+            "type": self.error,
+            "message": self.message,
+            "code": self.status.as_u16(),
+        });
+        if let Some(rid) = crate::rest::errors::current_request_id() {
+            error_obj["request_id"] = serde_json::json!(rid);
+        }
+        (self.status, Json(serde_json::json!({ "error": error_obj }))).into_response()
     }
 }
 

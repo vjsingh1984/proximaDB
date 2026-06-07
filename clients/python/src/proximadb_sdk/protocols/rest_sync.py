@@ -420,12 +420,15 @@ class ProximaDBClient:
                 "message": response.text or f"HTTP {response.status_code} error"
             }
 
-        # DEBUG: Log error details
-        logger.error(f"❌ HTTP {response.status_code} ERROR - URL: {response.url}")
+        # DEBUG: Log error details (incl. the server correlation id)
+        request_id = response.headers.get("x-request-id")
+        logger.error(
+            f"❌ HTTP {response.status_code} ERROR - URL: {response.url} "
+            f"request_id={request_id}"
+        )
         logger.error(f"❌ ERROR DATA: {error_data}")
-        logger.error(f"❌ RESPONSE TEXT: {response.text[:500]}")
 
-        raise map_http_error(response.status_code, error_data)
+        raise map_http_error(response.status_code, error_data, headers=response.headers)
 
     def _http_post(self, endpoint: str, data: Any) -> dict[str, Any]:
         """Helper method for POST requests"""

@@ -8,6 +8,21 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
+tokio::task_local! {
+    /// Per-request correlation id, scoped by the request-id middleware around
+    /// each request. Read by `RestError::into_response` so error envelopes
+    /// carry the SAME id the `X-Request-ID` response header advertises, with
+    /// zero changes to handler signatures.
+    pub static REQUEST_ID: String;
+}
+
+/// The request id for the current task scope, if the request-id middleware set
+/// one. `None` on paths not wrapped by the middleware (so we never emit a fake
+/// id that wouldn't match the `X-Request-ID` header).
+pub fn current_request_id() -> Option<String> {
+    REQUEST_ID.try_with(|id| id.clone()).ok()
+}
+
 /// Unified error type for REST API handlers in `proximadb-api`.
 #[derive(Debug, thiserror::Error)]
 pub enum RestError {
@@ -57,17 +72,15 @@ impl IntoResponse for RestError {
                 (StatusCode::TOO_MANY_REQUESTS, "resource_exhausted")
             }
         };
-        (
-            status,
-            Json(json!({
-                "error": {
-                    "type": error_type,
-                    "message": self.to_string(),
-                    "code": status.as_u16()
-                }
-            })),
-        )
-            .into_response()
+        let mut error_obj = json!({
+            "type": error_type,
+            "message": self.to_string(),
+            "code": status.as_u16(),
+        });
+        if let Some(rid) = current_request_id() {
+            error_obj["request_id"] = json!(rid);
+        }
+        (status, Json(json!({ "error": error_obj }))).into_response()
     }
 }
 
@@ -164,5 +177,24 @@ mod tests {
         let error = RestError::from(anyhow::anyhow!("disk unavailable"));
 
         assert!(matches!(error, RestError::Internal(message) if message == "disk unavailable"));
+    }
+
+    #[tokio::test]
+    async fn error_envelope_carries_request_id_when_scoped() {
+        let (_status, body) = REQUEST_ID
+            .scope("req-abc-123".to_string(), async {
+                response_parts(RestError::NotFound("x".to_string())).await
+            })
+            .await;
+        assert_eq!(body["error"]["request_id"], "req-abc-123");
+        assert_eq!(body["error"]["type"], "not_found");
+    }
+
+    #[tokio::test]
+    async fn error_envelope_omits_request_id_when_unscoped() {
+        // No middleware scope → no fake id (so body never disagrees with the
+        // X-Request-ID header).
+        let (_status, body) = response_parts(RestError::Internal("boom".to_string())).await;
+        assert!(body["error"].get("request_id").is_none());
     }
 }

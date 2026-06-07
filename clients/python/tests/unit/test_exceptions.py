@@ -470,3 +470,42 @@ class TestMapGrpcError:
         exc = map_grpc_error(MockGrpcError())
         assert isinstance(exc, ProximaDBError)
         assert "Data loss" in str(exc)
+
+
+class TestCanonicalErrorEnvelope:
+    """The server emits {"error":{"type,message,code,request_id}}; map_http_error
+    must normalise it (lowercase type -> typed exception) and pull request_id
+    from the body or the X-Request-ID header."""
+
+    def test_nested_envelope_maps_to_typed_exception(self):
+        from proximadb_sdk.exceptions import map_http_error
+
+        exc = map_http_error(
+            404,
+            {"error": {"type": "collection_not_found", "message": "Collection not found: c1", "code": 404}},
+            headers={"x-request-id": "rid-42"},
+        )
+        assert isinstance(exc, CollectionNotFoundError)
+        assert exc.request_id == "rid-42"  # from header (not in body)
+
+    def test_nested_envelope_request_id_from_body(self):
+        from proximadb_sdk.exceptions import map_http_error
+
+        exc = map_http_error(
+            400,
+            {"error": {"type": "validation_error", "message": "bad", "code": 400, "request_id": "b-7"}},
+        )
+        assert isinstance(exc, ValidationError)
+        assert exc.request_id == "b-7"
+
+    def test_legacy_flat_shape_still_supported(self):
+        from proximadb_sdk.exceptions import map_http_error
+
+        exc = map_http_error(500, {"error_code": "INTERNAL", "message": "boom"})
+        assert isinstance(exc, ServerError)
+
+    def test_bare_string_error_does_not_crash(self):
+        from proximadb_sdk.exceptions import map_http_error
+
+        exc = map_http_error(409, {"error": "already_exists", "message": "dup"})
+        assert isinstance(exc, ProximaDBError)

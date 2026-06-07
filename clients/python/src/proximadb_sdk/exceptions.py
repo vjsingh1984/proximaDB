@@ -238,12 +238,39 @@ class StreamingError(ProximaDBError):
         super().__init__(message, error_code="STREAMING_ERROR", **kwargs)
 
 
-def map_http_error(status_code: int, response_data: dict) -> ProximaDBError:
-    """Map HTTP status codes to appropriate exceptions"""
-    error_code = response_data.get("error_code", "UNKNOWN")
-    message = response_data.get("message", f"HTTP {status_code} error")
-    request_id = response_data.get("request_id")
-    details = response_data.get("details", {})
+def map_http_error(
+    status_code: int, response_data: dict, headers: dict | None = None
+) -> ProximaDBError:
+    """Map an HTTP error response to a typed exception.
+
+    Accepts the canonical ProximaDB error envelope
+    ``{"error": {"type", "message", "code", "request_id", "details"?}}`` as well
+    as the legacy flat shape ``{"error_code", "message", "request_id", "details"}``.
+    The server's ``type`` is lowercase snake_case (e.g. ``collection_not_found``);
+    it is upper-cased so the branches below (``COLLECTION_NOT_FOUND``) match.
+    ``request_id`` falls back to the ``X-Request-ID`` response header.
+    """
+    err = response_data.get("error")
+    if isinstance(err, dict):
+        # Canonical nested envelope.
+        error_code = str(err.get("type") or "unknown").upper()
+        message = err.get("message", f"HTTP {status_code} error")
+        request_id = err.get("request_id") or response_data.get("request_id")
+        details = err.get("details") or {}
+    else:
+        # Legacy flat shape (or a bare string error).
+        error_code = str(response_data.get("error_code") or err or "UNKNOWN").upper()
+        message = response_data.get("message", f"HTTP {status_code} error")
+        request_id = response_data.get("request_id")
+        details = response_data.get("details", {})
+
+    if not request_id and headers:
+        # Header lookups are case-insensitive for httpx.Headers; guard plain dicts.
+        request_id = (
+            headers.get("x-request-id")
+            or headers.get("X-Request-ID")
+            or (headers.get("X-Request-Id") if hasattr(headers, "get") else None)
+        )
 
     if status_code == 400:
         if error_code == "VALIDATION_ERROR":

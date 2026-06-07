@@ -9,11 +9,10 @@
 //! until a `CatalogPort` trait is defined in `proximadb-runtime`.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
 };
 use proximadb_proto::v1::{CollectionOperation, CollectionRequest};
 use serde::Deserialize;
