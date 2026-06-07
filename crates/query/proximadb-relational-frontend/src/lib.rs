@@ -435,30 +435,45 @@ fn lower_subquery_join_parts(
                 return Ok(None);
             };
             let sub_schema = sub.output_schema();
-            // `x [NOT] IN (subquery)` requires exactly one output column.
-            let [sub_col] = sub_schema.columns.as_slice() else {
+            // Outer operands: a row constructor `(a, b, …) [NOT] IN (…)` is a tuple;
+            // a scalar `x [NOT] IN (…)` is a single operand. Their count must match the
+            // subquery's column count, else decline (→ legacy).
+            let outer_exprs: Vec<&SqlExpr> = match expr.as_ref() {
+                SqlExpr::Tuple(items) => items.iter().collect(),
+                single => vec![single],
+            };
+            if outer_exprs.len() != sub_schema.columns.len() {
                 return Ok(None);
-            };
-            let outer = lower_expr(expr, scope)?;
-            // The subquery's lone column sits at `outer_width` in the combined
-            // left++right row the executor evaluates `on` against (Scope::concat
+            }
+            // Build the equi ON = AND over `outer_i = subcol_i`. Each subquery column
+            // sits at `outer_width + i` in the combined left++right row (Scope::concat
             // offsets right ordinals by the left width).
-            let sub_ref = ColumnRef {
-                name: sub_col.name.clone(),
-                ordinal: scope.columns.len(),
-                ty: sub_col.ty.clone(),
-                nullable: sub_col.nullable,
-            };
-            let on = Expr::bin(BinaryOp::Eq, outer, Expr::column(sub_ref));
-            // IN → Semi; NOT IN → AntiNullAware (NULL-correct: empty when the subquery
-            // has any NULL, and a NULL `x` is never emitted — via the executor's
-            // three-valued ON evaluation).
+            let base = scope.columns.len();
+            let mut on: Option<Expr> = None;
+            for (i, oexpr) in outer_exprs.iter().enumerate() {
+                let outer = lower_expr(oexpr, scope)?;
+                let sub_col = &sub_schema.columns[i];
+                let sub_ref = ColumnRef {
+                    name: sub_col.name.clone(),
+                    ordinal: base + i,
+                    ty: sub_col.ty.clone(),
+                    nullable: sub_col.nullable,
+                };
+                let eq = Expr::bin(BinaryOp::Eq, outer, Expr::column(sub_ref));
+                on = Some(match on {
+                    Some(prev) => Expr::bin(BinaryOp::And, prev, eq),
+                    None => eq,
+                });
+            }
+            // IN → Semi; NOT IN → AntiNullAware (NULL-correct via the executor's
+            // three-valued ON evaluation — the AND of column equalities yields NULL
+            // when any compared value is NULL).
             let kind = if *negated {
                 JoinKind::AntiNullAware
             } else {
                 JoinKind::Semi
             };
-            Ok(Some((kind, Some(on), sub)))
+            Ok(Some((kind, on, sub)))
         }
         SqlExpr::Exists { subquery, negated } => {
             let Ok(sub) = lower_query(subquery, catalog) else {
@@ -1603,12 +1618,46 @@ mod tests {
     }
 
     #[test]
-    fn multi_column_in_subquery_is_declined() {
+    fn in_subquery_arity_mismatch_is_declined() {
+        // A scalar operand against a 2-column subquery is an arity mismatch → decline
+        // (falls through to legacy). Multi-column IN needs a matching tuple operand.
         assert!(lower_sql(
             "SELECT name FROM users WHERE id IN (SELECT oid, uid FROM orders)",
             &catalog()
         )
         .is_err());
+    }
+
+    #[test]
+    fn multi_column_in_lowers_to_semi_with_and_on() {
+        // `(a, b) IN (SELECT x, y …)` → Semi join, ON = (a = x AND b = y).
+        match under_project(lower(
+            "SELECT name FROM users WHERE (id, age) IN (SELECT oid, uid FROM orders)",
+        )) {
+            LogicalNode::Join {
+                kind: JoinKind::Semi,
+                on:
+                    Some(Expr::BinaryOp {
+                        op: BinaryOp::And, ..
+                    }),
+                ..
+            } => {}
+            other => panic!("expected Semi join with AND ON, got {other:?}"),
+        }
+        // `(a, b) NOT IN (…)` → AntiNullAware with the same AND ON.
+        match under_project(lower(
+            "SELECT name FROM users WHERE (id, age) NOT IN (SELECT oid, uid FROM orders)",
+        )) {
+            LogicalNode::Join {
+                kind: JoinKind::AntiNullAware,
+                on:
+                    Some(Expr::BinaryOp {
+                        op: BinaryOp::And, ..
+                    }),
+                ..
+            } => {}
+            other => panic!("expected AntiNullAware join with AND ON, got {other:?}"),
+        }
     }
 
     #[test]

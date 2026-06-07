@@ -616,6 +616,22 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "NOT IN → dept ids with no employee"
     );
 
+    // (3q) Multi-column IN: a row constructor `(a, b) IN (SELECT x, y …)` lowers to a
+    // Semi join with an AND of column equalities. Only the employee whose (id, dept_id)
+    // matches ann's (10, 1) qualifies → {ann}.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT ename FROM {emp} WHERE (id, dept_id) IN \
+             (SELECT id, dept_id FROM {emp} WHERE ename = 'ann')"
+        ))
+        .await
+        .expect("SELECT multi-column IN");
+    assert_eq!(
+        col_set(&rows, "ename"),
+        set(&["ann"]),
+        "multi-column IN matches the full (id, dept_id) tuple"
+    );
+
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
     // (the gate keeps it on the hardened legacy path, not PATH B).
     let rows = client
