@@ -459,13 +459,6 @@ pub fn create_hybrid_search_router() -> Router<HybridRestState> {
     )
 }
 
-/// Build the SQL query router.
-pub fn create_sql_router() -> Router<RestAppState> {
-    super::with_v1_compatibility_headers(
-        Router::new().route("/api/v1/sql/execute", post(execute_sql)),
-    )
-}
-
 /// Build the health probe router.
 pub fn create_health_router() -> Router<RestAppState> {
     Router::new()
@@ -765,7 +758,6 @@ mod tests {
             .into_response();
         assert_eq!(ready.status(), StatusCode::OK);
 
-        let _sql_router = create_sql_router();
         let _health_router = create_health_router();
     }
 }

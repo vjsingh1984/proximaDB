@@ -350,20 +350,10 @@ pub async fn delete_collection(
 
 // ── Router configuration ──────────────────────────────────────────────────────
 
-/// Build the collection lifecycle router.
-pub fn create_collection_router() -> Router<RestAppState> {
-    super::with_v1_compatibility_headers(
-        Router::new()
-            .route(
-                "/api/v1/collections",
-                post(collection_operation).get(list_collections),
-            )
-            .route(
-                "/api/v1/collections/:collection_id",
-                get(get_collection).delete(delete_collection),
-            ),
-    )
-}
+// `create_collection_router` (legacy `/api/v1/collections`) was removed in the
+// API standardization hard-rename. Collection lifecycle is served by the
+// canonical v2 router (`create_v2_router`, `/api/v2/collections`). The handler
+// fns below remain re-exported for any direct registration use.
 
 #[cfg(test)]
 mod tests {
@@ -525,8 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn collection_router_and_legacy_stubs_construct() {
-        let _router = create_collection_router();
+    fn catalog_legacy_stubs_construct() {
         let _catalog = CatalogHandler::default();
         let _collection = CollectionHandler::new();
     }

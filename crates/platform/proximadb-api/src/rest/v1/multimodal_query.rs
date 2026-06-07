@@ -409,16 +409,9 @@ pub fn create_multimodal_router() -> Router<UnifiedQueryRestState> {
     )
 }
 
-/// Build a standalone router for `POST /api/v1/sql/explain`.
-///
-/// Delegates to `UnifiedQueryPort::explain_unified_query`, surfacing
-/// the same explanation plan as `/api/v1/unified/explain` but under
-/// the SQL-oriented URL that legacy clients expect.
-pub fn create_explain_router() -> Router<UnifiedQueryRestState> {
-    super::with_v1_compatibility_headers(
-        Router::new().route("/api/v1/sql/explain", post(explain_query)),
-    )
-}
+// `create_explain_router` (legacy `/api/v1/sql/explain`) was removed in the
+// API standardization hard-rename; SQL explain is served by the canonical
+// `/api/v2/query/explain` (create_v2_router).
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -723,6 +716,5 @@ mod tests {
     #[test]
     fn unified_query_routers_construct() {
         let _multimodal = create_multimodal_router();
-        let _explain = create_explain_router();
     }
 }

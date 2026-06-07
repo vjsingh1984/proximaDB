@@ -353,21 +353,11 @@ pub async fn vector_search_with_metadata(
 ///
 /// All routes are registered against `RestAppState`; callers `.with_state(state)` this
 /// before nesting it into the main application router.
-pub fn create_vector_router() -> Router<RestAppState> {
-    super::with_v1_compatibility_headers(
-        Router::new()
-            .route("/api/v1/search", post(vector_search))
-            .route(
-                "/api/v1/search/with_metadata",
-                post(vector_search_with_metadata),
-            )
-            .route("/api/v1/vectors/batch", post(vector_batch))
-            .route(
-                "/api/v1/vectors/:collection_id/:vector_id",
-                get(get_vector).delete(delete_vector),
-            ),
-    )
-}
+// `create_vector_router` (legacy `/api/v1/search`, `/api/v1/vectors/*`) was
+// removed in the API standardization hard-rename. Vector search and record
+// ops are served by the canonical v2 router (`/api/v2/collections/:id/search`,
+// `/records/*`). The handler fns below remain re-exported for any direct
+// registration use.
 
 #[cfg(test)]
 mod tests {
@@ -576,8 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn vector_router_registers_all_v1_vector_routes() {
-        let _router = create_vector_router();
+    fn vector_handlers_construct() {
         let _entity_handler = EntityHandler::default();
         let _vector_handler = VectorHandler::new();
     }

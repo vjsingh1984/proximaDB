@@ -109,15 +109,13 @@ pub use observability::ObservabilityRestState;
 
 // Re-exports — router builders
 pub use analytics::create_analytics_router;
-pub use catalog::create_collection_router;
 pub use document::create_document_router;
-pub use entities::{create_vector_router, parse_batch_request, parse_search_request};
+pub use entities::{parse_batch_request, parse_search_request};
 pub use graph::create_graph_router;
 pub use hybrid::{
-    create_health_router, create_hybrid_search_router, create_sql_router, execute_sql,
-    sql_value_to_json,
+    create_health_router, create_hybrid_search_router, execute_sql, sql_value_to_json,
 };
-pub use multimodal_query::{create_explain_router, create_multimodal_router};
+pub use multimodal_query::create_multimodal_router;
 pub use observability::create_observability_router;
 
 // Re-exports — handler functions (for direct registration in existing root-crate routers)
