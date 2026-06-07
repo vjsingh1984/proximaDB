@@ -57,6 +57,19 @@ def _stub_pkg(name, path):
     return mod
 
 
+# Save the original sys.modules entries we are about to shadow so teardown_module
+# can restore them. Without this, the injected stub for
+# `proximadb_sdk.embedding_providers` (which has no `get_provider`) leaks into
+# other test files that import the real package, causing cross-file ImportError
+# failures (e.g. test_embedding_providers.py).
+_SHADOWED_NAMES = (
+    "proximadb_sdk",
+    "proximadb_sdk.embedding_providers",
+    "proximadb_sdk.embedding_providers.base",
+    "proximadb_sdk.embedding_providers.multi_bert_provider",
+)
+_SAVED_MODULES = {name: sys.modules.get(name) for name in _SHADOWED_NAMES}
+
 # Stub the package chain (skip the expensive real __init__.py files).
 if not isinstance(sys.modules.get("proximadb_sdk"), types.ModuleType) or not hasattr(
     sys.modules.get("proximadb_sdk", object()), "__path__"
@@ -90,6 +103,23 @@ else:
 MultiBERTProvider = mbp.MultiBERTProvider
 AdaptiveBERTProvider = mbp.AdaptiveBERTProvider
 ModelSize = mbp.ModelSize
+
+
+def teardown_module(module):
+    """Restore sys.modules entries shadowed at import time.
+
+    The module-level stubs above replace the real `proximadb_sdk.embedding_providers`
+    package (which lacks `get_provider` in stub form) for the duration of this
+    file's tests. Without restoring them, the stubs leak into later test files
+    that import the real package and fail with a cross-file ImportError. This
+    file's own tests hold direct references (MultiBERTProvider, etc.), so
+    restoring sys.modules here does not affect them.
+    """
+    for name, original in _SAVED_MODULES.items():
+        if original is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
 
 
 # ---------------------------------------------------------------------------
