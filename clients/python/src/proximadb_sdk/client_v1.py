@@ -74,7 +74,7 @@ class ProximaDBClientV1:
             self.collection_stub = collection_pb2_grpc.CollectionServiceStub(
                 self.channel
             )
-            self.sql_stub = sql_pb2_grpc.SqlServiceStub(self.channel)
+            self.sql_stub = sql_pb2_grpc.QueryServiceStub(self.channel)
             self.graph_stub = graph_pb2_grpc.GraphServiceStub(self.channel)
 
         logger.info(
@@ -652,10 +652,10 @@ class ProximaDBClientV1:
                 proto_param = self._convert_to_sql_value(param)
                 proto_parameters.append(proto_param)
 
-        request = types_pb2.ExecuteSqlRequest(query=query, parameters=proto_parameters)
+        request = types_pb2.ExecuteQueryRequest(query=query, parameters=proto_parameters)
 
         try:
-            response = self.sql_stub.ExecuteSql(request, timeout=self.timeout)
+            response = self.sql_stub.ExecuteQuery(request, timeout=self.timeout)
 
             # Convert response to dictionary format
             rows = []

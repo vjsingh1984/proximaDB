@@ -25,13 +25,13 @@ _sym_db = _symbol_database.Default()
 from proximadb.v1 import types_pb2 as proximadb_dot_v1_dot_types__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16proximadb/v1/sql.proto\x12\x0cproximadb.v1\x1a\x18proximadb/v1/types.proto2]\n\nSqlService\x12O\n\nExecuteSql\x12\x1f.proximadb.v1.ExecuteSqlRequest\x1a .proximadb.v1.ExecuteSqlResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16proximadb/v1/sql.proto\x12\x0cproximadb.v1\x1a\x18proximadb/v1/types.proto2e\n\x0cQueryService\x12U\n\x0c\x45xecuteQuery\x12!.proximadb.v1.ExecuteQueryRequest\x1a\".proximadb.v1.ExecuteQueryResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'proximadb.v1.sql_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_SQLSERVICE']._serialized_start=66
-  _globals['_SQLSERVICE']._serialized_end=159
+  _globals['_QUERYSERVICE']._serialized_start=66
+  _globals['_QUERYSERVICE']._serialized_end=167
 # @@protoc_insertion_point(module_scope)
