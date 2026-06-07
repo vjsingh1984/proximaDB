@@ -6944,6 +6944,8 @@ dependencies = [
  "bytes",
  "futures",
  "object_store",
+ "parquet",
+ "proximadb-data-model",
  "proximadb-kernel",
  "proximadb-object-store",
  "proximadb-records",

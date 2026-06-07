@@ -21,6 +21,9 @@ proximadb-object-store = { path = "../proximadb-object-store" }
 proximadb-records = { workspace = true }
 proximadb-kernel.workspace = true
 object_store.workspace = true
+# Footer-driven range reads + column projection via the parquet async object-store
+# reader (the workspace dep enables the `object_store` feature, which pulls in `async`).
+parquet.workspace = true
 bytes = "1.5"
 arrow-array.workspace = true
 arrow-schema.workspace = true

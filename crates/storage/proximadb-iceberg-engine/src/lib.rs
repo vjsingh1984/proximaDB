@@ -17,9 +17,10 @@
 //!     → proxima_records_to_parquet_bytes(records, &schema)  // F1.5 + F1.6
 //!     → ProximaObjectStore::put(path, bytes)                // F1
 //!
-//! read_parquet_batches(path, _schema, batch_size)
-//!     = ProximaObjectStore::get(path)                       // F1
-//!     → parquet_bytes_to_record_batches_with_batch_size     // F1.6
+//! read_parquet_batches(path, schema, batch_size)
+//!     = ParquetObjectReader::new(inner_store, full_key)      // F1 (footer + range reads)
+//!     → ParquetRecordBatchStreamBuilder (projection by name) // parquet async reader
+//!     → lazy RecordBatch stream (row groups read on demand)
 //! ```
 //!
 //! ## v1 scope / follow-ups
@@ -27,12 +28,12 @@
 //!   so the file schema is inferred from the records (see `infer_proxima_schema`). When a
 //!   catalog-authoritative schema becomes available at the call site (F3 wiring), prefer
 //!   passing it instead of inferring.
-//! - **Read schema is advisory in v1.** `read_parquet_batches`' `schema` argument is the
-//!   caller's expected shape; this impl returns the file's batches as written (the Parquet
-//!   file embeds its own schema). Projection/coercion to the requested schema and Iceberg
-//!   manifest/row-group pruning are follow-ups (F5), layered on the same `ProximaObjectStore`.
-//! - **Eager read.** The returned `'static` stream is materialized eagerly (the whole object
-//!   is already an in-memory `Bytes`); true streaming/range reads are an F5 optimization.
+//! - **Read is footer-driven + projected.** `read_parquet_batches` opens a
+//!   [`ParquetObjectReader`], so it fetches only the footer (suffix/range read) and then
+//!   range-reads row groups lazily as the stream is polled — no whole-object download. A
+//!   non-empty `schema` arg is applied as a column projection (by name); reorder/coercion
+//!   to the requested schema and value-predicate row-group pruning (needs a predicate this
+//!   signature lacks) remain follow-ups layered on the same metadata.
 
 use std::sync::Arc;
 
@@ -44,15 +45,21 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use object_store::ObjectStore;
 use object_store::path::Path;
+use parquet::arrow::ParquetRecordBatchStreamBuilder;
+use parquet::arrow::ProjectionMask;
+use parquet::arrow::async_reader::ParquetObjectReader;
 use proximadb_kernel::error::StorageError;
 use proximadb_object_store::ProximaObjectStore;
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 use proximadb_storage_common::proxima_arrow::infer_proxima_schema;
-use proximadb_storage_common::proxima_parquet::{
-    parquet_bytes_to_record_batches_with_batch_size, proxima_records_to_parquet_bytes,
-};
+use proximadb_storage_common::proxima_parquet::proxima_records_to_parquet_bytes;
 use proximadb_storage_common::proxima_schema::ProximaSchema;
+
+/// Map a Parquet read/decode failure into a [`StorageError`] with operation context.
+fn read_err(context: &str, e: impl std::fmt::Display) -> StorageError {
+    StorageError::Serialization(format!("iceberg-engine: {context}: {e}"))
+}
 
 /// An [`ObjectStoreBridge`] backed by a [`ProximaObjectStore`] (any `object_store` backend:
 /// local `file://`, `memory://`, or cloud `s3://`/`gs://`/`az://` when the F1 crate's cloud
@@ -119,16 +126,52 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         self.store.store()
     }
 
+    /// Footer-driven, range-read, lazily-streamed Parquet read.
+    ///
+    /// Instead of a full-object `get` followed by an in-memory decode, this opens
+    /// a [`ParquetObjectReader`] over the wrapped object store, which fetches only
+    /// the Parquet footer (via a suffix/range read), parses the file metadata, and
+    /// then range-reads row groups **on demand** as the returned stream is polled.
+    /// On a cloud store that turns a whole-file download into a footer read plus
+    /// per-row-group ranges; on small in-memory objects it is equivalent.
+    ///
+    /// `schema` is honored as a **column projection**: when it carries fields, only
+    /// the file columns whose (root) names appear in it are read (matched by name
+    /// via [`ProjectionMask::columns`]; requested names absent from the file are
+    /// skipped, and file order is preserved — reordering/coercion to the requested
+    /// schema is a follow-up). An empty schema preserves the legacy "all columns"
+    /// contract. Value-predicate row-group pruning needs a predicate this signature
+    /// does not carry; it remains a follow-up layered on the same metadata.
     async fn read_parquet_batches(
         &self,
         path: &Path,
-        _schema: Arc<ArrowSchema>,
+        schema: Arc<ArrowSchema>,
         batch_size: usize,
         _tenant_id: Option<&str>,
     ) -> Result<BoxStream<'static, Result<RecordBatch, StorageError>>, StorageError> {
-        let bytes = self.store.get(path).await?;
-        let batches = parquet_bytes_to_record_batches_with_batch_size(bytes, batch_size)?;
-        Ok(futures::stream::iter(batches.into_iter().map(Ok)).boxed())
+        // Use the raw inner store + base-resolved key: ParquetObjectReader issues
+        // its own range reads, so it must address the concrete object key the way
+        // ProximaObjectStore's own methods do (which apply the base prefix).
+        let reader = ParquetObjectReader::new(self.store.store(), self.full_object_path(path));
+        let mut builder = ParquetRecordBatchStreamBuilder::new(reader)
+            .await
+            .map_err(|e| read_err("open parquet stream (footer)", e))?
+            .with_batch_size(batch_size);
+
+        if !schema.fields().is_empty() {
+            let mask = ProjectionMask::columns(
+                builder.parquet_schema(),
+                schema.fields().iter().map(|f| f.name().as_str()),
+            );
+            builder = builder.with_projection(mask);
+        }
+
+        let stream = builder
+            .build()
+            .map_err(|e| read_err("build parquet stream", e))?;
+        Ok(stream
+            .map(|batch| batch.map_err(|e| read_err("read parquet batch", e)))
+            .boxed())
     }
 
     async fn write_records_to_parquet(
@@ -182,6 +225,7 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
 mod tests {
     use super::*;
     use arrow_array::{Array, Int64Array, StringArray};
+    use arrow_schema::{DataType, Field};
     use object_store::memory::InMemory;
     use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaTreeNode, ProximaValue};
 
@@ -258,6 +302,69 @@ mod tests {
         assert_eq!(ages.value(1), 41);
         // The inferred dense-vector column round-tripped as a column too.
         assert!(batch.column_by_name("vector").is_some());
+    }
+
+    /// A non-empty `schema` arg projects the read to only the named columns (by name),
+    /// dropping the rest — and an absent requested name is silently skipped, not an error.
+    #[tokio::test]
+    async fn read_projects_to_requested_columns_by_name() {
+        let b = bridge();
+        let path = Path::from("warehouse/t/proj.parquet");
+
+        let r0 = record(
+            "r0",
+            vec![
+                ("name", ProximaValue::String("alice".into())),
+                ("age", ProximaValue::Int64(30)),
+                ("city", ProximaValue::String("paris".into())),
+            ],
+        );
+        let r1 = record(
+            "r1",
+            vec![
+                ("name", ProximaValue::String("bob".into())),
+                ("age", ProximaValue::Int64(41)),
+                ("city", ProximaValue::String("rome".into())),
+            ],
+        );
+        b.write_records_to_parquet(&path, &[r0, r1], None).await.unwrap();
+
+        // Project to {name, age} plus a name that does not exist in the file.
+        let projection = Arc::new(ArrowSchema::new(vec![
+            Field::new("name", DataType::Utf8, true),
+            Field::new("age", DataType::Int64, true),
+            Field::new("does_not_exist", DataType::Utf8, true),
+        ]));
+
+        let mut stream = b
+            .read_parquet_batches(&path, projection, 1024, None)
+            .await
+            .unwrap();
+
+        let mut batches = Vec::new();
+        while let Some(batch) = stream.next().await {
+            batches.push(batch.unwrap());
+        }
+        let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total, 2);
+
+        let batch = &batches[0];
+        // Only the two existing projected columns are present — `city` is pruned and the
+        // bogus requested name does not materialize a column.
+        assert_eq!(batch.num_columns(), 2, "projection must drop unrequested columns");
+        assert!(batch.column_by_name("name").is_some());
+        assert!(batch.column_by_name("age").is_some());
+        assert!(batch.column_by_name("city").is_none(), "city was not requested");
+        assert!(batch.column_by_name("does_not_exist").is_none());
+
+        let names = batch
+            .column_by_name("name")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(names.value(0), "alice");
+        assert_eq!(names.value(1), "bob");
     }
 
     /// Reading a path that was never written must surface a NotFound, not panic.
