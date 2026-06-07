@@ -288,6 +288,24 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "PK point lookup feeds the aggregate with the correct single row"
     );
 
+    // (2d) Stage 2 — uncorrelated scalar subquery in a WHERE comparison. The
+    // subquery `(SELECT avg(qty) FROM inv)` over [5,15,25,35] = 20 is hoisted to
+    // a LEFT JOIN ON TRUE (AssertMaxOneRow-guarded) and the predicate becomes
+    // `qty > col(hoisted)`, so only i3(25) and i4(35) qualify.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT id FROM {inv} WHERE qty > (SELECT avg(qty) FROM {inv})"
+        ))
+        .await
+        .expect("SELECT WHERE scalar subquery");
+    assert_eq!(
+        col_set(&rows, "id"),
+        ["i3".to_string(), "i4".to_string()]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        "WHERE qty > (SELECT avg(qty)) keeps only above-average rows"
+    );
+
     // (3) INNER JOIN over real rows from two tables → 3 joined rows.
     let rows = client
         .simple_query(&format!(

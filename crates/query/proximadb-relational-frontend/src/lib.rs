@@ -284,11 +284,26 @@ fn lower_select(
             }
         }
         if let Some((first, rest)) = filter_conjuncts.split_first() {
-            // Stage 1: WHERE expressions are sealed against scalar subqueries
-            // (Stage 2 un-seals this to hoist `WHERE a > (SELECT …)`).
-            let mut predicate = lower_expr_sealed(first, &scope)?;
+            // Stage 2: a scalar subquery in a WHERE comparison (`a > (SELECT …)`)
+            // is hoisted into a `LEFT JOIN ON TRUE` appended BELOW the Filter, so
+            // the predicate references the post-join column. `base_width` is the
+            // current plan width (Semi/Anti lifts above emit left-only, so it
+            // equals the base relation width).
+            let base_width = plan.output_schema().columns.len();
+            let mut ctx = LoweringCtx::new(catalog, base_width);
+            let mut predicate = lower_expr(first, &scope, &mut ctx)?;
             for conj in rest {
-                predicate = Expr::bin(BinaryOp::And, predicate, lower_expr_sealed(conj, &scope)?);
+                predicate =
+                    Expr::bin(BinaryOp::And, predicate, lower_expr(conj, &scope, &mut ctx)?);
+            }
+            for hoisted in ctx.hoisted.drain(..) {
+                plan = LogicalNode::Join {
+                    left: Box::new(plan),
+                    right: Box::new(hoisted.plan),
+                    kind: JoinKind::Left,
+                    on: hoisted.on,
+                    strategy: JoinStrategy::Auto,
+                };
             }
             plan = LogicalNode::Filter {
                 input: Box::new(plan),
@@ -361,10 +376,10 @@ fn lower_select(
         // Lower the projection through a hoisting context so a scalar subquery in
         // an output expression (e.g. `SELECT name, (SELECT max(t) FROM o) FROM u`)
         // is rewritten to a `LEFT JOIN ON TRUE` over an `AssertMaxOneRow`-guarded
-        // subplan. `base_width` is frozen to the current relation width BEFORE
-        // lowering, so hoisted columns append after the base columns and existing
-        // ordinals never shift.
-        let base_width = scope.columns.len();
+        // subplan. `base_width` is the current plan width (which already includes
+        // any scalar columns a WHERE subquery appended), so projection-hoisted
+        // columns append after all existing columns and ordinals never shift.
+        let base_width = plan.output_schema().columns.len();
         let mut ctx = LoweringCtx::new(catalog, base_width);
         let projection_items = lower_projection_items(&select.projection, &scope, &mut ctx)?;
         // Append each hoisted subquery as a LEFT JOIN onto the base plan, in
@@ -1914,17 +1929,56 @@ mod tests {
         );
     }
 
+    // --- Stage 2: uncorrelated scalar subquery in WHERE ------------------------
+
     #[test]
-    fn scalar_subquery_in_where_is_sealed_in_stage1() {
-        // Stage 1 seals WHERE against scalar subqueries (Stage 2 un-seals). A
-        // `WHERE a > (SELECT …)` declines to legacy for now.
+    fn where_scalar_subquery_lowers_to_filter_over_left_join() {
+        // `WHERE age > (SELECT max(total) FROM orders)` → Filter over a
+        // `LEFT JOIN ON TRUE` whose right is AssertMaxOneRow. The predicate
+        // references the hoisted column at ordinal 3 (users width = 3).
+        let plan = under_project(lower(
+            "SELECT name FROM users WHERE age > (SELECT max(total) FROM orders)",
+        ));
+        let LogicalNode::Filter { input, predicate } = plan else {
+            panic!("expected Filter");
+        };
+        // The predicate's right operand is the hoisted scalar column at ordinal 3.
+        match predicate {
+            Expr::BinaryOp { op: BinaryOp::Gt, right, .. } => {
+                assert!(matches!(*right, Expr::Column(c) if c.ordinal == 3));
+            }
+            other => panic!("expected `age > col(3)`, got {other:?}"),
+        }
+        match *input {
+            LogicalNode::Join {
+                kind: JoinKind::Left,
+                on: None,
+                right,
+                ..
+            } => assert!(matches!(*right, LogicalNode::AssertMaxOneRow { .. })),
+            other => panic!("expected LEFT JOIN ON TRUE over AssertMaxOneRow, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn where_and_projection_scalar_subqueries_get_disjoint_ordinals() {
+        // A scalar subquery in WHERE (appended at ordinal 3) and one in the
+        // projection (appended at ordinal 4) must not collide.
+        let LogicalNode::Project { outputs, input } = lower(
+            "SELECT (SELECT min(total) FROM orders) AS p FROM users \
+             WHERE age > (SELECT max(total) FROM orders)",
+        ) else {
+            panic!("expected Project");
+        };
+        let p = outputs.iter().find(|o| o.name == "p").expect("p");
         assert!(
-            lower_sql(
-                "SELECT name FROM users WHERE age > (SELECT max(total) FROM orders)",
-                &catalog()
-            )
-            .is_err()
+            matches!(&p.expr, Expr::Column(c) if c.ordinal == 4),
+            "projection scalar should be at ordinal 4 (after base 0..2 + WHERE scalar at 3), got {:?}",
+            p.expr
         );
+        // The WHERE scalar's join sits below the Filter, the projection scalar's
+        // above it — two nested LEFT JOINs total.
+        assert!(matches!(*input, LogicalNode::Join { kind: JoinKind::Left, .. }));
     }
 
     #[test]
