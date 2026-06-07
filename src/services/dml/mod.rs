@@ -1831,6 +1831,67 @@ impl DmlService {
             }
         }
 
+        // TD-110: enforce non-PK UNIQUE constraints / indexes on INSERT. For each
+        // unique column set, reject a tuple that repeats within this statement OR
+        // already exists as a committed row. NULL tuples are exempt (SQL permits
+        // multiple NULLs). O(N)/insert via `scan_records_filtered` until the
+        // index-backed slice (Slice C) replaces the scan with a point lookup.
+        let unique_sets = Self::unique_column_sets(&table_schema);
+        if !unique_sets.is_empty() {
+            let primary_key = Self::primary_key_column(&table_schema);
+            let pk_ref = primary_key.as_deref();
+            for columns in &unique_sets {
+                let mut batch_tuples: std::collections::HashSet<Vec<String>> =
+                    std::collections::HashSet::new();
+                for record in &records {
+                    let Some(tuple) = Self::unique_tuple_repr(record, columns, pk_ref) else {
+                        continue; // NULL/absent in the tuple → exempt
+                    };
+                    if !batch_tuples.insert(tuple.clone()) {
+                        return Err(anyhow!(
+                            "duplicate key value violates unique constraint on ({}) for table '{}': ({}) appears more than once in this INSERT",
+                            columns.join(", "),
+                            table_schema.name,
+                            tuple.join(", ")
+                        ));
+                    }
+                    // Cross-existing duplicate: scan for any committed row whose
+                    // tuple matches. limit=1 — presence is all we need.
+                    let want = tuple.clone();
+                    let cols = columns.clone();
+                    let pk_owned = primary_key.clone();
+                    let pred = move |existing: &ProximaRecord| {
+                        Self::unique_tuple_repr(existing, &cols, pk_owned.as_deref())
+                            .is_some_and(|existing_tuple| existing_tuple == want)
+                    };
+                    let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> =
+                        Some(&pred);
+                    let hits = self
+                        .record_store
+                        .scan_records_filtered(
+                            &table_schema,
+                            TableRecordScanRequest {
+                                table_id: table_id.name.clone(),
+                                limit: Some(1),
+                                include_vector: false,
+                                include_props: true,
+                            },
+                            predicate,
+                            None,
+                        )
+                        .await?;
+                    if !hits.is_empty() {
+                        return Err(anyhow!(
+                            "duplicate key value violates unique constraint on ({}) for table '{}': ({}) already exists",
+                            columns.join(", "),
+                            table_schema.name,
+                            tuple.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
+
         // Compute per-column min/max and NDV from the canonical record props before moving records
         // into mutations. Only orderable types (String, integers) tracked for min/max; floats and
         // booleans are additionally included in the NDV pass.
@@ -2819,6 +2880,54 @@ impl DmlService {
                 .find(|column| column.name == "id" || column.name == "record_id")
                 .map(|column| column.name.clone())
         })
+    }
+
+    /// TD-110: the column sets that carry a UNIQUE guarantee — cataloged unique
+    /// indexes plus inline `UNIQUE (...)` column constraints. Each is enforced
+    /// independently on INSERT.
+    fn unique_column_sets(table_schema: &CatalogTableSchema) -> Vec<Vec<String>> {
+        let mut sets: Vec<Vec<String>> = Vec::new();
+        for index in &table_schema.relational_capabilities.unique_indexes {
+            if !index.columns.is_empty() {
+                sets.push(index.columns.clone());
+            }
+        }
+        for constraint in &table_schema.relational_capabilities.constraints {
+            if let proximadb_catalog::ColumnConstraint::Unique { columns } = constraint
+                && !columns.is_empty()
+            {
+                sets.push(columns.clone());
+            }
+        }
+        sets
+    }
+
+    /// TD-110: render a record's value tuple for `columns` as comparable text for
+    /// UNIQUE checks. Returns `None` when ANY column is NULL or absent — SQL
+    /// UNIQUE permits multiple NULL tuples, so such rows are exempt. The primary
+    /// key is read from `oid` (it is not stored in `props`); other columns are
+    /// read from `props` and must be scalar.
+    fn unique_tuple_repr(
+        record: &ProximaRecord,
+        columns: &[String],
+        primary_key: Option<&str>,
+    ) -> Option<Vec<String>> {
+        let mut tuple = Vec::with_capacity(columns.len());
+        for column in columns {
+            if primary_key.is_some_and(|pk| column.eq_ignore_ascii_case(pk)) {
+                tuple.push(record.oid.clone());
+                continue;
+            }
+            match record.props.get(column) {
+                Some(ProximaTreeNode::Value(ProximaValue::Null)) | None => return None,
+                Some(ProximaTreeNode::Value(value)) => {
+                    tuple.push(Self::proxima_value_to_predicate_text(value));
+                }
+                // Non-scalar (nested tree / array) — not a scalar unique key.
+                Some(_) => return None,
+            }
+        }
+        Some(tuple)
     }
 
     /// Extract IDs from WHERE clause using the catalog primary key.
@@ -4530,6 +4639,104 @@ mod tests {
         ))
         .await
         .expect("distinct key insert");
+    }
+
+    #[tokio::test]
+    async fn insert_rejects_duplicate_unique_constraint() {
+        // TD-110: a non-PK UNIQUE column rejects a duplicate value against a
+        // committed row AND within one INSERT; NULL tuples are exempt (multiple
+        // NULLs allowed); distinct values still insert.
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE members (id TEXT NOT NULL, email TEXT, PRIMARY KEY (id), UNIQUE (email));",
+            )
+            .expect("parse create")
+            .expect("ddl");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("unique.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let insert = |sql: &'static str| {
+            parser.parse_dml(sql).expect("parse dml").expect("dml")
+        };
+
+        // First insert succeeds.
+        dml.execute(insert(
+            "INSERT INTO members (id, email) VALUES ('m1', 'a@x.com');",
+        ))
+        .await
+        .expect("first insert");
+
+        // A different PK but duplicate UNIQUE email is rejected against the committed row.
+        let err = dml
+            .execute(insert(
+                "INSERT INTO members (id, email) VALUES ('m2', 'a@x.com');",
+            ))
+            .await
+            .expect_err("duplicate UNIQUE email must be rejected");
+        assert!(
+            err.to_string()
+                .contains("duplicate key value violates unique constraint"),
+            "unexpected error: {err}"
+        );
+
+        // A duplicate UNIQUE value within a single INSERT is also rejected.
+        let err = dml
+            .execute(insert(
+                "INSERT INTO members (id, email) VALUES ('m3', 'b@x.com'), ('m4', 'b@x.com');",
+            ))
+            .await
+            .expect_err("within-batch duplicate UNIQUE value must be rejected");
+        assert!(
+            err.to_string().contains("appears more than once"),
+            "unexpected error: {err}"
+        );
+
+        // NULL UNIQUE tuples are exempt — multiple NULL emails are allowed.
+        dml.execute(insert("INSERT INTO members (id) VALUES ('m5');"))
+            .await
+            .expect("first NULL email insert");
+        dml.execute(insert("INSERT INTO members (id) VALUES ('m6');"))
+            .await
+            .expect("second NULL email allowed (NULLs exempt from UNIQUE)");
+
+        // A distinct UNIQUE value still inserts.
+        dml.execute(insert(
+            "INSERT INTO members (id, email) VALUES ('m7', 'c@x.com');",
+        ))
+        .await
+        .expect("distinct UNIQUE value insert");
     }
 
     /// SQL UPDATE and DELETE through `DirectWalTableRecordStore` — T9 conformance.

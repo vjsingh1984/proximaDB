@@ -216,42 +216,28 @@ impl CatalogRow {
     }
 
     fn reject_unenforced_stateful_constraints(&self, schema: &CatalogTableSchema) -> Result<()> {
-        for index in &schema.relational_capabilities.unique_indexes {
-            if tuple_is_complete_non_null(self, &index.columns) {
+        // TD-110: UNIQUE / PRIMARY KEY uniqueness is now ENFORCED on the DML
+        // insert path (within-statement dedup + a cross-existing duplicate scan
+        // in `DmlService::execute_insert`), so it no longer fail-closes here.
+        // FOREIGN KEY reference checking is still unimplemented, so a non-null
+        // FK tuple keeps fail-closing — rejecting the write is safer than
+        // silently accepting an unverified cross-table reference.
+        for constraint in &schema.relational_capabilities.constraints {
+            if let ColumnConstraint::ForeignKey {
+                columns,
+                references_table,
+                references_columns,
+                ..
+            } = constraint
+                && tuple_is_complete_non_null(self, columns)
+            {
                 return Err(anyhow!(
-                    "UNIQUE constraint/index '{}' on table '{}' is cataloged but native unique-index enforcement is not available yet",
-                    index.name,
+                    "FOREIGN KEY ({}) REFERENCES {}({}) on table '{}' is cataloged but native reference enforcement is not available yet",
+                    columns.join(", "),
+                    references_table,
+                    references_columns.join(", "),
                     schema.name
                 ));
-            }
-        }
-
-        for constraint in &schema.relational_capabilities.constraints {
-            match constraint {
-                ColumnConstraint::Unique { columns }
-                    if tuple_is_complete_non_null(self, columns) =>
-                {
-                    return Err(anyhow!(
-                        "UNIQUE constraint on ({}) for table '{}' is cataloged but native unique-index enforcement is not available yet",
-                        columns.join(", "),
-                        schema.name
-                    ));
-                }
-                ColumnConstraint::ForeignKey {
-                    columns,
-                    references_table,
-                    references_columns,
-                    ..
-                } if tuple_is_complete_non_null(self, columns) => {
-                    return Err(anyhow!(
-                        "FOREIGN KEY ({}) REFERENCES {}({}) on table '{}' is cataloged but native reference enforcement is not available yet",
-                        columns.join(", "),
-                        references_table,
-                        references_columns.join(", "),
-                        schema.name
-                    ));
-                }
-                _ => {}
             }
         }
 
@@ -1379,7 +1365,11 @@ mod tests {
     }
 
     #[test]
-    fn unique_constraint_rejects_non_null_tuple_until_index_enforcement_exists() {
+    fn unique_constraint_no_longer_fails_closed_in_row_validation() {
+        // TD-110: UNIQUE enforcement moved to the DML insert path (within-batch
+        // dedup + cross-existing scan in DmlService::execute_insert). Row-local
+        // validation can't see other rows, so it no longer rejects a non-null
+        // UNIQUE tuple — it accepts the row and lets the DML path enforce it.
         let schema = users_schema_with_unique_email();
         let mut values = HashMap::new();
         values.insert("id".to_string(), ProximaValue::Int64(42));
@@ -1388,12 +1378,8 @@ mod tests {
             ProximaValue::String("a@example.com".to_string()),
         );
 
-        let err = CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
-            .expect_err("non-null UNIQUE tuple should fail closed");
-        assert!(
-            err.to_string()
-                .contains("native unique-index enforcement is not available yet")
-        );
+        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect("non-null UNIQUE tuple is now accepted by row validation (DML enforces it)");
     }
 
     #[test]
