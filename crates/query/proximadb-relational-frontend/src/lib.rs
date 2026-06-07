@@ -428,14 +428,14 @@ fn lower_subquery_join_parts(
         SqlExpr::InSubquery {
             expr,
             subquery,
-            negated: false,
+            negated,
         } => {
             // Lower the subquery in isolation; correlated/unsupported → decline (None).
             let Ok(sub) = lower_query(subquery, catalog) else {
                 return Ok(None);
             };
             let sub_schema = sub.output_schema();
-            // `x IN (subquery)` requires exactly one output column.
+            // `x [NOT] IN (subquery)` requires exactly one output column.
             let [sub_col] = sub_schema.columns.as_slice() else {
                 return Ok(None);
             };
@@ -450,7 +450,15 @@ fn lower_subquery_join_parts(
                 nullable: sub_col.nullable,
             };
             let on = Expr::bin(BinaryOp::Eq, outer, Expr::column(sub_ref));
-            Ok(Some((JoinKind::Semi, Some(on), sub)))
+            // IN → Semi; NOT IN → AntiNullAware (NULL-correct: empty when the subquery
+            // has any NULL, and a NULL `x` is never emitted — via the executor's
+            // three-valued ON evaluation).
+            let kind = if *negated {
+                JoinKind::AntiNullAware
+            } else {
+                JoinKind::Semi
+            };
+            Ok(Some((kind, Some(on), sub)))
         }
         SqlExpr::Exists { subquery, negated } => {
             let Ok(sub) = lower_query(subquery, catalog) else {
@@ -465,8 +473,7 @@ fn lower_subquery_join_parts(
             };
             Ok(Some((kind, None, sub)))
         }
-        // NOT IN (negated InSubquery) is deferred (three-valued-NULL semantics);
-        // everything else is a normal predicate handled by the Filter.
+        // Everything else is a normal predicate handled by the Filter.
         _ => Ok(None),
     }
 }
@@ -1568,14 +1575,20 @@ mod tests {
     }
 
     #[test]
-    fn not_in_subquery_is_declined() {
-        // NOT IN is deferred (three-valued NULL semantics) → falls through to the
-        // Filter path where lower_expr rejects the subquery.
-        assert!(lower_sql(
+    fn not_in_subquery_lowers_to_null_aware_anti_join() {
+        // `x NOT IN (subquery)` → AntiNullAware join with the equi ON (NULL-correct
+        // via the executor's three-valued evaluation).
+        let plan = under_project(lower(
             "SELECT name FROM users WHERE id NOT IN (SELECT uid FROM orders)",
-            &catalog()
-        )
-        .is_err());
+        ));
+        match plan {
+            LogicalNode::Join {
+                kind: JoinKind::AntiNullAware,
+                on: Some(Expr::BinaryOp { op, .. }),
+                ..
+            } => assert_eq!(op, BinaryOp::Eq),
+            other => panic!("expected AntiNullAware join with equi ON, got {other:?}"),
+        }
     }
 
     #[test]

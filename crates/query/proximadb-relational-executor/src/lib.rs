@@ -1275,6 +1275,26 @@ impl NestedLoopJoinExec {
         let v = pred.eval(&combined, builtins())?;
         Ok(matches!(v, ProximaValue::Boolean(true)))
     }
+
+    /// Three-valued ON evaluation for AntiNullAware (`NOT IN`): `Some(true)` /
+    /// `Some(false)` for a Boolean result, `None` for NULL/UNKNOWN (or a
+    /// non-boolean result). A NULL probe key or build key makes `x = c` NULL here.
+    fn predicate_eval3(
+        &self,
+        left: &RelationalRow,
+        right: &RelationalRow,
+    ) -> Result<Option<bool>, ExecError> {
+        let Some(pred) = &self.on else {
+            return Ok(Some(true));
+        };
+        let mut combined = Vec::with_capacity(left.len() + right.len());
+        combined.extend_from_slice(left);
+        combined.extend_from_slice(right);
+        Ok(match pred.eval(&combined, builtins())? {
+            ProximaValue::Boolean(b) => Some(b),
+            _ => None,
+        })
+    }
 }
 
 #[async_trait]
@@ -1332,6 +1352,29 @@ impl ExecNode for NestedLoopJoinExec {
                 self.current_left_matched = false;
             }
             let left = self.current_left.as_ref().unwrap().clone();
+            // AntiNullAware (NOT IN): SQL three-valued semantics. Emit the left row
+            // iff the ON is FALSE for EVERY right row; any TRUE (match) or
+            // NULL/UNKNOWN (probe key NULL, or a build key NULL → `x = c` is NULL)
+            // excludes it. So `x NOT IN (S)` is empty when S has any NULL, and a NULL
+            // `x` is never emitted.
+            if matches!(self.kind, JoinKind::AntiNullAware) {
+                let buf = self.right_buf.as_ref().expect("buf");
+                let mut excluded = false;
+                for right in buf {
+                    match self.predicate_eval3(&left, right)? {
+                        Some(true) | None => {
+                            excluded = true;
+                            break;
+                        }
+                        Some(false) => {}
+                    }
+                }
+                self.current_left = None;
+                if !excluded {
+                    return Ok(Some(left));
+                }
+                continue;
+            }
             // Inner loop over right side.
             let buf = self.right_buf.as_ref().expect("buf");
             while self.right_cursor < buf.len() {
@@ -1358,7 +1401,10 @@ impl ExecNode for NestedLoopJoinExec {
                             self.current_left = None;
                             return Ok(Some(left));
                         }
-                        JoinKind::Anti => {
+                        // AntiNullAware is fully handled by the dedicated branch
+                        // above and never reaches this inner loop; grouped here only
+                        // for exhaustiveness.
+                        JoinKind::Anti | JoinKind::AntiNullAware => {
                             // Match found ⇒ anti excludes this left row;
                             // fast-forward to next left.
                             self.current_left = None;
@@ -1405,7 +1451,10 @@ fn build_join_schema(
     right: &RelationalSchema,
     kind: JoinKind,
 ) -> RelationalSchema {
-    if matches!(kind, JoinKind::Semi | JoinKind::Anti) {
+    if matches!(
+        kind,
+        JoinKind::Semi | JoinKind::Anti | JoinKind::AntiNullAware
+    ) {
         return left.clone();
     }
     let mut cols = left.columns.clone();
@@ -1455,6 +1504,14 @@ impl HashJoinExec {
         kind: JoinKind,
         on: Option<Expr>,
     ) -> Result<Self, ExecError> {
+        // NAAJ requires SQL three-valued ON evaluation the hash-equi path can't
+        // express; the planner always routes it to NestedLoop, so reaching Hash is a
+        // planner bug — fail loudly rather than silently mis-handle NULLs.
+        if matches!(kind, JoinKind::AntiNullAware) {
+            return Err(ExecError::Internal(
+                "AntiNullAware join must use NestedLoop, not Hash".into(),
+            ));
+        }
         let schema = build_join_schema(left.schema(), right.schema(), kind);
         let left_width = left.schema().len();
         let eq_pairs = match &on {
@@ -1651,7 +1708,9 @@ impl ExecNode for HashJoinExec {
                         return Ok(Some(l));
                     }
                 }
-                JoinKind::Anti => {
+                // AntiNullAware never reaches HashJoin (the planner routes it to
+                // NestedLoop and `new` rejects it); grouped for exhaustiveness only.
+                JoinKind::Anti | JoinKind::AntiNullAware => {
                     if matches.is_empty() {
                         return Ok(Some(l));
                     }
@@ -2841,6 +2900,79 @@ mod tests {
             .collect();
         out.sort(); // set-op output order is unspecified
         out
+    }
+
+    async fn run_not_in(left: &[Option<i64>], right: &[Option<i64>]) -> Vec<i64> {
+        let int_schema =
+            || RelationalSchema::new(vec![ColumnInfo::new("v", ProximaType::Int64, true)]);
+        let to_rows = |vals: &[Option<i64>]| -> Vec<RelationalRow> {
+            vals.iter()
+                .map(|v| {
+                    vec![v.map_or(ProximaValue::Null, ProximaValue::Int64)]
+                })
+                .collect()
+        };
+        let f = VecReaderFactory::new();
+        f.register("lft", int_schema(), to_rows(left), vec![0]);
+        f.register("rgt", int_schema(), to_rows(right), vec![0]);
+        let scan = |t: &str| PhysicalPlan::Scan {
+            table: TableId::new(t),
+            output_schema: int_schema(),
+            projection: None,
+            predicate: None,
+            limit: None,
+            access: ScanAccess::FullScan,
+        };
+        let col = |ordinal| {
+            Expr::column(ColumnRef {
+                name: "v".into(),
+                ordinal,
+                ty: ProximaType::Int64,
+                nullable: true,
+            })
+        };
+        let plan = PhysicalPlan::Join {
+            left: Box::new(scan("lft")),
+            right: Box::new(scan("rgt")),
+            kind: JoinKind::AntiNullAware,
+            on: Some(Expr::bin(BinaryOp::Eq, col(0), col(1))),
+            strategy: JoinStrategy::NestedLoop,
+        };
+        let mut exec = build_executor(plan, &f, &ExecutionContext::default()).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        let mut out: Vec<i64> = rows
+            .iter()
+            .map(|r| match &r[0] {
+                ProximaValue::Int64(v) => *v,
+                other => panic!("expected Int64, got {other:?}"),
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[tokio::test]
+    async fn not_in_null_aware_anti_join_semantics() {
+        // x NOT IN (S) — SQL three-valued semantics.
+        // basic: {1,2,3} NOT IN {2} → {1,3}
+        assert_eq!(
+            run_not_in(&[Some(1), Some(2), Some(3)], &[Some(2)]).await,
+            vec![1, 3]
+        );
+        // S contains a NULL → the predicate is UNKNOWN for every x → EMPTY.
+        assert_eq!(
+            run_not_in(&[Some(1), Some(2)], &[None]).await,
+            Vec::<i64>::new()
+        );
+        // a NULL x is never emitted; the non-null rows behave normally.
+        // {NULL,1,3} NOT IN {3} → {1}
+        assert_eq!(
+            run_not_in(&[None, Some(1), Some(3)], &[Some(3)]).await,
+            vec![1]
+        );
+        // NOT IN an empty set → all (non-null) left rows. {1,2} NOT IN {} → {1,2}
+        assert_eq!(run_not_in(&[Some(1), Some(2)], &[]).await, vec![1, 2]);
     }
 
     #[tokio::test]

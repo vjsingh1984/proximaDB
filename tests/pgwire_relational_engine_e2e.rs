@@ -601,6 +601,21 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "COALESCE substitutes a default for the NULL (unmatched) side"
     );
 
+    // (3p) NOT IN: dept ids NOT used by any employee → {3} (hr). Lowers to a
+    // null-aware anti join (NULL-correct; here the subquery has no NULLs). Previously
+    // NOT IN was declined and fell through to the legacy path.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT id FROM {dept} WHERE id NOT IN (SELECT dept_id FROM {emp})"
+        ))
+        .await
+        .expect("SELECT NOT IN (null-aware anti join)");
+    assert_eq!(
+        col_set(&rows, "id"),
+        set(&["3"]),
+        "NOT IN → dept ids with no employee"
+    );
+
     // (4) Regression: a simple single-table OR SELECT still returns correct rows
     // (the gate keeps it on the hardened legacy path, not PATH B).
     let rows = client

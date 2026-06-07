@@ -312,8 +312,15 @@ pub enum JoinKind {
     /// row exists. Useful as an `IN (subquery)` lowering target.
     Semi,
     /// Anti join — emit a left row when NO matching right row
-    /// exists. Useful as a `NOT IN` / `NOT EXISTS` lowering target.
+    /// exists. The `NOT EXISTS` lowering target.
     Anti,
+    /// Null-aware anti join — the `NOT IN (subquery)` lowering target.
+    /// Like `Anti`, but with SQL three-valued semantics: a left row is
+    /// emitted only when the ON predicate is FALSE for EVERY right row;
+    /// any TRUE (match) OR NULL/UNKNOWN (the probe key is NULL, or the
+    /// build side contains a NULL key) excludes it. So `x NOT IN (S)` is
+    /// empty when S contains any NULL, and a NULL `x` is never emitted.
+    AntiNullAware,
 }
 
 impl JoinKind {
@@ -327,6 +334,7 @@ impl JoinKind {
             Cross => "CROSS",
             Semi => "SEMI",
             Anti => "ANTI",
+            AntiNullAware => "ANTI_NULL_AWARE",
         }
     }
 }
@@ -577,9 +585,11 @@ impl LogicalNode {
                 // Outer-join sides get `nullable = true` for the
                 // possibly-NULL columns.
                 let (left_nullable, right_nullable) = match kind {
-                    JoinKind::Inner | JoinKind::Cross | JoinKind::Semi | JoinKind::Anti => {
-                        (false, false)
-                    }
+                    JoinKind::Inner
+                    | JoinKind::Cross
+                    | JoinKind::Semi
+                    | JoinKind::Anti
+                    | JoinKind::AntiNullAware => (false, false),
                     JoinKind::Left => (false, true),
                     JoinKind::Right => (true, false),
                     JoinKind::Full => (true, true),
@@ -589,8 +599,11 @@ impl LogicalNode {
                         c.nullable = true;
                     }
                 }
-                // Semi/Anti joins emit only the left side.
-                if matches!(kind, JoinKind::Semi | JoinKind::Anti) {
+                // Semi/Anti/null-aware-anti joins emit only the left side.
+                if matches!(
+                    kind,
+                    JoinKind::Semi | JoinKind::Anti | JoinKind::AntiNullAware
+                ) {
                     return RelationalSchema::new(cols);
                 }
                 let right_cols: Vec<ColumnInfo> = right_cols

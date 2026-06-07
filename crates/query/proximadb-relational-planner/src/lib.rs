@@ -810,6 +810,10 @@ pub fn pick_join_strategy(kind: JoinKind, on: Option<&Expr>) -> JoinStrategy {
     match kind {
         // CROSS has no ON — nested loop is the only correct strategy.
         JoinKind::Cross => JoinStrategy::NestedLoop,
+        // Null-aware anti join needs SQL three-valued ON evaluation per right row
+        // (only implemented in the NestedLoop executor; HashJoin's equi-key match
+        // can't express the NULL/UNKNOWN cases). Hash NAAJ is a perf follow-up.
+        JoinKind::AntiNullAware => JoinStrategy::NestedLoop,
         // RIGHT/FULL are correct on BOTH paths now: HashJoin drains unmatched
         // build rows, NestedLoop handles the non-equi case — so they follow the
         // normal equi→Hash / else→NestedLoop choice.
@@ -1401,7 +1405,12 @@ fn shift_column_ordinals(expr: Expr, offset: usize) -> Expr {
 fn can_push_to_left(kind: JoinKind) -> bool {
     matches!(
         kind,
-        JoinKind::Inner | JoinKind::Cross | JoinKind::Left | JoinKind::Semi | JoinKind::Anti
+        JoinKind::Inner
+            | JoinKind::Cross
+            | JoinKind::Left
+            | JoinKind::Semi
+            | JoinKind::Anti
+            | JoinKind::AntiNullAware
     )
 }
 
