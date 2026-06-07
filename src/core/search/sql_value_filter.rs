@@ -302,29 +302,21 @@ pub fn proxima_value_to_json(pv: &ProximaValue) -> serde_json::Value {
 /// Nested `Object` nodes are serialised as JSON objects. This matches the shape
 /// expected by `json_comparison::evaluate_filter` and `MetadataQueryEngine::evaluate`.
 pub fn proxima_tree_to_json_map(props: &ProximaTree) -> HashMap<String, serde_json::Value> {
+    fn node_to_json(node: &ProximaTreeNode) -> serde_json::Value {
+        match node {
+            ProximaTreeNode::Value(pv) => proxima_value_to_json(pv),
+            ProximaTreeNode::Object(subtree) => serde_json::Value::Object(
+                subtree
+                    .iter()
+                    .map(|(k, n)| (k.clone(), node_to_json(n)))
+                    .collect(),
+            ),
+        }
+    }
+
     props
         .iter()
-        .map(|(key, node)| {
-            let value = match node {
-                ProximaTreeNode::Value(pv) => proxima_value_to_json(pv),
-                ProximaTreeNode::Object(subtree) => {
-                    let obj: serde_json::Map<String, serde_json::Value> = subtree
-                        .iter()
-                        .map(|(k, n)| {
-                            let v = match n {
-                                ProximaTreeNode::Value(pv) => proxima_value_to_json(pv),
-                                ProximaTreeNode::Object(_) => {
-                                    serde_json::Value::String("[nested]".to_string())
-                                }
-                            };
-                            (k.clone(), v)
-                        })
-                        .collect();
-                    serde_json::Value::Object(obj)
-                }
-            };
-            (key.clone(), value)
-        })
+        .map(|(key, node)| (key.clone(), node_to_json(node)))
         .collect()
 }
 
