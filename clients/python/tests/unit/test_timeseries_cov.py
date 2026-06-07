@@ -1,15 +1,16 @@
 """Offline unit tests for proximadb_sdk.timeseries.
 
-All transport is via an injected MagicMock client; no network, no DB boot.
+Fully offline: the time-series module wraps a generic client object whose
+methods (create_timeseries_collection / ingest_timeseries / query_timeseries)
+we replace with MagicMock or hand fakes. No network, no server.
 """
 
 from __future__ import annotations
 
-import warnings
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 from proximadb_sdk.exceptions import ProximaDBError
 from proximadb_sdk.timeseries import (
@@ -31,7 +32,7 @@ from proximadb_sdk.timeseries import (
 
 @pytest.fixture(autouse=True)
 def _clear_shared_state():
-    """Reset the class-level shared dicts before/after each test."""
+    """The repository uses class-level shared dicts; reset between tests."""
     TimeSeriesRepository._shared_batch_buffer.clear()
     TimeSeriesRepository._shared_collections.clear()
     TimeSeriesRepository._shared_points.clear()
@@ -42,7 +43,7 @@ def _clear_shared_state():
 
 
 def make_client():
-    """A MagicMock client whose timeseries methods return plausible dicts."""
+    """A client whose RPCs succeed and return server-shaped dicts."""
     client = MagicMock()
     client.create_timeseries_collection.return_value = {"collection_id": "ts1"}
     client.ingest_timeseries.return_value = {
@@ -50,678 +51,769 @@ def make_client():
         "ingested_count": 1,
         "failed_count": 0,
     }
-    client.query_timeseries.return_value = {"points": [], "total_points": 0}
+    client.query_timeseries.return_value = {"points": [], "metrics": [], "total_points": 0}
     return client
 
 
-# ---------------------------------------------------------------------------
-# Enums + simple data models
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Enums and ValueColumn
+# =============================================================================
 
 
-def test_value_column_string_coercion_and_type_property():
-    vc = ValueColumn(name="c", type="int", aggregation="sum", unit="ms", description="d")
-    assert vc.data_type == ValueType.INT
-    assert vc.type == ValueType.INT
-    assert vc.aggregation == AggregationType.SUM
-    d = vc.to_dict()
-    assert d["name"] == "c"
-    assert d["data_type"] == "int"
-    assert d["aggregation"] == "sum"
-    assert d["unit"] == "ms"
-
-    # exercise the type setter (string + enum branches)
-    vc.type = "float"
+def test_value_column_defaults_and_type_alias():
+    vc = ValueColumn(name="cpu")
     assert vc.data_type == ValueType.FLOAT
-    vc.type = ValueType.BOOL
-    assert vc.data_type == ValueType.BOOL
+    assert vc.aggregation == AggregationType.AVG
+    assert vc.type == ValueType.FLOAT
+    d = vc.to_dict()
+    assert d["name"] == "cpu"
+    assert d["data_type"] == "float"
+    assert d["aggregation"] == "avg"
 
 
-def test_value_column_enum_passthrough():
-    vc = ValueColumn(
-        name="c", data_type=ValueType.UINT, aggregation=AggregationType.MAX
-    )
+def test_value_column_string_coercion_and_legacy_type_kwarg():
+    vc = ValueColumn(name="loc", type="int", aggregation="sum", unit="lines", description="x")
+    assert vc.data_type == ValueType.INT
+    assert vc.aggregation == AggregationType.SUM
+    assert vc.unit == "lines"
+    assert vc.description == "x"
+
+
+def test_value_column_type_setter():
+    vc = ValueColumn(name="flag", data_type=ValueType.BOOL)
+    assert vc.type == ValueType.BOOL
+    vc.type = "string"
+    assert vc.data_type == ValueType.STRING
+    vc.type = ValueType.UINT
     assert vc.data_type == ValueType.UINT
-    assert vc.aggregation == AggregationType.MAX
 
 
-def test_collection_config_retention_parsing_and_dict():
-    cfg = TimeSeriesCollectionConfig(
-        name="m",
-        value_columns=[ValueColumn(name="v"), {"name": "w", "type": "int"}],
-        tags_columns=["host"],
-        retention="30d",
-        compression="zigzag",
-    )
-    assert cfg.name == "m"
-    assert len(cfg.value_columns) == 2
-    assert cfg.value_columns[1].data_type == ValueType.INT
-    assert cfg.tags_columns == ["host"]
+def test_enums_values():
+    assert AggregationType.OHLC.value == "ohlc"
+    assert DownsampleMode.EMA.value == "ema"
+    assert CompressionCodec.GORILLA.value == "gorilla"
+
+
+# =============================================================================
+# TimeSeriesCollectionConfig
+# =============================================================================
+
+
+def test_collection_config_retention_parsing():
+    cfg = TimeSeriesCollectionConfig(name="c", retention="30d")
     assert cfg.retention_ms == 30 * 24 * 60 * 60 * 1000
     assert cfg.retention.endswith("ms")
-    assert cfg.compression == CompressionCodec.ZIGZAG
-    d = cfg.to_dict()
-    assert d["compression"] == "zigzag"
-    assert d["tag_columns"] == ["host"]
 
 
-def test_collection_config_default_compression_and_no_retention():
-    cfg = TimeSeriesCollectionConfig(
-        name="m",
-        tag_columns=["a"],
-        default_compression="gorilla",
-    )
-    assert cfg.compression == CompressionCodec.GORILLA
-    assert cfg.retention_ms is None
+def test_collection_config_retention_none_and_unknown_suffix():
+    assert TimeSeriesCollectionConfig._parse_retention_ms(None) is None
+    assert TimeSeriesCollectionConfig._parse_retention_ms("12x") is None
+    cfg = TimeSeriesCollectionConfig(name="c")
     assert cfg.retention is None
 
 
-def test_retention_parsing_variants_and_unknown():
-    p = TimeSeriesCollectionConfig._parse_retention_ms
-    assert p(None) is None
-    assert p("500ms") == 500
-    assert p("2s") == 2000
-    assert p("5m") == 5 * 60 * 1000
-    assert p("3h") == 3 * 60 * 60 * 1000
-    assert p("1w") == 7 * 24 * 60 * 60 * 1000
-    assert p("1y") == 365 * 24 * 60 * 60 * 1000
-    assert p("garbage") is None
-
-
-def test_metric_to_dict_datetime_and_str():
-    m = Metric(
-        timestamp=datetime(2026, 3, 10, 10, 0, 0),
-        values={"v": 1.0},
-        tags={"host": "a"},
+def test_collection_config_value_columns_from_dict_and_object():
+    cfg = TimeSeriesCollectionConfig(
+        name="m",
+        value_columns=[{"name": "a"}, ValueColumn(name="b", data_type=ValueType.INT)],
+        tags_columns=["host"],
     )
+    assert [c.name for c in cfg.value_columns] == ["a", "b"]
+    assert cfg.tag_columns == ["host"]
+    assert cfg.tags_columns == ["host"]
+
+
+def test_collection_config_default_compression_and_string():
+    cfg = TimeSeriesCollectionConfig(name="m", default_compression="zigzag")
+    assert cfg.compression == CompressionCodec.ZIGZAG
+    cfg2 = TimeSeriesCollectionConfig(name="m", compression=CompressionCodec.NONE)
+    assert cfg2.compression == CompressionCodec.NONE
+
+
+def test_collection_config_to_dict():
+    cfg = TimeSeriesCollectionConfig(
+        name="m",
+        value_columns=[ValueColumn(name="a")],
+        tag_columns=["t"],
+        retention_ms=1000,
+        resolution_ms=500,
+    )
+    d = cfg.to_dict()
+    assert d["name"] == "m"
+    assert d["tag_columns"] == ["t"]
+    assert d["retention_ms"] == 1000
+    assert d["resolution_ms"] == 500
+    assert d["compression"] == "gorilla"
+    assert d["value_columns"][0]["name"] == "a"
+
+
+# =============================================================================
+# Metric / AggregatedMetric / response
+# =============================================================================
+
+
+def test_metric_to_dict_with_datetime():
+    ts = datetime(2026, 3, 10, 10, 0, 0)
+    m = Metric(timestamp=ts, values={"v": 1.0}, tags={"host": "a"})
     d = m.to_dict()
-    assert "T" in d["timestamp"]
     assert d["v"] == 1.0
     assert d["host"] == "a"
+    assert d["timestamp"] == ts.isoformat()
 
-    m2 = Metric(timestamp="2026-03-10T10:00:00Z", values={"v": 2})
-    assert m2.to_dict()["timestamp"] == "2026-03-10T10:00:00Z"
+
+def test_metric_to_dict_with_string_timestamp():
+    m = Metric(timestamp="2026-03-10T10:00:00Z", values={"v": 2})
+    d = m.to_dict()
+    assert d["timestamp"] == "2026-03-10T10:00:00Z"
+    assert d["v"] == 2
 
 
 def test_aggregated_metric_to_dict():
     am = AggregatedMetric(
-        timestamp=datetime(2026, 1, 1),
-        values={"avg": 5.0},
-        count=3,
-        tags={"k": "v"},
+        timestamp=datetime(2026, 1, 1), values={"avg": 5.0}, count=3, tags={"g": "x"}
     )
     d = am.to_dict()
     assert d["_count"] == 3
     assert d["avg"] == 5.0
-    assert d["k"] == "v"
+    assert d["g"] == "x"
 
 
 def test_query_response_dict_like():
-    resp = TimeSeriesQueryResponse(
-        metrics=[{"a": 1}], total_points=1, query_time_ms=5
-    )
+    resp = TimeSeriesQueryResponse(metrics=[{"v": 1}], total_points=1, query_time_ms=5)
     assert resp.get("total_points") == 1
-    assert resp.get("missing", "x") == "x"
+    assert resp.get("missing", "d") == "d"
     assert len(resp) == 1
-    assert list(resp) == [{"a": 1}]
+    assert list(resp) == [{"v": 1}]
     assert resp.to_dict()["query_time_ms"] == 5
 
-    raw_resp = TimeSeriesQueryResponse(raw_points=[{"b": 2}, {"c": 3}])
-    assert len(raw_resp) == 2
-    assert list(raw_resp) == [{"b": 2}, {"c": 3}]
+
+def test_query_response_raw_points_iteration():
+    resp = TimeSeriesQueryResponse(raw_points=[{"x": 1}, {"x": 2}])
+    assert len(resp) == 2
+    assert list(resp) == [{"x": 1}, {"x": 2}]
 
 
-# ---------------------------------------------------------------------------
+# =============================================================================
 # TimeSeriesFilter builder
-# ---------------------------------------------------------------------------
+# =============================================================================
 
 
-def test_filter_builder_fluent():
+def test_filter_builder_full():
     f = (
         TimeSeriesFilter()
         .tag("language", "python")
-        .tag_in("host", ["a", "b"])
+        .tag_in("env", ["prod", "stage"])
         .and_()
-        .gte("c", 10)
-        .lte("c", 100)
-        .gt("d", 1)
-        .lt("d", 9)
-        .or_()
-        .time_range("2026-01-01T00:00:00", datetime(2026, 3, 1))
+        .gte("complexity", 10)
+        .lte("complexity", 100)
+        .gt("loc", 1)
+        .lt("loc", 9999)
+        .time_range("2026-01-01T00:00:00", "2026-03-01T00:00:00")
         .limit(50)
     )
     d = f.to_dict()
-    assert d["logic"] == "OR"
+    assert d["logic"] == "AND"
     assert d["limit"] == 50
+    assert {"key": "language", "op": "eq", "value": "python"} in d["tag_filters"]
+    assert {"key": "env", "op": "in", "value": ["prod", "stage"]} in d["tag_filters"]
+    assert len(d["value_filters"]) == 4
     assert d["start_time"] is not None
     assert d["end_time"] is not None
-    assert len(d["tag_filters"]) == 2
-    assert len(d["value_filters"]) == 4
 
 
-def test_filter_empty_dict():
+def test_filter_or_logic_and_datetime_range():
+    f = TimeSeriesFilter().or_().time_range(
+        datetime(2026, 1, 1), datetime(2026, 2, 1)
+    )
+    d = f.to_dict()
+    assert d["logic"] == "OR"
+    assert d["start_time"] is not None
+
+
+def test_filter_empty():
     d = TimeSeriesFilter().to_dict()
+    assert d["tag_filters"] == []
+    assert d["value_filters"] == []
     assert d["start_time"] is None
-    assert d["end_time"] is None
     assert d["limit"] is None
-    assert d["logic"] == "AND"
 
 
-# ---------------------------------------------------------------------------
-# Static helpers on the repository
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Repository static helpers
+# =============================================================================
 
 
-def test_parse_and_format_timestamp():
-    repo = TimeSeriesRepository(make_client())
-    dt = repo._parse_timestamp("2026-03-10T10:00:00Z")
-    assert dt.tzinfo is None
-    # datetime passthrough with tz
+def test_parse_timestamp_variants():
+    p = TimeSeriesRepository._parse_timestamp
+    assert p("2026-03-10T10:00:00Z") == datetime(2026, 3, 10, 10, 0, 0)
+    assert p("2026-03-10T10:00:00+00:00") == datetime(2026, 3, 10, 10, 0, 0)
+    naive = datetime(2026, 3, 10, 10, 0, 0)
+    assert p(naive) == naive
     aware = datetime(2026, 3, 10, 10, 0, 0, tzinfo=timezone.utc)
-    dt2 = repo._parse_timestamp(aware)
-    assert dt2.tzinfo is None
-    out = repo._format_timestamp(dt)
-    assert out.endswith("Z")
+    assert p(aware) == naive
 
 
-def test_normalize_aggregation_and_interval():
-    repo = TimeSeriesRepository(make_client())
-    assert repo._normalize_aggregation(None) is None
-    assert repo._normalize_aggregation("sum") == AggregationType.SUM
-    assert repo._normalize_aggregation(AggregationType.AVG) == AggregationType.AVG
+def test_format_timestamp():
+    s = TimeSeriesRepository._format_timestamp(datetime(2026, 3, 10, 10, 0, 0))
+    assert s.endswith("Z")
 
-    assert repo._interval_to_bucket_ms(None) is None
-    assert repo._interval_to_bucket_ms("1d") == 24 * 60 * 60 * 1000
-    assert repo._interval_to_bucket_ms("5m") == 5 * 60 * 1000
-    assert repo._interval_to_bucket_ms("100ms") == 100
-    assert repo._interval_to_bucket_ms("xyz") is None
+
+def test_normalize_aggregation():
+    n = TimeSeriesRepository._normalize_aggregation
+    assert n(None) is None
+    assert n(AggregationType.SUM) == AggregationType.SUM
+    assert n("avg") == AggregationType.AVG
+
+
+def test_interval_to_bucket_ms():
+    i = TimeSeriesRepository._interval_to_bucket_ms
+    assert i(None) is None
+    assert i("") is None
+    assert i("5m") == 5 * 60 * 1000
+    assert i("1d") == 24 * 60 * 60 * 1000
+    assert i("100ms") == 100
+    assert i("nounit") is None
 
 
 def test_infer_value_type():
-    repo = TimeSeriesRepository(make_client())
-    assert repo._infer_value_type(True) == ValueType.BOOL
-    assert repo._infer_value_type(3) == ValueType.INT
-    assert repo._infer_value_type(3.5) == ValueType.FLOAT
-    assert repo._infer_value_type("x") == ValueType.STRING
+    iv = TimeSeriesRepository._infer_value_type
+    assert iv(True) == ValueType.BOOL
+    assert iv(5) == ValueType.INT
+    assert iv(3.2) == ValueType.FLOAT
+    assert iv("s") == ValueType.STRING
 
 
-def test_normalize_metric_variants():
-    repo = TimeSeriesRepository(make_client())
-    # Metric object
-    n1 = repo._normalize_metric(
-        Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1}, tags={"t": "a"})
-    )
-    assert n1["values"] == {"v": 1}
-    # dict with explicit values+tags
-    n2 = repo._normalize_metric(
-        {"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 2}, "tags": {"t": "b"}}
-    )
-    assert n2["tags"] == {"t": "b"}
-    # flat dict: values inferred from non-reserved keys
-    n3 = repo._normalize_metric(
-        {"timestamp": "2026-01-01T00:00:00Z", "v": 3, "host": "z"}
-    )
-    assert n3["values"]["v"] == 3
-    assert n3["values"]["host"] == "z"
+def test_aggregate_value_branches():
+    repo = TimeSeriesRepository(client=make_client())
+    av = repo._aggregate_value
+    assert av([1, 2, 3], AggregationType.COUNT) == 3
+    assert av([], AggregationType.SUM) is None
+    assert av([1, 2, 3], AggregationType.SUM) == 6
+    assert av([2, 4], AggregationType.AVG) == 3
+    assert av([1, 5, 3], AggregationType.MIN) == 1
+    assert av([1, 5, 3], AggregationType.MAX) == 5
+    assert av([7, 8], AggregationType.FIRST) == 7
+    assert av([7, 8], AggregationType.LAST) == 8
+    # default branch (e.g. MEDIAN -> mean fallback)
+    assert av([2, 4], AggregationType.MEDIAN) == 3
 
 
-# ---------------------------------------------------------------------------
+def test_bucket_start():
+    repo = TimeSeriesRepository(client=make_client())
+    ts = datetime(2026, 1, 1, 0, 0, 30)
+    assert repo._bucket_start(ts, None) == ts
+    bucketed = repo._bucket_start(ts, 60 * 1000)
+    assert bucketed == datetime(2026, 1, 1, 0, 0, 0)
+
+
+# =============================================================================
 # Collection management
-# ---------------------------------------------------------------------------
+# =============================================================================
 
 
 def test_create_collection_success():
     client = make_client()
-    repo = TimeSeriesRepository(client)
-    cfg = TimeSeriesCollectionConfig(
-        name="cm",
-        value_columns=[ValueColumn(name="complexity", data_type=ValueType.FLOAT)],
-        tag_columns=["file"],
-    )
+    repo = TimeSeriesRepository(client=client)
+    cfg = TimeSeriesCollectionConfig(name="m", value_columns=[ValueColumn(name="v")])
     cid = repo.create_collection(cfg)
     assert cid == "ts1"
-    client.create_timeseries_collection.assert_called_once()
     assert "ts1" in repo._collections
+    client.create_timeseries_collection.assert_called_once()
+
+
+def test_create_collection_default_id_from_name():
+    client = make_client()
+    client.create_timeseries_collection.return_value = {}
+    repo = TimeSeriesRepository(client=client)
+    cid = repo.create_collection(TimeSeriesCollectionConfig(name="named"))
+    assert cid == "named"
 
 
 def test_create_collection_error_wrapped():
     client = make_client()
     client.create_timeseries_collection.side_effect = RuntimeError("boom")
-    repo = TimeSeriesRepository(client)
-    cfg = TimeSeriesCollectionConfig(name="bad")
+    repo = TimeSeriesRepository(client=client)
     with pytest.raises(ProximaDBError):
-        repo.create_collection(cfg)
+        repo.create_collection(TimeSeriesCollectionConfig(name="m"))
 
 
 def test_get_list_delete_collection():
     client = make_client()
-    repo = TimeSeriesRepository(client)
-    assert repo.get_collection("nope") is None
+    repo = TimeSeriesRepository(client=client)
+    repo.create_collection(
+        TimeSeriesCollectionConfig(name="m", value_columns=[ValueColumn(name="v")])
+    )
+    repo.ingest("ts1", [Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1.0})])
 
-    cfg = TimeSeriesCollectionConfig(
-        name="cm", value_columns=[ValueColumn(name="v")]
-    )
-    repo.create_collection(cfg)
-    repo.ingest(
-        "ts1",
-        [{"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1.0}}],
-    )
     info = repo.get_collection("ts1")
-    assert info is not None
     assert info["point_count"] == 1
     assert info["oldest_timestamp"] is not None
 
     cols = repo.list_collections()
-    assert any(c["id"] == "ts1" for c in cols)
+    assert len(cols) == 1
 
     assert repo.delete_collection("ts1") is True
     assert repo.get_collection("ts1") is None
 
 
-# ---------------------------------------------------------------------------
+def test_get_collection_missing():
+    repo = TimeSeriesRepository(client=make_client())
+    assert repo.get_collection("nope") is None
+
+
+def test_collection_info_empty_points():
+    client = make_client()
+    repo = TimeSeriesRepository(client=client)
+    repo.create_collection(TimeSeriesCollectionConfig(name="m"))
+    info = repo.get_collection("ts1")
+    assert info["point_count"] == 0
+    assert info["oldest_timestamp"] is None
+    assert info["newest_timestamp"] is None
+
+
+# =============================================================================
 # Ingestion
-# ---------------------------------------------------------------------------
+# =============================================================================
 
 
 def test_ingest_empty():
-    repo = TimeSeriesRepository(make_client())
+    repo = TimeSeriesRepository(client=make_client())
     res = repo.ingest("c", [])
     assert res["ingested_count"] == 0
 
 
-def test_ingest_server_path_and_infer_collection():
+def test_ingest_metric_objects_server_path():
     client = make_client()
-    repo = TimeSeriesRepository(client)
+    repo = TimeSeriesRepository(client=client)
     res = repo.ingest(
-        "cm",
+        "c",
+        [Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1.0}, tags={"h": "a"})],
+    )
+    assert res == client.ingest_timeseries.return_value
+    assert len(repo._points["c"]) == 1
+    # collection inferred
+    assert "c" in repo._collections
+
+
+def test_ingest_dict_metrics():
+    client = make_client()
+    repo = TimeSeriesRepository(client=client)
+    repo.ingest(
+        "c",
         [
-            {"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1.0}, "tags": {"h": "a"}},
-            Metric(timestamp="2026-01-01T01:00:00Z", values={"v": 2.0}, tags={"h": "a"}),
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "values": {"v": 1.0},
+                "tags": {"h": "a"},
+            }
         ],
     )
-    assert res["success"] is True
-    client.ingest_timeseries.assert_called_once()
-    # collection auto-inferred
-    assert "cm" in repo._collections
-    assert len(repo._points["cm"]) == 2
+    assert len(repo._points["c"]) == 1
 
 
-def test_ingest_fallback_local_on_server_error():
+def test_ingest_dict_explicit_values_tags():
     client = make_client()
-    client.ingest_timeseries.side_effect = ConnectionError("down")
-    repo = TimeSeriesRepository(client)
+    repo = TimeSeriesRepository(client=client)
+    repo.ingest(
+        "c",
+        [{"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 5}, "tags": {}}],
+    )
+    assert repo._points["c"][0]["values"] == {"v": 5}
+
+
+def test_ingest_server_failure_falls_back_local():
+    client = make_client()
+    client.ingest_timeseries.side_effect = RuntimeError("down")
+    repo = TimeSeriesRepository(client=client)
     res = repo.ingest(
-        "cm", [{"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1.0}}]
+        "c", [Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1.0})]
     )
     assert res["fallback"] == "local"
     assert res["ingested_count"] == 1
-    assert len(repo._points["cm"]) == 1
+    assert len(repo._points["c"]) == 1
 
 
-def test_ingest_auto_flush_small_batch_size():
+def test_ingest_autoflush_on_batch_size():
     client = make_client()
-    repo = TimeSeriesRepository(client, batch_size=1)
-    repo.ingest("cm", [{"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1.0}}])
-    # batch should have been flushed (buffer reset to empty)
-    assert repo._batch_buffer["cm"] == []
-
-
-def test_ingest_batch_flushes():
-    client = make_client()
-    repo = TimeSeriesRepository(client, batch_size=1000)
-    res = repo.ingest_batch(
-        "cm", [{"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1.0}}]
-    )
-    assert "flushed_count" in res
-
-
-# ---------------------------------------------------------------------------
-# Query
-# ---------------------------------------------------------------------------
-
-
-def _seed(repo, cid="cm"):
+    repo = TimeSeriesRepository(client=client, batch_size=2)
     repo.ingest(
-        cid,
+        "c",
         [
-            {"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 10.0}, "tags": {"h": "a"}},
-            {"timestamp": "2026-01-01T00:30:00Z", "values": {"v": 20.0}, "tags": {"h": "a"}},
-            {"timestamp": "2026-01-01T01:00:00Z", "values": {"v": 30.0}, "tags": {"h": "b"}},
+            Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1.0}),
+            Metric(timestamp="2026-01-01T00:01:00Z", values={"v": 2.0}),
         ],
     )
+    # buffer flushed because len >= batch_size
+    assert repo._batch_buffer["c"] == []
 
 
-def test_query_server_with_metrics():
+def test_ingest_batch_returns_flushed_count():
+    client = make_client()
+    repo = TimeSeriesRepository(client=client, batch_size=1000)
+    res = repo.ingest_batch(
+        "c", [Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1.0})]
+    )
+    assert res["flushed_count"] == 1
+
+
+# =============================================================================
+# Query
+# =============================================================================
+
+
+def test_query_server_metrics_path():
     client = make_client()
     client.query_timeseries.return_value = {
         "metrics": [
-            {"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1}, "tags": {}},
+            {"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1.0}, "tags": {}}
         ],
         "total_points": 1,
     }
-    repo = TimeSeriesRepository(client)
-    resp = repo.query("cm", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+    repo = TimeSeriesRepository(client=client)
+    resp = repo.query("c", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
     assert resp.total_points == 1
     assert len(resp.metrics) == 1
+    assert isinstance(resp.metrics[0], Metric)
 
 
-def test_query_server_with_raw_points():
+def test_query_server_raw_points_path():
     client = make_client()
     client.query_timeseries.return_value = {
-        "points": [{"timestamp": "2026-01-01T00:00:00Z", "v": 1}],
+        "points": [{"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1.0}}],
         "total_points": 1,
     }
-    repo = TimeSeriesRepository(client)
-    resp = repo.query("cm", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+    repo = TimeSeriesRepository(client=client)
+    resp = repo.query("c", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
     assert len(resp.raw_points) == 1
 
 
-def test_query_fallback_raw_local():
+def test_query_fallback_local_raw_no_aggregation():
     client = make_client()
     client.query_timeseries.side_effect = RuntimeError("server down")
-    repo = TimeSeriesRepository(client)
-    _seed(repo)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        resp = repo.query("cm", "2026-01-01T00:00:00Z", "2026-01-01T02:00:00Z")
-    assert resp.total_points == 3
-    assert len(resp.raw_points) == 3
+    repo = TimeSeriesRepository(client=client)
+    repo.ingest(
+        "c",
+        [
+            Metric(timestamp="2026-01-01T01:00:00Z", values={"v": 5.0}, tags={"h": "a"}),
+            Metric(timestamp="2026-01-01T02:00:00Z", values={"v": 7.0}, tags={"h": "a"}),
+        ],
+    )
+    with pytest.warns(UserWarning):
+        resp = repo.query("c", "2026-01-01T00:00:00Z", "2026-01-01T03:00:00Z")
+    assert len(resp.raw_points) == 2
+    assert resp.total_points == 2
 
 
-def test_query_fallback_aggregated_local():
+def test_query_fallback_local_with_aggregation_and_filter():
     client = make_client()
     client.query_timeseries.side_effect = RuntimeError("server down")
-    repo = TimeSeriesRepository(client)
-    _seed(repo)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    repo = TimeSeriesRepository(client=client)
+    repo.ingest(
+        "c",
+        [
+            Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 2.0}, tags={"h": "a"}),
+            Metric(timestamp="2026-01-01T00:00:30Z", values={"v": 4.0}, tags={"h": "a"}),
+            Metric(timestamp="2026-01-01T00:00:10Z", values={"v": 9.0}, tags={"h": "b"}),
+        ],
+    )
+    flt = TimeSeriesFilter().tag("h", "a")
+    with pytest.warns(UserWarning):
         resp = repo.query(
-            "cm",
+            "c",
             "2026-01-01T00:00:00Z",
-            "2026-01-01T02:00:00Z",
+            "2026-01-01T01:00:00Z",
+            filter=flt,
             aggregation="avg",
-            interval="1d",
+            interval="1m",
         )
-    assert len(resp.metrics) >= 1
-    # single 1d bucket averaging 10,20,30 -> 20
-    assert resp.metrics[0]["value"] == 20.0
+    # only h=a points (2,4) -> avg 3.0 in one 1m bucket
+    assert len(resp.metrics) == 1
+    assert resp.metrics[0]["value"] == 3.0
 
 
-def test_query_fallback_with_filter_and_tag_filters():
+def test_query_ohlc_aggregation():
     client = make_client()
-    client.query_timeseries.side_effect = RuntimeError("down")
-    repo = TimeSeriesRepository(client)
-    _seed(repo)
-    f = TimeSeriesFilter().gte("v", 20)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    client.query_timeseries.side_effect = RuntimeError("local")
+    repo = TimeSeriesRepository(client=client)
+    repo.ingest(
+        "c",
+        [
+            Metric(timestamp="2026-01-01T00:00:00Z", values={"price": 10.0}),
+            Metric(timestamp="2026-01-01T00:00:10Z", values={"price": 15.0}),
+            Metric(timestamp="2026-01-01T00:00:20Z", values={"price": 8.0}),
+            Metric(timestamp="2026-01-01T00:00:30Z", values={"price": 12.0}),
+        ],
+    )
+    with pytest.warns(UserWarning):
         resp = repo.query(
-            "cm",
+            "c",
             "2026-01-01T00:00:00Z",
-            "2026-01-01T02:00:00Z",
-            filter=f,
-            tag_filters={"h": "a"},
-        )
-    # only h=a AND v>=20 -> the 20.0 point
-    assert resp.total_points == 1
-
-
-def test_query_fallback_ohlc():
-    client = make_client()
-    client.query_timeseries.side_effect = RuntimeError("down")
-    repo = TimeSeriesRepository(client)
-    _seed(repo)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        resp = repo.query(
-            "cm",
-            "2026-01-01T00:00:00Z",
-            "2026-01-01T02:00:00Z",
-            aggregation="ohlc",
-            interval="1d",
+            "2026-01-01T01:00:00Z",
+            aggregation=AggregationType.OHLC,
+            interval="1h",
         )
     m = resp.metrics[0]
     assert m["open"] == 10.0
-    assert m["high"] == 30.0
-    assert m["low"] == 10.0
-    assert m["close"] == 30.0
+    assert m["high"] == 15.0
+    assert m["low"] == 8.0
+    assert m["close"] == 12.0
 
 
-# ---------------------------------------------------------------------------
-# Matching / filter dict variants
-# ---------------------------------------------------------------------------
-
-
-def test_matches_filter_dict_forms():
-    repo = TimeSeriesRepository(make_client())
-    point = {
-        "timestamp": repo._parse_timestamp("2026-01-01T00:00:00Z"),
-        "values": {"v": 50},
-        "tags": {"h": "a", "env": "prod"},
-    }
-    # tag_filters short-circuit miss
-    assert repo._matches_filter(point, None, {"h": "b"}) is False
-    # None filter -> True
-    assert repo._matches_filter(point, None) is True
-    # dict filter with dict-style tag_filters + value_filters + time bounds
-    fdict = {
+def test_query_with_dict_filter_and_value_filters():
+    client = make_client()
+    client.query_timeseries.side_effect = RuntimeError("local")
+    repo = TimeSeriesRepository(client=client)
+    repo.ingest(
+        "c",
+        [
+            Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 5.0}, tags={"h": "a"}),
+            Metric(timestamp="2026-01-01T00:00:01Z", values={"v": 50.0}, tags={"h": "a"}),
+        ],
+    )
+    filt = {
         "tag_filters": {"h": "a"},
-        "value_filters": [{"column": "v", "op": "gt", "value": 10}],
-        "start_time": "2025-12-31T00:00:00Z",
-        "end_time": "2026-12-31T00:00:00Z",
+        "value_filters": [{"column": "v", "op": "gte", "value": 10}],
         "logic": "AND",
     }
-    assert repo._matches_filter(point, fdict) is True
-    # OR logic with one matching tag-in
-    or_dict = {
-        "tag_filters": [{"key": "h", "op": "in", "value": ["a", "x"]}],
-        "value_filters": [{"column": "v", "op": "lt", "value": 1}],
-        "logic": "OR",
+    with pytest.warns(UserWarning):
+        resp = repo.query(
+            "c", "2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z", filter=filt
+        )
+    assert len(resp.raw_points) == 1
+    assert resp.raw_points[0]["values"]["v"] == 50.0
+
+
+def test_matches_filter_all_value_ops_and_or_logic():
+    repo = TimeSeriesRepository(client=make_client())
+    point = {
+        "timestamp": datetime(2026, 1, 1),
+        "values": {"v": 5},
+        "tags": {"h": "a"},
     }
-    assert repo._matches_filter(point, or_dict) is True
-    # lte / eq fallthrough
-    lte_dict = {"value_filters": [{"column": "v", "op": "lte", "value": 50}]}
-    assert repo._matches_filter(point, lte_dict) is True
-    eq_dict = {"value_filters": [{"column": "v", "op": "eq", "value": 50}]}
-    assert repo._matches_filter(point, eq_dict) is True
+    # tag mismatch via explicit tag_filters arg
+    assert repo._matches_filter(point, None, tag_filters={"h": "b"}) is False
+    assert repo._matches_filter(point, None, tag_filters={"h": "a"}) is True
+    # None filter
+    assert repo._matches_filter(point, None) is True
+
+    or_filter = {
+        "logic": "OR",
+        "value_filters": [
+            {"column": "v", "op": "gt", "value": 100},
+            {"column": "v", "op": "lt", "value": 10},
+        ],
+    }
+    assert repo._matches_filter(point, or_filter) is True
+
+    lte_gte = {
+        "value_filters": [
+            {"column": "v", "op": "lte", "value": 5},
+            {"column": "v", "op": "gte", "value": 5},
+        ]
+    }
+    assert repo._matches_filter(point, lte_gte) is True
+
+    # tag in-list and time bounds
+    tin = {
+        "tag_filters": [{"key": "h", "op": "in", "value": ["a", "z"]}],
+        "start_time": "2025-01-01T00:00:00Z",
+        "end_time": "2027-01-01T00:00:00Z",
+    }
+    assert repo._matches_filter(point, tin) is True
+
+    # default-op tag (eq) via TimeSeriesFilter object
+    tsf = TimeSeriesFilter().tag("h", "a")
+    assert repo._matches_filter(point, tsf) is True
 
 
-# ---------------------------------------------------------------------------
-# get_latest / get_latest_batch
-# ---------------------------------------------------------------------------
+# =============================================================================
+# get_latest
+# =============================================================================
 
 
 def test_get_latest_and_batch():
-    repo = TimeSeriesRepository(make_client())
-    _seed(repo)
-    latest = repo.get_latest("cm", {"h": "a"})
+    client = make_client()
+    repo = TimeSeriesRepository(client=client)
+    repo.ingest(
+        "c",
+        [
+            Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1.0}, tags={"f": "x"}),
+            Metric(timestamp="2026-01-01T02:00:00Z", values={"v": 3.0}, tags={"f": "x"}),
+            Metric(timestamp="2026-01-01T01:00:00Z", values={"v": 2.0}, tags={"f": "y"}),
+        ],
+    )
+    latest = repo.get_latest("c", {"f": "x"})
     assert latest is not None
-    assert latest.values["v"] == 20.0  # 00:30 is latest for h=a
+    assert latest.values["v"] == 3.0
 
-    assert repo.get_latest("cm", {"h": "missing"}) is None
+    assert repo.get_latest("c", {"f": "missing"}) is None
 
-    batch = repo.get_latest_batch("cm", [{"h": "a"}, {"h": "b"}, {"h": "none"}])
-    assert batch[0].values["v"] == 20.0
-    assert batch[1].values["v"] == 30.0
+    batch = repo.get_latest_batch("c", [{"f": "x"}, {"f": "y"}, {"f": "z"}])
+    assert batch[0].values["v"] == 3.0
+    assert batch[1].values["v"] == 2.0
     assert batch[2] is None
 
 
-# ---------------------------------------------------------------------------
-# Aggregate / downsample / flush
-# ---------------------------------------------------------------------------
+# =============================================================================
+# aggregate
+# =============================================================================
 
 
-def test_aggregate_simple():
+def test_aggregate_simple_path():
     client = make_client()
-    client.query_timeseries.side_effect = RuntimeError("down")
-    repo = TimeSeriesRepository(client)
-    _seed(repo)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    client.query_timeseries.side_effect = RuntimeError("local")
+    repo = TimeSeriesRepository(client=client)
+    repo.ingest(
+        "c",
+        [
+            Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 2.0}),
+            Metric(timestamp="2026-01-01T00:00:30Z", values={"v": 6.0}),
+        ],
+    )
+    with pytest.warns(UserWarning):
         res = repo.aggregate(
-            "cm",
+            "c",
             "2026-01-01T00:00:00Z",
-            "2026-01-01T02:00:00Z",
+            "2026-01-01T01:00:00Z",
             aggregation="avg",
-            interval="1d",
+            interval="1h",
             value_column="v",
         )
     assert "results" in res
-    assert "query_time_ms" in res
-    assert res["metrics"]
+    assert res["results"][0]["value"] == 4.0
 
 
-def test_aggregate_pipeline_group_by_and_plain():
+def test_aggregate_pipeline_group_by():
     client = make_client()
-    client.query_timeseries.side_effect = RuntimeError("down")
-    repo = TimeSeriesRepository(client)
-    _seed(repo)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    client.query_timeseries.side_effect = RuntimeError("local")
+    repo = TimeSeriesRepository(client=client)
+    repo.ingest(
+        "c",
+        [
+            Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 2.0}, tags={"g": "a"}),
+            Metric(timestamp="2026-01-01T00:00:10Z", values={"v": 4.0}, tags={"g": "a"}),
+            Metric(timestamp="2026-01-01T00:00:20Z", values={"v": 9.0}, tags={"g": "b"}),
+        ],
+    )
+    with pytest.warns(UserWarning):
         res = repo.aggregate(
-            "cm",
+            "c",
             "2026-01-01T00:00:00Z",
-            "2026-01-01T02:00:00Z",
+            "2026-01-01T01:00:00Z",
             pipeline=[
                 {
                     "stage": "group_by",
-                    "aggregation": "sum",
-                    "bucket_ms": 24 * 60 * 60 * 1000,
-                    "tag_columns": ["h"],
-                    "value_columns": ["v"],
-                },
+                    "aggregation": "avg",
+                    "bucket_ms": 60 * 60 * 1000,
+                    "tag_columns": ["g"],
+                }
             ],
         )
-    assert res["results"]
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        res2 = repo.aggregate(
-            "cm",
-            "2026-01-01T00:00:00Z",
-            "2026-01-01T02:00:00Z",
-            pipeline=[{"stage": "other", "aggregation": "max", "bucket_ms": 86400000}],
-        )
-    assert "results" in res2
+    assert len(res["results"]) == 2
 
 
-def test_downsample_and_flush():
-    repo = TimeSeriesRepository(make_client())
-    ds = repo.downsample("src", "dst", "1h", mode=DownsampleMode.SMA)
-    assert ds["success"] is True
-
-    # flush on unknown collection
-    assert repo.flush_batch("unknown")["flushed"] == 0
-    # flush after ingest (buffer non-empty since batch_size large)
-    _seed(repo)
-    fl = repo.flush_batch("cm")
-    assert fl["flushed"] == 3
-    # flush again -> empty buffer
-    assert repo.flush_batch("cm")["flushed"] == 0
-
-
-def test_aggregate_value_branches():
-    repo = TimeSeriesRepository(make_client())
-    vals = [1, 2, 3, True, "x", None]
-    assert repo._aggregate_value(vals, AggregationType.COUNT) == 6
-    assert repo._aggregate_value(vals, AggregationType.SUM) == 6
-    assert repo._aggregate_value(vals, AggregationType.AVG) == 2
-    assert repo._aggregate_value(vals, AggregationType.MIN) == 1
-    assert repo._aggregate_value(vals, AggregationType.MAX) == 3
-    assert repo._aggregate_value(vals, AggregationType.FIRST) == 1
-    assert repo._aggregate_value(vals, AggregationType.LAST) == 3
-    # unknown -> avg fallback
-    assert repo._aggregate_value(vals, AggregationType.MEDIAN) == 2
-    # no numeric -> None
-    assert repo._aggregate_value(["a", None], AggregationType.SUM) is None
-
-
-def test_value_column_names_branches():
-    repo = TimeSeriesRepository(make_client())
-    # explicit
-    assert repo._value_column_names("c", ["x", "y"]) == ["x", "y"]
-    # from config
-    repo._collections["c"] = TimeSeriesCollectionConfig(
-        name="c", value_columns=[ValueColumn(name="v")]
-    )
-    repo._points["c"] = []
-    assert repo._value_column_names("c") == ["v"]
-    # no config, infer from points
-    repo._collections.pop("c", None)
-    repo._points["c"] = [{"values": {"a": 1, "b": 2}}]
-    assert set(repo._value_column_names("c")) == {"a", "b"}
-    # nothing
-    repo._points["empty"] = []
-    assert repo._value_column_names("empty") == []
-
-
-# ---------------------------------------------------------------------------
-# High-level ProximaDBTimeSeries facade
-# ---------------------------------------------------------------------------
-
-
-def test_high_level_create_query_ingest_flow():
+def test_aggregate_pipeline_non_group_stage():
     client = make_client()
-    client.query_timeseries.side_effect = RuntimeError("down")
+    client.query_timeseries.return_value = {
+        "metrics": [
+            {"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1.0}, "tags": {}}
+        ],
+        "total_points": 1,
+    }
+    repo = TimeSeriesRepository(client=client)
+    res = repo.aggregate(
+        "c",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T01:00:00Z",
+        pipeline=[{"stage": "transform", "aggregation": "sum"}],
+    )
+    assert isinstance(res["results"], list)
+
+
+# =============================================================================
+# downsample / flush
+# =============================================================================
+
+
+def test_downsample_stub():
+    repo = TimeSeriesRepository(client=make_client())
+    res = repo.downsample("src", "dst", "1h", mode=DownsampleMode.SMA)
+    assert res["success"] is True
+    assert res["downsampled"] == 0
+
+
+def test_flush_batch_paths():
+    client = make_client()
+    repo = TimeSeriesRepository(client=client, batch_size=1000)
+    # unknown collection
+    assert repo.flush_batch("none")["flushed"] == 0
+    repo.ingest("c", [Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1.0})])
+    # has buffered point
+    res = repo.flush_batch("c")
+    assert res["flushed"] == 1
+    # now empty
+    assert repo.flush_batch("c")["flushed"] == 0
+
+
+# =============================================================================
+# High-level ProximaDBTimeSeries + factory
+# =============================================================================
+
+
+def test_high_level_create_and_ingest_and_query():
+    client = make_client()
+    client.query_timeseries.return_value = {"points": [], "metrics": [], "total_points": 0}
     ts = ProximaDBTimeSeries(client, batch_size=1000)
 
-    created = ts.create_collection(
-        name="cm",
-        value_columns=[ValueColumn(name="v")],
-        tags_columns=["h"],
-        retention="7d",
+    out = ts.create_collection(
+        name="m", value_columns=[ValueColumn(name="v")], tags_columns=["h"]
     )
-    assert created["success"] is True
-    assert created["collection_id"] == "ts1"
+    assert out["success"] is True
+    cid = out["collection_id"]
 
-    ts.ingest(
-        "ts1",
-        points=[{"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 5.0}, "tags": {"h": "a"}}],
-    )
-    # also exercise metrics= branch
-    ts.ingest(
-        "ts1",
-        metrics=[{"timestamp": "2026-01-01T00:30:00Z", "values": {"v": 7.0}, "tags": {"h": "a"}}],
-    )
+    ing = ts.ingest(cid, points=[Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1.0})])
+    assert ing == client.ingest_timeseries.return_value
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        resp = ts.query("ts1", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+    resp = ts.query(cid, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
     assert isinstance(resp, TimeSeriesQueryResponse)
 
-    latest = ts.get_latest("ts1", {"h": "a"})
-    assert latest.values["v"] == 7.0
 
-    cols = ts.list_collections()
-    assert any(c["id"] == "ts1" for c in cols)
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        agg = ts.aggregate(
-            "ts1",
-            "2026-01-01T00:00:00Z",
-            "2026-01-02T00:00:00Z",
-            aggregation="avg",
-            interval="1d",
-        )
-    assert "metrics" in agg
-
-    assert ts.flush("ts1")["success"] is True
-    assert ts.delete_collection("ts1") is True
-
-
-def test_high_level_create_with_explicit_config():
+def test_high_level_create_with_config():
     client = make_client()
     ts = ProximaDBTimeSeries(client)
-    cfg = TimeSeriesCollectionConfig(
-        name="explicit", value_columns=[ValueColumn(name="v")]
-    )
-    res = ts.create_collection(config=cfg)
-    assert res["collection_id"] == "ts1"
+    cfg = TimeSeriesCollectionConfig(name="m", value_columns=[ValueColumn(name="v")])
+    out = ts.create_collection(config=cfg)
+    assert out["success"] is True
+
+
+def test_high_level_ingest_metrics_kwarg():
+    client = make_client()
+    ts = ProximaDBTimeSeries(client)
+    res = ts.ingest("c", metrics=[Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 1.0})])
+    assert res == client.ingest_timeseries.return_value
+
+
+def test_high_level_get_latest_list_delete_flush_aggregate():
+    client = make_client()
+    ts = ProximaDBTimeSeries(client)
+    ts.create_collection(name="m", value_columns=[ValueColumn(name="v")])
+    ts.ingest("ts1", points=[Metric(timestamp="2026-01-01T00:00:00Z", values={"v": 9.0}, tags={"h": "a"})])
+
+    latest = ts.get_latest("ts1", {"h": "a"})
+    assert latest.values["v"] == 9.0
+
+    assert ts.list_collections()
+    assert ts.flush("ts1")["success"] is True
+
+    client.query_timeseries.return_value = {"metrics": [], "points": [], "total_points": 0}
+    agg = ts.aggregate("ts1", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", aggregation="sum", interval="1h")
+    assert "results" in agg
+
+    assert ts.delete_collection("ts1") is True
 
 
 def test_factory_function():
     client = make_client()
-    api = create_timeseries_api(client, batch_size=5)
+    api = create_timeseries_api(client, batch_size=5, compression=CompressionCodec.NONE)
     assert isinstance(api, ProximaDBTimeSeries)
     assert api._repository._batch_size == 5

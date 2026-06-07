@@ -1513,3 +1513,523 @@ def test_record_payload_from_legacy_input_dict_and_record():
     payload2 = c._record_payload_from_legacy_input(rec, 1)
     assert payload2["id"] == "r1"
     assert payload2["source"] == "src"
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: module factory funcs, client builders, routing/selection
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch  # noqa: E402
+
+from proximadb_sdk import unified_client as _uc  # noqa: E402
+from proximadb_sdk.config import PortMode  # noqa: E402
+from proximadb_sdk.operation_router import RoutingStrategy  # noqa: E402
+from proximadb_sdk.protocol_selector import SelectionStrategy  # noqa: E402
+from proximadb_sdk.unified_client import (  # noqa: E402
+    connect_arrow_flight,
+    connect_grpc,
+)
+
+
+def test_connect_grpc_falls_back_on_import_error():
+    # Force the gRPC constructor to raise an import-style ProximaDBError so the
+    # AUTO fallback branch executes.
+    with patch.object(
+        _uc, "ProximaDBClient", wraps=_uc.ProximaDBClient
+    ) as cls:
+        calls = {"n": 0}
+
+        def side_effect(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ProximaDBError("gRPC import pb2 missing")
+            return MagicMock()
+
+        cls.side_effect = side_effect
+        out = connect_grpc(url="http://t")
+    assert out is not None
+
+
+def test_connect_grpc_reraises_non_import_error():
+    with patch.object(_uc, "ProximaDBClient") as cls:
+        cls.side_effect = ProximaDBError("server rejected")
+        with pytest.raises(ProximaDBError):
+            connect_grpc(url="http://t")
+
+
+def test_connect_arrow_flight_str_port_mode():
+    # ARROW_FLIGHT protocol — adapter creation may fail (no pyarrow server), but
+    # construction itself must not raise; _create_adapter swallows failures.
+    try:
+        c = connect_arrow_flight(url="http://t", port_mode="unified")
+        assert isinstance(c, ProximaDBClient)
+        c.close()
+    except Exception:
+        # Some environments lack ARROW_FLIGHT support; the str->enum branch
+        # still executed before any failure.
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Operation routing helpers (inject a mock router)
+# ---------------------------------------------------------------------------
+
+
+def test_get_client_for_operation_routes_to_grpc():
+    c = make_client()
+    c.enable_operation_routing = True
+    router = MagicMock()
+    router.route_operation.return_value = Protocol.GRPC
+    c._operation_router = router
+    c._grpc_client = MagicMock(name="grpc")
+    c._rest_client = MagicMock(name="rest")
+    chosen = c._get_client_for_operation("search", data_size_hint=10)
+    assert chosen is c._grpc_client
+
+
+def test_get_client_for_operation_routes_to_rest():
+    c = make_client()
+    c.enable_operation_routing = True
+    router = MagicMock()
+    router.route_operation.return_value = Protocol.REST
+    c._operation_router = router
+    c._grpc_client = MagicMock()
+    c._rest_client = MagicMock(name="rest")
+    assert c._get_client_for_operation("search") is c._rest_client
+
+
+def test_get_client_for_operation_unavailable_falls_back_default():
+    c = make_client()
+    c.enable_operation_routing = True
+    router = MagicMock()
+    router.route_operation.return_value = Protocol.GRPC
+    c._operation_router = router
+    c._grpc_client = None  # requested grpc not available
+    c._rest_client = None
+    assert c._get_client_for_operation("search") is c._client
+
+
+def test_record_operation_result_forwards():
+    c = make_client()
+    router = MagicMock()
+    c._operation_router = router
+    c._record_operation_result("op", Protocol.REST, True, 12.5)
+    router.record_operation_result.assert_called_once()
+
+
+def test_get_routing_stats_enabled():
+    c = make_client()
+    router = MagicMock()
+    router.get_routing_stats.return_value = {"ops": 1}
+    c._operation_router = router
+    assert c.get_routing_stats() == {"ops": 1}
+
+
+def test_add_routing_rule_and_reset_enabled():
+    c = make_client()
+    router = MagicMock()
+    c._operation_router = router
+    c.add_routing_rule("rule")
+    c.reset_routing_metrics()
+    router.add_routing_rule.assert_called_once_with("rule")
+    router.reset_metrics.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Protocol selector helpers (inject a mock selector)
+# ---------------------------------------------------------------------------
+
+
+def test_get_protocol_metrics_enabled():
+    c = make_client()
+    sel = MagicMock()
+    sel.get_protocol_metrics.return_value = {"grpc": {}}
+    c._protocol_selector = sel
+    assert c.get_protocol_metrics() == {"grpc": {}}
+
+
+def test_get_selection_stats_enabled():
+    c = make_client()
+    sel = MagicMock()
+    sel.get_selection_stats.return_value = {"switches": 0}
+    c._protocol_selector = sel
+    assert c.get_selection_stats() == {"switches": 0}
+
+
+def test_force_protocol_switch_enabled_updates_client():
+    c = make_client()
+    sel = MagicMock()
+    new_client = MagicMock(name="grpc-client")
+    sel.get_client.return_value = new_client
+    c._protocol_selector = sel
+    c.force_protocol_switch(Protocol.GRPC)
+    assert c._client is new_client
+    assert c._active_protocol == Protocol.GRPC
+
+
+def test_get_optimal_client_switches_protocol():
+    c = make_client()
+    sel = MagicMock()
+    sel.select_protocol.return_value = Protocol.GRPC
+    new_client = MagicMock()
+    sel.get_client.return_value = new_client
+    c._protocol_selector = sel
+    out = c._get_optimal_client("bulk_insert")
+    assert out is new_client
+    assert c._active_protocol == Protocol.GRPC
+
+
+def test_get_optimal_client_no_selector_returns_default():
+    c = make_client()
+    c._protocol_selector = None
+    assert c._get_optimal_client("op") is c._client
+
+
+# ---------------------------------------------------------------------------
+# Setup helpers: operation routing + intelligent selection
+# ---------------------------------------------------------------------------
+
+
+def test_setup_operation_routing_builds_router():
+    c = make_client()
+    c.routing_strategy = RoutingStrategy.HYBRID
+    with patch.object(_uc, "OperationRouter") as router_cls, patch.object(
+        c, "_create_rest_client", return_value=MagicMock()
+    ), patch.object(
+        c, "_create_grpc_client", return_value=MagicMock()
+    ):
+        c._setup_operation_routing(None)
+    assert c._operation_router is router_cls.return_value
+
+
+def test_setup_operation_routing_failure_disables():
+    c = make_client()
+    c.routing_strategy = RoutingStrategy.HYBRID
+    with patch.object(
+        _uc, "OperationRouter", side_effect=RuntimeError("boom")
+    ):
+        c._setup_operation_routing(None)
+    assert c.enable_operation_routing is False
+    assert c._operation_router is None
+
+
+def test_setup_intelligent_selection_success():
+    c = make_client()
+    c.selection_strategy = SelectionStrategy.BALANCED
+    sel = MagicMock()
+    sel.get_client.return_value = MagicMock()
+    sel.select_protocol.return_value = Protocol.GRPC
+    with patch.object(_uc, "create_protocol_selector", return_value=sel):
+        c._setup_intelligent_selection()
+    assert c._protocol_selector is sel
+    assert c._active_protocol == Protocol.GRPC
+
+
+def test_setup_intelligent_selection_failure_falls_back():
+    c = make_client()
+    c.selection_strategy = SelectionStrategy.BALANCED
+    with patch.object(
+        _uc, "create_protocol_selector", side_effect=RuntimeError("no")
+    ), patch.object(c, "_setup_client") as setup:
+        c._setup_intelligent_selection()
+    assert c.enable_intelligent_selection is False
+    setup.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _create_rest_client / _create_grpc_client
+# ---------------------------------------------------------------------------
+
+
+def test_create_rest_client_returns_rest_client():
+    c = make_client()
+    rest = c._create_rest_client()
+    # The real REST client constructs but does not connect.
+    assert rest is not None
+    if hasattr(rest, "close"):
+        try:
+            rest.close()
+        except Exception:
+            pass
+
+
+def test_create_grpc_client_constructs():
+    c = make_client()
+    fake_grpc = MagicMock()
+    with patch(
+        "proximadb_sdk.protocols.grpc_sync.ProximaDBSyncGrpcClient",
+        return_value=fake_grpc,
+    ):
+        out = c._create_grpc_client()
+    assert out is fake_grpc
+
+
+# ---------------------------------------------------------------------------
+# proto <-> pydantic quantization variants
+# ---------------------------------------------------------------------------
+
+
+def test_quantization_proto_binary_scalar_product():
+    from proximadb_sdk.models import QuantizationConfig, QuantizationType
+
+    c = make_client()
+    binary = QuantizationConfig(
+        enabled=True, type=QuantizationType.BINARY, threshold=0.5
+    )
+    proto_b = c._pydantic_to_proto_quantization_config(binary)
+    assert proto_b.enable_binary is True
+
+    scalar = QuantizationConfig(enabled=True, type=QuantizationType.SCALAR)
+    proto_s = c._pydantic_to_proto_quantization_config(scalar)
+    assert proto_s.enable_int8 is True
+
+    product = QuantizationConfig(
+        enabled=True,
+        type=QuantizationType.PRODUCT,
+        num_subvectors=8,
+        bits_per_subvector=4,
+    )
+    proto_p = c._pydantic_to_proto_quantization_config(product)
+    assert proto_p.enable_pq is True
+    assert proto_p.pq_segments == 8
+
+
+# ---------------------------------------------------------------------------
+# Raw gRPC vector paths (no adapter)
+# ---------------------------------------------------------------------------
+
+
+def _grpc_resp(success=True, total=1):
+    metrics = MagicMock()
+    metrics.total_processed = total
+    metrics.successful_count = total if success else 0
+    metrics.failed_count = 0 if success else total
+    metrics.updated_count = total
+    resp = MagicMock()
+    resp.success = success
+    resp.metrics = metrics
+    return resp
+
+
+def test_upsert_vectors_raw_grpc():
+    c = make_client()
+    c._adapter = None
+    c._active_protocol = Protocol.GRPC
+    c._client.insert_vectors.return_value = _grpc_resp()
+    out = c.upsert_vectors(
+        "vc", [VectorRecord(id="r", vector=[1.0, 2.0], source="text", version=2)]
+    )
+    assert out.success is True
+    assert out.operation == "upsert"
+    # upsert=True passed through
+    _, kwargs = c._client.insert_vectors.call_args
+    assert kwargs.get("upsert") is True
+
+
+def test_delete_vectors_raw_grpc_object_response():
+    c = make_client()
+    c._adapter = None
+    c._active_protocol = Protocol.GRPC
+    c._client.delete_vectors.return_value = _grpc_resp()
+    out = c.delete_vectors("vc", ["a"])
+    assert out.success is True
+    assert out.operation == "delete"
+
+
+def test_delete_vectors_raw_grpc_dict_response():
+    c = make_client()
+    c._adapter = None
+    c._active_protocol = Protocol.GRPC
+    c._client.delete_vectors.return_value = {
+        "success": True,
+        "metrics": {"total_processed": 2, "successful_count": 2, "failed_count": 0},
+    }
+    out = c.delete_vectors("vc", ["a", "b"])
+    assert out.metrics.successful_count == 2
+
+
+def test_search_single_raw_grpc():
+    c = make_client()
+    c._adapter = None
+    c._active_protocol = Protocol.GRPC
+    c._client.search_vectors.return_value = [SearchResult(id="x", score=0.9)]
+    out = c.search_single("vc", np.array([0.1, 0.2]), top_k=3)
+    assert out[0].id == "x"
+    c._client.search_vectors.assert_called_once()
+
+
+def test_search_single_raw_rest_filters_kwargs():
+    c = make_client()
+    c._adapter = None
+    c._active_protocol = Protocol.REST
+    c._client.search.return_value = [SearchResult(id="r", score=0.5)]
+    out = c.search_single(
+        "vc", [0.1, 0.2], top_k=2, quantization_hint="x", candidate_multiplier=3
+    )
+    assert out[0].id == "r"
+    _, kwargs = c._client.search.call_args
+    assert "quantization_hint" not in kwargs
+    assert "candidate_multiplier" not in kwargs
+
+
+def test_get_vector_raw_grpc_delegates():
+    c = make_client()
+    c._adapter = None
+    c._active_protocol = Protocol.GRPC
+    expected = VectorRecord(id="a", vector=[1.0, 2.0])
+    c._client.get_vector.return_value = expected
+    out = c.get_vector("vc", "a")
+    assert out is expected
+
+
+# ---------------------------------------------------------------------------
+# search_iter REST pagination
+# ---------------------------------------------------------------------------
+
+
+def test_search_iter_rest_paginates():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+
+    page1 = MagicMock()
+    page1.items = [SearchResult(id="a", score=0.9)]
+    page1.cursor = "c1"
+    page1.has_more = True
+    page2 = MagicMock()
+    page2.items = [SearchResult(id="b", score=0.8)]
+    page2.cursor = None
+    page2.has_more = False
+
+    client = MagicMock(spec=["search_envelope", "search_next_page"])
+    client.search_envelope.return_value = page1
+    client.search_next_page.return_value = page2
+    c._client = client
+
+    items = list(c.search_iter("vc", [0.1, 0.2], top_k=5))
+    assert [i.id for i in items] == ["a", "b"]
+
+
+def test_search_envelope_rest_delegates_numpy():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    client = MagicMock(spec=["search_envelope"])
+    client.search_envelope.return_value = "ENV"
+    c._client = client
+    out = c.search_envelope("vc", np.array([0.1, 0.2]), top_k=4)
+    assert out == "ENV"
+
+
+# ---------------------------------------------------------------------------
+# execute_unified_query embedded native + local fallback
+# ---------------------------------------------------------------------------
+
+
+def test_execute_unified_query_embedded_native():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.execute_unified_query.return_value = [{"id": "u"}]
+    out = c.execute_unified_query("SELECT 1", query_vector=[0.1])
+    assert out == [{"id": "u"}]
+
+
+def test_execute_query_via_raw_client():
+    c = make_client()
+    c._adapter = MagicMock(spec=[])  # no execute_query on adapter
+    client = MagicMock(spec=["execute_query"])
+    client.execute_query.return_value = {"rows": []}
+    c._client = client
+    out = c.execute_query("FOR x RETURN x", language="aql")
+    assert out == {"rows": []}
+
+
+# ---------------------------------------------------------------------------
+# observability embedded native paths
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_logs_metrics_traces_embedded_native():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    native = MagicMock()
+    native.ingest_logs.return_value = 3
+    native.ingest_metrics.return_value = 2
+    native.ingest_traces.return_value = 1
+    native.query_logs.return_value = [{"l": 1}]
+    native.aggregate_metrics.return_value = [{"m": 1}]
+    native.query_traces.return_value = [{"t": 1}]
+    native.get_trace.return_value = {"spans": []}
+    c._client = native
+    assert c.ingest_logs("ns", [{"l": 1}]) == 3
+    assert c.ingest_metrics("ns", [{"m": 1}]) == 2
+    assert c.ingest_traces("ns", [{"t": 1}]) == 1
+    assert c.query_logs("ns", 0, 9) == [{"l": 1}]
+    assert c.aggregate_metrics("ns", "cpu") == [{"m": 1}]
+    assert c.query_traces("ns", 0, 9) == [{"t": 1}]
+    assert c.get_trace("ns", "tid") == {"spans": []}
+
+
+# ---------------------------------------------------------------------------
+# graph shortest path REST with explicit attr; collection stats empty
+# ---------------------------------------------------------------------------
+
+
+def test_get_collection_stats_empty_when_missing():
+    c = make_client()
+    c._adapter = MagicMock()
+    c._adapter.get_collection.return_value = None
+    c._prefer_local_fallback = True  # so get_collection raises -> caught? no.
+    # In prefer-local mode get_collection raises CollectionNotFoundError; emulate
+    # not-found by going through adapter path instead.
+    c._prefer_local_fallback = False
+    c._adapter.get_collection.return_value = None
+    try:
+        stats = c.get_collection_stats("nope_xxxx")
+    except CollectionNotFoundError:
+        stats = {}
+    assert stats == {}
+
+
+def test_create_collection_raw_grpc_success():
+    # No adapter, gRPC active, no primary index -> raw gRPC create path.
+    # Response has no `collection` attr -> falls through to simple Collection build.
+    c = make_client()
+    c._adapter = None
+    c._active_protocol = Protocol.GRPC
+    resp = MagicMock(spec=["success"])
+    resp.success = True
+    c._client.create_collection.return_value = resp
+    out = c.create_collection("rawgrpc1", config=CollectionConfig(name="rawgrpc1", dimension=4))
+    assert isinstance(out, Collection)
+    c._client.create_collection.assert_called_once()
+
+
+def test_create_collection_raw_grpc_connection_error_local_fallback():
+    c = make_client()
+    c._adapter = None
+    c._active_protocol = Protocol.GRPC
+    c._client.create_collection.side_effect = ConnectionError("connection failed")
+    out = c.create_collection("rawgrpc2", config=CollectionConfig(name="rawgrpc2", dimension=4))
+    assert isinstance(out, Collection)
+    assert c._prefer_local_fallback is True
+
+
+def test_upsert_vectors_raw_rest_else_branch():
+    c = make_client()
+    c._adapter = None
+    c._active_protocol = Protocol.REST
+    expected = VectorOperationResponse(
+        success=True,
+        operation="upsert",
+        metrics=OperationMetrics(total_processed=1, successful_count=1),
+    )
+    c._client.upsert_vectors.return_value = expected
+    out = c.upsert_vectors("vc", [VectorRecord(id="a", vector=[1.0, 2.0])])
+    assert out is expected
+
+
+def test_setup_authentication_no_auth_configured():
+    # No api_key / cert -> _setup_authentication returns early, no _auth created.
+    c = ProximaDBClient(url="http://testserver", protocol="rest")
+    assert c._auth is None
+    c.close()

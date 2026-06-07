@@ -15,7 +15,15 @@ import logging
 # pre-import the heavy chain HERE, before any coverage-driven find_spec, so the
 # modules are already resolved in sys.modules and coverage does not re-import
 # them inside a traced worker thread.
-for _mod in ("opentelemetry", "chromadb"):
+for _mod in (
+    "opentelemetry",
+    "chromadb",
+    "lancedb",
+    "sentence_transformers",
+    "torch",
+    "transformers",
+    "victor",
+):
     try:  # pragma: no cover - environment-dependent, best-effort warm import
         __import__(_mod)
     except Exception:

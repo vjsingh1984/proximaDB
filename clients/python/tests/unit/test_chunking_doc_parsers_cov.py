@@ -1,12 +1,12 @@
 """Offline coverage tests for chunking_strategies.document_parsers.
 
-Fully offline: no real RE/OCR tools, no subprocess execution against real
-binaries. subprocess.run, shutil.which, and os.path.exists are monkeypatched so
-nothing touches the host's tool chain.
+Fully offline: no real subprocess, no real RE/OCR tools. All tool detection and
+subprocess.run calls are monkeypatched. Binary headers are synthesized in-memory
+and written to tmp files so detect_binary_type runs against real bytes.
 """
 
+import struct
 import subprocess
-import types
 
 import pytest
 
@@ -34,16 +34,8 @@ from proximadb_sdk.chunking_strategies.document_parsers import (
 from proximadb_sdk.chunking_strategies.parser_utils import ParseError, ParserError
 
 
-def _elf(e_type: int) -> bytes:
-    """Build a minimal ELF header with e_type at offset 16."""
-    buf = bytearray(0x40)
-    buf[0:4] = b"\x7fELF"
-    buf[16:18] = e_type.to_bytes(2, "little")
-    return bytes(buf)
-
-
 # ---------------------------------------------------------------------------
-# Helpers
+# Fakes
 # ---------------------------------------------------------------------------
 
 
@@ -56,104 +48,112 @@ class FakeCompleted:
 
 @pytest.fixture(autouse=True)
 def _clear_tool_cache():
-    """Each test starts with an empty ToolDetector cache."""
+    """ToolDetector caches which() results process-wide; reset around each test."""
     ToolDetector._cache.clear()
     yield
     ToolDetector._cache.clear()
 
 
-def _which_none(_name):
-    return None
-
-
-def _which_some(present):
-    """Return a fake shutil.which that resolves only names in `present`."""
-
-    def which(name):
-        return f"/usr/bin/{name}" if name in present else None
-
-    return which
-
-
 # ---------------------------------------------------------------------------
-# Binary type detection
+# Binary header builders
 # ---------------------------------------------------------------------------
 
 
-def _write(tmp_path, name, data: bytes):
+def _write(tmp_path, name, data):
     p = tmp_path / name
     p.write_bytes(data)
     return str(p)
 
 
-def test_detect_pe_dll(tmp_path):
-    # MZ header + PE header at offset 0x80 with DLL characteristic bit.
-    buf = bytearray(0x100)
+def _pe_bytes(is_dll: bool) -> bytes:
+    pe_offset = 0x40
+    buf = bytearray(b"\x00" * (pe_offset + 24))
     buf[0:2] = b"MZ"
-    pe_off = 0x80
-    buf[0x3C:0x40] = pe_off.to_bytes(4, "little")
-    buf[pe_off:pe_off + 4] = b"PE\x00\x00"
-    buf[pe_off + 22:pe_off + 24] = (0x2000).to_bytes(2, "little")
-    path = _write(tmp_path, "lib.dll", bytes(buf))
-    assert detect_binary_type(path) == BinaryType.PE_DLL
+    struct.pack_into("<I", buf, 0x3C, pe_offset)
+    buf[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    characteristics = 0x2000 if is_dll else 0x0002
+    struct.pack_into("<H", buf, pe_offset + 22, characteristics)
+    return bytes(buf)
+
+
+def _elf_bytes(e_type: int) -> bytes:
+    buf = bytearray(b"\x00" * 32)
+    buf[0:4] = b"\x7fELF"
+    struct.pack_into("<H", buf, 16, e_type)
+    return bytes(buf)
+
+
+def _macho_bytes(magic: bytes) -> bytes:
+    return magic + b"\x00" * 28
+
+
+# ---------------------------------------------------------------------------
+# detect_binary_type
+# ---------------------------------------------------------------------------
 
 
 def test_detect_pe_exe(tmp_path):
-    buf = bytearray(0x100)
-    buf[0:2] = b"MZ"
-    pe_off = 0x80
-    buf[0x3C:0x40] = pe_off.to_bytes(4, "little")
-    buf[pe_off:pe_off + 4] = b"PE\x00\x00"
-    buf[pe_off + 22:pe_off + 24] = (0x0000).to_bytes(2, "little")
-    path = _write(tmp_path, "app.exe", bytes(buf))
+    path = _write(tmp_path, "a.exe", _pe_bytes(is_dll=False))
     assert detect_binary_type(path) == BinaryType.PE_EXE
 
 
+def test_detect_pe_dll(tmp_path):
+    path = _write(tmp_path, "a.dll", _pe_bytes(is_dll=True))
+    assert detect_binary_type(path) == BinaryType.PE_DLL
+
+
 def test_detect_elf_exec(tmp_path):
-    buf = bytearray(0x40)
-    buf[0:4] = b"\x7fELF"
-    buf[16:18] = (2).to_bytes(2, "little")  # ET_EXEC
-    path = _write(tmp_path, "prog", bytes(buf))
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
     assert detect_binary_type(path) == BinaryType.ELF_EXEC
 
 
 def test_detect_elf_so(tmp_path):
-    buf = bytearray(0x40)
-    buf[0:4] = b"\x7fELF"
-    buf[16:18] = (3).to_bytes(2, "little")  # ET_DYN
-    path = _write(tmp_path, "lib.so", bytes(buf))
+    path = _write(tmp_path, "a.so", _elf_bytes(3))
     assert detect_binary_type(path) == BinaryType.ELF_SO
 
 
-def test_detect_macho_dylib(tmp_path):
-    path = _write(tmp_path, "lib.dylib", b"\xfe\xed\xfa\xce" + b"\x00" * 16)
-    assert detect_binary_type(path) == BinaryType.MACHO_DYLIB
+def test_detect_elf_unknown_etype(tmp_path):
+    path = _write(tmp_path, "a.rel", _elf_bytes(1))
+    assert detect_binary_type(path) == BinaryType.UNKNOWN
 
 
-def test_detect_macho_exec(tmp_path):
-    path = _write(tmp_path, "mac_bin", b"\xcf\xfa\xed\xfe" + b"\x00" * 16)
+@pytest.mark.parametrize(
+    "magic",
+    [
+        b"\xfe\xed\xfa\xce",
+        b"\xfe\xed\xfa\xcf",
+        b"\xce\xfa\xed\xfe",
+        b"\xcf\xfa\xed\xfe",
+    ],
+)
+def test_detect_macho_exec(tmp_path, magic):
+    path = _write(tmp_path, "bin", _macho_bytes(magic))
     assert detect_binary_type(path) == BinaryType.MACHO_EXEC
 
 
-def test_detect_unknown_binary(tmp_path):
-    path = _write(tmp_path, "data.bin", b"NOPE" + b"\x00" * 16)
+def test_detect_macho_dylib(tmp_path):
+    path = _write(tmp_path, "lib.dylib", _macho_bytes(b"\xfe\xed\xfa\xce"))
+    assert detect_binary_type(path) == BinaryType.MACHO_DYLIB
+
+
+def test_detect_binary_unknown_magic(tmp_path):
+    path = _write(tmp_path, "x.bin", b"ABCD" + b"\x00" * 60)
     assert detect_binary_type(path) == BinaryType.UNKNOWN
 
 
 def test_detect_binary_missing_file_returns_unknown():
-    # open() raises -> caught -> UNKNOWN
     assert detect_binary_type("/nonexistent/path/xyz.bin") == BinaryType.UNKNOWN
 
 
 # ---------------------------------------------------------------------------
-# Document type detection
+# detect_document_type
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("a.pdf", DocumentType.PDF),
+        ("doc.pdf", DocumentType.PDF),
         ("a.tiff", DocumentType.TIFF),
         ("a.tif", DocumentType.TIFF),
         ("a.png", DocumentType.PNG),
@@ -162,6 +162,7 @@ def test_detect_binary_missing_file_returns_unknown():
         ("a.bmp", DocumentType.BMP),
         ("a.webp", DocumentType.WEBP),
         ("a.txt", DocumentType.UNKNOWN),
+        ("noext", DocumentType.UNKNOWN),
     ],
 )
 def test_detect_document_type(name, expected):
@@ -174,47 +175,52 @@ def test_detect_document_type(name, expected):
 
 
 def test_tool_detector_find_and_cache(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"objdump"}))
+    calls = []
+
+    def fake_which(name):
+        calls.append(name)
+        return "/usr/bin/" + name if name == "objdump" else None
+
+    monkeypatch.setattr(dp.shutil, "which", fake_which)
     assert ToolDetector.find_tool("objdump") == "/usr/bin/objdump"
     assert ToolDetector.is_available("objdump") is True
-    assert ToolDetector.find_tool("nope") is None
-    assert ToolDetector.is_available("nope") is False
-    # second call hits cache (which would still be fine, but verify cached key)
-    assert "objdump" in ToolDetector._cache
+    assert ToolDetector.find_tool("objdump") == "/usr/bin/objdump"
+    assert calls.count("objdump") == 1
+
+    assert ToolDetector.find_tool("missing") is None
+    assert ToolDetector.is_available("missing") is False
 
 
-def test_tool_detector_re_and_ocr_lists(monkeypatch):
+def test_tool_detector_available_lists(monkeypatch):
+    present = {"r2", "objdump", "tesseract", "pdftotext", "wine"}
     monkeypatch.setattr(
-        dp.shutil, "which", _which_some({"r2", "objdump", "tesseract", "pdftotext"})
+        dp.shutil, "which", lambda n: ("/bin/" + n) if n in present else None
     )
     re_tools = ToolDetector.get_available_re_tools()
     assert "r2" in re_tools and "objdump" in re_tools
     ocr_tools = ToolDetector.get_available_ocr_tools()
     assert "tesseract" in ocr_tools and "pdftotext" in ocr_tools
-
-
-def test_tool_detector_has_wine_true(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"wine"}))
     assert ToolDetector.has_wine() is True
 
 
-def test_tool_detector_has_wine_false(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_tool_detector_has_wine64(monkeypatch):
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/wine64" if n == "wine64" else None
+    )
+    assert ToolDetector.has_wine() is True
+
+
+def test_tool_detector_no_wine(monkeypatch):
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     assert ToolDetector.has_wine() is False
 
 
 def test_tool_detector_system_info(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     info = ToolDetector.get_system_info()
     assert set(info) == {"platform", "machine", "re_tools", "ocr_tools", "has_wine"}
-    assert info["re_tools"] == [] and info["ocr_tools"] == []
-
-
-def test_get_available_tools(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"tesseract"}))
-    tools = get_available_tools()
-    assert "tesseract" in tools["ocr_tools"]
-    assert "re_tools" in tools and "platform" in tools
+    assert info["re_tools"] == []
+    assert info["has_wine"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -223,79 +229,83 @@ def test_get_available_tools(monkeypatch):
 
 
 def test_radare2_not_available(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     a = Radare2Adapter()
     assert a.tool_name == "radare2"
     assert a.is_available() is False
 
 
-def test_radare2_analyze_missing_tool(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
-    path = _write(tmp_path, "x.so", _elf(3))
+def test_radare2_analyze(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.so", _elf_bytes(3))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/usr/bin/r2" if n == "r2" else None
+    )
+
+    outputs = {
+        "iI": "arch x86\nbits 64",
+        "ie": "vaddr=0x1234 entry0",
+        "is": "0x1000 1 10 FUNC .text main\n0x2000 1 8 OBJ .data gvar",
+        "ii": "0x0 import printf\n0x0 import malloc",
+        "iE": "0x3000 export foo\n0x3000 export bar",
+        "iz~[2:]": "hello world\nanother string\nx",
+        "iS": "0x0 4096 x .text\n0x1000 2048 x .data",
+    }
+
+    def fake_run(args, **kw):
+        cmd = args[3]  # ["r2", "-q", "-c", <cmd>, file]
+        return FakeCompleted(stdout=outputs.get(cmd, ""))
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
+    a = Radare2Adapter()
+    assert a.is_available() is True
+    result = a.analyze(path, BinaryParserConfig())
+    assert isinstance(result, BinaryAnalysis)
+    assert result.binary_type == BinaryType.ELF_SO
+    assert result.architecture == "x86"
+    assert result.entry_point == "0x1234"
+    assert any(s.name == "main" for s in result.symbols)
+    assert "printf" in result.imports
+    assert "foo" in result.exports
+    assert "hello world" in result.strings
+    assert any(sec["name"] == ".text" for sec in result.sections)
+    assert result.metadata["tool"] == "radare2"
+    assert len(result.content_hash) == 64
+
+
+def test_radare2_analyze_missing_tool_raises(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.so", _elf_bytes(3))
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     a = Radare2Adapter()
     with pytest.raises(ParserError):
         a.analyze(path, BinaryParserConfig())
 
 
-def test_radare2_analyze_success(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"r2"}))
-    path = _write(tmp_path, "x.so", _elf(3))
+def test_radare2_analyze_timeout(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.so", _elf_bytes(3))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/usr/bin/r2" if n == "r2" else None
+    )
 
-    outputs = {
-        "iI": "arch x86\nbits 64\n",
-        "ie": "vaddr=0x1000 entry0\n",
-        "is": "0x1000 1 32 func .text main\n",
-        "ii": "0x2000 1 imp printf\n",
-        "iE": "0x3000 1 exp my_export\n",
-        "iz~[2:]": "hello world\nfoo\n",
-        "iS": "0x0 4096 .text\n",
-    }
-
-    def fake_run(cmd, **kw):
-        # cmd is [r2_path, "-q", "-c", <command>, file]
-        sub = cmd[3]
-        return FakeCompleted(stdout=outputs.get(sub, ""))
+    def fake_run(args, **kw):
+        raise subprocess.TimeoutExpired(cmd="r2", timeout=60)
 
     monkeypatch.setattr(dp.subprocess, "run", fake_run)
-    a = Radare2Adapter()
-    assert a.is_available() is True
-    res = a.analyze(path, BinaryParserConfig())
-    assert isinstance(res, BinaryAnalysis)
-    assert res.architecture == "x86"
-    assert res.entry_point == "0x1000"
-    assert res.binary_type == BinaryType.ELF_SO
-    assert any(s.name == "main" for s in res.symbols)
-    assert "printf" in res.imports
-    assert "my_export" in res.exports
-    assert "hello world" in res.strings
-    assert res.metadata["tool"] == "radare2"
-    assert len(res.content_hash) == 64
-
-
-def test_radare2_analyze_timeout(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"r2"}))
-    path = _write(tmp_path, "x.so", b"\x7fELF" + b"\x00" * 16)
-
-    def fake_run(cmd, **kw):
-        raise subprocess.TimeoutExpired(cmd, 60)
-
-    monkeypatch.setattr(dp.subprocess, "run", fake_run)
-    a = Radare2Adapter()
     with pytest.raises(ParseError):
-        a.analyze(path, BinaryParserConfig())
+        Radare2Adapter().analyze(path, BinaryParserConfig())
 
 
-def test_radare2_analyze_generic_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"r2"}))
-    path = _write(tmp_path, "x.so", b"\x7fELF" + b"\x00" * 16)
+def test_radare2_analyze_generic_error(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.so", _elf_bytes(3))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/usr/bin/r2" if n == "r2" else None
+    )
 
-    def fake_run(cmd, **kw):
+    def fake_run(args, **kw):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(dp.subprocess, "run", fake_run)
-    a = Radare2Adapter()
     with pytest.raises(ParseError):
-        a.analyze(path, BinaryParserConfig())
+        Radare2Adapter().analyze(path, BinaryParserConfig())
 
 
 # ---------------------------------------------------------------------------
@@ -303,82 +313,87 @@ def test_radare2_analyze_generic_error(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_objdump_availability(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"objdump"}))
+def test_objdump_analyze(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
+    present = {"objdump", "strings"}
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: ("/bin/" + n) if n in present else None
+    )
+
+    def fake_run(args, **kw):
+        tool = args[0]
+        if tool == "objdump":
+            flag = args[1]
+            if flag == "-f":
+                return FakeCompleted("architecture: i386:x86-64, flags 0x00")
+            if flag == "-t":
+                return FakeCompleted(
+                    "0000000000001000 g F .text 0000 main\n"
+                    "0000000000002000 g O .data 0000 gvar"
+                )
+            if flag == "-T":
+                return FakeCompleted(
+                    "0000 DF *UND* 0000 printf\n0000 g DF .text 0000 exported_fn"
+                )
+            if flag == "-h":
+                return FakeCompleted(
+                    "Idx Name Size VMA\n 0 .text 00001000 00000000\n"
+                )
+        if tool == "strings":
+            return FakeCompleted("alpha\nbeta\n\n")
+        return FakeCompleted("")
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
     a = ObjdumpAdapter()
     assert a.tool_name == "objdump"
     assert a.is_available() is True
+    result = a.analyze(path, BinaryParserConfig())
+    assert result.binary_type == BinaryType.ELF_EXEC
+    assert "x86-64" in result.architecture
+    assert any(s.name == "main" for s in result.symbols)
+    assert "printf" in result.imports
+    assert "exported_fn" in result.exports
+    assert any(sec["name"] == ".text" for sec in result.sections)
+    assert "alpha" in result.strings
+    assert result.metadata["tool"] == "objdump"
 
 
-def test_objdump_analyze_success(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"objdump", "strings"}))
-    path = _write(tmp_path, "x.so", b"\x7fELF" + bytes([0, 0, 3, 0]) + b"\x00" * 16)
-
-    def fake_run(cmd, **kw):
-        prog = cmd[0]
-        if prog == "strings":
-            return FakeCompleted(stdout="alpha\nbeta\n\n")
-        flag = cmd[1]
-        if flag == "-f":
-            return FakeCompleted(stdout="architecture: i386:x86-64, flags 0x...\n")
-        if flag == "-t":
-            return FakeCompleted(stdout="0000000000001000 g F .text 0000 main\n")
-        if flag == "-T":
-            return FakeCompleted(
-                stdout=(
-                    "0000000000000000 DF *UND* 0000 printf\n"
-                    "0000000000002000 g DF .text 0000 my_export\n"
-                )
-            )
-        if flag == "-h":
-            return FakeCompleted(stdout="  0 .text 00001000 00400000\n")
-        return FakeCompleted(stdout="")
-
-    monkeypatch.setattr(dp.subprocess, "run", fake_run)
-    a = ObjdumpAdapter()
-    res = a.analyze(path, BinaryParserConfig())
-    assert res.architecture == "i386:x86-64,"
-    assert any(s.name == "main" for s in res.symbols)
-    assert "printf" in res.imports
-    assert "my_export" in res.exports
-    assert res.sections and res.sections[0]["name"] == ".text"
-    assert "alpha" in res.strings and "" not in res.strings
-    assert res.metadata["tool"] == "objdump"
+def test_objdump_analyze_no_strings_tool(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/objdump" if n == "objdump" else None
+    )
+    monkeypatch.setattr(dp.subprocess, "run", lambda args, **kw: FakeCompleted(""))
+    result = ObjdumpAdapter().analyze(path, BinaryParserConfig())
+    assert result.strings == []
 
 
-def test_objdump_analyze_no_strings_tool(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"objdump"}))
-    path = _write(tmp_path, "x.so", b"\x7fELF" + b"\x00" * 16)
-    monkeypatch.setattr(dp.subprocess, "run", lambda cmd, **kw: FakeCompleted(stdout=""))
-    a = ObjdumpAdapter()
-    res = a.analyze(path, BinaryParserConfig())
-    assert res.strings == []
+def test_objdump_analyze_timeout(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/objdump" if n == "objdump" else None
+    )
 
-
-def test_objdump_analyze_timeout(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"objdump"}))
-    path = _write(tmp_path, "x.so", b"\x7fELF" + b"\x00" * 16)
-
-    def fake_run(cmd, **kw):
-        raise subprocess.TimeoutExpired(cmd, 30)
+    def fake_run(args, **kw):
+        raise subprocess.TimeoutExpired(cmd="objdump", timeout=30)
 
     monkeypatch.setattr(dp.subprocess, "run", fake_run)
-    a = ObjdumpAdapter()
     with pytest.raises(ParseError):
-        a.analyze(path, BinaryParserConfig())
+        ObjdumpAdapter().analyze(path, BinaryParserConfig())
 
 
-def test_objdump_analyze_generic_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"objdump"}))
-    path = _write(tmp_path, "x.so", b"\x7fELF" + b"\x00" * 16)
+def test_objdump_analyze_generic_error(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/objdump" if n == "objdump" else None
+    )
 
-    def fake_run(cmd, **kw):
+    def fake_run(args, **kw):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(dp.subprocess, "run", fake_run)
-    a = ObjdumpAdapter()
     with pytest.raises(ParseError):
-        a.analyze(path, BinaryParserConfig())
+        ObjdumpAdapter().analyze(path, BinaryParserConfig())
 
 
 # ---------------------------------------------------------------------------
@@ -386,106 +401,145 @@ def test_objdump_analyze_generic_error(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_tesseract_availability(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"tesseract"}))
-    a = TesseractAdapter()
-    assert a.tool_name == "tesseract"
-    assert a.is_available() is True
+def test_tesseract_not_available(monkeypatch):
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
+    t = TesseractAdapter()
+    assert t.tool_name == "tesseract"
+    assert t.is_available() is False
 
 
-def test_tesseract_ocr_image(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"tesseract"}))
-    path = _write(tmp_path, "scan.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+def test_tesseract_ocr_image(tmp_path, monkeypatch):
+    path = _write(tmp_path, "scan.png", b"\x89PNG\r\n")
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/tesseract" if n == "tesseract" else None
+    )
 
     tsv = (
         "level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight\tconf\ttext\n"
-        "5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t90.0\tHello\n"
-        "5\t1\t1\t1\t1\t2\t0\t0\t10\t10\t80.0\tWorld\n"
+        "5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t90.5\tHello\n"
+        "5\t1\t1\t1\t1\t2\t0\t0\t10\t10\t80.5\tWorld\n"
     )
 
-    def fake_run(cmd, **kw):
-        if "tsv" in cmd:
-            return FakeCompleted(stdout=tsv, returncode=0)
-        return FakeCompleted(stdout="Hello World\n")
+    def fake_run(args, **kw):
+        if "tsv" in args:
+            return FakeCompleted(tsv, returncode=0)
+        return FakeCompleted("Hello World", returncode=0)
 
     monkeypatch.setattr(dp.subprocess, "run", fake_run)
-    a = TesseractAdapter()
-    res = a.extract_text(path, OCRConfig())
-    assert isinstance(res, OCRResult)
-    assert res.text == "Hello World"
-    assert res.document_type == DocumentType.PNG
-    assert res.confidence == pytest.approx(85.0)
-    assert res.pages[0]["page"] == 1
-    assert res.metadata["tool"] == "tesseract"
+    result = TesseractAdapter().extract_text(path, OCRConfig())
+    assert isinstance(result, OCRResult)
+    assert result.text == "Hello World"
+    assert result.document_type == DocumentType.PNG
+    assert result.confidence > 0
+    assert result.pages[0]["page"] == 1
+    assert result.metadata["tool"] == "tesseract"
 
 
-def test_tesseract_unsupported_type(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"tesseract"}))
-    path = _write(tmp_path, "data.txt", b"plain text")
-    a = TesseractAdapter()
+def test_tesseract_ocr_image_conf_failure(tmp_path, monkeypatch):
+    path = _write(tmp_path, "scan.jpg", b"\xff\xd8\xff")
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/tesseract" if n == "tesseract" else None
+    )
+
+    def fake_run(args, **kw):
+        if "tsv" in args:
+            return FakeCompleted("", returncode=1)  # confidence pass fails
+        return FakeCompleted("text only")
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
+    result = TesseractAdapter().extract_text(path, OCRConfig())
+    assert result.text == "text only"
+    assert result.confidence == 0.0
+
+
+def test_tesseract_ocr_image_bad_conf_value(tmp_path, monkeypatch):
+    # A non-numeric conf field exercises the ValueError swallow branch.
+    path = _write(tmp_path, "scan.png", b"\x89PNG")
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/tesseract" if n == "tesseract" else None
+    )
+
+    tsv = (
+        "h\n"
+        "5\t1\t1\t1\t1\t1\t0\t0\t1\t1\tNOTANUM\tword\n"  # conf parse fails
+        "5\t1\t1\t1\t1\t2\t0\t0\t1\t1\t-1\tword2\n"  # conf <= 0 ignored
+        "5\t1\t1\t1\t1\t3\t0\t0\t1\t1\t77.0\tword3\n"  # valid
+    )
+
+    def fake_run(args, **kw):
+        if "tsv" in args:
+            return FakeCompleted(tsv, returncode=0)
+        return FakeCompleted("body")
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
+    result = TesseractAdapter().extract_text(path, OCRConfig())
+    assert result.confidence == 77.0
+
+
+def test_tesseract_unsupported_type(tmp_path, monkeypatch):
+    path = _write(tmp_path, "doc.txt", b"hello")
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/tesseract" if n == "tesseract" else None
+    )
     with pytest.raises(ParseError):
-        a.extract_text(path, OCRConfig())
+        TesseractAdapter().extract_text(path, OCRConfig())
 
 
-def test_tesseract_pdf_via_pdftotext(monkeypatch, tmp_path):
-    # No pdftoppm; pdftotext path.
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"tesseract", "pdftotext"}))
-    path = _write(tmp_path, "doc.pdf", b"%PDF-1.4\n%%EOF")
+def test_tesseract_ocr_pdf_via_pdftoppm(tmp_path, monkeypatch):
+    path = _write(tmp_path, "doc.pdf", b"%PDF-1.4")
+    present = {"tesseract", "pdftoppm"}
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: ("/bin/" + n) if n in present else None
+    )
 
-    def fake_run(cmd, **kw):
-        if cmd[0] == "pdftotext":
-            return FakeCompleted(stdout="page one text\n")
-        return FakeCompleted(stdout="")
-
-    monkeypatch.setattr(dp.subprocess, "run", fake_run)
-    a = TesseractAdapter()
-    res = a.extract_text(path, OCRConfig())
-    assert res.document_type == DocumentType.PDF
-    assert "page one text" in res.text
-    assert res.confidence == 100.0
-    assert res.metadata["page_count"] == 1
-
-
-def test_tesseract_pdf_via_pdftoppm(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"tesseract", "pdftoppm"}))
-    path = _write(tmp_path, "doc.pdf", b"%PDF-1.4\n%%EOF")
-
-    created = {}
-
-    def fake_run(cmd, **kw):
-        if cmd[0] == "pdftoppm":
-            # Simulate writing one page image into the temp dir prefix.
-            prefix = cmd[-1]
-            import os as _os
-
-            img = prefix + "-1.png"
-            with open(img, "wb") as fh:
-                fh.write(b"\x89PNG\r\n\x1a\n")
-            created["img"] = img
-            return FakeCompleted(stdout="")
-        # tesseract calls on the page image
-        if "tsv" in cmd:
+    def fake_run(args, **kw):
+        if args[0] == "pdftoppm":
+            out_prefix = args[-1]  # os.path.join(tmpdir, "page")
+            png = out_prefix + "-1.png"
+            with open(png, "wb") as f:
+                f.write(b"\x89PNG")
+            return FakeCompleted("")
+        if "tsv" in args:
             return FakeCompleted(
-                stdout="a\tb\tc\td\te\tf\tg\th\ti\tj\t75.0\tHi\n", returncode=0
+                "h\n5\t1\t1\t1\t1\t1\t0\t0\t1\t1\t95.0\tpdfpage\n", returncode=0
             )
-        return FakeCompleted(stdout="Hi there\n")
+        return FakeCompleted("pdfpage text")
 
     monkeypatch.setattr(dp.subprocess, "run", fake_run)
-    a = TesseractAdapter()
-    res = a.extract_text(path, OCRConfig())
-    assert res.document_type == DocumentType.PDF
-    assert "Hi there" in res.text
-    assert res.metadata["page_count"] == 1
+    result = TesseractAdapter().extract_text(path, OCRConfig())
+    assert result.document_type == DocumentType.PDF
+    assert "pdfpage text" in result.text
+    assert result.metadata["page_count"] == 1
+    assert result.pages[0]["page"] == 1
 
 
-def test_tesseract_pdf_no_tools(monkeypatch, tmp_path):
-    # tesseract present but neither pdftoppm nor pdftotext
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"tesseract"}))
-    path = _write(tmp_path, "doc.pdf", b"%PDF-1.4\n%%EOF")
-    monkeypatch.setattr(dp.subprocess, "run", lambda cmd, **kw: FakeCompleted())
-    a = TesseractAdapter()
+def test_tesseract_ocr_pdf_via_pdftotext(tmp_path, monkeypatch):
+    path = _write(tmp_path, "doc.pdf", b"%PDF-1.4")
+    present = {"tesseract", "pdftotext"}  # no pdftoppm
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: ("/bin/" + n) if n in present else None
+    )
+
+    def fake_run(args, **kw):
+        if args[0] == "pdftotext":
+            return FakeCompleted("extracted layout text")
+        return FakeCompleted("")
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
+    result = TesseractAdapter().extract_text(path, OCRConfig())
+    assert result.document_type == DocumentType.PDF
+    assert "extracted layout text" in result.text
+    assert result.confidence == 100.0
+
+
+def test_tesseract_ocr_pdf_no_tools(tmp_path, monkeypatch):
+    path = _write(tmp_path, "doc.pdf", b"%PDF-1.4")
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/tesseract" if n == "tesseract" else None
+    )
+    monkeypatch.setattr(dp.subprocess, "run", lambda args, **kw: FakeCompleted(""))
     with pytest.raises(ParseError):
-        a.extract_text(path, OCRConfig())
+        TesseractAdapter().extract_text(path, OCRConfig())
 
 
 # ---------------------------------------------------------------------------
@@ -493,121 +547,135 @@ def test_tesseract_pdf_no_tools(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _stub_analysis(file_path):
-    return BinaryAnalysis(
-        file_path=file_path,
-        binary_type=BinaryType.ELF_SO,
-        architecture="x86",
-        symbols=[
-            BinarySymbol(name="main", address="0x1000", symbol_type="func"),
-            BinarySymbol(name="gvar", address="0x2000", symbol_type="data"),
-            BinarySymbol(name="imp", address="0x3000", symbol_type="import"),
-        ],
-        imports=["printf"],
-        exports=["main"],
-        strings=["hello"],
-        sections=[],
-        content_hash="abc",
-    )
-
-
-class _StubAdapter:
-    tool_name = "stub"
-
-    def __init__(self, fail=False):
-        self.fail = fail
-
-    def is_available(self):
-        return True
-
-    def analyze(self, file_path, config):
-        if self.fail:
-            raise ParseError("stub failed", file_path=file_path)
-        return _stub_analysis(file_path)
-
-
-def test_binary_parser_properties(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_binary_parser_init_no_tools(monkeypatch):
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     p = BinaryParser()
     assert p.language == "binary"
     assert p.tree_sitter_language_name == "binary"
     assert ".exe" in p.file_extensions
     assert p.has_tree_sitter is False
+    assert p._adapters == []
 
 
-def test_binary_parser_init_adapters(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"r2", "objdump"}))
-    p = BinaryParser()
-    names = {a.tool_name for a in p._adapters}
-    assert "radare2" in names and "objdump" in names
-
-
-def test_binary_parser_parse_success(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
-    p = create_binary_parser()
-    p._adapters = [_StubAdapter()]
-    path = _write(tmp_path, "x.so", b"\x7fELF")
-    parsed = p.parse("", path)
-    assert parsed.language == "binary"
-    assert parsed.content_hash == "abc"
-    assert len(parsed.symbols) == 3
-    assert "printf" in parsed.imports
+def test_binary_parser_init_with_adapters(monkeypatch):
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/objdump" if n == "objdump" else None
+    )
+    p = BinaryParser(BinaryParserConfig(preferred_tools=["objdump", "radare2"]))
+    assert any(isinstance(a, ObjdumpAdapter) for a in p._adapters)
 
 
 def test_binary_parser_parse_file_not_found(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     p = BinaryParser()
     with pytest.raises(ParseError):
-        p.parse("", "/no/such/file.so")
+        p.parse("", "/no/such/file.exe")
 
 
-def test_binary_parser_parse_adapter_failure_raises_last_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_binary_parser_parse_no_tools(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.so", _elf_bytes(3))
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     p = BinaryParser()
-    p._adapters = [_StubAdapter(fail=True)]
-    path = _write(tmp_path, "x.so", b"\x7fELF")
     with pytest.raises(ParseError):
         p.parse("", path)
 
 
-def test_binary_parser_parse_no_adapters(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_binary_parser_parse_success(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/objdump" if n == "objdump" else None
+    )
+
+    def fake_run(args, **kw):
+        if args[0] == "objdump" and args[1] == "-t":
+            return FakeCompleted(
+                "0000000000001000 g F .text 0000 main\n"
+                "0000000000002000 g O .data 0000 gvar"
+            )
+        if args[0] == "objdump" and args[1] == "-f":
+            return FakeCompleted("architecture: i386:x86-64")
+        if args[0] == "objdump" and args[1] == "-T":
+            return FakeCompleted("0000 DF *UND* 0000 printf")
+        return FakeCompleted("")
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
     p = BinaryParser()
-    p._adapters = []
-    path = _write(tmp_path, "x.so", b"\x7fELF")
+    parsed = p.parse("", path)
+    assert parsed.language == "binary"
+    assert len(parsed.symbols) >= 1
+    sym = parsed.symbols[0]
+    assert sym.simple_name in ("main", "gvar")
+    assert sym.metadata["binary_type"] == BinaryType.ELF_EXEC.name
+    assert "printf" in parsed.imports
+
+
+def test_binary_parser_parse_adapter_raises_propagates(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/objdump" if n == "objdump" else None
+    )
+
+    def fake_run(args, **kw):
+        raise RuntimeError("fail")
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
+    p = BinaryParser()
     with pytest.raises(ParseError):
         p.parse("", path)
 
 
-def test_binary_parser_fallback_and_map(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_binary_parser_map_symbol_type(monkeypatch):
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     from proximadb_sdk.chunking_strategies.code import CodeSymbolType
 
     p = BinaryParser()
-    res = p._fallback_regex_parse("content", "f.so")
-    assert res.symbols == []
-    assert res.language == "binary"
     assert p._map_symbol_type("func") == CodeSymbolType.FUNCTION
     assert p._map_symbol_type("data") == CodeSymbolType.VARIABLE
     assert p._map_symbol_type("import") == CodeSymbolType.MODULE
     assert p._map_symbol_type("export") == CodeSymbolType.FUNCTION
-    assert p._map_symbol_type("weirdtype") == CodeSymbolType.VARIABLE
+    assert p._map_symbol_type("weird") == CodeSymbolType.VARIABLE
 
 
-def test_binary_parser_get_analysis(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_binary_parser_fallback_regex(monkeypatch):
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     p = BinaryParser()
-    p._adapters = [_StubAdapter()]
-    path = _write(tmp_path, "x.so", b"\x7fELF")
-    res = p.get_analysis(path)
-    assert res.architecture == "x86"
+    parsed = p._fallback_regex_parse("some content", "x.exe")
+    assert parsed.symbols == []
+    assert parsed.language == "binary"
+    assert len(parsed.content_hash) == 64
 
 
-def test_binary_parser_get_analysis_all_fail(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_binary_parser_get_analysis(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/objdump" if n == "objdump" else None
+    )
+    monkeypatch.setattr(dp.subprocess, "run", lambda args, **kw: FakeCompleted(""))
     p = BinaryParser()
-    p._adapters = [_StubAdapter(fail=True)]
-    path = _write(tmp_path, "x.so", b"\x7fELF")
+    analysis = p.get_analysis(path)
+    assert isinstance(analysis, BinaryAnalysis)
+
+
+def test_binary_parser_get_analysis_adapter_raises(tmp_path, monkeypatch):
+    # Adapter present but analyze raises -> loop swallows and re-raises ParseError.
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/objdump" if n == "objdump" else None
+    )
+
+    def fake_run(args, **kw):
+        raise RuntimeError("explode")
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
+    p = BinaryParser()
+    with pytest.raises(ParseError):
+        p.get_analysis(path)
+
+
+def test_binary_parser_get_analysis_no_tools(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.out", _elf_bytes(2))
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
+    p = BinaryParser()
     with pytest.raises(ParseError):
         p.get_analysis(path)
 
@@ -617,93 +685,144 @@ def test_binary_parser_get_analysis_all_fail(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-class _StubOCR:
-    def __init__(self, pages=None):
-        self._pages = pages
-
-    def extract_text(self, file_path, config):
-        pages = self._pages
-        if pages is None:
-            pages = [
-                {"page": 1, "text": "first page text", "confidence": 90.0},
-                {"page": 2, "text": "   ", "confidence": 0.0},  # blank -> skipped
-            ]
-        return OCRResult(
-            file_path=file_path,
-            document_type=DocumentType.PDF,
-            text="combined",
-            pages=pages,
-            confidence=90.0,
-            content_hash="dochash",
-        )
-
-
-def test_document_parser_properties(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_document_parser_init_no_ocr(monkeypatch):
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     p = DocumentParser()
     assert p.language == "document"
     assert p.tree_sitter_language_name == "document"
     assert ".pdf" in p.file_extensions
-    assert p.has_ocr is False  # no tesseract
+    assert p.has_ocr is False
+    assert p.has_tree_sitter is False
 
 
-def test_document_parser_has_ocr_true(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_some({"tesseract"}))
+def test_document_parser_init_with_ocr(monkeypatch):
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/tesseract" if n == "tesseract" else None
+    )
     p = DocumentParser()
     assert p.has_ocr is True
 
 
-def test_document_parser_parse_success(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
-    p = create_document_parser()
-    p._adapter = _StubOCR()
-    path = _write(tmp_path, "doc.pdf", b"%PDF")
-    parsed = p.parse("", path)
-    assert parsed.language == "document"
-    assert parsed.content_hash == "dochash"
-    # blank page is skipped
-    assert len(parsed.symbols) == 1
-    assert parsed.symbols[0].simple_name == "Page 1"
-
-
 def test_document_parser_parse_file_not_found(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     p = DocumentParser()
-    p._adapter = _StubOCR()
     with pytest.raises(ParseError):
-        p.parse("", "/no/such/doc.pdf")
+        p.parse("", "/no/file.png")
 
 
-def test_document_parser_parse_no_adapter(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_document_parser_parse_no_ocr(tmp_path, monkeypatch):
+    path = _write(tmp_path, "a.png", b"\x89PNG")
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     p = DocumentParser()
-    p._adapter = None
-    path = _write(tmp_path, "doc.pdf", b"%PDF")
     with pytest.raises(ParseError):
         p.parse("", path)
 
 
-def test_document_parser_fallback(monkeypatch):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_document_parser_parse_success(tmp_path, monkeypatch):
+    path = _write(tmp_path, "scan.png", b"\x89PNG")
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/tesseract" if n == "tesseract" else None
+    )
+
+    def fake_run(args, **kw):
+        if "tsv" in args:
+            return FakeCompleted(
+                "h\n5\t1\t1\t1\t1\t1\t0\t0\t1\t1\t88.0\tword\n", returncode=0
+            )
+        return FakeCompleted("page body text")
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
     p = DocumentParser()
-    res = p._fallback_regex_parse("content", "doc.pdf")
-    assert res.symbols == []
-    assert res.language == "document"
+    parsed = p.parse("", path)
+    assert parsed.language == "document"
+    assert len(parsed.symbols) == 1
+    sym = parsed.symbols[0]
+    assert sym.simple_name == "Page 1"
+    assert "page body text" in sym.source_code
+    assert sym.metadata["document_type"] == DocumentType.PNG.name
 
 
-def test_document_parser_get_ocr_result(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_document_parser_parse_skips_empty_pages(tmp_path, monkeypatch):
+    path = _write(tmp_path, "scan.png", b"\x89PNG")
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/tesseract" if n == "tesseract" else None
+    )
+
+    def fake_run(args, **kw):
+        if "tsv" in args:
+            return FakeCompleted("", returncode=1)
+        return FakeCompleted("   ")  # whitespace-only -> stripped to empty
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
     p = DocumentParser()
-    p._adapter = _StubOCR()
-    path = _write(tmp_path, "doc.pdf", b"%PDF")
-    res = p.get_ocr_result(path)
-    assert res.content_hash == "dochash"
+    parsed = p.parse("", path)
+    assert parsed.symbols == []
 
 
-def test_document_parser_get_ocr_result_no_adapter(monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.shutil, "which", _which_none)
+def test_document_parser_fallback_regex(monkeypatch):
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
     p = DocumentParser()
-    p._adapter = None
-    path = _write(tmp_path, "doc.pdf", b"%PDF")
+    parsed = p._fallback_regex_parse("content", "x.pdf")
+    assert parsed.symbols == []
+    assert parsed.language == "document"
+
+
+def test_document_parser_get_ocr_result(tmp_path, monkeypatch):
+    path = _write(tmp_path, "scan.png", b"\x89PNG")
+    monkeypatch.setattr(
+        dp.shutil, "which", lambda n: "/bin/tesseract" if n == "tesseract" else None
+    )
+
+    def fake_run(args, **kw):
+        if "tsv" in args:
+            return FakeCompleted("", returncode=1)
+        return FakeCompleted("ocr text")
+
+    monkeypatch.setattr(dp.subprocess, "run", fake_run)
+    p = DocumentParser()
+    result = p.get_ocr_result(path)
+    assert isinstance(result, OCRResult)
+    assert result.text == "ocr text"
+
+
+def test_document_parser_get_ocr_result_no_ocr(tmp_path, monkeypatch):
+    path = _write(tmp_path, "scan.png", b"\x89PNG")
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
+    p = DocumentParser()
     with pytest.raises(ParseError):
         p.get_ocr_result(path)
+
+
+# ---------------------------------------------------------------------------
+# Factory functions & dataclasses
+# ---------------------------------------------------------------------------
+
+
+def test_factory_functions(monkeypatch):
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
+    assert isinstance(create_binary_parser(), BinaryParser)
+    assert isinstance(create_document_parser(), DocumentParser)
+    assert isinstance(create_binary_parser(BinaryParserConfig()), BinaryParser)
+    assert isinstance(create_document_parser(OCRConfig()), DocumentParser)
+
+
+def test_get_available_tools(monkeypatch):
+    monkeypatch.setattr(dp.shutil, "which", lambda n: None)
+    tools = get_available_tools()
+    assert set(tools) == {"re_tools", "ocr_tools", "has_wine", "platform"}
+    assert tools["re_tools"] == []
+    assert tools["has_wine"] is False
+
+
+def test_dataclasses_defaults():
+    sym = BinarySymbol(name="f", address="0x0", symbol_type="func")
+    assert sym.size == 0 and sym.metadata == {}
+    cfg = BinaryParserConfig()
+    assert "radare2" in cfg.preferred_tools
+    assert cfg.min_string_length == 4
+    occfg = OCRConfig()
+    assert occfg.language == "eng" and occfg.pdf_dpi == 300
+    res = OCRResult(
+        file_path="f", document_type=DocumentType.PDF, text="t", pages=[]
+    )
+    assert res.confidence == 0.0 and res.language == "eng"

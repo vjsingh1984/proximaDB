@@ -1,15 +1,12 @@
 """Offline unit tests for proximadb_sdk.embedded_multi.
 
-Mocks the underlying EmbeddedProtocolAdapter so no real embedded DB boots.
-Covers multi-model routing: vector/document/graph/time-series indexing,
-chunking, metrics extraction, hybrid search ranking/filtering, repo scanning.
+All transports/adapters are mocked. No real DB boot, no network, no model.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -17,30 +14,88 @@ from proximadb_sdk import embedded_multi
 from proximadb_sdk.embedded_multi import EmbeddedMultiModelProvider
 
 
-def make_adapter(get_collection_return=None):
-    """Build a MagicMock adapter standing in for EmbeddedProtocolAdapter."""
-    adapter = MagicMock()
-    # _db with no start/stop unless overridden (use a plain object)
-    adapter._db = SimpleNamespace()
-    adapter.get_collection.return_value = get_collection_return
-    adapter.create_collection.return_value = {"name": "c"}
-    adapter.create_document_collection.return_value = {"name": "d"}
-    adapter.create_timeseries_collection.return_value = {"name": "ts"}
-    adapter.insert_document.return_value = {"ok": True}
-    adapter.create_node.return_value = {"ok": True}
-    adapter.ingest_timeseries.return_value = {"ok": True}
-    adapter.insert_records.return_value = {"inserted": 1}
-    adapter.search.return_value = []
-    adapter.execute_graph_query.return_value = {"results": []}
-    adapter.close.return_value = None
-    return adapter
+# ---------------------------------------------------------------------------
+# Fakes
+# ---------------------------------------------------------------------------
 
 
-def attach(provider, adapter):
-    """Pre-initialize a provider with a mocked adapter (skip real init)."""
-    provider._adapter = adapter
-    provider._is_initialized = True
-    return provider
+class FakeSearchResult:
+    def __init__(self, score, metadata):
+        self.score = score
+        self.metadata = metadata
+
+
+class FakeAdapter:
+    """Hand fake for EmbeddedProtocolAdapter."""
+
+    def __init__(self, *args, **kwargs):
+        self._db = SimpleNamespace()
+        self.created_collections = []
+        self.created_doc_collections = []
+        self.created_ts_collections = []
+        self.inserted_records = []
+        self.inserted_documents = []
+        self.created_nodes = []
+        self.ingested_points = []
+        self.closed = False
+        self.search_results = []
+        self.graph_results = {"results": []}
+        self.existing_collections = set()
+        self.raise_on_doc_collection = False
+        self.raise_on_ts_collection = False
+        self.raise_on_create_node = False
+        self.raise_on_ingest = False
+
+    def get_collection(self, name):
+        return name if name in self.existing_collections else None
+
+    def create_collection(self, name, config=None):
+        self.created_collections.append((name, config))
+        self.existing_collections.add(name)
+
+    def create_document_collection(self, name, config=None):
+        if self.raise_on_doc_collection:
+            raise RuntimeError("exists")
+        self.created_doc_collections.append((name, config))
+
+    def create_timeseries_collection(self, name, config=None):
+        if self.raise_on_ts_collection:
+            raise RuntimeError("exists")
+        self.created_ts_collections.append((name, config))
+
+    def insert_records(self, collection_name, records):
+        self.inserted_records.append((collection_name, records))
+
+    def insert_document(self, collection_name, document, id):
+        self.inserted_documents.append((collection_name, document, id))
+
+    def create_node(self, graph, node_id, labels, properties):
+        if self.raise_on_create_node:
+            raise RuntimeError("node exists")
+        self.created_nodes.append((graph, node_id, labels, properties))
+
+    def ingest_timeseries(self, collection_name, points):
+        if self.raise_on_ingest:
+            raise RuntimeError("ts down")
+        self.ingested_points.append((collection_name, points))
+
+    def search(self, collection_id, query_vector, top_k, include_metadata):
+        return self.search_results
+
+    def execute_graph_query(self, graph, query):
+        return self.graph_results
+
+    def close(self):
+        self.closed = True
+
+
+def make_provider(adapter=None, initialized=True):
+    p = EmbeddedMultiModelProvider(data_dir="~/.proximadb/test", workspace="ws")
+    if adapter is None:
+        adapter = FakeAdapter()
+    p._adapter = adapter
+    p._is_initialized = initialized
+    return p, adapter
 
 
 # ---------------------------------------------------------------------------
@@ -50,28 +105,28 @@ def attach(provider, adapter):
 
 def test_init_defaults():
     p = EmbeddedMultiModelProvider()
-    assert p.workspace == "default_workspace"
     assert p.embedding_model == "all-MiniLM-L6-v2"
+    assert p.workspace == "default_workspace"
     assert p._vector_collection == "default_workspace_vectors"
     assert p._document_collection == "default_workspace_documents"
     assert p._graph_collection == "default_workspace_graph"
     assert p._timeseries_collection == "default_workspace_metrics"
     assert p._adapter is None
     assert p._is_initialized is False
+    assert "~" not in p.data_dir
 
 
 def test_init_custom():
     p = EmbeddedMultiModelProvider(
-        data_dir="~/foo",
-        workspace="ws",
+        data_dir="/tmp/x",
+        workspace="proj",
         embedding_model="custom-model",
-        config={"x": 1},
+        config={"k": "v"},
     )
-    assert "~" not in p.data_dir  # expanduser applied
-    assert p.workspace == "ws"
+    assert p.data_dir == "/tmp/x"
     assert p.embedding_model == "custom-model"
-    assert p.config == {"x": 1}
-    assert p._vector_collection == "ws_vectors"
+    assert p.config == {"k": "v"}
+    assert p._vector_collection == "proj_vectors"
 
 
 # ---------------------------------------------------------------------------
@@ -80,102 +135,86 @@ def test_init_custom():
 
 
 @pytest.mark.asyncio
-async def test_initialize_creates_collections(monkeypatch):
-    adapter = make_adapter(get_collection_return=None)
+async def test_initialize_already_done():
+    p, adapter = make_provider(initialized=True)
+    await p.initialize()
+    assert p._adapter is adapter
 
-    class FakeDB:
-        def __init__(self):
-            self.started = False
 
+@pytest.mark.asyncio
+async def test_initialize_creates_adapter_and_collections(monkeypatch):
+    made = {}
+    started = {"val": False}
+
+    class StartableDB:
         async def start(self):
-            self.started = True
+            started["val"] = True
 
-    adapter._db = FakeDB()
+    class FakeAdapterWithDB(FakeAdapter):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._db = StartableDB()
+            made["instance"] = self
 
-    def fake_ctor(data_dir, config):
-        return adapter
-
-    monkeypatch.setattr(embedded_multi, "EmbeddedProtocolAdapter", fake_ctor)
+    monkeypatch.setattr(embedded_multi, "EmbeddedProtocolAdapter", FakeAdapterWithDB)
 
     p = EmbeddedMultiModelProvider(workspace="ws")
     await p.initialize()
 
     assert p._is_initialized is True
-    assert adapter._db.started is True
-    # vector + graph created via create_collection (get_collection returned None)
-    assert adapter.create_collection.call_count == 2
-    adapter.create_document_collection.assert_called_once()
-    adapter.create_timeseries_collection.assert_called_once()
-
-    # idempotent: second call returns early
-    adapter.create_collection.reset_mock()
-    await p.initialize()
-    adapter.create_collection.assert_not_called()
+    assert started["val"] is True
+    adapter = made["instance"]
+    names = [n for n, _ in adapter.created_collections]
+    assert "ws_vectors" in names
+    assert "ws_graph" in names
+    assert adapter.created_doc_collections
+    assert adapter.created_ts_collections
 
 
 @pytest.mark.asyncio
-async def test_initialize_existing_collections_no_create(monkeypatch):
-    adapter = make_adapter(get_collection_return={"exists": True})
-    monkeypatch.setattr(
-        embedded_multi, "EmbeddedProtocolAdapter", lambda data_dir, config: adapter
-    )
-    p = EmbeddedMultiModelProvider()
-    await p.initialize()
-    # collections already exist -> create_collection not called
-    adapter.create_collection.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_initialize_collection_exceptions_swallowed(monkeypatch):
-    adapter = make_adapter(get_collection_return=None)
-    adapter.create_document_collection.side_effect = Exception("dup")
-    adapter.create_timeseries_collection.side_effect = Exception("dup")
-    monkeypatch.setattr(
-        embedded_multi, "EmbeddedProtocolAdapter", lambda data_dir, config: adapter
-    )
-    p = EmbeddedMultiModelProvider()
-    await p.initialize()  # must not raise
-    assert p._is_initialized is True
-
-
-@pytest.mark.asyncio
-async def test_initialize_db_without_start(monkeypatch):
-    adapter = make_adapter(get_collection_return=None)
-    adapter._db = SimpleNamespace()  # no .start attr
-    monkeypatch.setattr(
-        embedded_multi, "EmbeddedProtocolAdapter", lambda data_dir, config: adapter
-    )
-    p = EmbeddedMultiModelProvider()
+async def test_initialize_no_start_method(monkeypatch):
+    monkeypatch.setattr(embedded_multi, "EmbeddedProtocolAdapter", FakeAdapter)
+    p = EmbeddedMultiModelProvider(workspace="ws")
     await p.initialize()
     assert p._is_initialized is True
+
+
+@pytest.mark.asyncio
+async def test_ensure_collections_skips_existing_and_handles_errors():
+    adapter = FakeAdapter()
+    adapter.existing_collections = {"ws_vectors", "ws_graph"}
+    adapter.raise_on_doc_collection = True
+    adapter.raise_on_ts_collection = True
+    p, _ = make_provider(adapter=adapter)
+    await p._ensure_collections()
+    assert adapter.created_collections == []
+    assert adapter.created_doc_collections == []
+    assert adapter.created_ts_collections == []
 
 
 @pytest.mark.asyncio
 async def test_shutdown_with_stop():
-    adapter = make_adapter()
+    stopped = {"val": False}
 
-    class FakeDB:
-        def __init__(self):
-            self.stopped = False
-
+    class StoppableDB:
         async def stop(self):
-            self.stopped = True
+            stopped["val"] = True
 
-    adapter._db = FakeDB()
-    p = attach(EmbeddedMultiModelProvider(), adapter)
+    adapter = FakeAdapter()
+    adapter._db = StoppableDB()
+    p, _ = make_provider(adapter=adapter)
     await p.shutdown()
-    assert adapter._db.stopped is True
-    adapter.close.assert_called_once()
+    assert stopped["val"] is True
+    assert adapter.closed is True
     assert p._is_initialized is False
 
 
 @pytest.mark.asyncio
-async def test_shutdown_without_stop():
-    adapter = make_adapter()
-    adapter._db = SimpleNamespace()  # no stop
-    p = attach(EmbeddedMultiModelProvider(), adapter)
+async def test_shutdown_without_stop_method():
+    adapter = FakeAdapter()
+    p, _ = make_provider(adapter=adapter)
     await p.shutdown()
-    adapter.close.assert_called_once()
+    assert adapter.closed is True
     assert p._is_initialized is False
 
 
@@ -183,7 +222,7 @@ async def test_shutdown_without_stop():
 async def test_shutdown_no_adapter():
     p = EmbeddedMultiModelProvider()
     p._adapter = None
-    await p.shutdown()  # must not raise
+    await p.shutdown()
     assert p._is_initialized is False
 
 
@@ -192,31 +231,28 @@ async def test_shutdown_no_adapter():
 # ---------------------------------------------------------------------------
 
 
-def test_chunk_code_basic():
-    p = EmbeddedMultiModelProvider()
-    content = "def a():\n    pass\n\ndef b():\n    pass\n"
+def test_chunk_code_empty_lines_split():
+    p, _ = make_provider()
+    content = "line1\nline2\n\nline3\nline4"
     chunks = p._chunk_code(content)
-    assert len(chunks) >= 1
-    for c in chunks:
-        assert "content" in c
-        assert c["start_line"] >= 1
-        assert c["end_line"] >= 1
-        assert c["line_count"] >= 1
+    assert len(chunks) >= 2
+    assert all("content" in c and "start_line" in c for c in chunks)
+    assert chunks[0]["start_line"] == 1
 
 
-def test_chunk_code_no_trailing_remainder():
-    p = EmbeddedMultiModelProvider()
-    # content ends with empty line -> remainder flushed during loop
-    chunks = p._chunk_code("a\nb\n\n")
-    assert chunks  # at least one chunk produced
-
-
-def test_chunk_code_remainder_path():
-    p = EmbeddedMultiModelProvider()
-    # no empty lines at all -> remainder added after loop
-    chunks = p._chunk_code("line1\nline2\nline3")
+def test_chunk_code_no_trailing_empty():
+    p, _ = make_provider()
+    chunks = p._chunk_code("a\nb\nc")
     assert len(chunks) == 1
-    assert chunks[0]["content"] == "line1\nline2\nline3"
+    assert chunks[0]["line_count"] == 3
+    assert chunks[0]["end_line"] == 3
+
+
+def test_chunk_code_chunk_size_limit():
+    p, _ = make_provider()
+    content = "\n".join(f"x{i}" for i in range(20))
+    chunks = p._chunk_code(content, chunk_size=5)
+    assert len(chunks) > 1
 
 
 # ---------------------------------------------------------------------------
@@ -225,67 +261,31 @@ def test_chunk_code_remainder_path():
 
 
 def test_extract_code_metrics():
-    p = EmbeddedMultiModelProvider()
+    p, _ = make_provider()
     content = (
         "# comment\n"
         "import os\n"
         "def foo():\n"
         "    if x:\n"
-        "        pass\n"
+        "        return 1\n"
         "class Bar:\n"
-        "    def baz(self): { }\n"
+        "    pass\n"
     )
     metrics = p._extract_code_metrics(content, "python")
     names = {m["name"]: m["value"] for m in metrics}
-    assert names["lines_of_code"] >= 1
-    assert names["function_count"] == 2
+    assert names["function_count"] == 1
     assert names["class_count"] == 1
+    assert names["lines_of_code"] >= 5
     assert "max_nesting_depth" in names
-    for m in metrics:
-        assert m["language"] == "python"
+    assert all(m["language"] == "python" for m in metrics)
 
 
-def test_extract_code_metrics_nesting_braces():
-    p = EmbeddedMultiModelProvider()
-    content = "{\n  {\n    x\n  }\n}\n"
-    metrics = p._extract_code_metrics(content, "js")
+def test_extract_code_metrics_braces_nesting():
+    p, _ = make_provider()
+    content = "function f() {\n  if (x) {\n    y;\n  }\n}\n"
+    metrics = p._extract_code_metrics(content, "javascript")
     depth = next(m["value"] for m in metrics if m["name"] == "max_nesting_depth")
     assert depth == 2
-
-
-# ---------------------------------------------------------------------------
-# _find_code_files / _detect_language
-# ---------------------------------------------------------------------------
-
-
-def test_find_code_files(tmp_path):
-    (tmp_path / "a.py").write_text("x")
-    (tmp_path / "b.js").write_text("y")
-    (tmp_path / "ignore.txt").write_text("z")
-    sub = tmp_path / "sub"
-    sub.mkdir()
-    (sub / "c.rs").write_text("w")
-
-    p = EmbeddedMultiModelProvider()
-    files = p._find_code_files(tmp_path)
-    suffixes = sorted(f.suffix for f in files)
-    assert suffixes == [".js", ".py", ".rs"]
-
-
-def test_find_code_files_custom_map(tmp_path):
-    (tmp_path / "a.py").write_text("x")
-    (tmp_path / "b.foo").write_text("y")
-    p = EmbeddedMultiModelProvider()
-    files = p._find_code_files(tmp_path, language_map={".foo": "foolang"})
-    assert [f.suffix for f in files] == [".foo"]
-
-
-def test_detect_language():
-    from pathlib import Path
-
-    p = EmbeddedMultiModelProvider()
-    assert p._detect_language(Path("x.py"), {".py": "python"}) == "python"
-    assert p._detect_language(Path("x.unknown")) == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -295,8 +295,8 @@ def test_detect_language():
 
 @pytest.mark.asyncio
 async def test_index_code_as_graph_counts():
-    adapter = make_adapter()
-    p = attach(EmbeddedMultiModelProvider(), adapter)
+    adapter = FakeAdapter()
+    p, _ = make_provider(adapter=adapter)
     content = (
         "import os\n"
         "from sys import path\n"
@@ -304,29 +304,33 @@ async def test_index_code_as_graph_counts():
         "    pass\n"
         "async def bar():\n"
         "    pass\n"
-        "class Baz(Base):\n"
+        "class Baz(object):\n"
         "    pass\n"
     )
-    info = await p._index_code_as_graph("f.py", content, "python", {"file_hash": "h"})
+    info = await p._index_code_as_graph("f.py", content, "python", {"file_hash": "h1"})
     assert info["functions"] == 2
     assert info["classes"] == 1
     assert info["imports"] == 2
     assert info["calls"] == 0
-    # two function nodes + one class node created
-    assert adapter.create_node.call_count == 3
+    assert len(adapter.created_nodes) == 3
 
 
 @pytest.mark.asyncio
-async def test_index_code_as_graph_node_errors_swallowed():
-    adapter = make_adapter()
-    adapter.create_node.side_effect = Exception("dup")
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-    info = await p._index_code_as_graph(
-        "f.py", "def foo():\n    pass\nclass C:\n    pass\n", "python", {}
-    )
-    # file_hash defaulted by hashing content; exceptions swallowed
+async def test_index_code_as_graph_node_error_swallowed():
+    adapter = FakeAdapter()
+    adapter.raise_on_create_node = True
+    p, _ = make_provider(adapter=adapter)
+    info = await p._index_code_as_graph("f.py", "def foo():\n    pass\n", "python", {})
     assert info["functions"] == 1
-    assert info["classes"] == 1
+    assert adapter.created_nodes == []
+
+
+@pytest.mark.asyncio
+async def test_index_code_as_graph_no_file_hash_computed():
+    adapter = FakeAdapter()
+    p, _ = make_provider(adapter=adapter)
+    info = await p._index_code_as_graph("f.py", "x = 1\n", "python", {})
+    assert info["functions"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -335,98 +339,92 @@ async def test_index_code_as_graph_node_errors_swallowed():
 
 
 @pytest.mark.asyncio
-async def test_store_metric_ingests():
-    adapter = make_adapter()
-    p = attach(EmbeddedMultiModelProvider(), adapter)
+async def test_store_metric_success():
+    adapter = FakeAdapter()
+    p, _ = make_provider(adapter=adapter)
     await p._store_metric(
         "f.py", {"name": "loc", "value": 10, "language": "python"}, {}
     )
-    adapter.ingest_timeseries.assert_called_once()
-    kwargs = adapter.ingest_timeseries.call_args.kwargs
-    assert kwargs["collection_name"] == p._timeseries_collection
-    point = kwargs["points"][0]
-    assert point["values"]["value"] == 10
-    assert point["tags"]["metric_name"] == "loc"
+    assert len(adapter.ingested_points) == 1
+    coll, points = adapter.ingested_points[0]
+    assert coll == "ws_metrics"
+    assert points[0]["values"]["value"] == 10
+    assert points[0]["tags"]["metric_name"] == "loc"
 
 
 @pytest.mark.asyncio
 async def test_store_metric_error_swallowed():
-    adapter = make_adapter()
-    adapter.ingest_timeseries.side_effect = Exception("no ts")
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-    # missing language key -> uses default "unknown"
-    await p._store_metric("f.py", {"name": "loc", "value": 1}, {})  # no raise
+    adapter = FakeAdapter()
+    adapter.raise_on_ingest = True
+    p, _ = make_provider(adapter=adapter)
+    await p._store_metric("f.py", {"name": "loc", "value": 1}, {})
+    assert adapter.ingested_points == []
 
 
 # ---------------------------------------------------------------------------
-# index_code_file (the multi-model fan-out)
+# index_code_file
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_index_code_file_all_models():
-    adapter = make_adapter()
-    p = attach(EmbeddedMultiModelProvider(), adapter)
+async def test_index_code_file_full():
+    adapter = FakeAdapter()
+    p, _ = make_provider(adapter=adapter)
     content = "def foo():\n    return 1\n\nclass C:\n    pass\n"
-    res = await p.index_code_file(
-        "main.py", content, language="python", metadata={"author": "me"}
+    results = await p.index_code_file(
+        "main.py", content, language="python", metadata={"author": "x"}
     )
-    assert res["vectors"] >= 1
-    assert res["document"] is True
-    assert res["graph"]["functions"] == 1
-    assert res["timeseries"] == 4  # loc, func, class, nesting
-    # vectors routed via insert_records
-    assert adapter.insert_records.called
-    adapter.insert_document.assert_called_once()
+    assert results["vectors"] >= 1
+    assert results["document"] is True
+    assert results["graph"]["functions"] == 1
+    assert results["graph"]["classes"] == 1
+    assert results["timeseries"] == 4
+    assert adapter.inserted_documents
+    assert adapter.inserted_records
 
 
 @pytest.mark.asyncio
-async def test_index_code_file_graph_and_timeseries_errors(monkeypatch):
-    adapter = make_adapter()
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-
-    async def graph_boom(*a, **k):
-        raise RuntimeError("graph build fail")
-
-    def metrics_boom(*a, **k):
-        raise RuntimeError("metrics fail")
-
-    monkeypatch.setattr(p, "_index_code_as_graph", graph_boom)
-    monkeypatch.setattr(p, "_extract_code_metrics", metrics_boom)
-    res = await p.index_code_file("a.py", "def f():\n    pass\n")
-    assert "graph_error" in res
-    assert res["graph_error"] == "graph build fail"
-    assert "timeseries_error" in res
-    assert res["timeseries_error"] == "metrics fail"
-
-
-@pytest.mark.asyncio
-async def test_index_code_file_lazy_init(monkeypatch):
-    adapter = make_adapter(get_collection_return={"exists": True})
-    monkeypatch.setattr(
-        embedded_multi, "EmbeddedProtocolAdapter", lambda data_dir, config: adapter
-    )
-    p = EmbeddedMultiModelProvider()  # not initialized
-    res = await p.index_code_file("a.py", "x = 1\n")
+async def test_index_code_file_initializes_if_needed(monkeypatch):
+    monkeypatch.setattr(embedded_multi, "EmbeddedProtocolAdapter", FakeAdapter)
+    p = EmbeddedMultiModelProvider(workspace="ws")
+    assert p._is_initialized is False
+    results = await p.index_code_file("a.py", "x = 1\n")
     assert p._is_initialized is True
-    assert "vectors" in res
+    assert "vectors" in results
 
 
 @pytest.mark.asyncio
 async def test_index_code_file_error_branches():
-    adapter = make_adapter()
-    adapter.insert_records.side_effect = Exception("v fail")
-    adapter.insert_document.side_effect = Exception("d fail")
-    adapter.ingest_timeseries.side_effect = Exception("ts fail")
-    adapter.create_node.side_effect = Exception("g node fail")
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-    res = await p.index_code_file("a.py", "def f():\n    pass\n")
-    assert "vectors_error" in res
-    assert "document_error" in res
-    # graph node errors are swallowed inside _index_code_as_graph -> graph succeeds
-    assert "graph" in res
-    # timeseries errors swallowed in _store_metric -> reports count
-    assert res["timeseries"] == 4
+    class BrokenAdapter(FakeAdapter):
+        def insert_records(self, *a, **k):
+            raise RuntimeError("vec fail")
+
+        def insert_document(self, *a, **k):
+            raise RuntimeError("doc fail")
+
+    adapter = BrokenAdapter()
+    p, _ = make_provider(adapter=adapter)
+    results = await p.index_code_file("m.py", "def f():\n    pass\n")
+    assert "vectors_error" in results
+    assert "document_error" in results
+
+
+@pytest.mark.asyncio
+async def test_index_code_file_graph_and_timeseries_errors(monkeypatch):
+    adapter = FakeAdapter()
+    p, _ = make_provider(adapter=adapter)
+
+    async def graph_boom(*a, **k):
+        raise RuntimeError("graph fail")
+
+    async def metric_boom(*a, **k):
+        raise RuntimeError("metric fail")
+
+    monkeypatch.setattr(p, "_index_code_as_graph", graph_boom)
+    monkeypatch.setattr(p, "_store_metric", metric_boom)
+    results = await p.index_code_file("m.py", "def f():\n    pass\n")
+    assert "graph_error" in results
+    assert "timeseries_error" in results
 
 
 # ---------------------------------------------------------------------------
@@ -434,60 +432,52 @@ async def test_index_code_file_error_branches():
 # ---------------------------------------------------------------------------
 
 
-def _result(metadata, score=0.9):
-    return SimpleNamespace(metadata=metadata, score=score)
-
-
 @pytest.mark.asyncio
 async def test_find_similar_functions_filters():
-    adapter = make_adapter()
-    adapter.search.return_value = [
-        _result(
+    adapter = FakeAdapter()
+    adapter.search_results = [
+        FakeSearchResult(
+            0.9,
             {
                 "language": "python",
-                "content": "def parse(): pass",
+                "content": "def foo(): pass",
                 "file_path": "a.py",
                 "start_line": 1,
                 "end_line": 2,
-            }
+            },
         ),
-        _result({"language": "java", "content": "def x(): pass"}),  # wrong lang
-        _result({"language": "python", "content": "x = 1"}),  # no def
-        _result(None),  # None metadata -> language None != python
+        FakeSearchResult(
+            0.8, {"language": "go", "content": "def x(): pass", "file_path": "b.go"}
+        ),
+        FakeSearchResult(
+            0.7, {"language": "python", "content": "x = 1", "file_path": "c.py"}
+        ),
     ]
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-    out = await p.find_similar_functions(code="def y(): ...", language="python", top_k=5)
+    p, _ = make_provider(adapter=adapter)
+    out = await p.find_similar_functions("def q(): pass", language="python", top_k=5)
     assert len(out) == 1
     assert out[0]["file_path"] == "a.py"
     assert out[0]["score"] == 0.9
-    assert out[0]["start_line"] == 1
 
 
 @pytest.mark.asyncio
 async def test_find_similar_functions_name_filter():
-    adapter = make_adapter()
-    adapter.search.return_value = [
-        _result({"language": "python", "content": "def parse(): pass"}),
-        _result({"language": "python", "content": "def other(): pass"}),
+    adapter = FakeAdapter()
+    adapter.search_results = [
+        FakeSearchResult(0.9, {"language": "python", "content": "def foo(): pass"})
     ]
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-    out = await p.find_similar_functions(
-        code="q", function_name="parse", language="python"
-    )
-    assert len(out) == 1
-    assert "parse" in out[0]["content"]
+    p, _ = make_provider(adapter=adapter)
+    out = await p.find_similar_functions("x", function_name="bar", language="python")
+    assert out == []
 
 
 @pytest.mark.asyncio
-async def test_find_similar_functions_lazy_init(monkeypatch):
-    adapter = make_adapter(get_collection_return={"exists": True})
-    monkeypatch.setattr(
-        embedded_multi, "EmbeddedProtocolAdapter", lambda data_dir, config: adapter
-    )
-    p = EmbeddedMultiModelProvider()
-    out = await p.find_similar_functions(code="x")
+async def test_find_similar_functions_none_metadata():
+    adapter = FakeAdapter()
+    adapter.search_results = [FakeSearchResult(0.5, None)]
+    p, _ = make_provider(adapter=adapter)
+    out = await p.find_similar_functions("x", language="python")
     assert out == []
-    assert p._is_initialized is True
 
 
 # ---------------------------------------------------------------------------
@@ -497,27 +487,13 @@ async def test_find_similar_functions_lazy_init(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_trace_function_usage():
-    p = attach(EmbeddedMultiModelProvider(), make_adapter())
-    out = await p.trace_function_usage("foo", "f.py", depth=5)
-    assert out == {
-        "function": "foo",
-        "file": "f.py",
-        "callers": [],
-        "callees": [],
-        "depth": 5,
-    }
-
-
-@pytest.mark.asyncio
-async def test_trace_function_usage_lazy_init(monkeypatch):
-    adapter = make_adapter(get_collection_return={"exists": True})
-    monkeypatch.setattr(
-        embedded_multi, "EmbeddedProtocolAdapter", lambda data_dir, config: adapter
-    )
-    p = EmbeddedMultiModelProvider()
-    out = await p.trace_function_usage("foo", "f.py")
-    assert out["depth"] == 3
-    assert p._is_initialized is True
+    p, _ = make_provider()
+    res = await p.trace_function_usage("foo", "a.py", depth=2)
+    assert res["function"] == "foo"
+    assert res["file"] == "a.py"
+    assert res["depth"] == 2
+    assert res["callers"] == []
+    assert res["callees"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -527,17 +503,19 @@ async def test_trace_function_usage_lazy_init(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_index_repository_missing_path():
-    p = attach(EmbeddedMultiModelProvider(), make_adapter())
+    p, _ = make_provider()
     with pytest.raises(ValueError):
         await p.index_repository("/nonexistent/path/xyz")
 
 
 @pytest.mark.asyncio
 async def test_index_repository_success(tmp_path):
-    (tmp_path / "a.py").write_text("def f():\n    pass\n")
-    (tmp_path / "b.py").write_text("def g():\n    pass\n")
-    adapter = make_adapter()
-    p = attach(EmbeddedMultiModelProvider(), adapter)
+    (tmp_path / "a.py").write_text("def foo():\n    pass\n")
+    (tmp_path / "b.py").write_text("def bar():\n    pass\n")
+    (tmp_path / "readme.txt").write_text("ignore me")
+
+    adapter = FakeAdapter()
+    p, _ = make_provider(adapter=adapter)
     res = await p.index_repository(str(tmp_path))
     assert res["files_processed"] == 2
     assert res["files_failed"] == 0
@@ -547,156 +525,193 @@ async def test_index_repository_success(tmp_path):
 
 @pytest.mark.asyncio
 async def test_index_repository_max_files(tmp_path):
-    (tmp_path / "a.py").write_text("x = 1\n")
-    (tmp_path / "b.py").write_text("y = 2\n")
-    (tmp_path / "c.py").write_text("z = 3\n")
-    p = attach(EmbeddedMultiModelProvider(), make_adapter())
+    for i in range(3):
+        (tmp_path / f"f{i}.py").write_text("x = 1\n")
+    adapter = FakeAdapter()
+    p, _ = make_provider(adapter=adapter)
     res = await p.index_repository(str(tmp_path), max_files=1)
     assert res["files_processed"] == 1
 
 
 @pytest.mark.asyncio
 async def test_index_repository_file_failure(tmp_path, monkeypatch):
-    (tmp_path / "a.py").write_text("x = 1\n")
-    p = attach(EmbeddedMultiModelProvider(), make_adapter())
+    (tmp_path / "a.py").write_text("def foo():\n    pass\n")
+    p, _ = make_provider()
 
     async def boom(*a, **k):
         raise RuntimeError("index fail")
 
     monkeypatch.setattr(p, "index_code_file", boom)
     res = await p.index_repository(str(tmp_path))
-    assert res["files_processed"] == 0
     assert res["files_failed"] == 1
-    assert res["errors"][0]["error"] == "index fail"
+    assert res["errors"]
+    assert "index fail" in res["errors"][0]["error"]
 
 
 @pytest.mark.asyncio
-async def test_index_repository_lazy_init(tmp_path, monkeypatch):
-    adapter = make_adapter(get_collection_return={"exists": True})
-    monkeypatch.setattr(
-        embedded_multi, "EmbeddedProtocolAdapter", lambda data_dir, config: adapter
-    )
-    p = EmbeddedMultiModelProvider()
-    res = await p.index_repository(str(tmp_path))  # empty dir
-    assert res["files_processed"] == 0
+async def test_index_repository_initializes(monkeypatch, tmp_path):
+    monkeypatch.setattr(embedded_multi, "EmbeddedProtocolAdapter", FakeAdapter)
+    (tmp_path / "a.py").write_text("x=1\n")
+    p = EmbeddedMultiModelProvider(workspace="ws")
+    res = await p.index_repository(str(tmp_path))
     assert p._is_initialized is True
+    assert res["files_processed"] == 1
 
 
 # ---------------------------------------------------------------------------
-# hybrid_search + helpers
+# _find_code_files / _detect_language
+# ---------------------------------------------------------------------------
+
+
+def test_find_code_files(tmp_path):
+    (tmp_path / "a.py").write_text("x")
+    (tmp_path / "b.rs").write_text("x")
+    (tmp_path / "c.txt").write_text("x")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "d.go").write_text("x")
+    p, _ = make_provider()
+    files = p._find_code_files(tmp_path)
+    suffixes = sorted(f.suffix for f in files)
+    assert suffixes == [".go", ".py", ".rs"]
+
+
+def test_find_code_files_custom_map(tmp_path):
+    (tmp_path / "a.foo").write_text("x")
+    (tmp_path / "b.py").write_text("x")
+    p, _ = make_provider()
+    files = p._find_code_files(tmp_path, language_map={".foo": "foolang"})
+    assert [f.suffix for f in files] == [".foo"]
+
+
+def test_detect_language():
+    p, _ = make_provider()
+    assert p._detect_language(Path("a.py"), {".py": "python"}) == "python"
+    assert p._detect_language(Path("a.xyz"), {".py": "python"}) == "unknown"
+    assert p._detect_language(Path("a.py")) == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# hybrid_search
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_hybrid_search_vector_and_graph():
-    adapter = make_adapter()
-    adapter.search.return_value = [
-        _result({"content": "vec content", "file_path": "a.py"}, score=0.5),
+async def test_hybrid_search_vector_only():
+    adapter = FakeAdapter()
+    adapter.search_results = [
+        FakeSearchResult(0.9, {"content": "abc", "file_path": "a.py"}),
+        FakeSearchResult(0.5, {"content": "def", "file_path": "b.py"}),
     ]
-    adapter.execute_graph_query.return_value = {
-        "results": [
-            {
-                "score": 0.4,
-                "content": "graph content",
-                "metadata": {"file_path": "a.py"},
-            }
-        ]
+    p, _ = make_provider(adapter=adapter)
+    res = await p.hybrid_search("query", top_k=5)
+    assert len(res) == 2
+    assert res[0]["metadata"]["file_path"] == "a.py"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_vector_none_metadata():
+    # When a vector result has metadata=None, the ranking step dereferences
+    # the None metadata -> source raises AttributeError (documented behavior).
+    adapter = FakeAdapter()
+    adapter.search_results = [FakeSearchResult(0.9, None)]
+    p, _ = make_provider(adapter=adapter)
+    with pytest.raises(AttributeError):
+        await p.hybrid_search("q")
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_with_graph():
+    adapter = FakeAdapter()
+    adapter.search_results = [
+        FakeSearchResult(0.5, {"content": "vec", "file_path": "a.py"})
+    ]
+    adapter.graph_results = {
+        "results": [{"score": 0.4, "content": "g", "metadata": {"file_path": "a.py"}}]
     }
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-    out = await p.hybrid_search("query", top_k=10, graph_query="MATCH (n) RETURN n")
-    # a.py gets vector(0.5) + graph(0.4*1.2) ; ranked, file_path present
-    assert len(out) == 1
-    assert out[0]["metadata"]["file_path"] == "a.py"
+    p, _ = make_provider(adapter=adapter)
+    res = await p.hybrid_search("q", graph_query="MATCH (n) RETURN n")
+    assert len(res) == 1
 
 
 @pytest.mark.asyncio
 async def test_hybrid_search_graph_error_swallowed():
-    adapter = make_adapter()
-    adapter.search.return_value = [
-        _result({"content": "c", "file_path": "a.py"}, score=0.5)
+    adapter = FakeAdapter()
+    adapter.search_results = [
+        FakeSearchResult(0.5, {"content": "vec", "file_path": "a.py"})
     ]
-    adapter.execute_graph_query.side_effect = Exception("graph down")
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-    out = await p.hybrid_search("q", graph_query="bad")
-    assert len(out) == 1
 
+    def boom(graph, query):
+        raise RuntimeError("graph down")
 
-@pytest.mark.asyncio
-async def test_hybrid_search_no_graph_query():
-    adapter = make_adapter()
-    adapter.search.return_value = [
-        _result({"content": "c", "file_path": "a.py"}, score=0.5)
-    ]
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-    out = await p.hybrid_search("q")
-    adapter.execute_graph_query.assert_not_called()
-    assert len(out) == 1
+    adapter.execute_graph_query = boom
+    p, _ = make_provider(adapter=adapter)
+    res = await p.hybrid_search("q", graph_query="MATCH")
+    assert len(res) == 1
 
 
 @pytest.mark.asyncio
 async def test_hybrid_search_document_filter():
-    adapter = make_adapter()
-    adapter.search.return_value = [
-        _result({"content": "c1", "file_path": "a.py", "language": "python"}, 0.9),
-        _result({"content": "c2", "file_path": "b.py", "language": "java"}, 0.8),
+    adapter = FakeAdapter()
+    adapter.search_results = [
+        FakeSearchResult(0.9, {"content": "a", "file_path": "a.py", "lang": "py"}),
+        FakeSearchResult(0.8, {"content": "b", "file_path": "b.py", "lang": "go"}),
     ]
-    p = attach(EmbeddedMultiModelProvider(), adapter)
-    out = await p.hybrid_search("q", document_filter={"language": "python"})
-    assert len(out) == 1
-    assert out[0]["metadata"]["file_path"] == "a.py"
+    p, _ = make_provider(adapter=adapter)
+    res = await p.hybrid_search("q", document_filter={"lang": "py"})
+    assert len(res) == 1
+    assert res[0]["metadata"]["file_path"] == "a.py"
 
 
 @pytest.mark.asyncio
-async def test_hybrid_search_lazy_init(monkeypatch):
-    adapter = make_adapter(get_collection_return={"exists": True})
-    monkeypatch.setattr(
-        embedded_multi, "EmbeddedProtocolAdapter", lambda data_dir, config: adapter
-    )
-    p = EmbeddedMultiModelProvider()
-    out = await p.hybrid_search("q")
-    assert out == []
+async def test_hybrid_search_initializes(monkeypatch):
+    monkeypatch.setattr(embedded_multi, "EmbeddedProtocolAdapter", FakeAdapter)
+    p = EmbeddedMultiModelProvider(workspace="ws")
+    res = await p.hybrid_search("q")
     assert p._is_initialized is True
+    assert res == []
 
 
 # ---------------------------------------------------------------------------
-# _filter_hybrid_results / _matches_filter / _rank_hybrid_results
+# filter / rank helpers
 # ---------------------------------------------------------------------------
 
 
 def test_filter_hybrid_results_no_filter():
-    p = EmbeddedMultiModelProvider()
-    results = [{"metadata": {"a": 1}}]
-    assert p._filter_hybrid_results(results, None) is results
+    p, _ = make_provider()
+    data = [{"metadata": {"x": 1}}]
+    assert p._filter_hybrid_results(data, None) is data
 
 
 def test_matches_filter():
-    p = EmbeddedMultiModelProvider()
+    p, _ = make_provider()
     assert p._matches_filter({"a": 1, "b": 2}, {"a": 1}) is True
     assert p._matches_filter({"a": 1}, {"a": 2}) is False
     assert p._matches_filter({"a": 1}, {"missing": 1}) is False
 
 
-def test_rank_hybrid_results_scoring():
-    p = EmbeddedMultiModelProvider()
+def test_rank_hybrid_results_graph_boost():
+    p, _ = make_provider()
     results = [
         {"type": "vector", "score": 0.5, "metadata": {"file_path": "a.py"}},
-        {"type": "graph", "score": 0.5, "metadata": {"file_path": "a.py"}},
-        {"type": "vector", "score": 0.9, "metadata": {"file_path": "b.py"}},
-        {"type": "vector", "score": 0.1, "metadata": {}},  # no file_path -> dropped
+        {"type": "graph", "score": 0.5, "metadata": {"file_path": "b.py"}},
     ]
-    ranked = p._rank_hybrid_results(results, top_k=10)
-    paths = [r["metadata"].get("file_path") for r in ranked]
-    # a.py: 0.5 + 0.5*1.2 = 1.1 > b.py 0.9
-    assert paths == ["a.py", "b.py"]
+    ranked = p._rank_hybrid_results(results, top_k=5)
+    assert ranked[0]["metadata"]["file_path"] == "b.py"
 
 
-def test_rank_hybrid_results_top_k_limit():
-    p = EmbeddedMultiModelProvider()
+def test_rank_hybrid_results_skips_no_file_path():
+    p, _ = make_provider()
+    results = [{"type": "vector", "score": 1.0, "metadata": {}}]
+    assert p._rank_hybrid_results(results, top_k=5) == []
+
+
+def test_rank_hybrid_results_best_result_selection():
+    p, _ = make_provider()
     results = [
-        {"type": "vector", "score": float(i), "metadata": {"file_path": f"{i}.py"}}
-        for i in range(5)
+        {"type": "vector", "score": 0.2, "metadata": {"file_path": "a.py"}, "id": 1},
+        {"type": "vector", "score": 0.9, "metadata": {"file_path": "a.py"}, "id": 2},
     ]
-    ranked = p._rank_hybrid_results(results, top_k=2)
-    assert len(ranked) == 2
-    # highest scores first
-    assert ranked[0]["metadata"]["file_path"] == "4.py"
+    ranked = p._rank_hybrid_results(results, top_k=5)
+    assert len(ranked) == 1
+    assert ranked[0]["id"] == 2

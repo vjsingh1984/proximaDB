@@ -1,7 +1,8 @@
 """Offline unit tests for proximadb_sdk.chunking_strategies.parser_utils.
 
-Pure helpers and singletons; no network/IO. Tree-sitter import is expected to
-fail gracefully (regex fallback), so parsers init without external deps.
+Pure module: no network/server. Exercises errors, fallback config, metrics,
+cache (LRU), decorators, parser family base classes, plugin registry,
+config validation, and utility helpers.
 """
 
 import re
@@ -12,10 +13,27 @@ from proximadb_sdk.chunking_strategies import parser_utils as pu
 
 
 # ---------------------------------------------------------------------------
-# Error classes
+# Fixtures to reset process-wide singletons (shared state across tests).
 # ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _reset_singletons():
+    pu.get_metrics_collector().clear()
+    pu.get_metrics_collector().enable()
+    pu.get_parser_cache().clear()
+    reg = pu.get_plugin_registry()
+    for entry in list(reg.list_plugins()):
+        reg.unregister(entry["name"])
+    yield
+    pu.get_metrics_collector().clear()
+    pu.get_parser_cache().clear()
+    reg = pu.get_plugin_registry()
+    for entry in list(reg.list_plugins()):
+        reg.unregister(entry["name"])
 
 
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
 def test_parser_error_attrs():
     e = pu.ParserError("boom", language="python", file_path="a.py")
     assert e.language == "python"
@@ -23,29 +41,32 @@ def test_parser_error_attrs():
     assert str(e) == "boom"
 
 
-def test_parser_initialization_and_unsupported():
-    assert issubclass(pu.ParserInitializationError, pu.ParserError)
-    assert issubclass(pu.UnsupportedLanguageError, pu.ParserError)
-    e = pu.UnsupportedLanguageError("nope", language="cobol")
-    assert e.language == "cobol"
+def test_parser_initialization_error_is_parser_error():
+    e = pu.ParserInitializationError("init", language="go")
+    assert isinstance(e, pu.ParserError)
+    assert e.language == "go"
 
 
 def test_parse_error_line_column():
-    e = pu.ParseError("syntax", line=3, column=7, language="rust", file_path="x.rs")
-    assert e.line == 3
-    assert e.column == 7
+    e = pu.ParseError("bad", line=5, column=3, language="rust", file_path="x.rs")
+    assert e.line == 5
+    assert e.column == 3
     assert e.language == "rust"
     assert e.file_path == "x.rs"
 
 
-# ---------------------------------------------------------------------------
-# FallbackStrategy / FallbackConfig
-# ---------------------------------------------------------------------------
+def test_unsupported_language_error():
+    e = pu.UnsupportedLanguageError("nope", language="brainfuck")
+    assert isinstance(e, pu.ParserError)
+    assert e.language == "brainfuck"
 
 
+# ---------------------------------------------------------------------------
+# Fallback config / strategy
+# ---------------------------------------------------------------------------
 def test_fallback_strategy_members():
-    members = {s.name for s in pu.FallbackStrategy}
-    assert {"NONE", "REGEX", "SEMANTIC", "EMPTY", "PARTIAL"} <= members
+    names = {s.name for s in pu.FallbackStrategy}
+    assert {"NONE", "REGEX", "SEMANTIC", "EMPTY", "PARTIAL"} <= names
 
 
 def test_fallback_config_defaults():
@@ -60,14 +81,12 @@ def test_fallback_config_defaults():
 # ---------------------------------------------------------------------------
 # ParserMetrics
 # ---------------------------------------------------------------------------
-
-
 def test_parser_metrics_to_dict():
     m = pu.ParserMetrics(
         language="python",
-        file_path="m.py",
-        parse_time_ms=12.3456,
-        symbol_count=5,
+        file_path="a.py",
+        parse_time_ms=1.23456,
+        symbol_count=3,
         relation_count=2,
         error_count=1,
         fallback_used=True,
@@ -76,8 +95,8 @@ def test_parser_metrics_to_dict():
     )
     d = m.to_dict()
     assert d["language"] == "python"
-    assert d["parse_time_ms"] == 12.35  # rounded to 2 places
-    assert d["symbol_count"] == 5
+    assert d["parse_time_ms"] == 1.23  # rounded to 2 places
+    assert d["symbol_count"] == 3
     assert d["relation_count"] == 2
     assert d["error_count"] == 1
     assert d["fallback_used"] is True
@@ -86,310 +105,389 @@ def test_parser_metrics_to_dict():
 
 
 # ---------------------------------------------------------------------------
-# MetricsCollector singleton
+# MetricsCollector
 # ---------------------------------------------------------------------------
+def test_metrics_collector_singleton():
+    a = pu.MetricsCollector()
+    b = pu.get_metrics_collector()
+    assert a is b
 
 
-def test_metrics_collector_singleton_and_lifecycle():
-    c1 = pu.get_metrics_collector()
-    c2 = pu.MetricsCollector()
-    assert c1 is c2
+def test_metrics_collector_summary_empty():
+    c = pu.get_metrics_collector()
+    c.clear()
+    assert c.get_summary() == {}
 
-    c1.clear()
-    assert c1.get_summary() == {}
 
-    c1.enable()
-    c1.record(
+def test_metrics_collector_record_and_summary():
+    c = pu.get_metrics_collector()
+    c.clear()
+    c.record(
         pu.ParserMetrics(
-            language="python",
-            file_path="a.py",
-            parse_time_ms=10.0,
-            symbol_count=3,
-            relation_count=1,
-            error_count=0,
-            fallback_used=False,
-            cache_hit=True,
+            language="py", file_path="a.py", parse_time_ms=10.0,
+            symbol_count=2, relation_count=1, error_count=0, cache_hit=True,
         )
     )
-    c1.record(
+    c.record(
         pu.ParserMetrics(
-            language="python",
-            file_path="b.py",
-            parse_time_ms=20.0,
-            symbol_count=1,
-            relation_count=0,
-            error_count=1,
-            fallback_used=True,
-            cache_hit=False,
+            language="py", file_path="b.py", parse_time_ms=20.0,
+            symbol_count=4, relation_count=3, error_count=1, fallback_used=True,
         )
     )
-    c1.record(
-        pu.ParserMetrics(
-            language="rust",
-            file_path="c.rs",
-            parse_time_ms=5.0,
-            symbol_count=2,
-            relation_count=2,
-        )
+    c.record(
+        pu.ParserMetrics(language="go", file_path="m.go", parse_time_ms=5.0)
     )
-
-    summary = c1.get_summary()
-    assert set(summary.keys()) == {"python", "rust"}
-    py = summary["python"]
-    assert py["total_parses"] == 2
-    assert py["avg_parse_time_ms"] == 15.0
-    assert py["total_symbols"] == 4
-    assert py["total_relations"] == 1
-    assert py["error_rate"] == 0.5
-    assert py["fallback_rate"] == 0.5
-    assert py["cache_hit_rate"] == 0.5
-
-    c1.clear()
-    assert c1.get_summary() == {}
+    summary = c.get_summary()
+    assert summary["py"]["total_parses"] == 2
+    assert summary["py"]["avg_parse_time_ms"] == 15.0
+    assert summary["py"]["total_symbols"] == 6
+    assert summary["py"]["total_relations"] == 4
+    assert summary["py"]["error_rate"] == 0.5
+    assert summary["py"]["fallback_rate"] == 0.5
+    assert summary["py"]["cache_hit_rate"] == 0.5
+    assert summary["go"]["total_parses"] == 1
 
 
-def test_metrics_collector_disable_skips_record():
+def test_metrics_collector_disable_blocks_record():
     c = pu.get_metrics_collector()
     c.clear()
     c.disable()
-    c.record(pu.ParserMetrics(language="x", file_path="x"))
+    c.record(pu.ParserMetrics(language="py", file_path="a.py"))
     assert c.get_summary() == {}
-    c.enable()  # restore for other tests
-    c.clear()
+    c.enable()
+    c.record(pu.ParserMetrics(language="py", file_path="a.py"))
+    assert c.get_summary() != {}
 
 
 # ---------------------------------------------------------------------------
-# ParserCache singleton + LRU
+# ParserCache (LRU)
 # ---------------------------------------------------------------------------
+def test_parser_cache_singleton():
+    assert pu.ParserCache() is pu.get_parser_cache()
 
 
-def test_parser_cache_basic_put_get():
+def test_parser_cache_put_get_contains_size():
     cache = pu.get_parser_cache()
-    assert cache is pu.ParserCache()
+    cache.clear()
+    assert cache.get("python") is None
+    assert cache.contains("python") is False
+    obj = object()
+    cache.put("python", obj)
+    assert cache.get("python") is obj
+    assert cache.contains("python") is True
+    assert cache.size() == 1
+
+
+def test_parser_cache_put_existing_updates_access_order():
+    cache = pu.get_parser_cache()
+    cache.clear()
+    cache.put("a", object())
+    cache.put("b", object())
+    # Re-put existing key 'a' -> removed from access_order then re-added
+    new_a = object()
+    cache.put("a", new_a)
+    assert cache.get("a") is new_a
+    assert cache.size() == 2
+
+
+def test_parser_cache_clear():
+    cache = pu.get_parser_cache()
+    cache.put("x", object())
     cache.clear()
     assert cache.size() == 0
-
-    p = object()
-    cache.put("python", p)
-    assert cache.contains("python")
-    assert cache.get("python") is p
-    assert cache.size() == 1
-
-    # miss
-    assert cache.get("nope") is None
-    cache.clear()
-
-
-def test_parser_cache_replace_existing():
-    cache = pu.get_parser_cache()
-    cache.clear()
-    a, b = object(), object()
-    cache.put("go", a)
-    cache.put("go", b)  # replace branch
-    assert cache.get("go") is b
-    assert cache.size() == 1
-    cache.clear()
+    assert cache.contains("x") is False
 
 
 def test_parser_cache_lru_eviction():
-    # Singleton already created with max_size=32; force eviction by saturating.
+    # Force a tiny cache by mutating the private max_size of the singleton.
     cache = pu.get_parser_cache()
     cache.clear()
-    max_size = cache._max_size
-    sentinels = {}
-    for i in range(max_size):
-        obj = object()
-        sentinels[f"lang{i}"] = obj
-        cache.put(f"lang{i}", obj)
-    assert cache.size() == max_size
-
-    # touch lang0 so it is most-recently-used; lang1 becomes LRU
-    cache.get("lang0")
-    extra = object()
-    cache.put("overflow", extra)
-    assert cache.size() == max_size
-    assert cache.contains("lang0")  # survived
-    assert not cache.contains("lang1")  # evicted as LRU
-    assert cache.get("overflow") is extra
-    cache.clear()
+    original = cache._max_size
+    try:
+        cache._max_size = 2
+        cache.put("a", object())
+        cache.put("b", object())
+        # Access 'a' so 'b' becomes LRU
+        cache.get("a")
+        cache.put("c", object())  # should evict 'b'
+        assert cache.contains("a") is True
+        assert cache.contains("c") is True
+        assert cache.contains("b") is False
+        assert cache.size() == 2
+    finally:
+        cache._max_size = original
+        cache.clear()
 
 
 # ---------------------------------------------------------------------------
-# Decorators
+# Concrete parser for exercising base-class behavior + decorators
 # ---------------------------------------------------------------------------
-
-
-class _Result:
+class _FakeResult:
     def __init__(self, symbols, relations):
         self.symbols = symbols
         self.relations = relations
 
 
-class _FakeParser:
-    language = "python"
+class _DummyParser(pu.BaseLanguageParser):
+    @property
+    def language(self) -> str:
+        return "dummy"
 
-    def __init__(self):
-        self._parser = object()  # tree_sitter_available True
+    @property
+    def file_extensions(self):
+        return [".dum"]
 
-    @pu.with_metrics
     def parse(self, content, file_path):
-        return _Result(symbols=[1, 2, 3], relations=[("a", "b")])
-
-    @pu.with_metrics
-    def boom(self, content, file_path):
-        raise ValueError("nope")
-
-
-def test_with_metrics_success_records():
-    c = pu.get_metrics_collector()
-    c.clear()
-    p = _FakeParser()
-    res = p.parse("code", "f.py")
-    assert res.symbols == [1, 2, 3]
-    summary = c.get_summary()
-    assert summary["python"]["total_symbols"] == 3
-    assert summary["python"]["total_relations"] == 1
-    c.clear()
-
-
-def test_with_metrics_error_records_and_reraises():
-    c = pu.get_metrics_collector()
-    c.clear()
-    p = _FakeParser()
-    with pytest.raises(ValueError):
-        p.boom("code", "f.py")
-    summary = c.get_summary()
-    assert summary["python"]["error_rate"] == 1.0
-    c.clear()
-
-
-class _FallbackParser:
-    language = "python"
-
-    def __init__(self, fail=True):
-        self._fail = fail
-        self._parser = None
-        self._partial_result = "PARTIAL"
-
-    def _real(self, content, file_path):
-        if self._fail:
-            raise RuntimeError("parse failed")
-        return "OK"
+        return self._create_empty_result(file_path)
 
     def _fallback_regex_parse(self, content, file_path):
-        return "REGEX"
+        from proximadb_sdk.chunking_strategies.code import ParsedCode
 
-    def _fallback_semantic_parse(self, content, file_path):
-        return "SEMANTIC"
-
-    def _create_empty_result(self, file_path):
-        return "EMPTY"
-
-
-def _wrap(parser, cfg):
-    fn = pu.with_fallback(cfg)(_FallbackParser._real)
-    return lambda c, f: fn(parser, c, f)
+        return ParsedCode(
+            file_path=file_path,
+            language=self.language,
+            symbols=["regex_sym"],
+            relations=[],
+            imports=[],
+            content_hash="regex",
+        )
 
 
-def test_with_fallback_success_no_fallback():
-    p = _FallbackParser(fail=False)
+def test_base_parser_init_no_tree_sitter():
+    p = _DummyParser()
+    # tree_sitter not installed in env -> ImportError path -> _parser None
+    assert p.has_tree_sitter is False
+    assert p._parser is None
+    assert p.tree_sitter_language_name == "dummy"
+
+
+def test_base_parser_empty_and_semantic_results():
+    p = _DummyParser()
+    empty = p._create_empty_result("z.dum")
+    assert empty.file_path == "z.dum"
+    assert empty.language == "dummy"
+    assert empty.symbols == []
+    assert empty.content_hash == ""
+
+    sem = p._fallback_semantic_parse("hello", "z.dum")
+    assert sem.language == "dummy"
+    # semantic computes a real sha256 hash
+    assert len(sem.content_hash) == 64
+
+
+def test_base_parser_compute_content_hash_deterministic():
+    p = _DummyParser()
+    h1 = p._compute_content_hash("abc")
+    h2 = p._compute_content_hash("abc")
+    assert h1 == h2
+    assert h1 != p._compute_content_hash("abd")
+
+
+# ---------------------------------------------------------------------------
+# Decorators
+# ---------------------------------------------------------------------------
+def test_with_metrics_success_records():
+    collector = pu.get_metrics_collector()
+    collector.clear()
+
+    class P(_DummyParser):
+        @pu.with_metrics
+        def do(self, content, file_path):
+            return _FakeResult(symbols=[1, 2], relations=[3])
+
+    P().do("text", "f.dum")
+    summary = collector.get_summary()
+    assert summary["dummy"]["total_symbols"] == 2
+    assert summary["dummy"]["total_relations"] == 1
+    assert summary["dummy"]["error_rate"] == 0.0
+
+
+def test_with_metrics_exception_increments_error_and_reraises():
+    collector = pu.get_metrics_collector()
+    collector.clear()
+
+    class P(_DummyParser):
+        @pu.with_metrics
+        def do(self, content, file_path):
+            raise ValueError("kaboom")
+
+    with pytest.raises(ValueError):
+        P().do("text", "f.dum")
+    summary = collector.get_summary()
+    assert summary["dummy"]["error_rate"] == 1.0
+
+
+def test_with_fallback_regex_strategy():
     cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.REGEX, max_retries=0)
-    assert _wrap(p, cfg)("x", "f") == "OK"
 
+    class P(_DummyParser):
+        @pu.with_fallback(cfg)
+        def do(self, content, file_path):
+            raise RuntimeError("fail")
 
-def test_with_fallback_regex():
-    p = _FallbackParser(fail=True)
-    cfg = pu.FallbackConfig(
-        strategy=pu.FallbackStrategy.REGEX, max_retries=0, log_errors=True
-    )
-    assert _wrap(p, cfg)("x", "f") == "REGEX"
-
-
-def test_with_fallback_semantic():
-    p = _FallbackParser(fail=True)
-    cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.SEMANTIC, max_retries=0)
-    assert _wrap(p, cfg)("x", "f") == "SEMANTIC"
-
-
-def test_with_fallback_empty():
-    p = _FallbackParser(fail=True)
-    cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.EMPTY, max_retries=0)
-    assert _wrap(p, cfg)("x", "f") == "EMPTY"
-
-
-def test_with_fallback_partial_uses_partial_result():
-    p = _FallbackParser(fail=True)
-    cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.PARTIAL, max_retries=0)
-    assert _wrap(p, cfg)("x", "f") == "PARTIAL"
-
-
-def test_with_fallback_partial_without_attr_returns_empty():
-    p = _FallbackParser(fail=True)
-    del p._partial_result
-    cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.PARTIAL, max_retries=0)
-    assert _wrap(p, cfg)("x", "f") == "EMPTY"
+    res = P().do("x", "f.dum")
+    assert res.symbols == ["regex_sym"]
 
 
 def test_with_fallback_none_reraises():
-    p = _FallbackParser(fail=True)
     cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.NONE, max_retries=0)
-    with pytest.raises(RuntimeError):
-        _wrap(p, cfg)("x", "f")
+
+    class P(_DummyParser):
+        @pu.with_fallback(cfg)
+        def do(self, content, file_path):
+            raise KeyError("nope")
+
+    with pytest.raises(KeyError):
+        P().do("x", "f.dum")
 
 
-def test_with_fallback_retries_then_falls_back():
-    p = _FallbackParser(fail=True)
-    # small delay to keep it fast; 1 retry exercises the time.sleep branch
+def test_with_fallback_semantic_strategy():
+    cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.SEMANTIC, max_retries=0)
+
+    class P(_DummyParser):
+        @pu.with_fallback(cfg)
+        def do(self, content, file_path):
+            raise RuntimeError("fail")
+
+    res = P().do("body", "f.dum")
+    assert len(res.content_hash) == 64
+
+
+def test_with_fallback_empty_strategy():
+    cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.EMPTY, max_retries=0)
+
+    class P(_DummyParser):
+        @pu.with_fallback(cfg)
+        def do(self, content, file_path):
+            raise RuntimeError("fail")
+
+    res = P().do("body", "f.dum")
+    assert res.symbols == []
+    assert res.content_hash == ""
+
+
+def test_with_fallback_partial_with_partial_result():
+    cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.PARTIAL, max_retries=0)
+
+    class P(_DummyParser):
+        @pu.with_fallback(cfg)
+        def do(self, content, file_path):
+            self._partial_result = _FakeResult(symbols=["p"], relations=[])
+            raise RuntimeError("fail")
+
+    res = P().do("body", "f.dum")
+    assert res.symbols == ["p"]
+
+
+def test_with_fallback_partial_without_partial_result_uses_empty():
+    cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.PARTIAL, max_retries=0)
+
+    class P(_DummyParser):
+        @pu.with_fallback(cfg)
+        def do(self, content, file_path):
+            raise RuntimeError("fail")
+
+    res = P().do("body", "f.dum")
+    assert res.symbols == []
+
+
+def test_with_fallback_retries_then_succeeds():
     cfg = pu.FallbackConfig(
-        strategy=pu.FallbackStrategy.EMPTY, max_retries=1, retry_delay_ms=1
+        strategy=pu.FallbackStrategy.NONE, max_retries=2, retry_delay_ms=0,
+        log_errors=False,
     )
-    assert _wrap(p, cfg)("x", "f") == "EMPTY"
+    state = {"calls": 0}
+
+    class P(_DummyParser):
+        @pu.with_fallback(cfg)
+        def do(self, content, file_path):
+            state["calls"] += 1
+            if state["calls"] < 2:
+                raise RuntimeError("transient")
+            return _FakeResult(symbols=["ok"], relations=[])
+
+    res = P().do("body", "f.dum")
+    assert res.symbols == ["ok"]
+    assert state["calls"] == 2
 
 
-def test_with_fallback_default_config():
-    p = _FallbackParser(fail=True)
-    fn = pu.with_fallback()(_FallbackParser._real)
-    # default strategy REGEX, default max_retries=1 (delay 100ms once -> ok, fast)
-    assert fn(p, "x", "f") == "REGEX"
+def test_with_fallback_default_config_regex():
+    # max_retries=0 keeps it fast; default config arg path covered separately.
+    cfg = pu.FallbackConfig(strategy=pu.FallbackStrategy.REGEX, max_retries=0)
+
+    class P(_DummyParser):
+        @pu.with_fallback(cfg)
+        def do(self, content, file_path):
+            raise RuntimeError("x")
+
+    assert P().do("c", "f.dum").symbols == ["regex_sym"]
 
 
-def test_cached_parser_decorator_miss_then_hit():
-    cache = pu.get_parser_cache()
-    cache.clear()
+def test_with_fallback_no_arg_uses_default_config():
+    # Calling with_fallback() without args -> default FallbackConfig (REGEX).
+    class P(_DummyParser):
+        @pu.with_fallback()
+        def do(self, content, file_path):
+            raise RuntimeError("x")
 
-    calls = []
+    # default max_retries=1 with retry_delay_ms=100 -> ~0.1s sleep, acceptable.
+    assert P().do("c", "f.dum").symbols == ["regex_sym"]
 
-    class _CP:
-        language = "kotlin"
 
-        def __init__(self):
-            self._parser = "PARSER_OBJ"
-            self._language = "kotlin"
+def test_cached_parser_decorator_miss_caches_instance():
+    pu.get_parser_cache().clear()
+    calls = {"n": 0}
 
+    class P(_DummyParser):
         @pu.cached_parser
         def setup(self):
-            calls.append("ran")
+            calls["n"] += 1
             return "done"
 
-    first = _CP()
-    assert first.setup() == "done"  # miss -> put
-    assert cache.contains("kotlin")
+    p1 = P()
+    assert p1.setup() == "done"  # miss -> caches p1
+    assert pu.get_parser_cache().contains("dummy")
+    assert calls["n"] == 1
 
-    # second instance: hit branch copies _parser/_language from cached
-    second = _CP()
-    second._parser = None
-    assert second.setup() == "done"
-    assert second._parser == "PARSER_OBJ"
-    assert second._language == "kotlin"
-    assert len(calls) == 2
-    cache.clear()
+
+def test_cached_parser_decorator_hit_path_copies_attrs():
+    # On a cache hit the decorator copies cached._parser / cached._language onto
+    # self. BaseLanguageParser sets _parser but NOT _language, so the hit path
+    # raises AttributeError -- this asserts that real (quirky) behavior.
+    pu.get_parser_cache().clear()
+
+    class P(_DummyParser):
+        @pu.cached_parser
+        def setup(self):
+            return "done"
+
+    P().setup()  # miss caches first instance
+    with pytest.raises(AttributeError):
+        P().setup()  # hit -> tries cached._language -> AttributeError
+
+
+def test_cached_parser_decorator_hit_with_language_attr():
+    # If the cached instance happens to have _language set, the hit path
+    # succeeds without re-running the wrapped body side effects.
+    pu.get_parser_cache().clear()
+    calls = {"n": 0}
+
+    class P(_DummyParser):
+        @pu.cached_parser
+        def setup(self):
+            calls["n"] += 1
+            self._language = "dummy"
+            return "done"
+
+    P().setup()  # miss -> caches instance that now has _language
+    assert calls["n"] == 1
+    assert P().setup() == "done"  # hit path copies attrs, then runs body
+    assert calls["n"] == 2
 
 
 # ---------------------------------------------------------------------------
-# Parser family base classes (regex helpers)
+# CFamilyParser helpers
 # ---------------------------------------------------------------------------
-
-
 class _CParser(pu.CFamilyParser):
     @property
     def language(self):
@@ -400,62 +498,58 @@ class _CParser(pu.CFamilyParser):
         return [".c"]
 
     def parse(self, content, file_path):
-        return None
+        return self._create_empty_result(file_path)
 
     def _fallback_regex_parse(self, content, file_path):
-        return None
+        return self._create_empty_result(file_path)
 
 
-def test_cfamily_find_matching_brace_and_extract_block():
+def test_cfamily_find_matching_brace():
     p = _CParser()
-    assert p.has_tree_sitter is False or p.has_tree_sitter is True  # init ran
-    content = "void f() { int x = 1; }"
-    start = content.index("{")
-    end = p._find_matching_brace(content, start)
-    assert content[end - 1] == "}"
-
-    block, block_end = p._extract_block(content, 0)
-    assert block.startswith("{") and block.endswith("}")
-    assert block_end == end
+    code = "{ a { b } c }"
+    end = p._find_matching_brace(code, 0)
+    assert code[end - 1] == "}"
+    assert end == len(code)
 
 
-def test_cfamily_find_matching_brace_nested_and_strings():
+def test_cfamily_find_matching_brace_with_string():
     p = _CParser()
-    content = 'f() { if (a) { g("}"); } }'
-    start = content.index("{")
-    end = p._find_matching_brace(content, start)
-    # the closing brace must be the final one, not the one in the string
-    assert end == len(content)
+    code = '{ "}" }'  # the } inside the string must be ignored
+    end = p._find_matching_brace(code, 0)
+    assert end == len(code)
 
 
 def test_cfamily_find_matching_brace_unbalanced():
     p = _CParser()
-    content = "f() { unclosed"
-    start = content.index("{")
-    assert p._find_matching_brace(content, start) == -1
+    assert p._find_matching_brace("{ no close", 0) == -1
+
+
+def test_cfamily_extract_block():
+    p = _CParser()
+    block, end = p._extract_block("int f() { return 1; }", 0)
+    assert block.startswith("{")
+    assert block.endswith("}")
+    assert end > 0
 
 
 def test_cfamily_extract_block_no_brace():
     p = _CParser()
-    block, end = p._extract_block("no braces here", 0)
-    assert block == ""
-    assert end == -1
+    assert p._extract_block("int x;", 0) == ("", -1)
 
 
-def test_cfamily_extract_block_unmatched_returns_empty():
+def test_cfamily_extract_block_unbalanced():
     p = _CParser()
-    block, end = p._extract_block("f() { unclosed", 0)
-    assert block == ""
-    assert end == -1
+    assert p._extract_block("int f() { no close", 0) == ("", -1)
 
 
-def test_cfamily_regex_patterns_match():
-    assert _CParser.FUNCTION_PATTERN.search("public void doIt(int a) {")
-    assert _CParser.CLASS_PATTERN.search("public class Foo")
-    assert _CParser.BLOCK_START.search("{")
-    assert _CParser.BLOCK_END.search("}")
+def test_cfamily_patterns_match():
+    assert pu.CFamilyParser.FUNCTION_PATTERN.search("public void foo() {")
+    assert pu.CFamilyParser.CLASS_PATTERN.search("public class Bar")
 
 
+# ---------------------------------------------------------------------------
+# JVMFamilyParser helpers
+# ---------------------------------------------------------------------------
 class _JVMParser(pu.JVMFamilyParser):
     @property
     def language(self):
@@ -466,47 +560,53 @@ class _JVMParser(pu.JVMFamilyParser):
         return [".java"]
 
     def parse(self, content, file_path):
-        return None
+        return self._create_empty_result(file_path)
 
     def _fallback_regex_parse(self, content, file_path):
-        return None
+        return self._create_empty_result(file_path)
 
 
-def test_jvm_extract_package_imports_annotations():
+def test_jvm_extract_package():
     p = _JVMParser()
-    content = (
-        "package com.example.app;\n"
-        "import java.util.List;\n"
-        "import static org.junit.Assert.*;\n"
-        "@Override\n"
-        "@Deprecated\n"
-        "public void run() {}\n"
+    assert p._extract_package("package com.example.app;\nclass X {}") == (
+        "com.example.app"
     )
-    assert p._extract_package(content) == "com.example.app"
-    imports = p._extract_imports(content)
-    assert "java.util.List" in imports
-    assert "org.junit.Assert.*" in imports
-
-    pos = content.index("public void run")
-    annotations = p._extract_annotations(content, pos)
-    assert "Override" in annotations
-    assert "Deprecated" in annotations
 
 
 def test_jvm_extract_package_none():
     p = _JVMParser()
-    assert p._extract_package("class Foo {}") is None
+    assert p._extract_package("class X {}") is None
 
 
-def test_jvm_extract_annotations_stops_at_code():
+def test_jvm_extract_imports():
     p = _JVMParser()
-    content = "int x = 5;\n@Tag\nvoid m() {}\n"
-    pos = content.index("void m")
-    anns = p._extract_annotations(content, pos)
-    assert anns == ["Tag"]
+    src = "import java.util.List;\nimport static foo.Bar.baz;\n"
+    imports = p._extract_imports(src)
+    assert "java.util.List" in imports
+    assert "foo.Bar.baz" in imports
 
 
-class _DynParser(pu.DynamicLanguageParser):
+def test_jvm_extract_annotations():
+    p = _JVMParser()
+    src = "@Override\n@Deprecated\npublic void foo() {}"
+    pos = src.index("public")
+    anns = p._extract_annotations(src, pos)
+    assert "Override" in anns
+    assert "Deprecated" in anns
+
+
+def test_jvm_extract_annotations_stops_on_code():
+    p = _JVMParser()
+    src = "int x = 1;\n@Foo\npublic void foo() {}"
+    pos = src.index("public")
+    anns = p._extract_annotations(src, pos)
+    assert anns == ["Foo"]
+
+
+# ---------------------------------------------------------------------------
+# DynamicLanguageParser helpers
+# ---------------------------------------------------------------------------
+class _PyParser(pu.DynamicLanguageParser):
     @property
     def language(self):
         return "python"
@@ -516,67 +616,63 @@ class _DynParser(pu.DynamicLanguageParser):
         return [".py"]
 
     def parse(self, content, file_path):
-        return None
+        return self._create_empty_result(file_path)
 
     def _fallback_regex_parse(self, content, file_path):
-        return None
+        return self._create_empty_result(file_path)
 
 
-def test_dynamic_patterns_match():
-    assert _DynParser.PYTHON_FUNCTION_PATTERN.search("    def foo(a, b):")
-    assert _DynParser.PYTHON_CLASS_PATTERN.search("class Foo(Base):")
-    assert _DynParser.RUBY_METHOD_PATTERN.search("  def self.bar?")
-    assert _DynParser.RUBY_CLASS_PATTERN.search("class Baz < Parent")
+def test_dynamic_patterns():
+    assert pu.DynamicLanguageParser.PYTHON_FUNCTION_PATTERN.search("def foo():")
+    assert pu.DynamicLanguageParser.PYTHON_CLASS_PATTERN.search("class Foo:")
+    assert pu.DynamicLanguageParser.RUBY_METHOD_PATTERN.search("  def bar?")
+    assert pu.DynamicLanguageParser.RUBY_CLASS_PATTERN.search("class Baz < Qux")
 
 
-def test_dynamic_find_indentation_block_end():
-    p = _DynParser()
-    content = (
-        "def foo():\n"
-        "    x = 1\n"
-        "\n"
-        "    # comment\n"
-        "    y = 2\n"
-        "z = 3\n"
+def test_dynamic_indentation_block_end_stops_at_dedent():
+    # The helper iterates lines[1:] (the first line after `start` is always
+    # implicitly part of the block), skipping blanks/comments, and stops at the
+    # first line whose indent <= base_indent.
+    p = _PyParser()
+    src = "    a = 1\n    b = 2\nx = 9\n"
+    end = p._find_indentation_block_end(src, 0, 0)
+    # lines[1]="    b = 2" (indent 4 > 0) advances; lines[2]="x = 9" breaks.
+    # end_offset = len("    b = 2") + 1 = 10.
+    assert end == 10
+    assert "x = 9" in src[end:]
+
+
+def test_dynamic_indentation_block_end_skips_comment_then_breaks():
+    # A comment line is skipped (counted into the offset), but a following
+    # dedented code line still ends the block.
+    p = _PyParser()
+    src = "    a = 1\n    # note\nx = 9\n"
+    end = p._find_indentation_block_end(src, 0, 0)
+    # lines[1]="    # note" is a comment -> counted; lines[2]="x = 9" breaks.
+    assert end == len("    # note") + 1
+    assert "x = 9" in src[end:]
+
+
+def test_dynamic_indentation_block_end_no_dedent():
+    # No dedented line: the loop consumes the remaining lines and returns the
+    # accumulated offset (which stops before the implicit first line span).
+    p = _PyParser()
+    src = "    a = 1\n    b = 2\n"
+    end = p._find_indentation_block_end(src, 0, 0)
+    # lines[1]="    b = 2" advances (+10), trailing "" skipped (+1) -> 11.
+    assert end == 11
+
+
+# ---------------------------------------------------------------------------
+# Functional / Markup base classes
+# ---------------------------------------------------------------------------
+def test_functional_patterns():
+    assert pu.FunctionalLanguageParser.HASKELL_FUNCTION_PATTERN.search(
+        "foo :: Int -> Int"
     )
-    start = content.index("def foo")
-    end = p._find_indentation_block_end(content, start, base_indent=0)
-    # the dedented "z = 3" line terminates the block (is not consumed)
-    assert "z = 3" in content[end:]
-    assert 0 < end < len(content)
-
-
-def test_dynamic_find_indentation_block_end_consumes_indented_body():
-    p = _DynParser()
-    content = "def foo():\n    a = 1\n    b = 2\n"
-    start = content.index("def foo")
-    end = p._find_indentation_block_end(content, start, base_indent=0)
-    # all lines are part of the block (no dedent), advances past first body line
-    assert end > start
-    assert end <= len(content)
-
-
-class _FuncParser(pu.FunctionalLanguageParser):
-    @property
-    def language(self):
-        return "haskell"
-
-    @property
-    def file_extensions(self):
-        return [".hs"]
-
-    def parse(self, content, file_path):
-        return None
-
-    def _fallback_regex_parse(self, content, file_path):
-        return None
-
-
-def test_functional_patterns_match():
-    assert _FuncParser.HASKELL_FUNCTION_PATTERN.search("add :: Int -> Int -> Int")
-    assert _FuncParser.HASKELL_MODULE_PATTERN.search("module Data.List")
-    assert _FuncParser.ELIXIR_MODULE_PATTERN.search("defmodule MyApp.Thing")
-    assert _FuncParser.ELIXIR_FUNCTION_PATTERN.search("defp helper")
+    assert pu.FunctionalLanguageParser.HASKELL_MODULE_PATTERN.search("module Main")
+    assert pu.FunctionalLanguageParser.ELIXIR_MODULE_PATTERN.search("defmodule Foo")
+    assert pu.FunctionalLanguageParser.ELIXIR_FUNCTION_PATTERN.search("def hello")
 
 
 class _Markup(pu.MarkupParser):
@@ -589,239 +685,224 @@ class _Markup(pu.MarkupParser):
         return [".json"]
 
     def parse(self, content, file_path):
-        return None
+        return self._create_empty_result(file_path)
 
     def _fallback_regex_parse(self, content, file_path):
-        return None
+        return self._create_empty_result(file_path)
 
 
-def test_markup_not_implemented():
-    p = _Markup()
+def test_markup_unimplemented_methods_raise():
+    m = _Markup()
     with pytest.raises(NotImplementedError):
-        p._extract_keys("{}")
+        m._extract_keys("{}")
     with pytest.raises(NotImplementedError):
-        p._build_hierarchy("{}")
+        m._build_hierarchy("{}")
 
 
 # ---------------------------------------------------------------------------
-# BaseLanguageParser fallback/empty/semantic + hash
+# ParserPlugin
 # ---------------------------------------------------------------------------
-
-
-def test_base_semantic_empty_and_hash():
-    p = _DynParser()
-    semantic = p._fallback_semantic_parse("hello", "f.py")
-    assert semantic.file_path == "f.py"
-    assert semantic.language == "python"
-    assert semantic.symbols == []
-    assert semantic.content_hash  # sha256 hex
-
-    empty = p._create_empty_result("g.py")
-    assert empty.content_hash == ""
-    assert empty.language == "python"
-
-    h = p._compute_content_hash("abc")
-    assert len(h) == 64
-    assert re.fullmatch(r"[0-9a-f]{64}", h)
-
-
-def test_base_tree_sitter_language_name_defaults_to_language():
-    p = _DynParser()
-    assert p.tree_sitter_language_name == "python"
-
-
-# ---------------------------------------------------------------------------
-# Plugin architecture
-# ---------------------------------------------------------------------------
-
-
-def _make_plugin_class(lang="python"):
-    class _P(pu.BaseLanguageParser):
-        @property
-        def language(self):
-            return lang
-
-        @property
-        def file_extensions(self):
-            return [".py"]
-
-        def parse(self, content, file_path):
-            return None
-
-        def _fallback_regex_parse(self, content, file_path):
-            return None
-
-    return _P
-
-
-def test_parser_plugin_get_parser_and_supports():
-    cls = _make_plugin_class()
+def test_parser_plugin_basic():
     plugin = pu.ParserPlugin(
-        name="p1",
-        parser_class=cls,
-        languages=["Python"],
-        extensions=[".py", ".pyi"],
+        name="dummy",
+        parser_class=_DummyParser,
+        languages=["Dummy"],
+        extensions=[".dum", ".txt"],
         priority=5,
         metadata={"k": "v"},
     )
+    assert plugin.supports_language("dummy") is True
+    assert plugin.supports_language("DUMMY") is True
+    assert plugin.supports_language("python") is False
+    # supports_extension normalizes the *query* to add a leading dot, but
+    # compares against the stored list verbatim. So stored ".txt" matches both
+    # ".txt" and "txt" queries; a stored extension lacking the dot would not.
+    assert plugin.supports_extension(".dum") is True
+    assert plugin.supports_extension("dum") is True
+    assert plugin.supports_extension(".txt") is True
+    assert plugin.supports_extension("txt") is True
+    assert plugin.supports_extension(".py") is False
     assert plugin.metadata == {"k": "v"}
-    inst1 = plugin.get_parser()
-    inst2 = plugin.get_parser()
-    assert inst1 is inst2  # cached instance
 
-    assert plugin.supports_language("python")
-    assert plugin.supports_language("PYTHON")
-    assert not plugin.supports_language("rust")
 
-    # query without a leading dot is normalized to ".py" before comparison
-    assert plugin.supports_extension("py")
-    assert plugin.supports_extension(".pyi")
-    assert not plugin.supports_extension(".rs")
+def test_parser_plugin_extension_without_dot_in_store_not_matched():
+    # A stored extension lacking a leading dot is never matched because the
+    # query is always dot-normalized -- documents the real quirk.
+    plugin = pu.ParserPlugin("n", _DummyParser, ["dummy"], ["raw"])
+    assert plugin.supports_extension("raw") is False
+    assert plugin.supports_extension(".raw") is False
 
 
 def test_parser_plugin_default_metadata():
-    cls = _make_plugin_class()
-    plugin = pu.ParserPlugin("p", cls, ["go"], [".go"])
+    plugin = pu.ParserPlugin("n", _DummyParser, ["dummy"], [".dum"])
     assert plugin.metadata == {}
 
 
-def test_plugin_registry_register_unregister_and_lookup():
+def test_parser_plugin_get_parser_memoized():
+    plugin = pu.ParserPlugin("n", _DummyParser, ["dummy"], [".dum"])
+    a = plugin.get_parser()
+    b = plugin.get_parser()
+    assert a is b
+    assert isinstance(a, _DummyParser)
+
+
+# ---------------------------------------------------------------------------
+# ParserPluginRegistry
+# ---------------------------------------------------------------------------
+def _mk_plugin(name, langs, exts, prio=0):
+    return pu.ParserPlugin(name, _DummyParser, langs, exts, priority=prio)
+
+
+def test_registry_singleton():
+    assert pu.ParserPluginRegistry() is pu.get_plugin_registry()
+
+
+def test_registry_register_and_lookup():
     reg = pu.get_plugin_registry()
-    assert reg is pu.ParserPluginRegistry()
+    assert reg.register(_mk_plugin("p1", ["dummy"], [".dum"])) is True
+    # duplicate name rejected
+    assert reg.register(_mk_plugin("p1", ["dummy"], [".dum"])) is False
 
-    cls = _make_plugin_class("python")
-    low = pu.ParserPlugin("lowprio", cls, ["python"], ["py"], priority=1)
-    high = pu.ParserPlugin("hiprio", cls, ["python"], ["py"], priority=10)
-
-    # clean slate for these names
-    reg.unregister("lowprio")
-    reg.unregister("hiprio")
-
-    assert reg.register(low) is True
-    assert reg.register(low) is False  # duplicate
-    assert reg.register(high) is True
-
-    # highest priority wins for both language and extension lookup
-    by_lang = reg.get_parser_for_language("PYTHON")
-    assert by_lang is not None
-    by_ext = reg.get_parser_for_extension("py")
-    assert by_ext is not None
-    by_ext_dot = reg.get_parser_for_extension(".py")
-    assert by_ext_dot is not None
-
-    names = {p["name"] for p in reg.list_plugins()}
-    assert {"lowprio", "hiprio"} <= names
-
-    assert "python" in reg.get_supported_languages()
-    assert ".py" in reg.get_supported_extensions()
-
-    # unregister and confirm cleanup
-    assert reg.unregister("lowprio") is True
-    assert reg.unregister("hiprio") is True
-    assert reg.unregister("nonexistent") is False
+    parser = reg.get_parser_for_language("DUMMY")
+    assert isinstance(parser, _DummyParser)
+    parser_ext = reg.get_parser_for_extension("dum")
+    assert isinstance(parser_ext, _DummyParser)
+    assert "dummy" in reg.get_supported_languages()
+    assert ".dum" in reg.get_supported_extensions()
 
 
-def test_plugin_registry_lookup_misses():
+def test_registry_priority_ordering():
     reg = pu.get_plugin_registry()
-    assert reg.get_parser_for_language("nonexistent_lang_xyz") is None
-    assert reg.get_parser_for_extension(".nonexistent_xyz") is None
-    assert reg.get_parser_for_extension("nonexistent_xyz") is None
+    reg.register(_mk_plugin("low", ["shared"], [".sh"], prio=1))
+    reg.register(_mk_plugin("high", ["shared"], [".sh"], prio=10))
+    # the parser instance comes from the highest-priority ('high') plugin
+    high_parser = reg._plugins["high"].get_parser()
+    assert reg.get_parser_for_language("shared") is high_parser
+    assert reg.get_parser_for_extension(".sh") is high_parser
+
+
+def test_registry_lookup_missing():
+    reg = pu.get_plugin_registry()
+    assert reg.get_parser_for_language("nonexistent") is None
+    assert reg.get_parser_for_extension(".nope") is None
+
+
+def test_registry_unregister():
+    reg = pu.get_plugin_registry()
+    reg.register(_mk_plugin("temp", ["templang"], [".tmp"]))
+    assert reg.unregister("temp") is True
+    # gone from indices
+    assert reg.get_parser_for_language("templang") is None
+    assert reg.get_parser_for_extension(".tmp") is None
+    assert "templang" not in reg.get_supported_languages()
+    # unregister again -> False
+    assert reg.unregister("temp") is False
+
+
+def test_registry_list_plugins_shape():
+    reg = pu.get_plugin_registry()
+    reg.register(_mk_plugin("listme", ["l"], [".l"], prio=3))
+    entry = next(p for p in reg.list_plugins() if p["name"] == "listme")
+    assert entry["languages"] == ["l"]
+    assert entry["extensions"] == [".l"]
+    assert entry["priority"] == 3
+    assert entry["metadata"] == {}
 
 
 # ---------------------------------------------------------------------------
 # ConfigValidator
 # ---------------------------------------------------------------------------
-
-
-def test_validate_chunk_size_valid_with_small_warning():
-    res = pu.ConfigValidator.validate_chunk_size(50)
-    assert res.valid is True
-    assert any("very small" in w for w in res.warnings)
-
-
-def test_validate_chunk_size_large_warning():
-    res = pu.ConfigValidator.validate_chunk_size(20000)
-    assert res.valid is True
-    assert any("large" in w for w in res.warnings)
+def test_validate_chunk_size_ok():
+    r = pu.ConfigValidator.validate_chunk_size(500)
+    assert r.valid is True
+    assert r.errors == []
 
 
 def test_validate_chunk_size_below_min():
-    res = pu.ConfigValidator.validate_chunk_size(
-        500, min_chunk_size=1000, max_chunk_size=100000
-    )
-    assert res.valid is False
-    assert any("min_chunk_size" in e for e in res.errors)
+    r = pu.ConfigValidator.validate_chunk_size(5, min_chunk_size=10)
+    assert r.valid is False
+    assert any("min_chunk_size" in e for e in r.errors)
 
 
 def test_validate_chunk_size_above_max():
-    res = pu.ConfigValidator.validate_chunk_size(
-        500000, min_chunk_size=0, max_chunk_size=100000
-    )
-    assert res.valid is False
-    assert any("max_chunk_size" in e for e in res.errors)
+    r = pu.ConfigValidator.validate_chunk_size(200000, max_chunk_size=100000)
+    assert r.valid is False
+    assert any("max_chunk_size" in e for e in r.errors)
 
 
-def test_validate_overlap_valid():
-    res = pu.ConfigValidator.validate_overlap(100, 1000)
-    assert res.valid is True
-    assert res.errors == []
+def test_validate_chunk_size_small_warning():
+    r = pu.ConfigValidator.validate_chunk_size(50)
+    assert r.valid is True
+    assert any("very small" in w for w in r.warnings)
+
+
+def test_validate_chunk_size_large_warning():
+    r = pu.ConfigValidator.validate_chunk_size(20000)
+    assert any("large" in w for w in r.warnings)
+
+
+def test_validate_overlap_ok():
+    r = pu.ConfigValidator.validate_overlap(50, 500)
+    assert r.valid is True
 
 
 def test_validate_overlap_negative():
-    res = pu.ConfigValidator.validate_overlap(-5, 1000)
-    assert res.valid is False
-    assert any(">= 0" in e for e in res.errors)
+    r = pu.ConfigValidator.validate_overlap(-1, 500)
+    assert r.valid is False
+    assert any(">= 0" in e for e in r.errors)
 
 
-def test_validate_overlap_ge_chunk_size():
-    res = pu.ConfigValidator.validate_overlap(1000, 1000)
-    assert res.valid is False
-    assert any("< chunk_size" in e for e in res.errors)
+def test_validate_overlap_too_large():
+    r = pu.ConfigValidator.validate_overlap(600, 500)
+    assert r.valid is False
+    assert any("< chunk_size" in e for e in r.errors)
 
 
 def test_validate_overlap_high_redundancy_warning():
-    res = pu.ConfigValidator.validate_overlap(600, 1000)
-    assert res.valid is True
-    assert any("redundancy" in w for w in res.warnings)
+    r = pu.ConfigValidator.validate_overlap(300, 500)
+    assert r.valid is True
+    assert any(">50%" in w for w in r.warnings)
 
 
-def test_validate_languages_warns_unsupported():
-    res = pu.ConfigValidator.validate_languages(["definitely_not_a_lang"])
-    assert res.valid is True
-    assert any("may not be fully supported" in w for w in res.warnings)
+def test_validate_languages():
+    pu.get_plugin_registry().register(_mk_plugin("p", ["python"], [".py"]))
+    r = pu.ConfigValidator.validate_languages(["python", "unknownlang"])
+    assert r.valid is True
+    assert any("unknownlang" in w for w in r.warnings)
+    assert not any("python" in w for w in r.warnings)
 
 
-def test_validate_config_full():
-    class Cfg:
-        chunk_size = 50  # triggers small warning
-        chunk_overlap = 1000  # >= chunk_size -> error
-        min_chunk_size = 0
-        max_chunk_size = 100000
-        languages = ["unknown_lang"]
-
-    res = pu.ConfigValidator.validate_config(Cfg())
-    assert res.valid is False
-    assert any("chunk_overlap" in e for e in res.errors)
-    assert res.warnings  # small chunk + language warnings
+class _Cfg:
+    def __init__(self, **kw):
+        for k, v in kw.items():
+            setattr(self, k, v)
 
 
-def test_validate_config_empty_object():
-    class Empty:
-        pass
-
-    res = pu.ConfigValidator.validate_config(Empty())
-    assert res.valid is True
-    assert res.errors == []
+def test_validate_config_full_ok():
+    cfg = _Cfg(chunk_size=500, chunk_overlap=50, languages=None)
+    r = pu.ConfigValidator.validate_config(cfg)
+    assert r.valid is True
 
 
-def test_validate_config_valid_sizes():
-    class Cfg:
-        chunk_size = 1000
-        chunk_overlap = 100
-        languages = []
+def test_validate_config_full_errors():
+    cfg = _Cfg(
+        chunk_size=5,
+        min_chunk_size=10,
+        chunk_overlap=10,  # >= chunk_size error too
+        languages=["bogus"],
+    )
+    r = pu.ConfigValidator.validate_config(cfg)
+    assert r.valid is False
+    assert r.errors  # collected from chunk_size and overlap
+    # language warning surfaces
+    assert any("bogus" in w for w in r.warnings)
 
-    res = pu.ConfigValidator.validate_config(Cfg())
-    assert res.valid is True
+
+def test_validate_config_no_attrs():
+    cfg = _Cfg()
+    r = pu.ConfigValidator.validate_config(cfg)
+    assert r.valid is True
+    assert r.errors == []
 
 
 def test_validation_result_defaults():
@@ -833,74 +914,81 @@ def test_validation_result_defaults():
 # ---------------------------------------------------------------------------
 # parser_context
 # ---------------------------------------------------------------------------
-
-
 def test_parser_context_cache_miss():
-    cache = pu.get_parser_cache()
-    cache.clear()
+    pu.get_parser_cache().clear()
     with pu.parser_context("python") as parser:
-        assert parser is None  # cache miss
-    cache.clear()
+        assert parser is None
 
 
 def test_parser_context_cache_hit():
     cache = pu.get_parser_cache()
     cache.clear()
-    sentinel = object()
-    cache.put("python", sentinel)
+    obj = object()
+    cache.put("python", obj)
     with pu.parser_context("python") as parser:
-        assert parser is sentinel
-    cache.clear()
+        assert parser is obj
 
 
 # ---------------------------------------------------------------------------
 # detect_language_from_content
 # ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "shebang,expected",
     [
-        ("#!/usr/bin/env python3\n", "python"),
-        ("#!/usr/bin/node\n", "javascript"),
-        ("#!/usr/bin/env deno\n", "javascript"),
-        ("#!/usr/bin/ruby\n", "ruby"),
+        ("#!/usr/bin/env python3\nprint(1)", "python"),
+        ("#!/usr/bin/node\nconsole.log(1)", "javascript"),
+        ("#!/usr/bin/deno\n", "javascript"),
+        ("#!/usr/bin/ruby\nputs 1", "ruby"),
         ("#!/usr/bin/perl\n", "perl"),
         ("#!/bin/bash\n", "bash"),
     ],
 )
 def test_detect_language_shebang(shebang, expected):
-    assert pu.detect_language_from_content(shebang + "code") == expected
+    assert pu.detect_language_from_content(shebang) == expected
 
 
 def test_detect_language_go():
-    content = "package main\n\nfunc main() {}\n"
-    assert pu.detect_language_from_content(content) == "go"
+    src = "package main\n\nfunc main() {}\n"
+    assert pu.detect_language_from_content(src) == "go"
 
 
 def test_detect_language_rust():
-    content = "fn main() {\n    let x = 1;\n}\n"
-    assert pu.detect_language_from_content(content) == "rust"
+    src = "fn main() {\n    let x = 1;\n}"
+    assert pu.detect_language_from_content(src) == "rust"
 
 
 def test_detect_language_java():
-    content = "public class Foo {\n}\n"
-    assert pu.detect_language_from_content(content) == "java"
+    src = "public class Hello {}\n"
+    assert pu.detect_language_from_content(src) == "java"
 
 
-def test_detect_language_python_body():
-    content = "def foo():\n    return 1\n"
-    assert pu.detect_language_from_content(content) == "python"
+def test_detect_language_python_no_shebang():
+    src = "def hello():\n    return 1\n"
+    assert pu.detect_language_from_content(src) == "python"
 
 
-def test_detect_language_javascript_body():
-    content = "function hello() { return 1; }\n"
-    assert pu.detect_language_from_content(content) == "javascript"
+def test_detect_language_javascript():
+    src = "function foo() { return 1; }"
+    assert pu.detect_language_from_content(src) == "javascript"
 
 
 def test_detect_language_unknown():
-    assert pu.detect_language_from_content("just some plain prose text") is None
+    src = "lorem ipsum dolor sit amet\nno code here at all"
+    assert pu.detect_language_from_content(src) is None
 
 
 def test_detect_language_empty():
     assert pu.detect_language_from_content("") is None
+
+
+# ---------------------------------------------------------------------------
+# Module exports sanity
+# ---------------------------------------------------------------------------
+def test_all_exports_present():
+    for name in pu.__all__:
+        assert hasattr(pu, name), name
+
+
+def test_patterns_are_compiled():
+    assert isinstance(pu.CFamilyParser.BLOCK_START, re.Pattern)
+    assert isinstance(pu.JVMFamilyParser.PACKAGE_PATTERN, re.Pattern)
