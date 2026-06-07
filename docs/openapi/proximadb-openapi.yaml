@@ -605,6 +605,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Authentication required or insufficient permissions.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
   schemas:
     HealthResponse:
       type: object
@@ -644,6 +650,45 @@ components:
         initial_capacity:
           type: integer
           minimum: 0
+        index_configs:
+          type: array
+          description: >
+            Explicit per-index configuration. Drives index-algorithm dispatch
+            (e.g. an IVF index → recall-tune uses the IVF arm). When omitted the
+            engine selects a default (HNSW).
+          items:
+            $ref: "#/components/schemas/IndexConfigInput"
+        tags:
+          type: array
+          description: >
+            Operator metadata, e.g. `recall_target:0.95`,
+            `target_vector_count:1000`, `modalities:text,image`.
+          items:
+            type: string
+    IndexConfigInput:
+      type: object
+      required: [algorithm]
+      properties:
+        index_name:
+          type: string
+        algorithm:
+          type: string
+          enum: [hnsw, ivf, pq, flat, annoy, lsh]
+        parameters:
+          type: object
+          additionalProperties:
+            type: string
+        hnsw_config:
+          type: object
+          properties:
+            m: { type: integer }
+            ef_construction: { type: integer }
+            ef_search: { type: integer }
+        ivf_config:
+          type: object
+          properties:
+            n_lists: { type: integer }
+            n_probe: { type: integer }
     CreateCollectionResponse:
       type: object
       required: [collection_id, name, dimension, engine, proxima_record_enabled, created_at]
@@ -1169,15 +1214,33 @@ components:
       enum: [cosine, euclidean, dot_product]
       default: cosine
     ErrorResponse:
+      description: >
+        Canonical ProximaDB error envelope. `request_id` (also returned in the
+        `X-Request-ID` response header) is present whenever the request passed
+        through the request-id middleware; quote it in bug reports.
       type: object
-      additionalProperties: true
+      required: [error]
       properties:
         error:
-          type: string
-        error_message:
-          type: string
-        code:
-          type: string
+          type: object
+          required: [type, message, code]
+          properties:
+            type:
+              type: string
+              description: Stable machine-readable error code (snake_case).
+              example: collection_not_found
+            message:
+              type: string
+            code:
+              type: integer
+              description: HTTP status code.
+            request_id:
+              type: string
+              description: Correlation id (matches the X-Request-ID header).
+            details:
+              type: object
+              additionalProperties: true
+              description: Optional structured context (e.g. migration hints).
     # ── Graph schemas (v2) ──────────────────────────────────────────
     # Reconciled 2026-05-30 against
     # `crates/platform/proximadb-api/src/rest/v1/graph.rs` (the live
