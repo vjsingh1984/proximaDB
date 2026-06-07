@@ -56,6 +56,9 @@ use proximadb_storage_common::proxima_arrow::infer_proxima_schema;
 use proximadb_storage_common::proxima_parquet::proxima_records_to_parquet_bytes;
 use proximadb_storage_common::proxima_schema::ProximaSchema;
 
+/// Iceberg-style atomic manifest commits (optimistic concurrency via `put_if_absent`).
+pub mod manifest;
+
 /// Map a Parquet read/decode failure into a [`StorageError`] with operation context.
 fn read_err(context: &str, e: impl std::fmt::Display) -> StorageError {
     StorageError::Serialization(format!("iceberg-engine: {context}: {e}"))
