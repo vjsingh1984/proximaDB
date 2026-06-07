@@ -1054,51 +1054,36 @@ impl UnifiedParquetReader {
 
         let mut records = Vec::new();
 
-        // Read all batches from selected row groups
-        // Try to convert filter expression to MetadataFilter for vectorized processing
-        let vectorized_filter = filter_expression.and_then(|fe| {
-            crate::storage::engines::core::formats::columnar::MetadataFilter::from_filter_expression(fe)
-        });
-
         for batch in reader {
             let batch = batch?;
 
             if let Some(filter_expr) = filter_expression {
-                // Try vectorized path: use Arrow compute kernels on entire arrays
-                if let Some(ref metadata_filter) = vectorized_filter {
-                    match super::vectorized_executor::vectorized_filter_batch(
-                        batch.clone(),
-                        &metadata_filter.conditions,
-                    ) {
-                        Ok(filtered_batch) => {
-                            let batch_records = self.extract_records_from_batch(
-                                &filtered_batch,
-                                needs_vectors,
-                                needs_metadata,
-                            )?;
-                            records.extend(batch_records);
-                        }
-                        Err(_) => {
-                            // Fallback: row-at-a-time filtering
-                            let batch_records = self.extract_records_from_batch(
-                                &batch,
-                                needs_vectors,
-                                needs_metadata,
-                            )?;
-                            for record in batch_records {
-                                if self.matches_filter_expression(&record, filter_expr) {
-                                    records.push(record);
-                                }
-                            }
-                        }
+                // Vectorized path: evaluate the full FilterExpression tree (AND/OR/NOT,
+                // boolean equality, all numeric/string comparison kernels) into a mask.
+                match super::vectorized_executor::vectorized_filter_batch_expr(
+                    batch.clone(),
+                    filter_expr,
+                )? {
+                    Some(filtered_batch) => {
+                        let batch_records = self.extract_records_from_batch(
+                            &filtered_batch,
+                            needs_vectors,
+                            needs_metadata,
+                        )?;
+                        records.extend(batch_records);
                     }
-                } else {
-                    // Can't convert to metadata filter, use row-at-a-time
-                    let batch_records =
-                        self.extract_records_from_batch(&batch, needs_vectors, needs_metadata)?;
-                    for record in batch_records {
-                        if self.matches_filter_expression(&record, filter_expr) {
-                            records.push(record);
+                    None => {
+                        // Some sub-expression has no vectorized kernel — fall back to
+                        // correct row-at-a-time filtering.
+                        let batch_records = self.extract_records_from_batch(
+                            &batch,
+                            needs_vectors,
+                            needs_metadata,
+                        )?;
+                        for record in batch_records {
+                            if self.matches_filter_expression(&record, filter_expr) {
+                                records.push(record);
+                            }
                         }
                     }
                 }
@@ -1187,30 +1172,28 @@ impl UnifiedParquetReader {
 
         let mut result_batches = Vec::new();
 
-        // Convert filter expression to columnar MetadataFilter for vectorized batch filtering
-        let vectorized_filter = filter_expression.and_then(|fe| {
-            crate::storage::engines::core::formats::columnar::MetadataFilter::from_filter_expression(fe)
-        });
-
         for batch in reader {
             let batch = batch?;
 
-            if let Some(ref metadata_filter) = vectorized_filter {
-                // Vectorized path: use Arrow compute kernels on entire arrays
-                match super::vectorized_executor::vectorized_filter_batch(
+            if let Some(filter_expr) = filter_expression {
+                // Vectorized path: evaluate the full FilterExpression tree (AND/OR/NOT,
+                // boolean equality, all numeric/string comparison kernels) into a mask.
+                match super::vectorized_executor::vectorized_filter_batch_expr(
                     batch.clone(),
-                    &metadata_filter.conditions,
-                ) {
-                    Ok(filtered_batch) => {
+                    filter_expr,
+                )? {
+                    Some(filtered_batch) => {
                         if filtered_batch.num_rows() > 0 {
                             result_batches.push(filtered_batch);
                         }
                     }
-                    Err(_) => {
-                        // Fallback: pass batch through unfiltered
-                        // (row group pruning already applied above)
-                        if batch.num_rows() > 0 {
-                            result_batches.push(batch);
+                    None => {
+                        // Some sub-expression has no vectorized kernel — fall back to
+                        // correct row-at-a-time evaluation rather than passing everything.
+                        let filtered =
+                            self.filter_batch_row_at_a_time(&batch, filter_expr)?;
+                        if filtered.num_rows() > 0 {
+                            result_batches.push(filtered);
                         }
                     }
                 }
@@ -2551,6 +2534,26 @@ impl UnifiedParquetReader {
         // Use centralized type-safe SqlValue filtering from core::search::sql_value_filter
         // ProximaRecord.metadata is map<string, SqlValue> per proto definition
         crate::core::search::sql_value_filter::evaluate_filter_proxima(filter_expr, &record.props)
+    }
+
+    /// Row-at-a-time fallback for filtering a RecordBatch when the expression has no
+    /// vectorized kernel. Materializes per-row metadata, evaluates the full
+    /// `FilterExpression` via the centralized evaluator, and returns a filtered batch.
+    ///
+    /// The row order of the extracted records matches the batch row order, so the
+    /// resulting boolean mask aligns 1:1 with the batch and can be applied directly.
+    fn filter_batch_row_at_a_time(
+        &self,
+        batch: &arrow::record_batch::RecordBatch,
+        filter_expr: &crate::core::search::FilterExpression,
+    ) -> Result<arrow::record_batch::RecordBatch> {
+        let records = self.extract_records_from_batch(batch, false, true)?;
+        let mask: arrow::array::BooleanArray = records
+            .iter()
+            .map(|record| self.matches_filter_expression(record, filter_expr))
+            .collect();
+        arrow::compute::filter_record_batch(batch, &mask)
+            .map_err(|e| anyhow::anyhow!("Row-at-a-time batch filter failed: {}", e))
     }
 
     /// Legacy method for backward compatibility with MetadataFilter
