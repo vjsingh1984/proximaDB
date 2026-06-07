@@ -193,3 +193,28 @@ def test_create_get_list_delete_graph(client):
     assert any(p == "/api/v2/graphs" for p in paths)
     assert any(p == "/api/v2/graphs/default" for p in paths)
     assert any(p == "/api/v2/graphs/default/stats" for p in paths)
+
+
+# ---- capability negotiation (WS4) --------------------------------------------
+
+
+def test_server_capabilities_and_supports(monkeypatch):
+    c = ProximaDBClient(url="http://testserver")
+    monkeypatch.setattr(
+        c, "_make_request",
+        lambda m, p, **k: FakeResp({"api_version": "0.2.0", "features": ["hybrid_search", "graphs"]}),
+    )
+    caps = c.server_capabilities()
+    assert caps["api_version"] == "0.2.0"
+    assert c.supports("hybrid_search") is True
+    assert c.supports("nope") is False
+    # cached: a second call doesn't re-request (swap to a raising stub)
+    monkeypatch.setattr(c, "_make_request", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should be cached")))
+    assert c.server_capabilities()["api_version"] == "0.2.0"
+
+
+def test_server_capabilities_graceful_on_old_server(monkeypatch):
+    c = ProximaDBClient(url="http://testserver")
+    monkeypatch.setattr(c, "_make_request", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("404")))
+    assert c.server_capabilities() == {}
+    assert c.supports("anything") is False

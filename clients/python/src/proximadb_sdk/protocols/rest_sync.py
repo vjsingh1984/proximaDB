@@ -260,6 +260,30 @@ class ProximaDBClient:
             "warmed_collections": list(self._warmed_collections),
         }
 
+    def server_capabilities(self, refresh: bool = False) -> dict[str, Any]:
+        """Negotiate capabilities with the server (GET /api/v2/_meta/capabilities).
+
+        The result (api_version, features, limits, error-envelope contract) is
+        cached after the first call. Returns ``{}`` on older servers that don't
+        expose the endpoint, so callers can degrade gracefully.
+        """
+        cached = getattr(self, "_server_capabilities", None)
+        if cached is not None and not refresh:
+            return cached
+        try:
+            resp = self._make_request("GET", "/api/v2/_meta/capabilities")
+            caps = resp.json() if hasattr(resp, "json") else {}
+            if not isinstance(caps, dict):
+                caps = {}
+        except Exception:
+            caps = {}
+        self._server_capabilities = caps  # type: ignore[attr-defined]
+        return caps
+
+    def supports(self, feature: str) -> bool:
+        """True if the server advertises ``feature`` (via server_capabilities)."""
+        return feature in (self.server_capabilities().get("features") or [])
+
     def _setup_logging(self) -> None:
         """Setup logging configuration"""
         if self.config.enable_debug_logging:

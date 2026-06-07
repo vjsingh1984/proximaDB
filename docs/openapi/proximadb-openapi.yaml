@@ -52,6 +52,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProbeResponse"
+  /api/v2/_meta/capabilities:
+    get:
+      tags: [Meta]
+      operationId: getCapabilities
+      summary: Negotiate server capabilities.
+      description: >
+        Advertises API version, supported features, limits, and the error-
+        envelope contract so SDKs can adapt instead of hard-coding assumptions.
+      security: []
+      responses:
+        "200":
+          description: Capability document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilitiesResponse"
   /api/v2/collections:
     post:
       tags: [Collections]
@@ -628,6 +644,24 @@ components:
       properties:
         status:
           type: string
+    CapabilitiesResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        api_version:
+          type: string
+        surface:
+          type: string
+        features:
+          type: array
+          items:
+            type: string
+        limits:
+          type: object
+          additionalProperties: true
+        error_envelope:
+          type: object
+          additionalProperties: true
     CreateCollectionRequest:
       type: object
       required: [name, dimension]
