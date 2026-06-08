@@ -104,22 +104,22 @@ MultiBERTProvider = mbp.MultiBERTProvider
 AdaptiveBERTProvider = mbp.AdaptiveBERTProvider
 ModelSize = mbp.ModelSize
 
-
-def teardown_module(module):
-    """Restore sys.modules entries shadowed at import time.
-
-    The module-level stubs above replace the real `proximadb_sdk.embedding_providers`
-    package (which lacks `get_provider` in stub form) for the duration of this
-    file's tests. Without restoring them, the stubs leak into later test files
-    that import the real package and fail with a cross-file ImportError. This
-    file's own tests hold direct references (MultiBERTProvider, etc.), so
-    restoring sys.modules here does not affect them.
-    """
-    for name, original in _SAVED_MODULES.items():
-        if original is None:
-            sys.modules.pop(name, None)
-        else:
-            sys.modules[name] = original
+# Restore sys.modules IMMEDIATELY — the stub packages were only needed to exec
+# multi_bert_provider.py above; the tests below use the held refs + monkeypatched
+# fakes, not the package. This MUST happen at import time, NOT in a
+# teardown_module(): pytest imports every test module during collection before
+# running any test, so a stub left in sys.modules past this import poisons other
+# files whose package imports are lazy (e.g. test_embedding_providers'
+# `from proximadb_sdk.embedding_providers import get_provider` at test time) —
+# they would resolve the get_provider-less stub and fail with a cross-file
+# ImportError. A teardown_module would fire far too late (after this file's tests,
+# which run after the victim's). Popping a stub restores the real package on the
+# next (fresh) import.
+for _name, _orig in _SAVED_MODULES.items():
+    if _orig is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _orig
 
 
 # ---------------------------------------------------------------------------
