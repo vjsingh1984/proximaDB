@@ -129,6 +129,60 @@ impl IcebergObjectStoreBridge {
         let bytes = proxima_records_to_parquet_bytes(records, schema, None)?;
         self.store.put(path, Bytes::from(bytes)).await
     }
+
+    /// Atomically publish the data objects currently under `data_prefix` as the next
+    /// snapshot in the manifest log at `manifest_prefix`.
+    ///
+    /// This is the warehouse base-tier commit: it composes [`list_objects`] (the data
+    /// files written via `write_records_to_parquet*`) with the
+    /// [`ManifestCommitter`](crate::manifest) `put_if_absent` protocol, so a snapshot
+    /// is published all-or-nothing and concurrent publishers cannot clobber each other
+    /// (the loser gets [`CommitOutcome::Conflict`](crate::manifest::CommitOutcome)).
+    ///
+    /// `manifest_prefix` MUST NOT be nested under `data_prefix`, or the manifest objects
+    /// would themselves be listed as data. The manifest body is the **v1 format**: the
+    /// sorted, newline-delimited, base-relative data-file keys — exactly the keys
+    /// `list_objects` yields, so they round-trip through `read_parquet_batches`. `parent`
+    /// is the snapshot being superseded (`None` for the first commit, version `0`).
+    ///
+    /// [`list_objects`]: ObjectStoreBridge::list_objects
+    pub async fn publish_snapshot(
+        &self,
+        data_prefix: &Path,
+        manifest_prefix: &str,
+        parent: Option<u64>,
+    ) -> Result<manifest::CommitOutcome, StorageError> {
+        let mut keys: Vec<String> = self
+            .list_objects(data_prefix)
+            .await?
+            .iter()
+            .map(|p| p.as_ref().to_string())
+            .collect();
+        keys.sort(); // deterministic manifest body regardless of list order
+        let body = keys.join("\n");
+        let committer = manifest::ManifestCommitter::new(self.store.clone(), manifest_prefix);
+        committer.commit(parent, Bytes::from(body)).await
+    }
+
+    /// Read the data-file keys recorded by snapshot `version` of the manifest log at
+    /// `manifest_prefix` (parses the v1 newline-delimited body). Each returned path is
+    /// directly consumable by
+    /// [`read_parquet_batches`](ObjectStoreBridge::read_parquet_batches).
+    pub async fn read_snapshot(
+        &self,
+        manifest_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<Path>, StorageError> {
+        let committer = manifest::ManifestCommitter::new(self.store.clone(), manifest_prefix);
+        let bytes = committer.read_manifest(version).await?;
+        let text =
+            std::str::from_utf8(&bytes).map_err(|e| read_err("decode manifest body (utf8)", e))?;
+        Ok(text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(Path::from)
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -376,6 +430,80 @@ mod tests {
             .unwrap();
         assert_eq!(names.value(0), "alice");
         assert_eq!(names.value(1), "bob");
+    }
+
+    /// End-to-end warehouse base-tier publish: write data files, atomically publish a
+    /// snapshot listing them, read the snapshot back, and re-read the data through it.
+    #[tokio::test]
+    async fn publish_and_read_snapshot_round_trips_data_files() {
+        let b = bridge();
+        // Two data files under t/data; the manifest log lives OUTSIDE that prefix.
+        let p0 = Path::from("t/data/part-0.parquet");
+        let p1 = Path::from("t/data/part-1.parquet");
+        b.write_records_to_parquet(
+            &p0,
+            &[record("r0", vec![("name", ProximaValue::String("alice".into()))])],
+            None,
+        )
+        .await
+        .unwrap();
+        b.write_records_to_parquet(
+            &p1,
+            &[record("r1", vec![("name", ProximaValue::String("bob".into()))])],
+            None,
+        )
+        .await
+        .unwrap();
+
+        let out = b
+            .publish_snapshot(&Path::from("t/data"), "t/_manifests", None)
+            .await
+            .unwrap();
+        assert_eq!(out, manifest::CommitOutcome::Committed(0));
+
+        let files = b.read_snapshot("t/_manifests", 0).await.unwrap();
+        assert_eq!(files.len(), 2, "snapshot records both data files");
+        assert!(files.contains(&p0) && files.contains(&p1));
+
+        // The recorded keys re-read as data through the bridge — end to end.
+        let mut total = 0usize;
+        for f in &files {
+            let mut s = b
+                .read_parquet_batches(f, Arc::new(ArrowSchema::empty()), 1024, None)
+                .await
+                .unwrap();
+            while let Some(batch) = s.next().await {
+                total += batch.unwrap().num_rows();
+            }
+        }
+        assert_eq!(total, 2, "both rows readable via the published snapshot");
+    }
+
+    /// Two publishes from the same parent conflict (atomic CAS) — the base tier cannot
+    /// double-commit a version; the loser is told the latest to rebase onto.
+    #[tokio::test]
+    async fn publish_snapshot_is_atomic_cas() {
+        let b = bridge();
+        b.write_records_to_parquet(
+            &Path::from("t/data/part-0.parquet"),
+            &[record("r0", vec![("k", ProximaValue::Int64(1))])],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            b.publish_snapshot(&Path::from("t/data"), "t/_manifests", None)
+                .await
+                .unwrap(),
+            manifest::CommitOutcome::Committed(0)
+        );
+        // A second publish from the same parent (None ⇒ target v0) loses the race.
+        assert_eq!(
+            b.publish_snapshot(&Path::from("t/data"), "t/_manifests", None)
+                .await
+                .unwrap(),
+            manifest::CommitOutcome::Conflict { latest: Some(0) }
+        );
     }
 
     /// Reading a path that was never written must surface a NotFound, not panic.
