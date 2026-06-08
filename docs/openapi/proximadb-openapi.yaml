@@ -559,6 +559,130 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GraphStatsResponse"
+  # ── Hybrid search (relocated to /api/v2 in the API standardization) ──────
+  /api/v2/hybrid/search:
+    post:
+      tags: [Hybrid]
+      operationId: hybridSearch
+      summary: BM25 + vector hybrid (fusion) search.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection]
+              additionalProperties: true
+              properties:
+                collection: { type: string }
+                vector: { type: array, items: { type: number } }
+                text_query: { type: string }
+                top_k: { type: integer }
+                fusion_strategy: { type: string }
+      responses:
+        "200":
+          description: Fused results.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v2/hybrid/index:
+    post:
+      tags: [Hybrid]
+      operationId: hybridIndex
+      summary: Index documents for BM25 full-text search.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection, documents]
+              additionalProperties: true
+      responses:
+        "200":
+          description: Index result.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  # ── Document collections (de-doubled from /api/v1/documents/collections) ──
+  /api/v2/document-collections:
+    post:
+      tags: [Documents]
+      operationId: createDocumentCollection
+      summary: Create a document collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Created., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+    get:
+      tags: [Documents]
+      operationId: listDocumentCollections
+      summary: List document collections.
+      responses:
+        "200": { description: Collections., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/v2/document-collections/{collection}/documents:
+    parameters:
+      - name: collection
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Documents]
+      operationId: insertDocument
+      summary: Insert a document.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Inserted., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      tags: [Documents]
+      operationId: queryDocuments
+      summary: Query documents.
+      responses:
+        "200": { description: Documents., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  # ── Observability (relocated to /api/v2; underscores dropped) ────────────
+  /api/v2/observability/namespaces/{namespace}/logs:
+    parameters:
+      - name: namespace
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Observability]
+      operationId: ingestLog
+      summary: Ingest a log entry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Ingested., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/v2/observability/namespaces/{namespace}/logs/search:
+    parameters:
+      - name: namespace
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Observability]
+      operationId: queryLogs
+      summary: Query logs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Matching logs., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
 components:
   securitySchemes:
     bearerAuth:
