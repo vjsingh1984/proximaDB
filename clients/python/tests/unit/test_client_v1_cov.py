@@ -108,7 +108,7 @@ def test_init_auto_resolves_grpc_by_port(monkeypatch):
     for mod, attr in [
         (client_v1.vector_pb2_grpc, "VectorServiceStub"),
         (client_v1.collection_pb2_grpc, "CollectionServiceStub"),
-        (client_v1.sql_pb2_grpc, "SqlServiceStub"),
+        (client_v1.sql_pb2_grpc, "QueryServiceStub"),
         (client_v1.graph_pb2_grpc, "GraphServiceStub"),
     ]:
         monkeypatch.setattr(mod, attr, lambda ch: object())
@@ -132,7 +132,7 @@ def test_init_explicit_grpc_scheme(monkeypatch):
     for mod, attr in [
         (client_v1.vector_pb2_grpc, "VectorServiceStub"),
         (client_v1.collection_pb2_grpc, "CollectionServiceStub"),
-        (client_v1.sql_pb2_grpc, "SqlServiceStub"),
+        (client_v1.sql_pb2_grpc, "QueryServiceStub"),
         (client_v1.graph_pb2_grpc, "GraphServiceStub"),
     ]:
         monkeypatch.setattr(mod, attr, lambda ch: object())
@@ -697,7 +697,7 @@ def test_execute_sql_grpc_ok():
     resp = _pytypes.SimpleNamespace(
         rows=[row], rows_scanned=10, rows_returned=1, execution_time_ms=5
     )
-    c.sql_stub.ExecuteSql = lambda req, timeout: resp
+    c.sql_stub.ExecuteQuery = lambda req, timeout: resp
     out = c.execute_sql("SELECT x", parameters=[1, "s", True, 1.5])
     assert out["rows"][0]["x"] == 42
     assert out["rows_scanned"] == 10
@@ -709,7 +709,7 @@ def test_execute_sql_grpc_error():
     def boom(req, timeout):
         raise FakeRpcError("sql fail")
 
-    c.sql_stub.ExecuteSql = boom
+    c.sql_stub.ExecuteQuery = boom
     with pytest.raises(ProximaDBError):
         c.execute_sql("SELECT 1")
 
