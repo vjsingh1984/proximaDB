@@ -40,6 +40,7 @@ use crate::services::operations::VectorOps;
 use crate::services::operations::batch_result::OperationMetrics;
 use crate::services::operations::vectors::{RichRecordGetRequest, RichSearchResult};
 use crate::storage::tenant::context::TenantContext;
+use crate::metrics::saas_billing_metrics::{record_object_store_op, record_storage_bytes};
 
 /// Logical mutation kind at the canonical table-record boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,18 +254,16 @@ fn sanitize_object_path_segment(value: &str) -> String {
     }
 }
 
-fn object_store_write_base_path(schema: &CatalogTableSchema) -> String {
-    primary_layout(schema)
-        .and_then(|layout| match layout.physical_format {
-            CatalogPhysicalFormat::Iceberg | CatalogPhysicalFormat::Parquet => {
-                layout.location.as_deref()
-            }
-            _ => None,
-        })
-        .or(schema.location.as_deref())
-        .map(normalize_object_path_prefix)
-        .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| format!("tables/{}", sanitize_object_path_segment(&schema.name)))
+fn object_store_write_base_path(schema: &CatalogTableSchema, tenant_context: Option<&TenantContext>) -> String {
+    let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str()).unwrap_or("default_tenant");
+    let mock_namespace = proximadb_catalog::CatalogNamespace::new(vec!["default".into()])
+        .with_tenant(tenant_id)
+        .with_namespace_id("ns_default");
+        
+    let dr_path = crate::storage::trait_components::path_resolver::DrPathBuilder::build(&mock_namespace, &schema.name)
+        .expect("DrPathBuilder failed to construct valid tenant-isolated path");
+        
+    dr_path.root_prefix()
 }
 
 fn mutation_kind_label(kind: TableRecordMutationKind) -> &'static str {
@@ -282,15 +281,16 @@ fn mutation_kind_label(kind: TableRecordMutationKind) -> &'static str {
 fn object_store_parquet_mutation_path(
     schema: &CatalogTableSchema,
     kind: TableRecordMutationKind,
+    tenant_context: Option<&TenantContext>,
 ) -> ObjectPath {
-    let base = object_store_write_base_path(schema);
+    let base = object_store_write_base_path(schema, tenant_context);
     let table = sanitize_object_path_segment(&schema.name);
     let sequence = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     ObjectPath::from(format!(
-        "{base}/data/{table}-{}-{sequence}.parquet",
+        "{base}data/{table}-{}-{sequence}.parquet",
         mutation_kind_label(kind)
     ))
 }
@@ -298,15 +298,16 @@ fn object_store_parquet_mutation_path(
 fn object_store_pax_segment_path(
     schema: &CatalogTableSchema,
     kind: TableRecordMutationKind,
+    tenant_context: Option<&TenantContext>,
 ) -> ObjectPath {
-    let base = object_store_write_base_path(schema);
+    let base = object_store_write_base_path(schema, tenant_context);
     let table = sanitize_object_path_segment(&schema.name);
     let sequence = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     ObjectPath::from(format!(
-        "{base}/segments/{table}-{}-{sequence}{PAX_SEGMENT_EXT}",
+        "{base}segments/{table}-{}-{sequence}{PAX_SEGMENT_EXT}",
         mutation_kind_label(kind)
     ))
 }
@@ -1241,6 +1242,7 @@ mod tests {
             _path: &ObjectPath,
             _schema: Arc<ArrowSchema>,
             _batch_size: usize,
+            _tenant_id: Option<&str>,
         ) -> std::result::Result<
             BoxStream<'static, std::result::Result<RecordBatch, StorageError>>,
             StorageError,
@@ -1252,6 +1254,7 @@ mod tests {
             &self,
             path: &ObjectPath,
             records: &[ProximaRecord],
+            _tenant_id: Option<&str>,
         ) -> std::result::Result<(), StorageError> {
             self.writes.lock().unwrap().push((
                 path.clone(),
@@ -1263,6 +1266,7 @@ mod tests {
         async fn fetch_vector_segment(
             &self,
             _path: &ObjectPath,
+            _tenant_id: Option<&str>,
         ) -> std::result::Result<Vec<u8>, StorageError> {
             Ok(Vec::new())
         }
@@ -1271,6 +1275,7 @@ mod tests {
             &self,
             path: &ObjectPath,
             data: &[u8],
+            _tenant_id: Option<&str>,
         ) -> std::result::Result<(), StorageError> {
             self.segments
                 .lock()
@@ -2001,7 +2006,7 @@ mod tests {
             writes[0]
                 .0
                 .as_ref()
-                .starts_with("warehouse/orders/data/orders-insert-")
+                .starts_with("data/default_tenant/ns_default/orders/data/orders-insert-")
         );
         assert!(writes[0].0.as_ref().ends_with(".parquet"));
     }
@@ -2040,7 +2045,7 @@ mod tests {
             segments[0]
                 .0
                 .as_ref()
-                .starts_with("tables/vectors/segments/vectors-upsert-")
+                .starts_with("data/default_tenant/ns_default/vectors/segments/vectors-upsert-")
         );
         assert!(segments[0].0.as_ref().ends_with(PAX_SEGMENT_EXT));
         assert!(
@@ -2330,19 +2335,25 @@ impl ObjectStoreIcebergRecordStore {
     /// reads — are deferred to F5/P5 and layer behind this same `ObjectStoreBridge`
     /// seam (see `iceberg-engine/src/lib.rs` v1-scope notes; routing these leaf
     /// reads through DataFusion via `ComputeScheduler` is P1/P5).
-    async fn read_all_records(&self, schema: &CatalogTableSchema) -> Result<Vec<ProximaRecord>> {
-        let base = object_store_write_base_path(schema);
-        let prefix = ObjectPath::from(format!("{base}/data"));
+    async fn read_all_records(&self, schema: &CatalogTableSchema, tenant_context: Option<&TenantContext>) -> Result<Vec<ProximaRecord>> {
+        let base = object_store_write_base_path(schema, tenant_context);
+        let prefix = ObjectPath::from(format!("{base}data"));
         let parquet_paths = list_objects_with_suffix(&self.bridge, &prefix, ".parquet").await?;
+        
+        let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
+        record_object_store_op(tenant_id, "list_parquet");
 
         let mut records = Vec::new();
+        
         for path in parquet_paths {
+            record_object_store_op(tenant_id, "read_parquet");
             let mut stream = self
                 .bridge
                 .read_parquet_batches(
                     &path,
                     Arc::new(ArrowSchema::empty()),
                     OBJECT_STORE_READ_BATCH_SIZE,
+                    tenant_id,
                 )
                 .await
                 .map_err(|err| {
@@ -2383,9 +2394,11 @@ impl TableRecordStore for ObjectStoreIcebergRecordStore {
             .first()
             .map(|mutation| mutation.kind)
             .unwrap_or(TableRecordMutationKind::Insert);
-        let path = object_store_parquet_mutation_path(schema, kind);
+        let path = object_store_parquet_mutation_path(schema, kind, _tenant_context);
+        let tenant_id = _tenant_context.map(|tc| tc.tenant_id.as_str());
+        record_object_store_op(tenant_id, "write_parquet");
         self.bridge
-            .write_records_to_parquet(&path, &records)
+            .write_records_to_parquet(&path, &records, tenant_id)
             .await
             .map_err(|err| {
                 anyhow!(
@@ -2410,7 +2423,7 @@ impl TableRecordStore for ObjectStoreIcebergRecordStore {
         request: TableRecordGetRequest,
         _tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordGetResponse> {
-        let records = self.read_all_records(table_schema).await?;
+        let records = self.read_all_records(table_schema, _tenant_context).await?;
         let found = records.into_iter().find(|record| record.oid == request.key);
         Ok(found.map(|record| {
             proxima_record_to_get_response(
@@ -2428,7 +2441,7 @@ impl TableRecordStore for ObjectStoreIcebergRecordStore {
         request: TableRecordScanRequest,
         _tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordScanResponse> {
-        let mut records = self.read_all_records(table_schema).await?;
+        let mut records = self.read_all_records(table_schema, _tenant_context).await?;
         if let Some(limit) = request.limit {
             records.truncate(limit);
         }
@@ -2459,17 +2472,20 @@ impl ObjectStoreVectorRecordStore {
     /// Read every current record for `schema` by listing the PAX segment objects
     /// the write path produced under the table's `segments/` prefix and decoding
     /// each via the bridge's `fetch_vector_segment`.
-    async fn read_all_records(&self, schema: &CatalogTableSchema) -> Result<Vec<ProximaRecord>> {
-        let base = object_store_write_base_path(schema);
-        let prefix = ObjectPath::from(format!("{base}/segments"));
+    async fn read_all_records(&self, schema: &CatalogTableSchema, tenant_context: Option<&TenantContext>) -> Result<Vec<ProximaRecord>> {
+        let base = object_store_write_base_path(schema, tenant_context);
+        let prefix = ObjectPath::from(format!("{base}segments"));
         let segment_paths =
             list_objects_with_suffix(&self.bridge, &prefix, PAX_SEGMENT_EXT).await?;
+        let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
+        record_object_store_op(tenant_id, "list_pax");
 
         let mut records = Vec::new();
         for path in segment_paths {
+            record_object_store_op(tenant_id, "fetch_pax");
             let bytes = self
                 .bridge
-                .fetch_vector_segment(&path)
+                .fetch_vector_segment(&path, tenant_id)
                 .await
                 .map_err(|err| {
                     anyhow!("ObjectStoreVectorRecordStore failed to fetch '{path}': {err}")
@@ -2526,7 +2542,7 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             .first()
             .map(|mutation| mutation.kind)
             .unwrap_or(TableRecordMutationKind::Insert);
-        let object_path = object_store_pax_segment_path(schema, kind);
+        let object_path = object_store_pax_segment_path(schema, kind, _tenant_context);
         let local_path = temp_pax_segment_path(schema, kind);
         let mut writer = PaxSegmentWriter::new(
             &local_path,
@@ -2551,15 +2567,17 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
                 schema.name
             )
         })?;
-        let bytes = fs::read(&segment_meta.path).map_err(|err| {
+        let bytes = std::fs::read(&segment_meta.path).map_err(|err| {
             anyhow!(
                 "ObjectStoreVectorRecordStore failed to read staged PAX segment '{}': {err}",
                 segment_meta.path.display()
             )
         })?;
-        let remove_result = fs::remove_file(&segment_meta.path);
+        let remove_result = std::fs::remove_file(&segment_meta.path);
+        
+        let tenant_id = _tenant_context.map(|tc| tc.tenant_id.as_str());
         self.bridge
-            .persist_vector_segment(&object_path, &bytes)
+            .persist_vector_segment(&object_path, &bytes, tenant_id)
             .await
             .map_err(|err| {
                 anyhow!(
@@ -2591,7 +2609,7 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         request: TableRecordGetRequest,
         _tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordGetResponse> {
-        let records = self.read_all_records(table_schema).await?;
+        let records = self.read_all_records(table_schema, _tenant_context).await?;
         let found = records.into_iter().find(|record| record.oid == request.key);
         Ok(found.map(|record| {
             proxima_record_to_get_response(
@@ -2609,7 +2627,7 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         request: TableRecordScanRequest,
         _tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordScanResponse> {
-        let mut records = self.read_all_records(table_schema).await?;
+        let mut records = self.read_all_records(table_schema, _tenant_context).await?;
         if let Some(limit) = request.limit {
             records.truncate(limit);
         }

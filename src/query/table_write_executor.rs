@@ -45,6 +45,8 @@ pub struct TableWriteExecutionRequest<'a> {
     pub source_schema: Option<&'a CatalogTableSchema>,
     /// Routed plan selected by `DmlWritePlanner` / `TableWriteRouter`.
     pub routed_plan: RoutedExecutionPlan,
+    /// Tenant context for execution, used for path isolation and billing attribution.
+    pub tenant_context: Option<&'a crate::storage::tenant::context::TenantContext>,
 }
 
 /// Result returned by a table-write executor implementation.
@@ -268,6 +270,7 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
         &self,
         request: TableWriteExecutionRequest<'_>,
     ) -> Result<TableWriteExecutionResult> {
+        let start_time = std::time::Instant::now();
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         if request.routed_plan.backend != ComputeBackend::Native {
             return Ok(TableWriteExecutionResult::planned(&request.routed_plan));
@@ -337,6 +340,7 @@ impl TableWriteExecutor for PlannedOnlyTableWriteExecutor {
         &self,
         request: TableWriteExecutionRequest<'_>,
     ) -> Result<TableWriteExecutionResult> {
+        let start_time = std::time::Instant::now();
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         Ok(TableWriteExecutionResult::planned(&request.routed_plan))
     }
@@ -600,6 +604,7 @@ mod tests {
             _path: &Path,
             _schema: Arc<ArrowSchema>,
             _batch_size: usize,
+            _tenant_id: Option<&str>,
         ) -> std::result::Result<
             BoxStream<'static, std::result::Result<RecordBatch, StorageError>>,
             StorageError,
@@ -611,6 +616,7 @@ mod tests {
             &self,
             path: &Path,
             records: &[ProximaRecord],
+            _tenant_id: Option<&str>,
         ) -> std::result::Result<(), StorageError> {
             self.writes.lock().unwrap().push((
                 path.clone(),
@@ -622,6 +628,7 @@ mod tests {
         async fn fetch_vector_segment(
             &self,
             _path: &Path,
+            _tenant_id: Option<&str>,
         ) -> std::result::Result<Vec<u8>, StorageError> {
             Ok(Vec::new())
         }
@@ -630,6 +637,7 @@ mod tests {
             &self,
             _path: &Path,
             _data: &[u8],
+            _tenant_id: Option<&str>,
         ) -> std::result::Result<(), StorageError> {
             Ok(())
         }
@@ -704,6 +712,7 @@ mod tests {
                 target_schema: &schema,
                 source_schema: None,
                 routed_plan: routed,
+                tenant_context: None,
             })
             .await
             .unwrap();
@@ -750,6 +759,7 @@ mod tests {
                     },
                     ..routed
                 },
+                tenant_context: None,
             })
             .await
             .unwrap_err();
@@ -835,6 +845,7 @@ mod tests {
                 target_schema: &schema,
                 source_schema: None,
                 routed_plan: routed,
+                tenant_context: None,
             })
             .await
             .unwrap();
@@ -928,6 +939,7 @@ mod tests {
             target_schema: &schema,
             source_schema: None,
             routed_plan: routed,
+            tenant_context: None,
         })
         .await
         .unwrap_err();
@@ -999,6 +1011,7 @@ mod tests {
             target_schema: &schema,
             source_schema: None,
             routed_plan: routed,
+            tenant_context: None,
         })
         .await
         .unwrap();
@@ -1031,6 +1044,7 @@ mod tests {
             target_schema: &schema,
             source_schema: None,
             routed_plan: routed,
+            tenant_context: None,
         })
         .await
         .unwrap_err();
@@ -1073,6 +1087,7 @@ mod tests {
             target_schema: &schema,
             source_schema: None,
             routed_plan: routed,
+            tenant_context: None,
         })
         .await
         .unwrap_err();
@@ -1111,6 +1126,7 @@ mod tests {
                 target_schema: &schema,
                 source_schema: None,
                 routed_plan: routed,
+                tenant_context: None,
             })
             .await
             .unwrap();
@@ -1164,6 +1180,7 @@ mod tests {
             target_schema: &schema,
             source_schema: None,
             routed_plan: routed,
+            tenant_context: None,
         })
         .await
         .unwrap();
@@ -1217,6 +1234,7 @@ mod tests {
             target_schema: &schema,
             source_schema: None,
             routed_plan: routed,
+            tenant_context: None,
         })
         .await
         .unwrap_err();
@@ -1261,6 +1279,7 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
         &self,
         request: TableWriteExecutionRequest<'_>,
     ) -> Result<TableWriteExecutionResult> {
+        let start_time = std::time::Instant::now();
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         if !is_datafusion_backend(&request.routed_plan.backend) {
             return Ok(TableWriteExecutionResult::planned(&request.routed_plan));
@@ -1300,8 +1319,9 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
                         request.target_schema.name
                     )
                 })?;
+                let tenant_id = request.tenant_context.map(|tc| tc.tenant_id.as_str());
                 bridge
-                    .write_records_to_parquet(path, &batch)
+                    .write_records_to_parquet(path, &batch, tenant_id)
                     .await
                     .map_err(|err| {
                         anyhow!(

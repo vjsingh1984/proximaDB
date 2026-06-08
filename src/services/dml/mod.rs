@@ -32,6 +32,7 @@ use crate::query::table_write_plan::{
     LogicalTableRef, ReadSource, RoutedExecutionPlan, TableWriteRouteExplanation,
     WriteIntentOverrides, WriteMode,
 };
+use crate::storage::tenant::context::TenantContext;
 use crate::services::operations::VectorOps;
 use crate::services::operations::vectors::RichSearchResult;
 use crate::services::record_store::{
@@ -547,7 +548,7 @@ impl DmlService {
             }
             DmlStatement::InsertSelect { plan, columns }
             | DmlStatement::InsertOverwrite { plan, columns } => {
-                self.plan_table_write(&plan, &columns).await?
+                self.plan_table_write(&plan, &columns, None).await?
             }
         };
 
@@ -1116,6 +1117,7 @@ impl DmlService {
         &self,
         plan: &CopyIntoPlan,
         target_columns: &[String],
+        tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
         let (table_schema, target_stats) = self
             .resolve_table_metadata(&plan.target.qualified_name())
@@ -1138,6 +1140,7 @@ impl DmlService {
                 target_schema: &table_schema,
                 source_schema,
                 routed_plan: routed,
+                tenant_context,
             })
             .await?;
 
@@ -6473,7 +6476,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dml_rejects_non_null_unique_and_fk_until_stateful_enforcement_exists() {
+    async fn dml_rejects_non_null_fk_until_stateful_enforcement_exists() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let manager = Arc::new(CatalogManager::new());
         manager
@@ -6492,7 +6495,6 @@ mod tests {
         let parser = crate::query::sql_frontend::SqlFrontendParser::new();
         for ddl in [
             "CREATE TABLE customers_for_fk (id TEXT NOT NULL, PRIMARY KEY (id));",
-            "CREATE TABLE users_with_unique (id TEXT NOT NULL, email TEXT, PRIMARY KEY (id), UNIQUE (email));",
             "CREATE TABLE orders_with_fk (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers_for_fk(id));",
         ] {
             let stmt = parser.parse_ddl(ddl).expect("parse ddl").expect("ddl stmt");
@@ -6508,20 +6510,9 @@ mod tests {
             Arc::new(PlannedOnlyTableWriteExecutor::new()),
         );
 
-        let unique_insert = parser
-            .parse_dml("INSERT INTO users_with_unique (id, email) VALUES ('u1', 'a@example.com');")
-            .expect("parse unique insert")
-            .expect("unique insert");
-        let unique_err = dml
-            .execute(unique_insert)
-            .await
-            .expect_err("non-null UNIQUE tuple should fail closed");
-        assert!(
-            unique_err
-                .to_string()
-                .contains("native unique-index enforcement is not available yet")
-        );
-
+        // UNIQUE is now enforced natively (see `insert_rejects_duplicate_unique_constraint`),
+        // so a non-null UNIQUE tuple no longer fails closed. FK enforcement is still
+        // pending, so an FK insert must continue to fail closed.
         let fk_insert = parser
             .parse_dml("INSERT INTO orders_with_fk (id, customer_id) VALUES ('o1', 'c1');")
             .expect("parse fk insert")
