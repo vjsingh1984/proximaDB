@@ -1837,20 +1837,29 @@ impl DmlService {
         // TD-110: enforce non-PK UNIQUE constraints / indexes on INSERT. For each
         // unique column set, reject a tuple that repeats within this statement OR
         // already exists as a committed row. NULL tuples are exempt (SQL permits
-        // multiple NULLs). O(N)/insert via `scan_records_filtered` until the
-        // index-backed slice (Slice C) replaces the scan with a point lookup.
+        // multiple NULLs).
+        //
+        // Slice-C increment: the within-batch tuples are collected ONCE into a
+        // candidate set, then a SINGLE short-circuiting `scan_records_filtered`
+        // per column set checks the whole batch against committed rows — an
+        // M-row INSERT now does one scan per unique set instead of M. (The
+        // persistent index that turns this O(N) scan into an O(1) probe + survives
+        // deletes/recovery is the remaining Slice-C work; it belongs in the
+        // RecordStorage layer, which is schema-agnostic today.)
         let unique_sets = Self::unique_column_sets(&table_schema);
         if !unique_sets.is_empty() {
             let primary_key = Self::primary_key_column(&table_schema);
             let pk_ref = primary_key.as_deref();
             for columns in &unique_sets {
-                let mut batch_tuples: std::collections::HashSet<Vec<String>> =
+                // 1. Within-batch dedup: collect candidate tuples; a repeat in the
+                //    same statement is rejected without touching storage.
+                let mut candidate_tuples: std::collections::HashSet<Vec<String>> =
                     std::collections::HashSet::new();
                 for record in &records {
                     let Some(tuple) = Self::unique_tuple_repr(record, columns, pk_ref) else {
                         continue; // NULL/absent in the tuple → exempt
                     };
-                    if !batch_tuples.insert(tuple.clone()) {
+                    if !candidate_tuples.insert(tuple.clone()) {
                         return Err(anyhow!(
                             "duplicate key value violates unique constraint on ({}) for table '{}': ({}) appears more than once in this INSERT",
                             columns.join(", "),
@@ -1858,39 +1867,45 @@ impl DmlService {
                             tuple.join(", ")
                         ));
                     }
-                    // Cross-existing duplicate: scan for any committed row whose
-                    // tuple matches. limit=1 — presence is all we need.
-                    let want = tuple.clone();
-                    let cols = columns.clone();
-                    let pk_owned = primary_key.clone();
-                    let pred = move |existing: &ProximaRecord| {
-                        Self::unique_tuple_repr(existing, &cols, pk_owned.as_deref())
-                            .is_some_and(|existing_tuple| existing_tuple == want)
-                    };
-                    let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> =
-                        Some(&pred);
-                    let hits = self
-                        .record_store
-                        .scan_records_filtered(
-                            &table_schema,
-                            TableRecordScanRequest {
-                                table_id: table_id.name.clone(),
-                                limit: Some(1),
-                                include_vector: false,
-                                include_props: true,
-                            },
-                            predicate,
-                            None,
-                        )
-                        .await?;
-                    if !hits.is_empty() {
-                        return Err(anyhow!(
-                            "duplicate key value violates unique constraint on ({}) for table '{}': ({}) already exists",
-                            columns.join(", "),
-                            table_schema.name,
-                            tuple.join(", ")
-                        ));
-                    }
+                }
+                if candidate_tuples.is_empty() {
+                    continue; // every row in this set was NULL/exempt
+                }
+
+                // 2. Cross-existing: ONE short-circuiting scan — does any committed
+                //    row collide with any candidate tuple? limit=1; presence suffices.
+                let cols = columns.clone();
+                let pk_owned = primary_key.clone();
+                let wanted = candidate_tuples;
+                let pred = move |existing: &ProximaRecord| {
+                    Self::unique_tuple_repr(existing, &cols, pk_owned.as_deref())
+                        .is_some_and(|existing_tuple| wanted.contains(&existing_tuple))
+                };
+                let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
+                let hits = self
+                    .record_store
+                    .scan_records_filtered(
+                        &table_schema,
+                        TableRecordScanRequest {
+                            table_id: table_id.name.clone(),
+                            limit: Some(1),
+                            include_vector: false,
+                            include_props: true,
+                        },
+                        predicate,
+                        None,
+                    )
+                    .await?;
+                if let Some(existing) = hits.first() {
+                    let collided = Self::unique_tuple_repr(existing, columns, pk_ref)
+                        .map(|tuple| tuple.join(", "))
+                        .unwrap_or_default();
+                    return Err(anyhow!(
+                        "duplicate key value violates unique constraint on ({}) for table '{}': ({}) already exists",
+                        columns.join(", "),
+                        table_schema.name,
+                        collided
+                    ));
                 }
             }
         }
@@ -4740,6 +4755,27 @@ mod tests {
         ))
         .await
         .expect("distinct UNIQUE value insert");
+
+        // Slice-C increment: a multi-row INSERT where ONE row (amid non-colliding
+        // rows) duplicates a committed value is rejected by the single batch scan.
+        let err = dml
+            .execute(insert(
+                "INSERT INTO members (id, email) VALUES ('m8', 'fresh1@x.com'), ('m9', 'c@x.com'), ('m10', 'fresh2@x.com');",
+            ))
+            .await
+            .expect_err("a colliding row anywhere in the batch must be rejected");
+        assert!(
+            err.to_string()
+                .contains("duplicate key value violates unique constraint"),
+            "unexpected error: {err}"
+        );
+
+        // And a fully-distinct multi-row batch still inserts.
+        dml.execute(insert(
+            "INSERT INTO members (id, email) VALUES ('m11', 'd@x.com'), ('m12', 'e@x.com');",
+        ))
+        .await
+        .expect("fully-distinct batch insert");
     }
 
     /// SQL UPDATE and DELETE through `DirectWalTableRecordStore` — T9 conformance.
