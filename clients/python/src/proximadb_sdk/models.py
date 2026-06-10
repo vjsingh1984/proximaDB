@@ -1451,6 +1451,10 @@ class DeleteResult(BaseModel):
     deleted_count: int = 0
     success: bool = True
     message: str | None = None
+    # Per-id failure messages; populated by batch delete_vectors when individual
+    # deletes fail. (Previously absent, so delete_vectors silently dropped the
+    # errors it tried to set — a real bug this field closes.)
+    errors: list[str] = Field(default_factory=list)
     metrics: OperationMetrics | None = None
 
 

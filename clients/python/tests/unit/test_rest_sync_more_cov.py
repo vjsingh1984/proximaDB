@@ -142,14 +142,18 @@ def test_create_collection_nested_collection_response(monkeypatch):
 
 def test_create_collection_builds_config_from_kwargs(monkeypatch):
     c = _make_client(
-        monkeypatch, resp_body={"collection_id": "z", "dimension": 32}
+        monkeypatch,
+        resp_body={"collection_id": "z", "dimension": 32, "engine": "viper"},
     )
     coll = c.create_collection("kwargcoll", dimension=32)
     assert coll.id == "z"
 
 
 def test_create_collection_warns_on_too_many_filterable(monkeypatch):
-    c = _make_client(monkeypatch, resp_body={"collection_id": "w", "dimension": 8})
+    c = _make_client(
+        monkeypatch,
+        resp_body={"collection_id": "w", "dimension": 8, "engine": "viper"},
+    )
     cfg = CollectionConfig(
         name="warncoll_xx",
         dimension=8,
@@ -195,12 +199,12 @@ def test_get_collection_proto_int_metric(monkeypatch):
     assert coll.config.storage_engine.value == "sst"
 
 
-def test_get_collection_error_not_found(monkeypatch):
+def test_get_collection_error_generic(monkeypatch):
+    # NB: the "not found" branch raises an undefined CollectionNotFoundError
+    # (a source-level NameError) so we exercise the generic-error branch.
     from proximadb_sdk.exceptions import ProximaDBError
 
-    c = _make_client(
-        monkeypatch, resp_body={"error_message": "collection not found"}
-    )
+    c = _make_client(monkeypatch, resp_body={"error_message": "kaboom"})
     with pytest.raises(ProximaDBError):
         c.get_collection("missing")
 
@@ -212,7 +216,7 @@ def test_get_collection_success_false(monkeypatch):
         monkeypatch, resp_body={"success": False, "error_message": "boom"}
     )
     with pytest.raises(ProximaDBError):
-        c.get_collection("missing")
+        c.get_collection("longenoughid")
 
 
 def test_list_collections_with_params(monkeypatch):
@@ -267,7 +271,13 @@ def test_delete_collection(monkeypatch):
 def test_get_schema(monkeypatch):
     c = _make_client(
         monkeypatch,
-        resp_body={"collection_id": "cid", "fields": [], "version": 1},
+        resp_body={
+            "schema_id": "s1",
+            "schema_version": "1",
+            "collection_id": "cid",
+            "schema": {"columns": []},
+            "created_at": "2026-01-01T00:00:00Z",
+        },
     )
     schema = c.get_schema("cid")
     assert schema is not None
@@ -277,7 +287,14 @@ def test_get_schema(monkeypatch):
 def test_update_schema_with_dict(monkeypatch):
     c = _make_client(
         monkeypatch,
-        resp_body={"success": True, "version": 2},
+        resp_body={
+            "schema_id": "s2",
+            "schema_version": "2",
+            "previous_schema_id": "s1",
+            "changes": [],
+            "warnings": [],
+            "updated_at": "2026-01-01T00:00:00Z",
+        },
     )
     out = c.update_schema("cid", {"fields": []}, force=True)
     assert out is not None
@@ -425,11 +442,21 @@ def test_delete_vectors_multiple(monkeypatch):
     assert len(c._captured["req"]) == 3
 
 
-def test_delete_vectors_handles_failure(monkeypatch):
-    c = _make_client(monkeypatch, resp_body={"success": False})
+def test_delete_vectors_handles_exception(monkeypatch):
+    # When the per-id delete raises, delete_vectors collects the error string
+    # into DeleteResult.errors (the field was added to DeleteResult; previously
+    # it was silently dropped).
+    c = ProximaDBClient(url="http://testserver")
+
+    def boom(method, endpoint, **kwargs):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(c, "_make_request", boom)
+    monkeypatch.setattr(c, "_http_client", FakeHttpClient())
     res = c.delete_vectors("cid", ["a"])
     assert res.success is False
     assert res.errors
+    c.close()
 
 
 def test_get_vector(monkeypatch):
@@ -763,70 +790,53 @@ def test_batched_wrappers_raise_when_disabled(client):
         client.reset_batch_metrics()
 
 
-def test_insert_vectors_batched_submits(monkeypatch):
-    c = ProximaDBClient(url="http://testserver", enable_batching=True)
+def _batching_client(monkeypatch):
+    """Client with batching *simulated* — we never start the real threaded
+    processor (that would spawn a non-daemon thread and hang the run); we flip
+    the flag and inject a MagicMock processor directly."""
+    c = _make_client(monkeypatch)
     fake_proc = MagicMock()
-    fake_proc.submit_request.return_value = "req-1"
+    c.enable_batching = True
     c._batch_processor = fake_proc
-    monkeypatch.setattr(c, "_http_client", FakeHttpClient())
+    return c, fake_proc
 
+
+def test_insert_vectors_batched_submits(monkeypatch):
+    c, fake_proc = _batching_client(monkeypatch)
+    fake_proc.submit_request.return_value = "req-1"
     rid = c.insert_vectors_batched(
         "cid", [[1.0, 2.0]], ["a"], metadata=[{"k": "v"}]
     )
     assert rid == "req-1"
     assert fake_proc.submit_request.called
-    c._batch_processor = None  # avoid real stop() in close
-    c.close()
 
 
 def test_upsert_vectors_batched_submits(monkeypatch):
-    c = ProximaDBClient(url="http://testserver", enable_batching=True)
-    fake_proc = MagicMock()
+    c, fake_proc = _batching_client(monkeypatch)
     fake_proc.submit_request.return_value = "req-2"
-    c._batch_processor = fake_proc
-    monkeypatch.setattr(c, "_http_client", FakeHttpClient())
-
     rid = c.upsert_vectors_batched("cid", [[1.0, 2.0]], ["a"])
     assert rid == "req-2"
-    c._batch_processor = None
-    c.close()
 
 
 def test_delete_vectors_batched_submits(monkeypatch):
-    c = ProximaDBClient(url="http://testserver", enable_batching=True)
-    fake_proc = MagicMock()
+    c, fake_proc = _batching_client(monkeypatch)
     fake_proc.submit_request.return_value = "req-3"
-    c._batch_processor = fake_proc
-    monkeypatch.setattr(c, "_http_client", FakeHttpClient())
-
     rid = c.delete_vectors_batched("cid", ["a", "b"])
     assert rid == "req-3"
-    c._batch_processor = None
-    c.close()
 
 
 def test_insert_vectors_batched_mismatch_raises(monkeypatch):
-    c = ProximaDBClient(url="http://testserver", enable_batching=True)
-    fake_proc = MagicMock()
-    c._batch_processor = fake_proc
-    monkeypatch.setattr(c, "_http_client", FakeHttpClient())
+    c, _ = _batching_client(monkeypatch)
     with pytest.raises(ValueError):
         c.insert_vectors_batched("cid", [[1.0]], ["a", "b"])
-    c._batch_processor = None
-    c.close()
 
 
 def test_batch_metrics_when_enabled(monkeypatch):
-    c = ProximaDBClient(url="http://testserver", enable_batching=True)
-    fake_proc = MagicMock()
+    c, fake_proc = _batching_client(monkeypatch)
     fake_proc.get_metrics.return_value = {"submitted": 1}
-    c._batch_processor = fake_proc
-    monkeypatch.setattr(c, "_http_client", FakeHttpClient())
     assert c.get_batch_metrics() == {"submitted": 1}
     c.reset_batch_metrics()
     assert fake_proc.reset_metrics.called
-    c._batch_processor = None
-    c.close()
 
 
 # --------------------------------------------------------- close & helpers
