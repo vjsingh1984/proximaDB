@@ -1887,7 +1887,7 @@ def test_get_vector_raw_grpc_delegates():
 # ---------------------------------------------------------------------------
 
 
-def test_search_iter_rest_paginates():
+def test_search_iter_rest_paginates_b():
     c = make_client()
     c._active_protocol = Protocol.REST
 
@@ -2033,3 +2033,1122 @@ def test_setup_authentication_no_auth_configured():
     c = ProximaDBClient(url="http://testserver", protocol="rest")
     assert c._auth is None
     c.close()
+
+
+# ===========================================================================
+# Additional coverage: old-API conversions, routing-client branches,
+# upsert adapter/embedded/local, embedded-SQL fallback chains, misc.
+# ===========================================================================
+
+
+def _routed_client(routed_to):
+    """Client with operation routing enabled where _get_client_for_operation
+    is forced to return either the grpc or rest client object."""
+    c = ProximaDBClient(url="http://testserver", protocol="rest")
+    c._adapter = None
+    # spec-limited: no insert_records so the record-native fast path raises
+    # NotImplementedError and the legacy routing block is exercised.
+    c._rest_client = MagicMock(spec=["insert_vectors", "list_collections"])
+    c._grpc_client = MagicMock(spec=["insert_vectors", "list_collections"])
+    c.enable_operation_routing = True
+    c._operation_router = MagicMock()
+    c._client = MagicMock()
+    c._active_protocol = Protocol.REST
+    c._prefer_local_fallback = False
+    target = c._grpc_client if routed_to == "grpc" else c._rest_client
+    c._operation_router.route_operation.return_value = (
+        Protocol.GRPC if routed_to == "grpc" else Protocol.REST
+    )
+    return c, target
+
+
+def test_insert_vectors_old_api_vectors_lists_converted():
+    # vectors as plain lists (old API) -> converted to VectorRecord objects.
+    c = raw_rest_client()
+    c._client.get_collection.return_value = None
+    c._client.insert_vectors.return_value = VectorOperationResponse(
+        success=True, operation="INSERT", metrics=OperationMetrics()
+    )
+    out = c.insert_vectors(
+        "oldapixx",
+        vectors=[[1.0, 2.0], [3.0, 4.0]],
+        ids=["a", "b"],
+        metadata=[{"k": 1}, {"k": 2}],
+    )
+    assert out.success is True
+
+
+def test_insert_vectors_routed_to_grpc_client():
+    c, grpc = _routed_client("grpc")
+    grpc.insert_vectors.return_value = type(
+        "R", (), {"success": True, "metrics": None}
+    )()
+    rec = VectorRecord(id="r1", vector=[1.0, 2.0], source="src", version=2)
+    out = c.insert_vectors("routedgr", records=[rec])
+    assert out.success is True
+    grpc.insert_vectors.assert_called_once()
+
+
+def test_insert_vectors_routed_to_rest_client():
+    c, rest = _routed_client("rest")
+    rest.insert_vectors.return_value = VectorOperationResponse(
+        success=True, operation="INSERT", metrics=OperationMetrics()
+    )
+    rec = VectorRecord(id="r1", vector=[1.0, 2.0])
+    out = c.insert_vectors("routedre", records=[rec])
+    assert out.success is True
+    rest.insert_vectors.assert_called_once()
+
+
+def test_insert_vectors_prefer_local_rest_count():
+    c = make_client()
+    c._prefer_local_fallback = True
+    c._active_protocol = Protocol.REST
+    c._store_local_collection(a_collection("ivprefer"))
+    c._adapter = MagicMock(spec=[])
+    out = c.insert_vectors(
+        "ivprefer", records=[VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
+    )
+    assert out.success == 1
+    assert len(c._get_local_vector_records("ivprefer")) == 1
+
+
+def test_insert_vectors_adapter_embedded_stores_local():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._store_local_collection(a_collection("ivembedd"))
+    adapter = MagicMock(spec=["insert_vectors"])
+    adapter.insert_vectors.return_value = VectorOperationResponse(
+        success=True, operation="INSERT", metrics=OperationMetrics()
+    )
+    c._adapter = adapter
+    out = c.insert_vectors(
+        "ivembedd", records=[VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
+    )
+    assert out.success is True
+    assert len(c._get_local_vector_records("ivembedd")) == 1
+
+
+def test_insert_vectors_adapter_error_local_fallback():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    c._store_local_collection(a_collection("ivadperr"))
+    adapter = MagicMock(spec=["insert_vectors"])
+    adapter.insert_vectors.side_effect = ConnectionError("connection failed")
+    c._adapter = adapter
+    out = c.insert_vectors(
+        "ivadperr", records=[VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
+    )
+    assert out.success == 1
+    assert c._prefer_local_fallback is True
+
+
+def test_upsert_vectors_prefer_local_rest_count():
+    c = make_client()
+    c._prefer_local_fallback = True
+    c._active_protocol = Protocol.REST
+    c._store_local_collection(a_collection("upprfrst"))
+    out = c.upsert_vectors(
+        "upprfrst", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
+    )
+    assert out.success == 1
+
+
+def test_list_collections_routed_to_grpc_client():
+    c, _ = _routed_client("grpc")
+    proto = type(
+        "P",
+        (),
+        {
+            "id": "lcgrpccc",
+            "config": type("C", (), {"name": "lcgrpccc", "dimension": 3})(),
+        },
+    )()
+    c._grpc_client.list_collections.return_value = [proto]
+    out = c.list_collections()
+    assert len(out) == 1
+
+
+def test_list_collections_routed_to_rest_client():
+    c, _ = _routed_client("rest")
+    c._rest_client.list_collections.return_value = [a_collection("lcrestc")]
+    out = c.list_collections()
+    assert len(out) == 1
+
+
+def test_insert_vectors_else_branch_active_grpc():
+    # routing disabled -> default client; client != _grpc_client; active GRPC
+    # -> exercises the else fallback gRPC dict-building block.
+    c = raw_rest_client()
+    c._active_protocol = Protocol.GRPC
+    metrics = type(
+        "M",
+        (),
+        {"total_processed": 1, "successful_count": 1, "failed_count": 0},
+    )()
+    c._client.insert_vectors.return_value = type(
+        "R", (), {"success": True, "metrics": metrics}
+    )()
+    rec = VectorRecord(id="r1", vector=[1.0, 2.0], source="s", version=3)
+    out = c.insert_vectors("elsegrpc", records=[rec])
+    assert out.metrics.total_processed == 1
+
+
+def test_insert_vectors_else_branch_active_grpc_no_metrics():
+    c = raw_rest_client()
+    c._active_protocol = Protocol.GRPC
+    c._client.insert_vectors.return_value = type(
+        "R", (), {"success": True, "metrics": None}
+    )()
+    rec = VectorRecord(id="r1", vector=[1.0, 2.0])
+    out = c.insert_vectors("elsegrp2", records=[rec])
+    assert out.success is True
+
+
+def test_insert_vectors_else_branch_active_rest_no_ids():
+    # else branch, active REST, records without ids -> generates vec_N ids.
+    c = raw_rest_client()
+    c._active_protocol = Protocol.REST
+    c._client.get_collection.return_value = None
+    c._client.insert_vectors.return_value = VectorOperationResponse(
+        success=True, operation="INSERT", metrics=OperationMetrics()
+    )
+    rec = VectorRecord(vector=[1.0, 2.0])
+    out = c.insert_vectors("elserest", records=[rec])
+    assert out.success is True
+
+
+def test_insert_vectors_routed_grpc_with_metrics():
+    c, grpc = _routed_client("grpc")
+    metrics = type(
+        "M",
+        (),
+        {"total_processed": 1, "successful_count": 1, "failed_count": 0},
+    )()
+    grpc.insert_vectors.return_value = type(
+        "R", (), {"success": True, "metrics": metrics}
+    )()
+    rec = VectorRecord(id="r1", vector=[1.0, 2.0])
+    out = c.insert_vectors("routedgm", records=[rec])
+    assert out.metrics.total_processed == 1
+
+
+def test_upsert_vectors_adapter_path():
+    c = make_client()
+    expected = VectorOperationResponse(
+        success=True, operation="UPSERT", metrics=OperationMetrics()
+    )
+    # adapter has no upsert_records (so upsert_records delegates to insert_records)
+    # but DOES have upsert_vectors -> exercise adapter upsert_vectors branch.
+    adapter = MagicMock(spec=["upsert_vectors"])
+    adapter.upsert_vectors.return_value = expected
+    c._adapter = adapter
+    out = c.upsert_vectors("upadapter", [VectorRecord(id="a", vector=[1.0, 2.0])])
+    assert out is expected
+
+
+def test_upsert_vectors_adapter_embedded_stores_local():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._store_local_collection(a_collection("upembedd"))
+    adapter = MagicMock(spec=["upsert_vectors"])
+    adapter.upsert_vectors.return_value = VectorOperationResponse(
+        success=True, operation="UPSERT", metrics=OperationMetrics()
+    )
+    c._adapter = adapter
+    out = c.upsert_vectors(
+        "upembedd", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
+    )
+    assert out.success is True
+    assert len(c._get_local_vector_records("upembedd")) == 1
+
+
+def test_upsert_vectors_adapter_error_local_fallback():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    c._store_local_collection(a_collection("upfallbk"))
+    adapter = MagicMock(spec=["upsert_vectors"])
+    adapter.upsert_vectors.side_effect = ConnectionError("connection failed")
+    c._adapter = adapter
+    out = c.upsert_vectors(
+        "upfallbk", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
+    )
+    # REST local fallback returns success as a count
+    assert out.success == 1
+    assert c._prefer_local_fallback is True
+
+
+def test_upsert_vectors_prefer_local():
+    c = make_client()
+    c._prefer_local_fallback = True
+    c._active_protocol = Protocol.REST
+    c._store_local_collection(a_collection("upprefer"))
+    out = c.upsert_vectors(
+        "upprefer", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
+    )
+    assert out.operation == "UPSERT"
+
+
+def test_upsert_vectors_raw_grpc_with_metrics():
+    c = raw_rest_client()
+    c._active_protocol = Protocol.GRPC
+    metrics = type(
+        "M",
+        (),
+        {
+            "total_processed": 1,
+            "successful_count": 1,
+            "failed_count": 0,
+            "updated_count": 1,
+        },
+    )()
+    c._client.insert_vectors.return_value = type(
+        "R", (), {"success": True, "metrics": metrics}
+    )()
+    out = c.upsert_vectors(
+        "upgrpcm", [VectorRecord(id="a", vector=[1.0, 2.0], source="s", version=1)]
+    )
+    assert out.metrics.updated_count == 1
+
+
+def test_insert_legacy_method_builds_records():
+    c = make_client()
+    c._adapter = MagicMock(spec=["insert_records"])
+    c._adapter.insert_records.return_value = BatchResult(total=2, success=2)
+    out = c.insert(
+        "leginscol",
+        vectors=[[1.0, 2.0], [3.0, 4.0]],
+        ids=["a", "b"],
+        metadata=[{"x": 1}, {"x": 2}],
+    )
+    assert out.success
+
+
+def test_upsert_legacy_method_builds_records():
+    c = make_client()
+    c._adapter = MagicMock(spec=["upsert_records"])
+    c._adapter.upsert_records.return_value = BatchResult(total=1, success=1)
+    out = c.upsert("legupscol", vectors=[[1.0, 2.0]], ids=["a"])
+    assert out.success
+
+
+def test_delete_legacy_method():
+    c = make_client()
+    c._adapter.delete_vectors.return_value = _delete_resp()
+    out = c.delete("legdelco", ["a", "b"])
+    assert out.success is True
+
+
+def test_embedded_sql_native_error_adapter_fallback():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.execute_sql.side_effect = RuntimeError("native boom")
+    adapter = MagicMock(spec=["execute_sql"])
+    adapter.execute_sql.return_value = {"rows": [{"id": "x"}], "row_count": 1}
+    c._adapter = adapter
+    out = c.execute_sql("SELECT * FROM coll")
+    assert out["row_count"] == 1
+    adapter.execute_sql.assert_called_once()
+
+
+def test_embedded_sql_native_error_adapter_error_local_fallback():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.execute_sql.side_effect = RuntimeError("native boom")
+    adapter = MagicMock(spec=["execute_sql"])
+    adapter.execute_sql.side_effect = RuntimeError("adapter boom")
+    c._adapter = adapter
+    c._store_local_collection(a_collection("sqllocal"))
+    c._store_local_vector_records(
+        "sqllocal", [VectorRecord(id="v1", vector=[1.0, 2.0, 3.0])]
+    )
+    out = c.execute_sql("SELECT id FROM sqllocal")
+    assert out["row_count"] == 1
+
+
+def test_embedded_sql_native_vector_search_empty_local_overlay():
+    # native returns empty rows for a vector_search SQL -> local overlay kicks in
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.execute_sql.return_value = {"rows": [], "row_count": 0}
+    c._store_local_collection(a_collection("vsearchc"))
+    c._store_local_vector_records(
+        "vsearchc", [VectorRecord(id="v1", vector=[1.0, 0.0, 0.0])]
+    )
+    sql = "SELECT * FROM vector_search('vsearchc', '[1.0, 0.0, 0.0]', 5)"
+    out = c.execute_sql(sql)
+    assert out["row_count"] >= 1
+
+
+def test_grpc_sql_error_local_fallback():
+    c = make_client()
+    c._active_protocol = Protocol.GRPC
+    c._client = MagicMock()
+    c._client.execute_sql.side_effect = RuntimeError("grpc sql boom")
+    c._store_local_collection(a_collection("grpcsqlc"))
+    c._store_local_vector_records(
+        "grpcsqlc", [VectorRecord(id="v1", vector=[1.0, 2.0, 3.0])]
+    )
+    out = c.execute_sql("SELECT id FROM grpcsqlc")
+    assert out["row_count"] == 1
+
+
+def test_grpc_sql_success():
+    c = make_client()
+    c._active_protocol = Protocol.GRPC
+    c._client = MagicMock()
+    c._client.execute_sql.return_value = {"rows": [{"id": "a"}], "row_count": 1}
+    out = c.execute_sql("SELECT id FROM xcoll")
+    assert out["row_count"] == 1
+
+
+def test_execute_unified_query_embedded_empty_vector_search_local():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.execute_unified_query.return_value = []
+    c._store_local_collection(a_collection("uqlcolln"))
+    c._store_local_vector_records(
+        "uqlcolln", [VectorRecord(id="v1", vector=[1.0, 0.0, 0.0])]
+    )
+    sql = "SELECT * FROM vector_search('uqlcolln', '[1.0, 0.0, 0.0]', 5)"
+    out = c.execute_unified_query(sql)
+    assert isinstance(out, list)
+    assert out and out[0]["source_model"] == "vector"
+
+
+def test_execute_unified_query_embedded_error_adapter_fallback():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.execute_unified_query.side_effect = RuntimeError("boom")
+    adapter = MagicMock(spec=["execute_unified_query"])
+    adapter.execute_unified_query.return_value = [{"id": "z"}]
+    c._adapter = adapter
+    out = c.execute_unified_query("SELECT 1")
+    assert out == [{"id": "z"}]
+
+
+def test_execute_unified_query_adapter_execute_query_dict():
+    c = make_client()
+    adapter = MagicMock(spec=["execute_query"])
+    adapter.execute_query.return_value = {"records": [{"id": "a"}]}
+    c._adapter = adapter
+    out = c.execute_unified_query("FOR x RETURN x")
+    assert out == [{"id": "a"}]
+
+
+def test_execute_unified_query_not_implemented():
+    c = make_client()
+    c._adapter = MagicMock(spec=[])
+    c._client = MagicMock(spec=[])
+    with pytest.raises(NotImplementedError):
+        c.execute_unified_query("SELECT 1")
+
+
+def test_execute_query_not_implemented():
+    c = make_client()
+    c._adapter = MagicMock(spec=[])
+    c._client = MagicMock(spec=[])
+    with pytest.raises(NotImplementedError):
+        c.execute_query("FOR x RETURN x")
+
+
+def test_execute_uql_aql_federated_delegate_b():
+    c = make_client()
+    adapter = MagicMock(spec=["execute_query"])
+    adapter.execute_query.return_value = {"rows": []}
+    c._adapter = adapter
+    assert c.execute_uql("q") == {"rows": []}
+    assert c.execute_aql("q") == {"rows": []}
+    assert c.execute_federated("q") == {"rows": []}
+    assert adapter.execute_query.call_count == 3
+
+
+def test_execute_sql_rest_requests_path(monkeypatch):
+    # _client without _session -> uses requests.post directly.
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    client = MagicMock(spec=["_rest_url", "_api_key"])
+    client._rest_url = "http://testserver"
+    client._api_key = "k"
+    c._client = client
+
+    class FakeResp:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return {"rows": [], "row_count": 0}
+
+    fake_requests = MagicMock()
+    fake_requests.post.return_value = FakeResp()
+    monkeypatch.setattr(_uc, "ProximaDBError", ProximaDBError)
+    import sys as _sys
+
+    monkeypatch.setitem(_sys.modules, "requests", fake_requests)
+    out = c._execute_sql_rest("SELECT 1", parameters=[1], collection="c")
+    assert out == {"rows": [], "row_count": 0}
+    fake_requests.post.assert_called_once()
+
+
+def test_execute_sql_rest_requests_path_error(monkeypatch):
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    client = MagicMock(spec=["_base_url"])
+    client._base_url = "http://testserver"
+    c._client = client
+
+    class FakeResp:
+        ok = False
+        status_code = 500
+        text = "boom"
+
+        def json(self):
+            return {"message": "server error"}
+
+    fake_requests = MagicMock()
+    fake_requests.post.return_value = FakeResp()
+    import sys as _sys
+
+    monkeypatch.setitem(_sys.modules, "requests", fake_requests)
+    with pytest.raises(Exception):
+        c._execute_sql_rest("SELECT 1")
+
+
+def test_observability_namespace_embedded_native_nondict():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.create_observability_namespace.return_value = object()
+    out = c.create_observability_namespace("ns", retention_days=7)
+    assert out["success"] is True
+
+
+def test_observability_namespace_adapter_path():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    adapter = MagicMock(spec=["create_observability_namespace"])
+    adapter.create_observability_namespace.return_value = {"ok": True}
+    c._adapter = adapter
+    out = c.create_observability_namespace("ns")
+    assert out == {"ok": True}
+
+
+def test_observability_not_implemented_paths():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    c._adapter = MagicMock(spec=[])
+    for fn in (
+        lambda: c.create_observability_namespace("ns"),
+        lambda: c.ingest_logs("ns", []),
+        lambda: c.query_logs("ns", 0, 9),
+        lambda: c.ingest_metrics("ns", []),
+        lambda: c.aggregate_metrics("ns", "cpu"),
+        lambda: c.ingest_traces("ns", []),
+        lambda: c.query_traces("ns", 0, 9),
+        lambda: c.get_trace("ns", "t"),
+    ):
+        with pytest.raises(NotImplementedError):
+            fn()
+
+
+def test_observability_adapter_delegating_paths():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    adapter = MagicMock(
+        spec=[
+            "ingest_logs",
+            "query_logs",
+            "ingest_metrics",
+            "aggregate_metrics",
+            "ingest_traces",
+            "query_traces",
+            "get_trace",
+        ]
+    )
+    adapter.ingest_logs.return_value = 5
+    adapter.query_logs.return_value = [{"l": 1}]
+    adapter.ingest_metrics.return_value = 4
+    adapter.aggregate_metrics.return_value = [{"m": 1}]
+    adapter.ingest_traces.return_value = 3
+    adapter.query_traces.return_value = [{"t": 1}]
+    adapter.get_trace.return_value = {"spans": []}
+    c._adapter = adapter
+    assert c.ingest_logs("ns", [{"l": 1}]) == 5
+    assert c.query_logs("ns", 0, 9, query="q", limit=10) == [{"l": 1}]
+    assert c.ingest_metrics("ns", [{"m": 1}]) == 4
+    assert c.aggregate_metrics("ns", "cpu") == [{"m": 1}]
+    assert c.ingest_traces("ns", [{"t": 1}]) == 3
+    assert c.query_traces("ns", 0, 9, trace_id="x") == [{"t": 1}]
+    assert c.get_trace("ns", "tid") == {"spans": []}
+
+
+def test_embedded_observability_native_error_falls_to_adapter():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    native = MagicMock()
+    native.ingest_logs.side_effect = RuntimeError("boom")
+    c._client = native
+    adapter = MagicMock(spec=["ingest_logs"])
+    adapter.ingest_logs.return_value = 7
+    c._adapter = adapter
+    assert c.ingest_logs("ns", [{"l": 1}]) == 7
+
+
+def test_get_trace_embedded_native_nonlist():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    native = MagicMock()
+    native.get_trace.return_value = ["span1", "span2"]
+    c._client = native
+    out = c.get_trace("ns", "tid")
+    assert out["complete"] is True
+    assert out["spans"] == ["span1", "span2"]
+
+
+def test_search_batch_iterates():
+    c = make_client()
+    c._adapter.search.return_value = [SearchResult(id="a", score=0.9)]
+    out = c.search_batch("vc", [[0.1, 0.2], [0.3, 0.4]], top_k=3)
+    assert len(out) == 2
+    assert out[0][0].id == "a"
+
+
+def test_search_top_k_validation():
+    c = make_client()
+    with pytest.raises(ProximaDBError):
+        c.search("vc", [0.1, 0.2], top_k=0)
+
+
+def test_search_single_adapter_error_local_fallback():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    c._store_local_collection(a_collection("ssearchc"))
+    c._store_local_vector_records(
+        "ssearchc", [VectorRecord(id="v1", vector=[1.0, 0.0, 0.0])]
+    )
+    c._adapter.search.side_effect = ConnectionError("connection failed")
+    out = c.search_single("ssearchc", [1.0, 0.0, 0.0], top_k=5)
+    assert isinstance(out, list)
+    assert c._prefer_local_fallback is True
+
+
+def test_search_single_raw_rest_filters_kwargs_b():
+    c = raw_rest_client()
+    c._active_protocol = Protocol.REST
+    c._client.search.return_value = [SearchResult(id="a", score=0.5)]
+    out = c.search_single(
+        "rawsrchc",
+        [0.1, 0.2],
+        top_k=3,
+        optimization_hints={"x": 1},
+        enable_two_stage_search=True,
+    )
+    assert out[0].id == "a"
+    # filtered kwargs must not be forwarded
+    _, kwargs = c._client.search.call_args
+    assert "optimization_hints" not in kwargs
+    assert "enable_two_stage_search" not in kwargs
+
+
+def test_search_single_raw_grpc_numpy():
+    c = raw_rest_client()
+    c._active_protocol = Protocol.GRPC
+    c._client.search_vectors.return_value = [SearchResult(id="g", score=0.7)]
+    out = c.search_single("grpcsrch", np.array([0.1, 0.2]), top_k=4)
+    assert out[0].id == "g"
+
+
+def test_delete_vectors_adapter_embedded_clears_local():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._store_local_collection(a_collection("delembed"))
+    c._store_local_vector_records(
+        "delembed", [VectorRecord(id="v1", vector=[1.0, 2.0, 3.0])]
+    )
+    c._adapter.delete_vectors.return_value = _delete_resp()
+    out = c.delete_vectors("delembed", ["v1"])
+    assert out.success is True
+    assert len(c._get_local_vector_records("delembed")) == 0
+
+
+def test_delete_vectors_adapter_error_local_fallback():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    c._store_local_collection(a_collection("delfallb"))
+    c._store_local_vector_records(
+        "delfallb", [VectorRecord(id="v1", vector=[1.0, 2.0, 3.0])]
+    )
+    c._adapter.delete_vectors.side_effect = ConnectionError("connection failed")
+    out = c.delete_vectors("delfallb", ["v1"])
+    assert out.operation == "DELETE"
+    assert c._prefer_local_fallback is True
+
+
+def test_get_vector_raw_rest_error_local_fallback():
+    c = raw_rest_client()
+    c._active_protocol = Protocol.REST
+    c._store_local_collection(a_collection("gvfallbk"))
+    c._store_local_vector_records(
+        "gvfallbk", [VectorRecord(id="v1", vector=[1.0, 2.0, 3.0])]
+    )
+    c._client.get_vector.side_effect = ConnectionError("connection failed")
+    out = c.get_vector("gvfallbk", "v1")
+    assert out.id == "v1"
+    assert c._prefer_local_fallback is True
+
+
+def test_insert_vector_single_and_upsert_alias():
+    c = make_client()
+    c._adapter = MagicMock(spec=["insert_records", "upsert_records"])
+    c._adapter.insert_records.return_value = BatchResult(total=1, success=1)
+    c._adapter.upsert_records.return_value = BatchResult(total=1, success=1)
+    r1 = c.insert_vector(
+        "ivsingle",
+        "id1",
+        [1.0, 2.0],
+        metadata={"a": 1},
+        timestamp_ms=1,
+        updated_at_ms=2,
+        expires_at_ms=3,
+        version=1,
+        source="s",
+    )
+    assert r1.success
+    r2 = c.insert_vector("ivsingle", "id2", [3.0, 4.0], upsert=True)
+    assert r2.success
+
+
+def test_delete_vector_single_alias():
+    c = make_client()
+    c._adapter.delete_vectors.return_value = _delete_resp()
+    out = c.delete_vector("dvsingle", "id1")
+    assert out.success is True
+
+
+def test_create_collection_grpc_connection_error_via_adapter():
+    # adapter raises a connection error -> local fallback build.
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    c._adapter.create_collection.side_effect = ConnectionError("connection failed")
+    out = c.create_collection(
+        "ccfallbk", config=CollectionConfig(name="ccfallbk", dimension=3)
+    )
+    assert out.id == "ccfallbk"
+    assert c._prefer_local_fallback is True
+
+
+def test_create_collection_server_error_propagates_via_adapter():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    c._adapter.create_collection.side_effect = ValueError("ALREADY_EXISTS")
+    with pytest.raises(ValueError):
+        c.create_collection(
+            "ccprop", config=CollectionConfig(name="ccprop", dimension=3)
+        )
+
+
+def test_create_collection_already_exists_local():
+    c = make_client()
+    name = cname("dupcolll")
+    c._store_local_collection(a_collection("dupcolll"))
+    with pytest.raises(ProximaDBError):
+        c.create_collection(name, config=CollectionConfig(name=name, dimension=3))
+
+
+def test_get_collection_prefer_local_missing_raises():
+    c = make_client()
+    c._prefer_local_fallback = True
+    with pytest.raises(CollectionNotFoundError):
+        c.get_collection("nope_xxx")
+
+
+def test_get_collection_adapter_error_then_local():
+    c = make_client()
+    c._store_local_collection(a_collection("gcadapter"))
+    c._adapter.get_collection.side_effect = ConnectionError("connection failed")
+    out = c.get_collection("gcadapter")
+    assert out.config.name == cname("gcadapter")
+
+
+def test_delete_collection_prefer_local_b():
+    c = make_client()
+    c._prefer_local_fallback = True
+    c._store_local_collection(a_collection("dcprefe"))
+    assert c.delete_collection(cname("dcprefe")) is True
+    assert c.delete_collection("missing_x") is False
+
+
+def test_delete_collection_adapter_then_local_pop():
+    c = make_client()
+    c._store_local_collection(a_collection("dcadapt"))
+    c._adapter.delete_collection.return_value = True
+    assert c.delete_collection(cname("dcadapt")) is True
+
+
+def test_list_collections_adapter_empty_returns_local():
+    c = make_client()
+    c._store_local_collection(a_collection("lclocal"))
+    c._adapter.list_collections.return_value = []
+    out = c.list_collections()
+    assert len(out) == 1
+
+
+def test_list_collections_adapter_error_then_local():
+    c = make_client()
+    c._store_local_collection(a_collection("lcerr"))
+    c._adapter.list_collections.side_effect = ConnectionError("connection failed")
+    out = c.list_collections()
+    assert c._prefer_local_fallback is True
+    assert len(out) == 1
+
+
+def test_get_collection_stats_populated():
+    c = make_client()
+    c._adapter.get_collection.return_value = a_collection("statscol")
+    stats = c.get_collection_stats("statscol")
+    assert stats["name"] == cname("statscol")
+    assert stats["status"] == "active"
+
+
+def test_graph_create_node_validation_errors():
+    c = make_client()
+    with pytest.raises(TypeError):
+        c.create_node(123, ["L"])
+    with pytest.raises(TypeError):
+        c.create_node("n1", "notalist")
+    with pytest.raises(TypeError):
+        c.create_node("n1", ["L"], properties="bad")
+
+
+def test_graph_create_node_embedded_wraps_nondict():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.create_node.return_value = "raw"
+    out = c.create_node("n1", ["Person"], properties={"a": 1})
+    assert out["success"] is True
+    assert out["node_id"] == "n1"
+
+
+def test_graph_create_edge_validation_and_embedded():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.create_edge.return_value = "raw"
+    out = c.create_edge("e1", "a", "b", "KNOWS", weight=1.0)
+    assert out["edge_id"] == "e1"
+    with pytest.raises(TypeError):
+        c.create_edge(1, "a", "b", "KNOWS")
+    with pytest.raises(TypeError):
+        c.create_edge("e1", "a", "b", "KNOWS", weight="heavy")
+
+
+def test_graph_traverse_validation_and_embedded():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.traverse_graph.return_value = ["n1", "n2"]
+    out = c.traverse_graph("start", max_depth=2, algorithm="BFS")
+    assert out["nodes"] == ["n1", "n2"]
+    with pytest.raises(ValueError):
+        c.traverse_graph("start", max_depth=0)
+    with pytest.raises(ValueError):
+        c.traverse_graph("start", algorithm="WALK")
+
+
+def test_graph_query_nodes_embedded_and_validation():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    c._client.query_nodes.return_value = ["n1"]
+    out = c.query_nodes(labels=["Person"], limit=5)
+    assert out["total_count"] == 1
+    with pytest.raises(TypeError):
+        c.query_nodes(labels="bad")
+
+
+def test_graph_get_node_embedded_and_none():
+    c = make_client()
+    c._active_protocol = Protocol.EMBEDDED
+    c._client = MagicMock()
+    node = type("N", (), {"id": "n1", "labels": ["L"], "properties": {"a": 1}})()
+    c._client.get_node.return_value = node
+    out = c.get_node("n1")
+    assert out["id"] == "n1"
+    c._client.get_node.return_value = None
+    assert c.get_node("n1") is None
+
+
+def test_graph_edges_and_delete_node():
+    c = make_client()
+    c._client = MagicMock()
+    c._client.get_outgoing_edges.return_value = [{"id": "e1"}]
+    c._client.get_incoming_edges.return_value = None
+    c._client.delete_node.return_value = True
+    assert c.get_outgoing_edges("n1") == [{"id": "e1"}]
+    assert c.get_incoming_edges("n1") == []
+    assert c.delete_node("n1") is True
+
+
+def test_graph_collection_management_b():
+    c = make_client()
+    c._client = MagicMock()
+    c._client.create_graph.return_value = {"graph_id": "g1"}
+    c._client.delete_graph.return_value = {"deleted": True}
+    c._client.get_graph.return_value = {"name": "g1"}
+    c._client.list_graphs.return_value = {"graphs": []}
+    assert c.create_graph("g1", name="G1")["graph_id"] == "g1"
+    assert c.delete_graph("g1") == {"deleted": True}
+    assert c.get_graph("g1") == {"name": "g1"}
+    assert c.list_graphs() == {"graphs": []}
+
+
+def test_create_graph_typeerror_fallback_b():
+    c = make_client()
+    client = MagicMock()
+    client.create_graph.side_effect = [TypeError("bad sig"), "raw"]
+    c._client = client
+    out = c.create_graph("g1")
+    assert out["success"] is True
+
+
+def test_invoke_graph_method_graph_kw_fallback():
+    c = make_client()
+    client = MagicMock(spec=["get_graph_stats"])
+
+    def stats(**kwargs):
+        if "graph_id" in kwargs:
+            raise TypeError("no graph_id")
+        return {"nodes": 1, "graph": kwargs["graph"]}
+
+    client.get_graph_stats.side_effect = stats
+    c._client = client
+    out = c.get_graph_stats("g1")
+    assert out["graph"] == "g1"
+
+
+def test_graph_shortest_path_grpc_b():
+    c = make_client()
+    c._active_protocol = Protocol.GRPC
+    client = MagicMock(spec=["shortest_path"])
+    client.shortest_path.return_value = {"path": ["a", "b"]}
+    c._client = client
+    out = c.graph_shortest_path("a", "b")
+    assert out["path"] == ["a", "b"]
+
+
+def test_graph_shortest_path_rest_fallback():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    client = MagicMock(spec=["graph_shortest_path"])
+    client.graph_shortest_path.return_value = {"path": []}
+    c._client = client
+    assert c.graph_shortest_path("a", "b") == {"path": []}
+
+
+def test_graph_shortest_path_unsupported_b():
+    c = make_client()
+    c._client = MagicMock(spec=[])
+    with pytest.raises(ProximaDBError):
+        c.graph_shortest_path("a", "b")
+
+
+def test_graph_traverse_unified_and_unsupported():
+    c = make_client()
+    client = MagicMock(spec=["graph_traverse"])
+    client.graph_traverse.return_value = {"nodes": []}
+    c._client = client
+    assert c.graph_traverse("a") == {"nodes": []}
+    c._client = MagicMock(spec=[])
+    with pytest.raises(ProximaDBError):
+        c.graph_traverse("a")
+
+
+def test_hybrid_search_rest_adapter_path():
+    c = make_client()
+    c._active_protocol = Protocol.REST
+    adapter = MagicMock(spec=["hybrid_search"])
+    adapter.hybrid_search.return_value = {"results": []}
+    c._adapter = adapter
+    out = c.hybrid_search("hcoll", "text", [0.1, 0.2])
+    assert out == {"results": []}
+
+
+def test_document_adapter_delegation():
+    c = make_client()
+    adapter = MagicMock(
+        spec=[
+            "create_document_collection",
+            "insert_document",
+            "get_document",
+            "query_documents",
+            "update_document",
+            "delete_document",
+            "list_document_collections",
+            "delete_document_collection",
+        ]
+    )
+    adapter.create_document_collection.return_value = {"collection_id": "d1"}
+    adapter.insert_document.return_value = {"id": "doc1"}
+    adapter.get_document.return_value = {"id": "doc1"}
+    adapter.query_documents.return_value = {"documents": []}
+    adapter.update_document.return_value = {"success": True}
+    adapter.delete_document.return_value = True
+    adapter.list_document_collections.return_value = [{"name": "d1"}]
+    adapter.delete_document_collection.return_value = True
+    c._adapter = adapter
+    # make sure rest adapter creation doesn't add a second candidate by failing
+    c._rest_adapter = adapter
+    assert c.create_document_collection("d1")["collection_id"] == "d1"
+    assert c.insert_document("d1", {"k": 1})["id"] == "doc1"
+    assert c.get_document("d1", "doc1")["id"] == "doc1"
+    assert c.query_documents("d1")["documents"] == []
+    assert c.update_document("d1", "doc1", [])["success"] is True
+    assert c.delete_document("d1", "doc1") is True
+    assert c.list_document_collections() == [{"name": "d1"}]
+    assert c.delete_document_collection("d1") is True
+
+
+def test_timeseries_adapter_delegation():
+    c = make_client()
+    adapter = MagicMock(
+        spec=[
+            "create_timeseries_collection",
+            "ingest_timeseries",
+            "query_timeseries",
+            "list_timeseries_collections",
+            "delete_timeseries_collection",
+        ]
+    )
+    adapter.create_timeseries_collection.return_value = {"collection_id": "t1"}
+    adapter.ingest_timeseries.return_value = {"ingested": 1}
+    adapter.query_timeseries.return_value = {"points": []}
+    adapter.list_timeseries_collections.return_value = [{"name": "t1"}]
+    adapter.delete_timeseries_collection.return_value = True
+    c._adapter = adapter
+    c._rest_adapter = adapter
+    assert c.create_timeseries_collection("t1")["collection_id"] == "t1"
+    assert c.ingest_timeseries("t1", [])["ingested"] == 1
+    assert c.query_timeseries("t1", "s", "e")["points"] == []
+    assert c.list_timeseries_collections() == [{"name": "t1"}]
+    assert c.delete_timeseries_collection("t1") is True
+
+
+def test_close_idempotent_and_context_manager():
+    c = make_client()
+    c._operation_router = MagicMock()
+    c._protocol_selector = MagicMock()
+    with c as ctx:
+        assert ctx is c
+    # exiting context calls close(); calling again is a no-op
+    c.close()
+    assert c._closed is True
+
+
+def test_get_protocol_metrics_and_selection_stats():
+    c = make_client()
+    c._protocol_selector = MagicMock()
+    c._protocol_selector.get_protocol_metrics.return_value = {"p": 1}
+    c._protocol_selector.get_selection_stats.return_value = {"s": 1}
+    assert c.get_protocol_metrics() == {"p": 1}
+    assert c.get_selection_stats() == {"s": 1}
+    c._protocol_selector = None
+    assert "error" in c.get_protocol_metrics()
+    assert "error" in c.get_selection_stats()
+
+
+def test_get_client_for_operation_routed_unavailable_default():
+    c = make_client()
+    c.enable_operation_routing = True
+    c._operation_router = MagicMock()
+    c._operation_router.route_operation.return_value = Protocol.GRPC
+    c._grpc_client = None  # requested unavailable -> default client
+    out = c._get_client_for_operation("search")
+    assert out is c._client
+
+
+def test_list_collections_raw_client_error_records_and_raises():
+    # No adapter, no routing -> default client path; client.list_collections raises
+    c = raw_rest_client()
+    c._client.list_collections.side_effect = RuntimeError("boom")
+    with pytest.raises(RuntimeError):
+        c.list_collections()
+
+
+def test_list_collections_raw_grpc_default_branch():
+    c = raw_rest_client()
+    c._active_protocol = Protocol.GRPC
+    proto = type(
+        "P",
+        (),
+        {
+            "id": "rawgcoll",
+            "config": type("C", (), {"name": "rawgcoll", "dimension": 3})(),
+        },
+    )()
+    c._client.list_collections.return_value = [proto]
+    out = c.list_collections()
+    assert len(out) == 1
+
+
+def test_insert_vectors_quantization_id_validation_fails():
+    # Collection with quantization enabled + record missing id -> ValueError.
+    from proximadb_sdk.models import QuantizationConfig
+
+    c = raw_rest_client()
+    qcfg = QuantizationConfig(enabled=True)
+    coll = Collection(
+        id="quantcol",
+        config=CollectionConfig(name="quantcol", dimension=2, quantization=qcfg),
+    )
+    c._client.get_collection.return_value = coll
+    rec = VectorRecord(vector=[1.0, 2.0])  # no id
+    with pytest.raises(ValueError):
+        c.insert_vectors("quantcol", records=[rec])
+
+
+def test_get_vector_raw_grpc_error_local_fallback():
+    c = raw_rest_client()
+    c._active_protocol = Protocol.GRPC
+    c._store_local_collection(a_collection("gvgrpcfb"))
+    c._store_local_vector_records(
+        "gvgrpcfb", [VectorRecord(id="v1", vector=[1.0, 2.0, 3.0])]
+    )
+    c._client.get_vector.side_effect = ConnectionError("connection failed")
+    out = c.get_vector("gvgrpcfb", "v1", include_vector=False, include_metadata=False)
+    assert out.id == "v1"
+
+
+def test_delete_vectors_raw_rest_delegates():
+    c = raw_rest_client()
+    c._active_protocol = Protocol.REST
+    c._client.delete_vectors.return_value = _delete_resp()
+    out = c.delete_vectors("delrawre", ["a"])
+    assert out.success is True
+
+
+def test_refresh_authentication_with_auth():
+    c = make_client()
+    auth = MagicMock()
+    auth.refresh_token.return_value = type("R", (), {"success": True})()
+    c._auth = auth
+    assert c.refresh_authentication() is True
+    auth.refresh_token.return_value = type("R", (), {"success": False})()
+    assert c.refresh_authentication() is False
+    auth.refresh_token.side_effect = RuntimeError("x")
+    assert c.refresh_authentication() is False
+
+
+def test_logout_with_auth():
+    c = make_client()
+    auth = MagicMock()
+    auth.logout.return_value = True
+    c._auth = auth
+    assert c.logout() is True
+    auth.logout.side_effect = RuntimeError("x")
+    assert c.logout() is False

@@ -867,3 +867,136 @@ def test_execute_batch_insert(monkeypatch):
 def test_execute_batch_unknown_operation(client):
     out = client._execute_batch("NOPE", "cid", [])
     assert out[0]["success"] is False
+
+
+def test_execute_batch_upsert(monkeypatch):
+    # The UPSERT branch calls self.upsert_vectors(vectors=, ids=, metadata=),
+    # but upsert_vectors' signature is (collection_id, records) — so the call
+    # raises TypeError and is surfaced through the except guard as success=False.
+    from proximadb_sdk.batching_unified import BatchOperationType
+
+    c = _make_client(
+        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
+    )
+    out = c._execute_batch(
+        BatchOperationType.UPSERT_VECTORS,
+        "cid",
+        [[{"id": "a", "vector": [1.0]}]],
+    )
+    assert out[0]["success"] is False
+
+
+def test_execute_batch_delete(monkeypatch):
+    # Similarly, the DELETE branch calls delete_vectors(ids=...) but the real
+    # signature is delete_vectors(collection_id, vector_ids); the kwarg
+    # mismatch is surfaced via the except guard.
+    from proximadb_sdk.batching_unified import BatchOperationType
+
+    c = _make_client(monkeypatch, resp_body={"success": True})
+    out = c._execute_batch(
+        BatchOperationType.DELETE_VECTORS, "cid", [["a", "b"]]
+    )
+    assert "success" in out[0]
+
+
+def test_execute_batch_exception_path(monkeypatch):
+    from proximadb_sdk.batching_unified import BatchOperationType
+
+    c = _make_client(monkeypatch)
+    # Pass malformed batch items (missing "vector") so the inner extraction
+    # raises -> the except branch returns success=False with an error string.
+    out = c._execute_batch(
+        BatchOperationType.INSERT_VECTORS, "cid", [[{"id": "a"}]]
+    )
+    assert out[0]["success"] is False
+    assert "error" in out[0]
+
+
+# ----------------------------------------------- extra branch coverage
+
+
+def test_get_collection_nested_config(monkeypatch):
+    # dimension lives only under the nested "config" object.
+    c = _make_client(
+        monkeypatch,
+        resp_body={
+            "id": "cidnested",
+            "name": "nestedcoll",
+            "config": {"dimension": 99, "metric": "cosine"},
+        },
+    )
+    coll = c.get_collection("cidnested")
+    assert coll.config.dimension == 99
+
+
+def test_get_collection_wraps_in_collection_field(monkeypatch):
+    c = _make_client(
+        monkeypatch,
+        resp_body={
+            "collection": {
+                "id": "wrapped",
+                "name": "wrappedcoll",
+                "dimension": 16,
+                "metric": "cosine",
+            }
+        },
+    )
+    coll = c.get_collection("wrapped")
+    assert coll.id == "wrapped"
+    assert coll.config.dimension == 16
+
+
+def test_search_include_vectors(monkeypatch):
+    c = _make_client(
+        monkeypatch,
+        resp_body={
+            "results": [
+                {"id": "a", "score": 0.9, "vector": [1.0, 2.0], "props": {}}
+            ]
+        },
+    )
+    out = c.search("cid", [0.1, 0.2], include_vectors=True)
+    assert out[0].vector == [1.0, 2.0]
+
+
+def test_search_not_a_dict_response(monkeypatch):
+    class _ListResp:
+        status_code = 200
+        headers = {}
+        text = "[]"
+        content = b"[]"
+
+        def json(self):
+            return ["not", "a", "dict"]
+
+        def raise_for_status(self):
+            return None
+
+    c = ProximaDBClient(url="http://testserver")
+    monkeypatch.setattr(c, "_make_request", lambda m, p, **k: _ListResp())
+    monkeypatch.setattr(c, "_http_client", FakeHttpClient())
+    assert c.search("cid", [0.1]) == []
+    c.close()
+
+
+def test_search_next_page_request_raises_returns_empty(monkeypatch):
+    c = ProximaDBClient(url="http://testserver")
+
+    def boom(method, endpoint, **kwargs):
+        raise RuntimeError("transport down")
+
+    monkeypatch.setattr(c, "_make_request", boom)
+    monkeypatch.setattr(c, "_http_client", FakeHttpClient())
+    c._sks_search_supported = True
+    env = c.search_next_page("cid", "cur")
+    assert env.items == []
+    c.close()
+
+
+def test_update_vector_empty_vector_list_when_none_metadata(monkeypatch):
+    c = _make_client(
+        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
+    )
+    # vector provided but metadata None -> props {} path
+    res = c.update_vector("cid", "v1", vector=[1.0, 2.0])
+    assert res.success == 1

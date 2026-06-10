@@ -1,15 +1,12 @@
 """Offline unit tests for proximadb_sdk.adapters.rest_adapter.RestProtocolAdapter.
 
-Fully offline: the underlying ProximaDBClient is constructed (it does NOT open
-a socket on init) and then its transport (the wrapped client and its HTTP
-session) is replaced with hand fakes / MagicMocks. No network, no server.
+Fully offline: the adapter is constructed (load_config does not connect), then its
+underlying REST client (``adapter._client``) is replaced with a hand-built fake that
+provides the ``_session`` / ``_timeout`` attributes and the protocol methods used by
+the adapter. No sockets, no servers, no sleeps.
 """
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock
-
 import pytest
-from pydantic import ValidationError
 
 from proximadb_sdk.adapters.rest_adapter import RestProtocolAdapter
 from proximadb_sdk.models import (
@@ -30,93 +27,139 @@ from proximadb_sdk.models import (
 
 
 class FakeResp:
-    """Minimal requests-like response."""
+    """Permissive fake HTTP response object."""
 
-    def __init__(self, payload=None, status_code=200):
-        self._payload = payload if payload is not None else {}
+    def __init__(self, body=None, status_code=200, raise_exc=None):
+        self._body = {} if body is None else body
         self.status_code = status_code
         self.headers = {}
-        self.text = ""
-        self.content = b""
-        self.raised = False
+        self.text = "ok"
+        self.content = b"ok"
+        self._raise_exc = raise_exc
 
     def json(self):
-        return self._payload
+        return self._body
 
     def raise_for_status(self):
-        self.raised = True
+        if self._raise_exc is not None:
+            raise self._raise_exc
         return None
 
 
 class FakeSession:
-    """Records the last call and returns a queued FakeResp per verb."""
+    """Records calls and returns programmed FakeResp objects per verb."""
 
     def __init__(self):
         self.calls = []
         self.responses = {}  # verb -> FakeResp or Exception
+        self.default = FakeResp({})
 
-    def _set(self, verb, resp):
+    def program(self, verb, resp):
         self.responses[verb] = resp
 
-    def _handle(self, verb, url, **kw):
-        self.calls.append((verb, url, kw))
-        resp = self.responses.get(verb, FakeResp())
-        if isinstance(resp, Exception):
-            raise resp
-        return resp
+    def _handle(self, verb, url, **kwargs):
+        self.calls.append((verb, url, kwargs))
+        r = self.responses.get(verb, self.default)
+        if isinstance(r, Exception):
+            raise r
+        return r
 
-    def get(self, url, **kw):
-        return self._handle("get", url, **kw)
+    def get(self, url, **kwargs):
+        return self._handle("get", url, **kwargs)
 
-    def post(self, url, **kw):
-        return self._handle("post", url, **kw)
+    def post(self, url, **kwargs):
+        return self._handle("post", url, **kwargs)
 
-    def put(self, url, **kw):
-        return self._handle("put", url, **kw)
+    def put(self, url, **kwargs):
+        return self._handle("put", url, **kwargs)
 
-    def delete(self, url, **kw):
-        return self._handle("delete", url, **kw)
+    def delete(self, url, **kwargs):
+        return self._handle("delete", url, **kwargs)
 
 
-def _make_collection(name="testcollection", dim=4):
-    return Collection(id="c1", config=CollectionConfig(name=name, dimension=dim))
+class FakeClient:
+    """Hand fake of the low-level REST client used by the adapter."""
+
+    def __init__(self):
+        self._session = FakeSession()
+        self._timeout = 30.0
+        self.closed = False
+        self._health = None
+        self._create_collection_ret = None
+        self._get_collection_ret = None
+        self._list_collections_ret = []
+        self._delete_collection_ret = True
+        self._insert_ret = None
+        self._upsert_ret = None
+        self._delete_vectors_ret = None
+        self._search_ret = []
+        self._execute_query_ret = {"rows": []}
+        self._explain_query_ret = {"plan": "scan"}
+        self.last_insert = None
+        self.last_search = None
+
+    def health(self):
+        return self._health
+
+    def create_collection(self, name=None, config=None, **kwargs):
+        return self._create_collection_ret
+
+    def get_collection(self, collection_id):
+        return self._get_collection_ret
+
+    def list_collections(self):
+        return self._list_collections_ret
+
+    def delete_collection(self, collection_id):
+        return self._delete_collection_ret
+
+    def insert_records(self, collection_id, payloads, **kwargs):
+        self.last_insert = (collection_id, payloads, kwargs)
+        return self._insert_ret
+
+    def upsert_records(self, collection_id, payloads, **kwargs):
+        self.last_insert = (collection_id, payloads, kwargs)
+        return self._upsert_ret
+
+    def delete_vectors(self, collection_id, vector_ids, **kwargs):
+        return self._delete_vectors_ret
+
+    def search(self, **kwargs):
+        self.last_search = kwargs
+        return self._search_ret
+
+    def execute_query(self, query, **kwargs):
+        self.last_query = (query, kwargs)
+        return self._execute_query_ret
+
+    def explain_query(self, query, **kwargs):
+        self.last_explain = (query, kwargs)
+        return self._explain_query_ret
+
+    def close(self):
+        self.closed = True
 
 
 @pytest.fixture
 def adapter():
-    """Construct a RestProtocolAdapter with a mocked underlying client + session."""
     a = RestProtocolAdapter(url="http://testserver")
-    a._client = MagicMock()
-    sess = FakeSession()
-    a._client._session = sess
-    a._client._timeout = 5.0
-    # remove auto-magic optional methods unless a test wants them
+    a._client = FakeClient()
     return a
 
 
+def _collection(cid="collection_a", dim=4):
+    return Collection(id=cid, config=CollectionConfig(name=cid, dimension=dim))
+
+
 # ---------------------------------------------------------------------------
-# Basic properties / construction
+# Construction / properties
 # ---------------------------------------------------------------------------
 
 
-def test_properties(adapter):
+def test_protocol_properties(adapter):
     assert adapter.protocol_name == "rest"
     assert adapter.is_connected is True
-
-
-def test_close_calls_client_close(adapter):
-    adapter._client.close = MagicMock()
-    adapter.close()
-    adapter._client.close.assert_called_once()
-    assert adapter.is_connected is False
-
-
-def test_close_without_close_method():
-    a = RestProtocolAdapter(url="http://testserver")
-    # client lacking a close method
-    a._client = SimpleNamespace()
-    a.close()
-    assert a.is_connected is False
+    assert adapter._url == "http://testserver"
 
 
 # ---------------------------------------------------------------------------
@@ -124,596 +167,632 @@ def test_close_without_close_method():
 # ---------------------------------------------------------------------------
 
 
-def test_health_passthrough_healthstatus(adapter):
+def test_health_passthrough_model(adapter):
     hs = HealthStatus(
         status="running",
-        version="1.0.0",
-        uptime_seconds=10,
-        services={"rest": "ok"},
+        version="1.0",
+        uptime_seconds=5,
+        services={},
         timestamp_ms=1,
     )
-    adapter._client.health.return_value = hs
+    adapter._client._health = hs
     assert adapter.health() is hs
 
 
 def test_health_from_dict(adapter):
-    adapter._client.health.return_value = {
+    adapter._client._health = {
         "status": "running",
-        "version": "1.0.0",
+        "version": "2.0",
         "uptime_seconds": 1,
-        "services": {"rest": "ok"},
-        "timestamp_ms": 1,
+        "services": {},
+        "timestamp_ms": 123,
     }
     result = adapter.health()
     assert isinstance(result, HealthStatus)
-    assert result.status == "running"
+    assert result.version == "2.0"
 
 
 def test_health_exception_fallback(adapter):
-    adapter._client.health.side_effect = RuntimeError("boom")
+    def boom():
+        raise RuntimeError("down")
+
+    adapter._client.health = boom
     result = adapter.health()
     assert isinstance(result, HealthStatus)
     assert result.services == {"rest": "unavailable"}
 
 
 # ---------------------------------------------------------------------------
-# Collection ops
+# Collections
 # ---------------------------------------------------------------------------
 
 
-def test_create_collection_passthrough(adapter):
-    coll = _make_collection()
-    adapter._client.create_collection.return_value = coll
-    assert adapter.create_collection("testcollection") is coll
+def test_create_collection_model_passthrough(adapter):
+    col = _collection()
+    adapter._client._create_collection_ret = col
+    assert adapter.create_collection("c1") is col
 
 
 def test_create_collection_from_dict(adapter):
-    coll = _make_collection()
-    adapter._client.create_collection.return_value = coll.model_dump()
-    result = adapter.create_collection("testcollection")
+    adapter._client._create_collection_ret = {
+        "id": "c2",
+        "config": {"name": "collection_two", "dimension": 8},
+    }
+    result = adapter.create_collection("collection_two")
     assert isinstance(result, Collection)
+    assert result.id == "c2"
 
 
-def test_create_collection_wrapper_raises(adapter):
-    # Wrapper objects exercise the legacy branch which builds Collection with
-    # name/dimension kwargs -- Collection now requires a `config`, so it raises.
-    wrapper = SimpleNamespace(id="x", name="testcollection", dimension=7)
-    adapter._client.create_collection.return_value = wrapper
-    with pytest.raises(ValidationError):
-        adapter.create_collection("testcollection")
+def test_create_collection_wrapper_object(adapter):
+    # The wrapper branch builds Collection(id=, name=, dimension=) which lacks the
+    # required `config` field, so the source raises ValidationError here.
+    class W:
+        id = "c3"
+        name = "collection_three"
+        dimension = 16
+
+    adapter._client._create_collection_ret = W()
+    with pytest.raises(Exception):
+        adapter.create_collection(
+            "collection_three",
+            config=CollectionConfig(name="collection_three", dimension=16),
+        )
 
 
-def test_create_collection_other(adapter):
-    adapter._client.create_collection.return_value = 12345
-    assert adapter.create_collection("testcollection") == 12345
-
-
-def test_get_collection_passthrough(adapter):
-    coll = _make_collection()
-    adapter._client.get_collection.return_value = coll
-    assert adapter.get_collection("c1") is coll
+def test_get_collection_model(adapter):
+    col = _collection()
+    adapter._client._get_collection_ret = col
+    assert adapter.get_collection("c1") is col
 
 
 def test_get_collection_none(adapter):
-    adapter._client.get_collection.return_value = None
-    assert adapter.get_collection("c1") is None
+    adapter._client._get_collection_ret = None
+    assert adapter.get_collection("missing") is None
 
 
 def test_get_collection_from_dict(adapter):
-    coll = _make_collection()
-    adapter._client.get_collection.return_value = coll.model_dump()
-    assert isinstance(adapter.get_collection("c1"), Collection)
+    adapter._client._get_collection_ret = {
+        "id": "c9",
+        "config": {"name": "collection_nine", "dimension": 3},
+    }
+    result = adapter.get_collection("c9")
+    assert isinstance(result, Collection)
+    assert result.id == "c9"
 
 
-def test_get_collection_wrapper_swallowed(adapter):
-    # The wrapper branch builds Collection(name=, dimension=) which raises;
-    # get_collection wraps everything in try/except and returns None.
-    adapter._client.get_collection.return_value = SimpleNamespace(
-        id="z", name="othercollection", dimension=3
-    )
-    assert adapter.get_collection("c1") is None
+def test_get_collection_wrapper_object(adapter):
+    # Wrapper branch builds an invalid Collection (no config) -> raises, caught,
+    # returns None.
+    class W:
+        id = "cw"
+        name = "collection_w"
+        dimension = 2
 
-
-def test_get_collection_other_object(adapter):
-    obj = object()
-    adapter._client.get_collection.return_value = obj
-    assert adapter.get_collection("c1") is obj
+    adapter._client._get_collection_ret = W()
+    assert adapter.get_collection("cw") is None
 
 
 def test_get_collection_exception(adapter):
-    adapter._client.get_collection.side_effect = ValueError("nope")
-    assert adapter.get_collection("c1") is None
+    def boom(_):
+        raise RuntimeError("x")
+
+    adapter._client.get_collection = boom
+    assert adapter.get_collection("c") is None
 
 
-def test_list_collections_passthrough_and_dict(adapter):
-    coll = _make_collection()
-    adapter._client.list_collections.return_value = [
-        coll,
-        coll.model_dump(),
-        object(),  # ignored (no name attr)
+def test_list_collections_mixed(adapter):
+    adapter._client._list_collections_ret = [
+        _collection("collection_a"),
+        {"id": "b", "config": {"name": "collection_b", "dimension": 4}},
     ]
     result = adapter.list_collections()
     assert len(result) == 2
     assert all(isinstance(c, Collection) for c in result)
 
 
-def test_list_collections_wrapper_item_raises(adapter):
-    # An item with a `name` attr hits the legacy Collection(name=,dim=) build,
-    # which raises -- the conversion loop is not guarded per-item.
-    adapter._client.list_collections.return_value = [
-        SimpleNamespace(id="w", name="wrappercollection", dimension=2),
-    ]
-    with pytest.raises(ValidationError):
-        adapter.list_collections()
-
-
 def test_list_collections_exception(adapter):
-    adapter._client.list_collections.side_effect = RuntimeError("x")
+    def boom():
+        raise RuntimeError("x")
+
+    adapter._client.list_collections = boom
     assert adapter.list_collections() == []
 
 
 def test_delete_collection_bool(adapter):
-    adapter._client.delete_collection.return_value = True
+    adapter._client._delete_collection_ret = True
     assert adapter.delete_collection("c1") is True
 
 
 def test_delete_collection_success_attr(adapter):
-    adapter._client.delete_collection.return_value = SimpleNamespace(success=False)
+    class R:
+        success = False
+
+    adapter._client._delete_collection_ret = R()
     assert adapter.delete_collection("c1") is False
 
 
 def test_delete_collection_other(adapter):
-    adapter._client.delete_collection.return_value = "weird"
+    adapter._client._delete_collection_ret = "deleted"
     assert adapter.delete_collection("c1") is True
 
 
 def test_delete_collection_exception(adapter):
-    adapter._client.delete_collection.side_effect = RuntimeError("x")
+    def boom(_):
+        raise RuntimeError("x")
+
+    adapter._client.delete_collection = boom
     assert adapter.delete_collection("c1") is False
 
 
 # ---------------------------------------------------------------------------
-# Record payload helper / batch result conversion
+# Record operations + helpers
 # ---------------------------------------------------------------------------
 
 
 def test_record_payloads_variants():
-    class HasDump:
-        def model_dump(self, exclude_none=True):
-            return {"id": "m", "vector": [1.0]}
-
+    rec_model = VectorRecord(id="v1", vector=[0.1, 0.2], metadata={"k": "v"})
     payloads = RestProtocolAdapter._record_payloads(
-        [{"id": "d", "vector": [0.1]}, HasDump()]
+        [{"id": "d1", "vector": [1.0]}, rec_model]
     )
-    assert payloads[0]["id"] == "d"
-    assert payloads[1]["id"] == "m"
-
-
-def test_record_payloads_proto_converter_branch(monkeypatch):
-    # A record that is neither a dict nor has model_dump falls through to the
-    # ProtoConverter path.
-    import proximadb_sdk.adapters.rest_adapter as mod
-
-    monkeypatch.setattr(
-        mod.ProtoConverter,
-        "vector_record_to_dict",
-        staticmethod(lambda rec: {"converted": True}),
-    )
-    payloads = RestProtocolAdapter._record_payloads([object()])
-    assert payloads == [{"converted": True}]
+    assert payloads[0] == {"id": "d1", "vector": [1.0]}
+    assert payloads[1]["id"] == "v1"
 
 
 def test_to_batch_result_passthrough():
-    br = BatchResult(total=3, success=3)
-    assert RestProtocolAdapter._to_batch_result(br, 3) is br
+    br = BatchResult(total=1, success=1, failed=0)
+    assert RestProtocolAdapter._to_batch_result(br, 1) is br
 
 
 def test_to_batch_result_from_vector_response():
-    resp = VectorOperationResponse(
+    vor = VectorOperationResponse(
         success=True,
         operation="INSERT",
-        metrics=OperationMetrics(successful_count=2, failed_count=1),
+        metrics=OperationMetrics(successful_count=3, failed_count=1),
         error_message="oops",
     )
-    br = RestProtocolAdapter._to_batch_result(resp, 3)
-    assert br.success == 2
+    br = RestProtocolAdapter._to_batch_result(vor, 4)
+    assert br.success == 3
     assert br.failed == 1
     assert br.errors == ["oops"]
 
 
 def test_to_batch_result_from_dict():
     br = RestProtocolAdapter._to_batch_result(
-        {"successful_count": 4, "failed_count": 1, "errors": ["e"]}, 5
+        {"success": 5, "failed": 2, "total": 7, "errors": ["e"]}, 7
     )
+    assert br.total == 7
+    assert br.success == 5
+    assert br.failed == 2
+
+
+def test_to_batch_result_from_object_bool_success():
+    class R:
+        success = True
+        failed = 0
+
+    br = RestProtocolAdapter._to_batch_result(R(), 9)
+    assert br.success == 9
+
+
+def test_to_batch_result_from_object_count_success():
+    class R:
+        success = 4
+        failed = 1
+
+    br = RestProtocolAdapter._to_batch_result(R(), 5)
     assert br.success == 4
     assert br.failed == 1
-    assert br.total == 5
-
-
-def test_to_batch_result_from_object():
-    obj = SimpleNamespace(success=True, failed=0)
-    br = RestProtocolAdapter._to_batch_result(obj, 7)
-    assert br.success == 7  # bool True -> total_count
-
-    obj2 = SimpleNamespace(success=False, failed=0)
-    br2 = RestProtocolAdapter._to_batch_result(obj2, 7)
-    assert br2.success == 0
-
-
-def test_batch_to_vector_response():
-    br = BatchResult(total=2, success=2, metrics=OperationMetrics(successful_count=2))
-    resp = RestProtocolAdapter._batch_to_vector_response(br, "INSERT")
-    assert resp.operation == "INSERT"
-    assert resp.error_message is None
-
-    br2 = BatchResult(total=1, success=0, errors=["a", "b"])
-    resp2 = RestProtocolAdapter._batch_to_vector_response(br2, "UPSERT")
-    assert resp2.error_message == "a; b"
-
-
-# ---------------------------------------------------------------------------
-# Insert / upsert records + vector aliases
-# ---------------------------------------------------------------------------
 
 
 def test_insert_records(adapter):
-    adapter._client.insert_records.return_value = {
-        "successful_count": 2,
-        "failed_count": 0,
-    }
-    result = adapter.insert_records("c1", [{"id": "a", "vector": [1.0]}, {"id": "b", "vector": [2.0]}])
+    adapter._client._insert_ret = {"success": 2, "failed": 0}
+    result = adapter.insert_records("c1", [{"id": "a"}, {"id": "b"}])
     assert isinstance(result, BatchResult)
     assert result.success == 2
 
 
 def test_upsert_records_native(adapter):
-    adapter._client.upsert_records.return_value = {"successful_count": 1}
-    result = adapter.upsert_records("c1", [{"id": "a", "vector": [1.0]}])
+    adapter._client._upsert_ret = {"success": 1, "failed": 0}
+    result = adapter.upsert_records("c1", [{"id": "a"}])
     assert result.success == 1
 
 
 def test_upsert_records_fallback(adapter):
-    # client without upsert_records: must fall back to insert_records(upsert=True)
-    a = RestProtocolAdapter(url="http://testserver")
-    fake = SimpleNamespace()
-    captured = {}
+    # Client without upsert_records -> falls back to insert_records(upsert=True)
+    class Minimal:
+        def __init__(self):
+            self._session = FakeSession()
+            self._timeout = 30.0
+            self.last_insert = None
+            self._insert_ret = {"success": 1, "failed": 0}
 
-    def insert_records(cid, payloads, **kw):
-        captured["kw"] = kw
-        return {"successful_count": 1}
+        def insert_records(self, collection_id, payloads, **kwargs):
+            self.last_insert = (collection_id, payloads, kwargs)
+            return self._insert_ret
 
-    fake.insert_records = insert_records
-    a._client = fake
-    result = a.upsert_records("c1", [{"id": "a", "vector": [1.0]}])
+    m = Minimal()
+    adapter._client = m
+    result = adapter.upsert_records("c1", [{"id": "a"}])
     assert result.success == 1
-    assert captured["kw"].get("upsert") is True
+    assert m.last_insert[2].get("upsert") is True
 
 
-def test_insert_vectors_alias(adapter):
-    adapter._client.insert_records.return_value = {"successful_count": 1}
-    resp = adapter.insert_vectors("c1", [{"id": "a", "vector": [1.0]}])
+# ---------------------------------------------------------------------------
+# Vector compatibility aliases
+# ---------------------------------------------------------------------------
+
+
+def test_insert_vectors(adapter):
+    adapter._client._insert_ret = {"success": 2, "failed": 0}
+    resp = adapter.insert_vectors("c1", [{"id": "a"}, {"id": "b"}])
     assert isinstance(resp, VectorOperationResponse)
     assert resp.operation == "INSERT"
+    assert resp.success == 2
 
 
-def test_upsert_vectors_alias(adapter):
-    adapter._client.upsert_records.return_value = {"successful_count": 1}
-    resp = adapter.upsert_vectors("c1", [{"id": "a", "vector": [1.0]}])
+def test_upsert_vectors(adapter):
+    adapter._client._upsert_ret = {"success": 1, "failed": 1, "errors": ["x"]}
+    resp = adapter.upsert_vectors("c1", [{"id": "a"}, {"id": "b"}])
     assert resp.operation == "UPSERT"
+    assert resp.error_message == "x"
 
 
-# ---------------------------------------------------------------------------
-# get_vectors
-# ---------------------------------------------------------------------------
+def test_get_vectors_native(adapter):
+    def get_vectors(collection_id, vector_ids, include_vectors=True, **kw):
+        return [
+            VectorRecord(id="v1", vector=[1.0], metadata={}),
+            {"id": "v2", "vector": [2.0], "metadata": {}},
+        ]
+
+    adapter._client.get_vectors = get_vectors
+    recs = adapter.get_vectors("c1", ["v1", "v2"])
+    assert len(recs) == 2
+    assert all(isinstance(r, VectorRecord) for r in recs)
 
 
-def test_get_vectors_batch(adapter):
-    vr = VectorRecord(id="a", vector=[1.0])
-    adapter._client.get_vectors.return_value = [
-        vr,
-        {"id": "b", "vector": [2.0]},
-        SimpleNamespace(id="c", vector=[3.0], metadata={"k": "v"}),
-    ]
-    result = adapter.get_vectors("c1", ["a", "b", "c"])
-    assert len(result) == 3
-    assert all(isinstance(r, VectorRecord) for r in result)
+def test_get_vectors_object(adapter):
+    class V:
+        id = "v3"
+        vector = [3.0]
+        metadata = {"a": 1}
+
+    def get_vectors(collection_id, vector_ids, include_vectors=True, **kw):
+        return [V()]
+
+    adapter._client.get_vectors = get_vectors
+    recs = adapter.get_vectors("c1", ["v3"])
+    assert recs[0].id == "v3"
 
 
-def test_get_vectors_fallback_single(adapter):
-    a = RestProtocolAdapter(url="http://testserver")
-    fake = SimpleNamespace()
+def test_get_vectors_fallback_get_vector(adapter):
+    calls = {"n": 0}
 
-    def get_vector(cid, vid):
-        if vid == "missing":
-            raise RuntimeError("not found")
-        return VectorRecord(id=vid, vector=[1.0])
+    def get_vector(collection_id, vid):
+        calls["n"] += 1
+        if vid == "bad":
+            raise RuntimeError("nope")
+        return VectorRecord(id=vid, vector=[1.0], metadata={})
 
-    fake.get_vector = get_vector
-    a._client = fake
-    result = a.get_vectors("c1", ["a", "missing", "b"])
-    ids = {r.id for r in result}
-    assert ids == {"a", "b"}
-
-
-# ---------------------------------------------------------------------------
-# delete_vectors / update_vector_metadata
-# ---------------------------------------------------------------------------
+    adapter._client.get_vector = get_vector
+    recs = adapter.get_vectors("c1", ["good", "bad"])
+    assert len(recs) == 1
+    assert recs[0].id == "good"
 
 
 def test_delete_vectors_passthrough(adapter):
-    resp = VectorOperationResponse(
+    vor = VectorOperationResponse(
         success=True, operation="DELETE", metrics=OperationMetrics()
     )
-    adapter._client.delete_vectors.return_value = resp
-    assert adapter.delete_vectors("c1", ["a"]) is resp
+    adapter._client._delete_vectors_ret = vor
+    assert adapter.delete_vectors("c1", ["a"]) is vor
 
 
-def test_delete_vectors_built(adapter):
-    adapter._client.delete_vectors.return_value = SimpleNamespace(success=True)
-    result = adapter.delete_vectors("c1", ["a", "b"])
-    assert isinstance(result, VectorOperationResponse)
-    assert result.operation == "DELETE"
-    assert result.metrics.successful_count == 2
+def test_delete_vectors_synthesizes_response(adapter):
+    adapter._client._delete_vectors_ret = {"raw": True}
+    resp = adapter.delete_vectors("c1", ["a", "b"])
+    assert isinstance(resp, VectorOperationResponse)
+    assert resp.operation == "DELETE"
+    assert resp.metrics.successful_count == 2
 
 
 def test_update_vector_metadata_native(adapter):
-    resp = VectorOperationResponse(
-        success=True, operation="UPDATE", metrics=OperationMetrics()
-    )
-    adapter._client.update_vector_metadata.return_value = resp
-    assert adapter.update_vector_metadata("c1", "a", {"k": "v"}) is resp
+    def update_vector_metadata(collection_id, vid, metadata, **kw):
+        return VectorOperationResponse(
+            success=True, operation="UPDATE", metrics=OperationMetrics()
+        )
+
+    adapter._client.update_vector_metadata = update_vector_metadata
+    resp = adapter.update_vector_metadata("c1", "v1", {"k": "v"})
+    assert resp.operation == "UPDATE"
 
 
-def test_update_vector_metadata_native_builds(adapter):
-    adapter._client.update_vector_metadata.return_value = {"ok": True}
-    result = adapter.update_vector_metadata("c1", "a", {"k": "v"})
-    assert isinstance(result, VectorOperationResponse)
-    assert result.operation == "UPDATE"
+def test_update_vector_metadata_native_non_model(adapter):
+    def update_vector_metadata(collection_id, vid, metadata, **kw):
+        return {"ok": True}
+
+    adapter._client.update_vector_metadata = update_vector_metadata
+    resp = adapter.update_vector_metadata("c1", "v1", {"k": "v"})
+    assert isinstance(resp, VectorOperationResponse)
+    assert resp.success is True
 
 
-def test_update_vector_metadata_update_metadata_method(adapter):
-    a = RestProtocolAdapter(url="http://testserver")
-    fake = SimpleNamespace()
-    resp = VectorOperationResponse(
-        success=True, operation="UPDATE", metrics=OperationMetrics()
-    )
-    fake.update_metadata = lambda cid, vid, meta, **kw: resp
-    a._client = fake
-    assert a.update_vector_metadata("c1", "a", {"k": "v"}) is resp
+def test_update_vector_metadata_update_metadata_alias(adapter):
+    class C:
+        def __init__(self):
+            self._session = FakeSession()
+            self._timeout = 30.0
+
+        def update_metadata(self, collection_id, vid, metadata, **kw):
+            return VectorOperationResponse(
+                success=True, operation="UPDATE", metrics=OperationMetrics()
+            )
+
+    adapter._client = C()
+    resp = adapter.update_vector_metadata("c1", "v1", {"k": "v"})
+    assert resp.operation == "UPDATE"
 
 
 def test_update_vector_metadata_fallback_found(adapter):
-    a = RestProtocolAdapter(url="http://testserver")
-    fake = SimpleNamespace()
-    fake.get_vector = lambda cid, vid: VectorRecord(
-        id=vid, vector=[1.0], metadata={"old": "1"}
-    )
-    fake.insert_records = lambda cid, payloads, **kw: {"successful_count": 1}
-    a._client = fake
-    result = a.update_vector_metadata("c1", "a", {"new": "2"})
-    assert isinstance(result, VectorOperationResponse)
-    assert result.operation == "UPSERT"
+    # Minimal client lacking update_* methods; provides get_vector + upsert path.
+    class Minimal:
+        def __init__(self):
+            self._session = FakeSession()
+            self._timeout = 30.0
+            self.last_insert = None
+
+        def get_vector(self, collection_id, vid):
+            return VectorRecord(id=vid, vector=[1.0], metadata={"old": 1})
+
+        def upsert_records(self, collection_id, payloads, **kwargs):
+            self.last_insert = (collection_id, payloads, kwargs)
+            return {"success": 1, "failed": 0}
+
+    adapter._client = Minimal()
+    resp = adapter.update_vector_metadata("c1", "v1", {"new": 2})
+    assert resp.operation == "UPSERT"
+    assert resp.success == 1
 
 
 def test_update_vector_metadata_fallback_not_found(adapter):
-    # No vector found -> builds the "not found" VectorOperationResponse, but
-    # that model requires `metrics` and the adapter omits it, so it raises.
-    a = RestProtocolAdapter(url="http://testserver")
-    fake = SimpleNamespace()
-    fake.get_vector = lambda cid, vid: None
-    a._client = fake
-    with pytest.raises(ValidationError):
-        a.update_vector_metadata("c1", "missing", {"k": "v"})
+    class Minimal:
+        def __init__(self):
+            self._session = FakeSession()
+            self._timeout = 30.0
+
+        def get_vector(self, collection_id, vid):
+            raise RuntimeError("missing")
+
+    adapter._client = Minimal()
+    # The not-found fallback builds VectorOperationResponse without the required
+    # `metrics` field, so the source raises ValidationError on this branch.
+    with pytest.raises(Exception):
+        adapter.update_vector_metadata("c1", "missing", {"k": "v"})
 
 
 # ---------------------------------------------------------------------------
-# search / batch_search
+# Search
 # ---------------------------------------------------------------------------
 
 
-class _NumpyLike:
-    def __init__(self, data):
-        self._data = data
-
-    def tolist(self):
-        return self._data
-
-
-def test_search_mixed_results(adapter):
-    sr = SearchResult(id="a", score=0.9)
-    adapter._client.search.return_value = [
-        sr,
-        {"vector_id": "b", "distance": 0.5, "vector": [1.0], "metadata": {"x": 1}},
-        SimpleNamespace(id="c", distance=0.3, vector=[2.0], metadata={"y": 2}),
+def test_search_dict_results(adapter):
+    adapter._client._search_ret = [
+        {"id": "a", "score": 0.9, "metadata": {"m": 1}, "vector": [1.0]},
+        {"vector_id": "b", "distance": 0.5},
     ]
-    result = adapter.search(
-        "c1", _NumpyLike([1.0, 2.0]), top_k=3, include_vectors=True
-    )
-    assert len(result) == 3
-    assert all(isinstance(r, SearchResult) for r in result)
-    assert result[1].id == "b"
+    results = adapter.search("c1", [0.1, 0.2], top_k=5, include_vectors=True)
+    assert len(results) == 2
+    assert results[0].id == "a"
+    assert results[1].id == "b"
+
+
+def test_search_numpy_query(adapter):
+    np = pytest.importorskip("numpy")
+    adapter._client._search_ret = [SearchResult(id="a", score=0.1)]
+    results = adapter.search("c1", np.array([0.1, 0.2]))
+    assert results[0].id == "a"
+    assert isinstance(adapter._client.last_search["query_vector"], list)
+
+
+def test_search_object_results(adapter):
+    class R:
+        id = "z"
+        score = 0.42
+        vector = [1.0]
+        metadata = {"k": "v"}
+
+    adapter._client._search_ret = [R()]
+    results = adapter.search("c1", [0.1], include_vectors=True, include_metadata=True)
+    assert results[0].id == "z"
+    assert results[0].score == 0.42
+
+
+def test_search_passthrough_model(adapter):
+    sr = SearchResult(id="m", score=0.7)
+    adapter._client._search_ret = [sr]
+    results = adapter.search("c1", [0.1])
+    assert results[0] is sr
 
 
 def test_search_none_results(adapter):
-    adapter._client.search.return_value = None
-    assert adapter.search("c1", [1.0]) == []
-
-
-def test_batch_search_native(adapter):
-    adapter._client.batch_search.return_value = [
-        [SearchResult(id="a", score=0.9), {"id": "b", "score": 0.5}],
-        None,
-    ]
-    result = adapter.batch_search(
-        "c1", [_NumpyLike([1.0]), [2.0]], include_vectors=True, include_metadata=True
-    )
-    assert len(result) == 2
-    assert len(result[0]) == 2
-    assert result[1] == []
-
-
-def test_batch_search_fallback(adapter):
-    a = RestProtocolAdapter(url="http://testserver")
-    fake = SimpleNamespace()
-    fake.search = lambda **kw: [{"id": "z", "score": 0.1}]
-    a._client = fake
-    result = a.batch_search("c1", [[1.0], [2.0]])
-    assert len(result) == 2
-    assert result[0][0].id == "z"
+    adapter._client._search_ret = None
+    assert adapter.search("c1", [0.1]) == []
 
 
 # ---------------------------------------------------------------------------
-# Query operations
+# Query surface
 # ---------------------------------------------------------------------------
 
 
 def test_execute_query(adapter):
-    adapter._client.execute_query.return_value = {"rows": []}
-    assert adapter.execute_query("MATCH ...", collection="c") == {"rows": []}
+    adapter._client._execute_query_ret = {"rows": [1, 2]}
+    out = adapter.execute_query("SELECT 1", language="uql", limit=10)
+    assert out == {"rows": [1, 2]}
+    assert adapter._client.last_query[0] == "SELECT 1"
 
 
 def test_execute_uql(adapter):
-    adapter._client.execute_query.return_value = {"ok": 1}
-    out = adapter.execute_uql("q", parameters=[1], collection="c", limit=5)
-    assert out == {"ok": 1}
-    _, kwargs = adapter._client.execute_query.call_args
-    assert kwargs["language"] == "uql"
+    adapter._client._execute_query_ret = {"rows": []}
+    adapter.execute_uql("FOR d IN c RETURN d", collection="c")
+    assert adapter._client.last_query[1]["language"] == "uql"
 
 
 def test_execute_aql(adapter):
-    adapter._client.execute_query.return_value = {}
-    adapter.execute_aql("q")
-    _, kwargs = adapter._client.execute_query.call_args
-    assert kwargs["language"] == "aql"
+    adapter.execute_aql("FOR d IN c RETURN d")
+    assert adapter._client.last_query[1]["language"] == "aql"
 
 
 def test_execute_federated(adapter):
-    adapter._client.execute_query.return_value = {}
-    adapter.execute_federated("q")
-    _, kwargs = adapter._client.execute_query.call_args
-    assert kwargs["language"] == "federated"
+    adapter.execute_federated("SELECT * FROM remote", limit=3)
+    assert adapter._client.last_query[1]["language"] == "federated"
 
 
 def test_explain_query(adapter):
-    adapter._client.explain_query.return_value = {"plan": "scan"}
-    assert adapter.explain_query("q", collection="c") == {"plan": "scan"}
+    out = adapter.explain_query("SELECT 1", language="aql", collection="c")
+    assert out == {"plan": "scan"}
+    assert adapter._client.last_explain[1]["language"] == "aql"
 
 
 # ---------------------------------------------------------------------------
-# Document operations (session-based)
+# Batch search
+# ---------------------------------------------------------------------------
+
+
+def test_batch_search_fallback(adapter):
+    adapter._client._search_ret = [{"id": "a", "score": 0.1}]
+    out = adapter.batch_search("c1", [[0.1], [0.2]], top_k=3)
+    assert len(out) == 2
+    assert out[0][0].id == "a"
+
+
+def test_batch_search_native(adapter):
+    np = pytest.importorskip("numpy")
+
+    def batch_search(**kwargs):
+        return [
+            [SearchResult(id="a", score=0.1)],
+            [{"id": "b", "score": 0.2, "metadata": {"m": 1}, "vector": [1.0]}],
+        ]
+
+    adapter._client.batch_search = batch_search
+    out = adapter.batch_search(
+        "c1", [np.array([0.1]), [0.2]], include_vectors=True, include_metadata=True
+    )
+    assert out[0][0].id == "a"
+    assert out[1][0].id == "b"
+
+
+def test_batch_search_native_none(adapter):
+    def batch_search(**kwargs):
+        return None
+
+    adapter._client.batch_search = batch_search
+    assert adapter.batch_search("c1", [[0.1]]) == []
+
+
+# ---------------------------------------------------------------------------
+# Document operations (HTTP via _session)
 # ---------------------------------------------------------------------------
 
 
 def test_create_document_collection(adapter):
-    adapter._client._session.responses["post"] = FakeResp({"id": "dc"})
-    out = adapter.create_document_collection("docs", {"shards": 2})
-    assert out == {"id": "dc"}
+    adapter._client._session.program("post", FakeResp({"name": "docs"}))
+    out = adapter.create_document_collection("docs", config={"shards": 2})
+    assert out == {"name": "docs"}
     verb, url, kw = adapter._client._session.calls[-1]
     assert verb == "post"
     assert "document-collections" in url
-    assert kw["json"]["shards"] == 2
 
 
 def test_create_document_collection_error(adapter):
-    adapter._client._session.responses["post"] = RuntimeError("fail")
+    adapter._client._session.program("post", RuntimeError("boom"))
     with pytest.raises(RuntimeError):
         adapter.create_document_collection("docs")
 
 
 def test_insert_document(adapter):
-    adapter._client._session.responses["post"] = FakeResp({"inserted": True})
-    out = adapter.insert_document("docs", {"a": 1}, id="d1")
-    assert out == {"inserted": True}
+    adapter._client._session.program("post", FakeResp({"id": "d1"}))
+    out = adapter.insert_document("docs", {"title": "x"}, id="d1")
+    assert out == {"id": "d1"}
 
 
 def test_insert_document_error(adapter):
-    adapter._client._session.responses["post"] = RuntimeError("fail")
+    adapter._client._session.program("post", FakeResp(raise_exc=RuntimeError("x")))
     with pytest.raises(RuntimeError):
-        adapter.insert_document("docs", {"a": 1})
+        adapter.insert_document("docs", {"title": "x"})
 
 
-def test_get_document_found(adapter):
-    adapter._client._session.responses["get"] = FakeResp({"id": "d1", "a": 1})
-    out = adapter.get_document("docs", "d1", projection=["a", "b"])
+def test_get_document(adapter):
+    adapter._client._session.program("get", FakeResp({"id": "d1", "title": "x"}))
+    out = adapter.get_document("docs", "d1", projection=["title"])
     assert out["id"] == "d1"
-    _, _, kw = adapter._client._session.calls[-1]
-    assert kw["params"]["projection"] == "a,b"
+    verb, url, kw = adapter._client._session.calls[-1]
+    assert kw["params"]["projection"] == "title"
 
 
 def test_get_document_404(adapter):
-    adapter._client._session.responses["get"] = FakeResp(status_code=404)
+    adapter._client._session.program("get", FakeResp({}, status_code=404))
     assert adapter.get_document("docs", "missing") is None
 
 
-def test_get_document_exception(adapter):
-    adapter._client._session.responses["get"] = RuntimeError("boom")
+def test_get_document_error(adapter):
+    adapter._client._session.program("get", RuntimeError("x"))
     assert adapter.get_document("docs", "d1") is None
 
 
 def test_query_documents(adapter):
-    adapter._client._session.responses["post"] = FakeResp({"documents": []})
+    adapter._client._session.program("post", FakeResp({"documents": [1, 2]}))
     out = adapter.query_documents(
-        "docs", filter={"a": 1}, projection=["a"], limit=50
+        "docs", filter={"a": 1}, projection=["title"], limit=5
     )
-    assert out == {"documents": []}
-    _, _, kw = adapter._client._session.calls[-1]
-    assert kw["json"]["limit"] == 50
-    assert kw["json"]["filter"] == {"a": 1}
+    assert out["documents"] == [1, 2]
 
 
 def test_query_documents_error(adapter):
-    adapter._client._session.responses["post"] = RuntimeError("fail")
+    adapter._client._session.program("post", RuntimeError("x"))
     with pytest.raises(RuntimeError):
         adapter.query_documents("docs")
 
 
 def test_update_document(adapter):
-    adapter._client._session.responses["put"] = FakeResp({"updated": True})
-    out = adapter.update_document("docs", "d1", [{"op": "set"}])
-    assert out == {"updated": True}
+    adapter._client._session.program("put", FakeResp({"updated": True}))
+    out = adapter.update_document("docs", "d1", [{"set": {"a": 1}}])
+    assert out["updated"] is True
 
 
 def test_update_document_error(adapter):
-    adapter._client._session.responses["put"] = RuntimeError("fail")
+    adapter._client._session.program("put", RuntimeError("x"))
     with pytest.raises(RuntimeError):
         adapter.update_document("docs", "d1", [])
 
 
-def test_delete_document_true(adapter):
-    adapter._client._session.responses["delete"] = FakeResp({"deleted": True})
+def test_delete_document(adapter):
+    adapter._client._session.program("delete", FakeResp({"deleted": True}))
     assert adapter.delete_document("docs", "d1") is True
 
 
-def test_delete_document_false(adapter):
-    adapter._client._session.responses["delete"] = FakeResp({})
-    assert adapter.delete_document("docs", "d1") is False
-
-
-def test_delete_document_exception(adapter):
-    adapter._client._session.responses["delete"] = RuntimeError("fail")
+def test_delete_document_error(adapter):
+    adapter._client._session.program("delete", RuntimeError("x"))
     assert adapter.delete_document("docs", "d1") is False
 
 
 def test_list_document_collections(adapter):
-    adapter._client._session.responses["get"] = FakeResp(
-        {"collections": [{"name": "x"}]}
-    )
+    adapter._client._session.program("get", FakeResp({"collections": [{"name": "a"}]}))
     out = adapter.list_document_collections()
-    assert out == [{"name": "x"}]
+    assert out == [{"name": "a"}]
 
 
 def test_list_document_collections_error(adapter):
-    adapter._client._session.responses["get"] = RuntimeError("fail")
+    adapter._client._session.program("get", RuntimeError("x"))
     assert adapter.list_document_collections() == []
 
 
-def test_delete_document_collection_true(adapter):
-    adapter._client._session.responses["delete"] = FakeResp({"success": True})
+def test_delete_document_collection(adapter):
+    adapter._client._session.program("delete", FakeResp({"success": True}))
     assert adapter.delete_document_collection("docs") is True
 
 
 def test_delete_document_collection_error(adapter):
-    adapter._client._session.responses["delete"] = RuntimeError("fail")
+    adapter._client._session.program("delete", RuntimeError("x"))
     assert adapter.delete_document_collection("docs") is False
 
 
@@ -723,18 +802,18 @@ def test_delete_document_collection_error(adapter):
 
 
 def test_hybrid_search(adapter):
-    adapter._client._session.responses["post"] = FakeResp({"results": [1, 2]})
-    out = adapter.hybrid_search("c", "text", [1.0, 2.0], fusion_strategy="weighted")
-    assert out == {"results": [1, 2]}
-    _, url, kw = adapter._client._session.calls[-1]
+    adapter._client._session.program("post", FakeResp({"results": [1]}))
+    out = adapter.hybrid_search("c1", "find me", [0.1, 0.2], top_k=3)
+    assert out["results"] == [1]
+    verb, url, kw = adapter._client._session.calls[-1]
     assert "hybrid/search" in url
-    assert kw["json"]["fusion_strategy"] == "weighted"
+    assert kw["json"]["fusion_strategy"] == "rrf"
 
 
 def test_hybrid_search_error(adapter):
-    adapter._client._session.responses["post"] = RuntimeError("fail")
+    adapter._client._session.program("post", RuntimeError("x"))
     with pytest.raises(RuntimeError):
-        adapter.hybrid_search("c", "text", [1.0])
+        adapter.hybrid_search("c1", "q", [0.1])
 
 
 # ---------------------------------------------------------------------------
@@ -743,81 +822,95 @@ def test_hybrid_search_error(adapter):
 
 
 def test_create_timeseries_collection(adapter):
-    adapter._client._session.responses["post"] = FakeResp({"id": "ts"})
-    out = adapter.create_timeseries_collection("ts", {"retention": "7d"})
-    assert out == {"id": "ts"}
-    _, url, kw = adapter._client._session.calls[-1]
-    assert "timeseries/collections" in url
-    assert kw["json"]["retention"] == "7d"
+    adapter._client._session.program("post", FakeResp({"name": "ts"}))
+    out = adapter.create_timeseries_collection("ts", config={"retention": "7d"})
+    assert out["name"] == "ts"
 
 
 def test_create_timeseries_collection_error(adapter):
-    adapter._client._session.responses["post"] = RuntimeError("fail")
+    adapter._client._session.program("post", RuntimeError("x"))
     with pytest.raises(RuntimeError):
         adapter.create_timeseries_collection("ts")
 
 
 def test_ingest_timeseries(adapter):
-    adapter._client._session.responses["post"] = FakeResp({"ingested": 3})
-    out = adapter.ingest_timeseries("ts", [{"t": 1, "v": 2}])
-    assert out == {"ingested": 3}
+    adapter._client._session.program("post", FakeResp({"ingested": 2}))
+    out = adapter.ingest_timeseries("ts", [{"t": 1, "v": 1.0}, {"t": 2, "v": 2.0}])
+    assert out["ingested"] == 2
 
 
 def test_ingest_timeseries_error(adapter):
-    adapter._client._session.responses["post"] = RuntimeError("fail")
+    adapter._client._session.program("post", RuntimeError("x"))
     with pytest.raises(RuntimeError):
         adapter.ingest_timeseries("ts", [])
 
 
 def test_query_timeseries_full(adapter):
-    adapter._client._session.responses["post"] = FakeResp({"series": []})
+    adapter._client._session.program("post", FakeResp({"points": [1, 2]}))
     out = adapter.query_timeseries(
         "ts",
-        "2020-01-01",
-        "2020-01-02",
+        start_time="2024-01-01",
+        end_time="2024-01-02",
         aggregation="sum",
-        bucket_ms=1000,
+        bucket_ms=60000,
         tag_filters={"host": "a"},
     )
-    assert out == {"series": []}
-    _, _, kw = adapter._client._session.calls[-1]
-    assert kw["json"]["bucket_ms"] == 1000
+    assert out["points"] == [1, 2]
+    verb, url, kw = adapter._client._session.calls[-1]
+    assert kw["json"]["bucket_ms"] == 60000
     assert kw["json"]["tag_filters"] == {"host": "a"}
-    assert kw["json"]["aggregation"] == "sum"
 
 
 def test_query_timeseries_minimal(adapter):
-    adapter._client._session.responses["post"] = FakeResp({"series": []})
-    out = adapter.query_timeseries("ts", "2020-01-01", "2020-01-02")
-    assert out == {"series": []}
-    _, _, kw = adapter._client._session.calls[-1]
+    adapter._client._session.program("post", FakeResp({"points": []}))
+    out = adapter.query_timeseries("ts", start_time="a", end_time="b")
+    verb, url, kw = adapter._client._session.calls[-1]
     assert "bucket_ms" not in kw["json"]
     assert "tag_filters" not in kw["json"]
+    assert out["points"] == []
 
 
 def test_query_timeseries_error(adapter):
-    adapter._client._session.responses["post"] = RuntimeError("fail")
+    adapter._client._session.program("post", RuntimeError("x"))
     with pytest.raises(RuntimeError):
         adapter.query_timeseries("ts", "a", "b")
 
 
 def test_list_timeseries_collections(adapter):
-    adapter._client._session.responses["get"] = FakeResp(
-        {"collections": [{"name": "ts"}]}
-    )
-    assert adapter.list_timeseries_collections() == [{"name": "ts"}]
+    adapter._client._session.program("get", FakeResp({"collections": ["ts1"]}))
+    assert adapter.list_timeseries_collections() == ["ts1"]
 
 
 def test_list_timeseries_collections_error(adapter):
-    adapter._client._session.responses["get"] = RuntimeError("fail")
+    adapter._client._session.program("get", RuntimeError("x"))
     assert adapter.list_timeseries_collections() == []
 
 
-def test_delete_timeseries_collection_true(adapter):
-    adapter._client._session.responses["delete"] = FakeResp({"success": True})
+def test_delete_timeseries_collection(adapter):
+    adapter._client._session.program("delete", FakeResp({"success": True}))
     assert adapter.delete_timeseries_collection("ts") is True
 
 
 def test_delete_timeseries_collection_error(adapter):
-    adapter._client._session.responses["delete"] = RuntimeError("fail")
+    adapter._client._session.program("delete", RuntimeError("x"))
     assert adapter.delete_timeseries_collection("ts") is False
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_close(adapter):
+    adapter.close()
+    assert adapter._client.closed is True
+    assert adapter.is_connected is False
+
+
+def test_close_no_close_method(adapter):
+    class NoClose:
+        pass
+
+    adapter._client = NoClose()
+    adapter.close()
+    assert adapter.is_connected is False

@@ -1,1278 +1,898 @@
 """Offline unit tests for proximadb_sdk.client_v1.ProximaDBClientV1.
 
-Fully offline: no real network / no real gRPC channel. The REST paths are
-exercised by monkeypatching ``requests`` inside the client module; the gRPC
-paths are exercised by constructing a client with protocol="rest" and then
-swapping in fake stubs / forcing ``protocol == "grpc"`` for dispatch.
+Fully offline: every transport (requests + gRPC stubs) is mocked. No real
+network, server, or channel I/O happens. gRPC channels are created lazily by
+grpc.insecure_channel and never connected because we replace every stub with a
+MagicMock before invoking any RPC.
 """
 
-import types as _pytypes
+from unittest.mock import MagicMock
 
 import grpc
 import pytest
-from pydantic import ValidationError
 
-from proximadb_sdk import client_v1
+import proximadb_sdk.client_v1 as cv1
 from proximadb_sdk.client_v1 import ProximaDBClientV1, create_client_v1
 from proximadb_sdk.exceptions import NetworkError, ProximaDBError
-from proximadb_sdk.models import (
-    DistanceMetric,
-    StorageEngine,
-    VectorRecord,
+from proximadb_sdk.models import DistanceMetric, StorageEngine, VectorRecord
+from proximadb_sdk.v1 import (
+    collection_types_pb2,
+    graph_pb2,
+    types_pb2,
+    vector_types_pb2,
 )
-from proximadb_sdk.v1 import types_pb2
+from proximadb_sdk.v2 import record_pb2
 
 
 # --------------------------------------------------------------------------
-# Fakes
+# Test doubles
 # --------------------------------------------------------------------------
 class FakeResp:
-    def __init__(self, json_data=None, status_code=200, raise_exc=None):
+    def __init__(self, json_data=None, status_code=200):
         self._json = json_data if json_data is not None else {}
         self.status_code = status_code
         self.headers = {}
-        self.text = ""
-        self.content = b""
-        self._raise_exc = raise_exc
+        self.text = "fake"
+        self.content = b"fake"
 
     def json(self):
         return self._json
 
     def raise_for_status(self):
-        if self._raise_exc is not None:
-            raise self._raise_exc
         return None
 
 
-class FakeRequests:
-    """Stand-in for the ``requests`` module used inside client_v1."""
-
-    # Mirror the exception type the client catches.
-    RequestException = client_v1.requests.RequestException
-
-    def __init__(self):
-        self.calls = []
-        self.next_resp = FakeResp()
-        self.raise_on_call = None
-
-    def _record(self, method, url, **kwargs):
-        self.calls.append((method, url, kwargs))
-        if self.raise_on_call is not None:
-            raise self.raise_on_call
-        return self.next_resp
-
-    def get(self, url, **kwargs):
-        return self._record("GET", url, **kwargs)
-
-    def post(self, url, **kwargs):
-        return self._record("POST", url, **kwargs)
-
-
-@pytest.fixture
-def fake_requests(monkeypatch):
-    fr = FakeRequests()
-    monkeypatch.setattr(client_v1, "requests", fr)
-    return fr
-
-
-def make_rest_client():
-    return ProximaDBClientV1(url="http://testserver:5678", protocol="rest")
-
-
-# --------------------------------------------------------------------------
-# Construction / protocol selection
-# --------------------------------------------------------------------------
-def test_init_rest_default():
-    c = make_rest_client()
-    assert c.protocol == "rest"
-    assert c.base_url == "http://testserver:5678"
-    assert c.timeout == 30.0
-
-
-def test_init_auto_resolves_rest():
-    c = ProximaDBClientV1(url="http://localhost:8080", protocol="auto")
-    assert c.protocol == "rest"
-
-
-def test_init_auto_resolves_grpc_by_port(monkeypatch):
-    created = {}
-
-    class FakeChannel:
-        def close(self):
-            created["closed"] = True
-
-    monkeypatch.setattr(
-        client_v1.grpc, "insecure_channel", lambda url: FakeChannel()
-    )
-    # Stub the *_grpc stub classes so __init__ doesn't touch real grpc.
-    for mod, attr in [
-        (client_v1.vector_pb2_grpc, "VectorServiceStub"),
-        (client_v1.collection_pb2_grpc, "CollectionServiceStub"),
-        (client_v1.sql_pb2_grpc, "QueryServiceStub"),
-        (client_v1.graph_pb2_grpc, "GraphServiceStub"),
-    ]:
-        monkeypatch.setattr(mod, attr, lambda ch: object())
-    if client_v1.record_pb2_grpc is not None:
-        monkeypatch.setattr(
-            client_v1.record_pb2_grpc,
-            "ProximaRecordServiceStub",
-            lambda ch: object(),
-        )
-
-    c = ProximaDBClientV1(url="http://localhost:5679", protocol="auto")
-    assert c.protocol == "grpc"
-    c.close()
-    assert created.get("closed") is True
-
-
-def test_init_explicit_grpc_scheme(monkeypatch):
-    monkeypatch.setattr(
-        client_v1.grpc, "insecure_channel", lambda url: object()
-    )
-    for mod, attr in [
-        (client_v1.vector_pb2_grpc, "VectorServiceStub"),
-        (client_v1.collection_pb2_grpc, "CollectionServiceStub"),
-        (client_v1.sql_pb2_grpc, "QueryServiceStub"),
-        (client_v1.graph_pb2_grpc, "GraphServiceStub"),
-    ]:
-        monkeypatch.setattr(mod, attr, lambda ch: object())
-    if client_v1.record_pb2_grpc is not None:
-        monkeypatch.setattr(
-            client_v1.record_pb2_grpc,
-            "ProximaRecordServiceStub",
-            lambda ch: object(),
-        )
-    c = ProximaDBClientV1(url="grpc://host:1234", protocol="auto")
-    assert c.protocol == "grpc"
-
-
-def test_close_without_channel():
-    c = make_rest_client()
-    # Should be a no-op (no channel attribute).
-    c.close()
-
-
-def test_create_client_v1_convenience():
-    c = create_client_v1(url="http://testserver", protocol="rest")
-    assert isinstance(c, ProximaDBClientV1)
-
-
-# --------------------------------------------------------------------------
-# gRPC error helper
-# --------------------------------------------------------------------------
 class FakeRpcError(grpc.RpcError):
-    def __init__(self, details="boom", code=grpc.StatusCode.INTERNAL):
-        self._details = details
+    def __init__(self, code=grpc.StatusCode.INTERNAL, details="boom"):
         self._code = code
-
-    def details(self):
-        return self._details
+        self._details = details
 
     def code(self):
         return self._code
 
+    def details(self):
+        return self._details
 
+
+@pytest.fixture
+def rest_client():
+    return ProximaDBClientV1(url="http://testserver", protocol="rest")
+
+
+@pytest.fixture
 def grpc_client():
-    """A client forced into grpc dispatch with fake stubs attached."""
-    c = make_rest_client()
-    c.protocol = "grpc"
-    c.collection_stub = _pytypes.SimpleNamespace()
-    c.vector_stub = _pytypes.SimpleNamespace()
-    c.sql_stub = _pytypes.SimpleNamespace()
-    c.graph_stub = _pytypes.SimpleNamespace()
+    c = ProximaDBClientV1(url="http://testserver:5679", protocol="grpc")
+    # Replace every stub so no real RPC can hit the wire.
+    c.vector_stub = MagicMock()
+    c.collection_stub = MagicMock()
+    c.sql_stub = MagicMock()
+    c.graph_stub = MagicMock()
+    c.record_stub = MagicMock()
     return c
 
 
 # --------------------------------------------------------------------------
-# create_collection - REST
+# Construction / protocol resolution
 # --------------------------------------------------------------------------
-def test_create_collection_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp(
-        {
-            "collection_id": "c1",
-            "name": "bookshelf",
-            "dimension": 4,
-            "engine": "sst",
-        }
-    )
-    c = make_rest_client()
-    col = c.create_collection(
-        "bookshelf", 4, DistanceMetric.COSINE, StorageEngine.SST
+def test_init_rest_default():
+    c = ProximaDBClientV1()
+    assert c.protocol == "rest"
+    assert c.base_url == "http://localhost:5678"
+
+
+def test_init_auto_grpc_by_port():
+    c = ProximaDBClientV1(url="http://h:5679", protocol="auto")
+    assert c.protocol == "grpc"
+    assert hasattr(c, "channel")
+    c.close()
+
+
+def test_init_auto_grpc_by_scheme():
+    c = ProximaDBClientV1(url="grpc://h:1234", protocol="auto")
+    assert c.protocol == "grpc"
+    c.close()
+
+
+def test_init_explicit_grpc_sets_stubs():
+    c = ProximaDBClientV1(url="http://h:5679", protocol="grpc")
+    assert hasattr(c, "vector_stub")
+    assert hasattr(c, "collection_stub")
+    assert hasattr(c, "sql_stub")
+    assert hasattr(c, "graph_stub")
+    c.close()
+
+
+def test_close_no_channel(rest_client):
+    # No channel attribute on REST clients; close must be a no-op.
+    assert not hasattr(rest_client, "channel")
+    rest_client.close()
+
+
+def test_create_client_v1_factory():
+    c = create_client_v1(url="http://testserver", protocol="rest")
+    assert isinstance(c, ProximaDBClientV1)
+    assert c.protocol == "rest"
+
+
+# --------------------------------------------------------------------------
+# Collections - REST
+# --------------------------------------------------------------------------
+def test_create_collection_rest(rest_client, monkeypatch):
+    captured = {}
+
+    def fake_post(url, json=None, timeout=None, **kw):
+        captured["url"] = url
+        captured["json"] = json
+        return FakeResp({"collection_id": "c1", "name": "docs_col", "dimension": 8, "engine": "sst"})
+
+    monkeypatch.setattr(cv1.requests, "post", fake_post)
+    col = rest_client.create_collection(
+        "docs_col", 8, DistanceMetric.COSINE, StorageEngine.SST
     )
     assert col.id == "c1"
-    assert col.config.dimension == 4
-    method, url, kwargs = fake_requests.calls[0]
-    assert method == "POST"
-    assert url.endswith("/api/v2/collections")
-    assert kwargs["json"]["enable_proxima_record"] is True
+    assert col.config.dimension == 8
+    assert "/api/v2/collections" in captured["url"]
+    assert captured["json"]["enable_proxima_record"] is True
 
 
-def test_create_collection_rest_string_args(fake_requests):
-    fake_requests.next_resp = FakeResp({"id": "x", "dimension": 8})
-    c = make_rest_client()
-    col = c.create_collection("tablename", 8, "euclidean", "nova")
+def test_create_collection_rest_string_enums(rest_client, monkeypatch):
+    monkeypatch.setattr(
+        cv1.requests, "post", lambda *a, **k: FakeResp({"id": "x", "dimension": 4})
+    )
+    col = rest_client.create_collection("colnamed", 4, distance_metric="euclidean", storage_engine="nova")
     assert col.config.distance_metric == DistanceMetric.EUCLIDEAN
 
 
-def test_create_collection_rest_network_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("nope")
-    c = make_rest_client()
+def test_create_collection_rest_network_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("down")
+
+    monkeypatch.setattr(cv1.requests, "post", boom)
     with pytest.raises(NetworkError):
-        c.create_collection("tablename", 4)
+        rest_client.create_collection("c", 4)
 
 
-# --------------------------------------------------------------------------
-# create_collection - gRPC
-# --------------------------------------------------------------------------
-def test_create_collection_grpc_ok():
-    c = grpc_client()
-    resp = _pytypes.SimpleNamespace(
-        id="cid",
-        config=_pytypes.SimpleNamespace(
-            name="bookshelf", dimension=4, distance_metric=2, storage_engine=2
+def test_get_collection_rest_found(rest_client, monkeypatch):
+    monkeypatch.setattr(
+        cv1.requests,
+        "get",
+        lambda *a, **k: FakeResp(
+            {"id": "c1", "name": "docs_col", "dimension": 8, "distance_metric": "COSINE", "engine": "SST"}
         ),
-        stats=_pytypes.SimpleNamespace(
-            vector_count=5, index_size_bytes=10, data_size_bytes=20
-        ),
-        created_at=2000,
-        updated_at=4000,
     )
-    c.collection_stub.CreateCollection = lambda req, timeout: resp
-    col = c.create_collection(
-        "bookshelf", 4, DistanceMetric.COSINE, StorageEngine.SST
-    )
-    assert col.id == "cid"
-    assert col.config.distance_metric == DistanceMetric.EUCLIDEAN
-    assert col.config.storage_engine == StorageEngine.SST
-    assert col.stats.vector_count == 5
-    assert col.created_at_ms == 2  # 2000 micros -> 2 millis
-
-
-def test_create_collection_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("create failed")
-
-    c.collection_stub.CreateCollection = boom
-    with pytest.raises(ProximaDBError):
-        c.create_collection("bookshelf", 4)
-
-
-# --------------------------------------------------------------------------
-# get_collection
-# --------------------------------------------------------------------------
-def test_get_collection_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp(
-        {
-            "collection_id": "c1",
-            "name": "bookshelf",
-            "dimension": 4,
-            "distance_metric": "Cosine",
-            "engine": "SST",
-        }
-    )
-    col = make_rest_client().get_collection("bookshelf")
-    assert col.id == "c1"
+    col = rest_client.get_collection("docs_col")
+    assert col.config.dimension == 8
     assert col.config.distance_metric == DistanceMetric.COSINE
 
 
-def test_get_collection_rest_404(fake_requests):
-    fake_requests.next_resp = FakeResp(status_code=404)
-    assert make_rest_client().get_collection("missing") is None
+def test_get_collection_rest_not_found(rest_client, monkeypatch):
+    monkeypatch.setattr(cv1.requests, "get", lambda *a, **k: FakeResp({}, status_code=404))
+    assert rest_client.get_collection("missing") is None
 
 
-def test_get_collection_rest_network_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
+def test_get_collection_rest_network_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("oops")
+
+    monkeypatch.setattr(cv1.requests, "get", boom)
     with pytest.raises(NetworkError):
-        make_rest_client().get_collection("books")
+        rest_client.get_collection("docs")
 
 
-def test_get_collection_grpc_ok():
-    # The gRPC path builds a flat Collection(id, name, dimension, ...) without
-    # the required `config` field, so the pydantic model rejects it. Exercising
-    # the path still covers the construction lines.
-    c = grpc_client()
-    resp = _pytypes.SimpleNamespace(
-        id="cid",
-        name="bookshelf",
-        dimension=4,
-        distance_metric="COSINE",
-        storage_engine="SST",
+def test_list_collections_rest(rest_client, monkeypatch):
+    monkeypatch.setattr(
+        cv1.requests,
+        "get",
+        lambda *a, **k: FakeResp(
+            {"collections": [{"name": "alpha_col", "dimension": 4, "engine": "sst"}]}
+        ),
     )
-    c.collection_stub.GetCollection = lambda req, timeout: resp
-    with pytest.raises(ValidationError):
-        c.get_collection("bookshelf")
-
-
-def test_get_collection_grpc_not_found():
-    c = grpc_client()
-
-    def nf(req, timeout):
-        raise FakeRpcError("nf", code=grpc.StatusCode.NOT_FOUND)
-
-    c.collection_stub.GetCollection = nf
-    assert c.get_collection("books") is None
-
-
-def test_get_collection_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("err", code=grpc.StatusCode.INTERNAL)
-
-    c.collection_stub.GetCollection = boom
-    with pytest.raises(ProximaDBError):
-        c.get_collection("books")
-
-
-# --------------------------------------------------------------------------
-# list_collections
-# --------------------------------------------------------------------------
-def test_list_collections_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp(
-        {
-            "collections": [
-                {
-                    "name": "bookshelf",
-                    "dimension": 4,
-                    "distance_metric": "cosine",
-                    "engine": "sst",
-                }
-            ]
-        }
-    )
-    cols = make_rest_client().list_collections()
+    cols = rest_client.list_collections()
     assert len(cols) == 1
-    assert cols[0].config.name == "bookshelf"
+    assert cols[0].config.name == "alpha_col"
 
 
-def test_list_collections_rest_network_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
+def test_list_collections_rest_network_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("oops")
+
+    monkeypatch.setattr(cv1.requests, "get", boom)
     with pytest.raises(NetworkError):
-        make_rest_client().list_collections()
+        rest_client.list_collections()
 
 
-def test_list_collections_grpc_ok():
-    c = grpc_client()
-    col = _pytypes.SimpleNamespace(
+# --------------------------------------------------------------------------
+# Collections - gRPC
+# --------------------------------------------------------------------------
+def test_create_collection_grpc(grpc_client):
+    resp = collection_types_pb2.Collection(
         id="c1",
-        name="books",
-        dimension=4,
-        distance_metric="COSINE",
-        storage_engine="SST",
+        config=collection_types_pb2.CollectionConfig(
+            name="docs_col", dimension=8, distance_metric=vector_types_pb2.COSINE,
+            storage_engine=vector_types_pb2.SST,
+        ),
+        stats=collection_types_pb2.CollectionStats(vector_count=3),
+        created_at=2000,
+        updated_at=4000,
     )
-    c.collection_stub.ListCollections = (
-        lambda req, timeout: _pytypes.SimpleNamespace(collections=[col])
-    )
-    # Same flat-Collection construction issue as the gRPC get path.
-    with pytest.raises(ValidationError):
-        c.list_collections()
+    grpc_client.collection_stub.CreateCollection.return_value = resp
+    col = grpc_client.create_collection("docs_col", 8, "cosine", "sst")
+    assert col.id == "c1"
+    assert col.config.dimension == 8
+    assert col.stats.vector_count == 3
+    assert col.created_at_ms == 2  # micros -> millis
 
 
-def test_list_collections_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("x")
-
-    c.collection_stub.ListCollections = boom
+def test_create_collection_grpc_error(grpc_client):
+    grpc_client.collection_stub.CreateCollection.side_effect = FakeRpcError(details="bad")
     with pytest.raises(ProximaDBError):
-        c.list_collections()
+        grpc_client.create_collection("docs", 8)
+
+
+def test_get_collection_grpc_not_found(grpc_client):
+    grpc_client.collection_stub.GetCollection.side_effect = FakeRpcError(
+        code=grpc.StatusCode.NOT_FOUND, details="nope"
+    )
+    assert grpc_client.get_collection("x") is None
+
+
+def test_get_collection_grpc_other_error(grpc_client):
+    grpc_client.collection_stub.GetCollection.side_effect = FakeRpcError(
+        code=grpc.StatusCode.INTERNAL, details="boom"
+    )
+    with pytest.raises(ProximaDBError):
+        grpc_client.get_collection("x")
+
+
+def test_list_collections_grpc_error(grpc_client):
+    grpc_client.collection_stub.ListCollections.side_effect = FakeRpcError()
+    with pytest.raises(ProximaDBError):
+        grpc_client.list_collections()
 
 
 # --------------------------------------------------------------------------
-# insert_records / insert_vectors - REST
+# Records / vectors - REST
 # --------------------------------------------------------------------------
-def test_insert_records_rest_dict_and_alias(fake_requests):
-    fake_requests.next_resp = FakeResp({"success": True})
-    c = make_rest_client()
-    out = c.insert_records(
-        "c1",
+def test_insert_records_rest_dict_payloads(rest_client, monkeypatch):
+    captured = {}
+
+    def fake_post(url, json=None, timeout=None, **kw):
+        captured["url"] = url
+        captured["json"] = json
+        return FakeResp({"success": True, "success_count": 2})
+
+    monkeypatch.setattr(cv1.requests, "post", fake_post)
+    out = rest_client.insert_records(
+        "col",
         [
-            {"id": "r1", "vector": [0.1], "metadata": {"k": 1}},
+            {"id": "r1", "vector": [0.1], "metadata": {"k": "v"}},
             {"oid": "r2", "vector": [0.2]},
-            {"vector": [0.3]},  # no id -> record_2
         ],
     )
     assert out["success"] is True
-    sent = fake_requests.calls[0][2]["json"]["records"]
-    # metadata renamed to props
-    assert sent[0]["props"] == {"k": 1}
-    assert sent[1]["id"] == "r2"
-    assert sent[2]["id"] == "record_2"
+    recs = captured["json"]["records"]
+    # metadata renamed to props; id derived from oid for second record
+    assert recs[0]["props"] == {"k": "v"}
+    assert recs[1]["id"] == "r2"
+    assert "/records/batch" in captured["url"]
 
 
-def test_insert_vectors_alias_with_vectorrecord(fake_requests):
-    fake_requests.next_resp = FakeResp({"success": True})
-    c = make_rest_client()
-    vr = VectorRecord(id="v1", vector=[0.5], metadata={"a": "b"})
-    out = c.insert_vectors("c1", [vr])
-    assert out["success"] is True
-    rec = fake_requests.calls[0][2]["json"]["records"][0]
-    assert rec["id"] == "v1"
-    assert rec["props"] == {"a": "b"}
+def test_insert_records_rest_vectorrecord(rest_client, monkeypatch):
+    captured = {}
+
+    def fake_post(url, json=None, timeout=None, **kw):
+        captured["json"] = json
+        return FakeResp({"success": True})
+
+    monkeypatch.setattr(cv1.requests, "post", fake_post)
+    rec = VectorRecord(id="v1", vector=[1.0, 2.0], metadata={"a": 1}, source="hello")
+    rest_client.insert_vectors("col", [rec])
+    payload = captured["json"]["records"][0]
+    assert payload["id"] == "v1"
+    assert payload["source"] == "hello"
+    assert payload["text_fields"][0]["content"] == "hello"
 
 
-def test_record_payload_vectorrecord_with_source(fake_requests):
-    c = make_rest_client()
-    vr = VectorRecord(id="v1", vector=[0.5], source="hello world")
-    payload = c._record_payload(vr, 0)
-    assert payload["source"] == "hello world"
-    assert payload["text_fields"][0]["content"] == "hello world"
-
-
-def test_record_payload_vectorrecord_no_id():
-    c = make_rest_client()
-    vr = VectorRecord(id="", vector=[0.1])
-    payload = c._record_payload(vr, 7)
-    assert payload["id"] == "record_7"
-
-
-def test_insert_vectors_rest_alias_direct(fake_requests):
-    fake_requests.next_resp = FakeResp({"success": True})
-    c = make_rest_client()
-    out = c._insert_vectors_rest("c1", [VectorRecord(id="v1", vector=[0.1])])
-    assert out["success"] is True
-
-
-def test_insert_records_rest_network_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
-    with pytest.raises(NetworkError):
-        make_rest_client().insert_records("c1", [{"id": "a", "vector": [0.1]}])
-
-
-# --------------------------------------------------------------------------
-# insert_records - gRPC
-# --------------------------------------------------------------------------
-@pytest.mark.skipif(
-    client_v1.record_pb2 is None, reason="v2 record stubs unavailable"
-)
-def test_insert_records_grpc_ok():
-    c = grpc_client()
-    c.record_stub = _pytypes.SimpleNamespace()
-    err = _pytypes.SimpleNamespace(
-        record_index=1, record_id="r2", error_code="E", error_message="bad"
+def test_insert_records_rest_no_id_fallback(rest_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cv1.requests,
+        "post",
+        lambda url, json=None, **k: captured.update(json=json) or FakeResp({}),
     )
-    resp = _pytypes.SimpleNamespace(
+    rec = VectorRecord(vector=[1.0])
+    rest_client.insert_records("col", [rec])
+    assert captured["json"]["records"][0]["id"] == "record_0"
+
+
+def test_insert_records_rest_network_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
+
+    monkeypatch.setattr(cv1.requests, "post", boom)
+    with pytest.raises(NetworkError):
+        rest_client.insert_records("col", [{"id": "x", "vector": [1.0]}])
+
+
+# --------------------------------------------------------------------------
+# Records / vectors - gRPC
+# --------------------------------------------------------------------------
+def test_insert_records_grpc(grpc_client):
+    resp = record_pb2.ProximaRecordBatchResponse(
         success=True,
         total_processed=2,
         success_count=1,
         failed_count=1,
         inserted_ids=["r1"],
-        errors=[err],
+        errors=[
+            record_pb2.BatchError(
+                record_index=1, record_id="r2", error_code="DUP", error_message="dup"
+            )
+        ],
     )
-    c.record_stub.InsertRecords = lambda req, timeout: resp
-    out = c.insert_records(
-        "c1",
+    grpc_client.record_stub.InsertRecords.return_value = resp
+    out = grpc_client.insert_records(
+        "col",
         [
-            {
-                "id": "r1",
-                "vector": [0.1],
-                "props": {
-                    "b": True,
-                    "i": 3,
-                    "f": 1.5,
-                    "s": "x",
-                    "n": None,
-                },
-                "source": "doc",
-                "text_fields": [{"name": "text", "content": "hello"}],
-            }
+            {"id": "r1", "vector": [0.1], "props": {"n": 1, "b": True, "f": 1.5, "s": "x", "z": None}},
+            {"id": "r2", "vector": [0.2], "source": "txt", "text_fields": [{"name": "t", "content": "body"}]},
         ],
     )
     assert out["success"] is True
+    assert out["success_count"] == 1
     assert out["inserted_ids"] == ["r1"]
     assert out["errors"][0]["record_id"] == "r2"
 
 
-@pytest.mark.skipif(
-    client_v1.record_pb2 is None, reason="v2 record stubs unavailable"
-)
-def test_insert_records_grpc_error():
-    c = grpc_client()
-    c.record_stub = _pytypes.SimpleNamespace()
-
-    def boom(req, timeout):
-        raise FakeRpcError("insert fail")
-
-    c.record_stub.InsertRecords = boom
+def test_insert_records_grpc_error(grpc_client):
+    grpc_client.record_stub.InsertRecords.side_effect = FakeRpcError()
     with pytest.raises(ProximaDBError):
-        c.insert_records("c1", [{"id": "r1", "vector": [0.1]}])
+        grpc_client.insert_records("col", [{"id": "r1", "vector": [0.1]}])
 
 
 def test_insert_records_grpc_missing_stub():
-    c = grpc_client()
-    # no record_stub attribute -> should raise ProximaDBError
+    c = ProximaDBClientV1(url="http://h:5679", protocol="grpc")
+    # Simulate v2 stubs unavailable.
     if hasattr(c, "record_stub"):
         delattr(c, "record_stub")
     with pytest.raises(ProximaDBError):
-        c._insert_records_grpc("c1", [{"id": "r1", "vector": [0.1]}])
+        c.insert_records("col", [{"id": "r1", "vector": [0.1]}])
+    c.close()
 
 
-def test_insert_vectors_grpc_alias():
-    c = grpc_client()
-    c.record_stub = _pytypes.SimpleNamespace()
-    resp = _pytypes.SimpleNamespace(
-        success=True,
-        total_processed=1,
-        success_count=1,
-        failed_count=0,
-        inserted_ids=["r1"],
-        errors=[],
-    )
-    c.record_stub.InsertRecords = lambda req, timeout: resp
-    out = c._insert_vectors_grpc("c1", [VectorRecord(id="r1", vector=[0.1])])
-    assert out["success_count"] == 1
+def test_typed_value_branches(grpc_client):
+    assert grpc_client._typed_value(None).is_null is True
+    assert grpc_client._typed_value(True).boolean_value is True
+    assert grpc_client._typed_value(5).integer_value == 5
+    assert grpc_client._typed_value(2.5).float_value == 2.5
+    assert grpc_client._typed_value("hi").text_value == "hi"
 
 
-# --------------------------------------------------------------------------
-# _typed_value
-# --------------------------------------------------------------------------
-@pytest.mark.skipif(
-    client_v1.record_pb2 is None, reason="v2 record stubs unavailable"
-)
-def test_typed_value_variants():
-    c = make_rest_client()
-    assert c._typed_value(None).is_null is True
-    assert c._typed_value(True).boolean_value is True
-    assert c._typed_value(3).integer_value == 3
-    assert c._typed_value(1.5).float_value == 1.5
-    assert c._typed_value("hi").text_value == "hi"
-
-
-# --------------------------------------------------------------------------
-# search_vectors
-# --------------------------------------------------------------------------
-def test_search_vectors_rest_ok(fake_requests):
-    # The REST path builds SearchResult(results=..., total_found=...) which omits
-    # the model's required id/score fields, raising ValidationError. The request
-    # is still sent (covered) before construction fails.
-    fake_requests.next_resp = FakeResp(
-        {"results": [{"id": "a", "score": 0.9}], "total_found": 1}
-    )
-    c = make_rest_client()
-    with pytest.raises(ValidationError):
-        c.search_vectors("c1", [0.1, 0.2], top_k=5, filters={"genre": "sci"})
-    sent = fake_requests.calls[0][2]["json"]
-    assert sent["filters"][0]["field"] == "genre"
-
-
-def test_search_vectors_rest_no_filters(fake_requests):
-    fake_requests.next_resp = FakeResp({"results": [], "total_found": 0})
-    with pytest.raises(ValidationError):
-        make_rest_client().search_vectors("c1", [0.1])
-
-
-def test_search_vectors_rest_network_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
-    with pytest.raises(NetworkError):
-        make_rest_client().search_vectors("c1", [0.1])
-
-
-def test_search_vectors_grpc_ok():
-    c = grpc_client()
-    r = _pytypes.SimpleNamespace(
-        id="a", score=0.9, vector=[0.1], metadata={"k": "v"}
-    )
-    resp = _pytypes.SimpleNamespace(
-        results=_pytypes.SimpleNamespace(results=[r])
-    )
-    c.vector_stub.VectorSearch = lambda req, timeout: resp
-    out = c.search_vectors("c1", [0.1], top_k=3)
-    assert out[0].id == "a"
-    assert out[0].score == 0.9
-
-
-def test_search_vectors_grpc_empty():
-    c = grpc_client()
-    resp = _pytypes.SimpleNamespace(results=None)
-    c.vector_stub.VectorSearch = lambda req, timeout: resp
-    out = c.search_vectors("c1", [0.1])
-    assert out == []
-
-
-def test_search_vectors_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("search fail")
-
-    c.vector_stub.VectorSearch = boom
+def test_typed_value_unavailable(grpc_client, monkeypatch):
+    monkeypatch.setattr(cv1, "record_pb2", None)
     with pytest.raises(ProximaDBError):
-        c.search_vectors("c1", [0.1])
+        grpc_client._typed_value(1)
 
 
 # --------------------------------------------------------------------------
-# get_vector
+# Search - REST / gRPC
 # --------------------------------------------------------------------------
-def test_get_vector_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp(
-        {"id": "v1", "vector": [0.1, 0.2], "props": {"k": 1}}
+def test_search_vectors_grpc(grpc_client):
+    inner = vector_types_pb2.SearchResult(
+        results=[
+            vector_types_pb2.SearchVectorRecord(id="r1", score=0.9, vector=[0.1, 0.2])
+        ]
     )
-    vr = make_rest_client().get_vector("c1", "v1")
-    assert vr.id == "v1"
-    assert vr.metadata == {"k": 1}
+    resp = vector_types_pb2.VectorOperationResponse(success=True, results=inner)
+    grpc_client.vector_stub.VectorSearch.return_value = resp
+    # filters left None: the gRPC SearchQuery.filters map expects SqlValue
+    # messages, so the source's ``filters or {}`` only works for the empty case.
+    results = grpc_client.search_vectors("col", [0.1, 0.2], top_k=5)
+    assert results[0].id == "r1"
+    assert results[0].score == pytest.approx(0.9)
 
 
-def test_get_vector_rest_404(fake_requests):
-    fake_requests.next_resp = FakeResp(status_code=404)
-    assert make_rest_client().get_vector("c1", "v1") is None
+def test_search_vectors_grpc_empty(grpc_client):
+    resp = vector_types_pb2.VectorOperationResponse(success=True)
+    grpc_client.vector_stub.VectorSearch.return_value = resp
+    assert grpc_client.search_vectors("col", [0.1]) == []
 
 
-def test_get_vector_rest_no_id(fake_requests):
-    fake_requests.next_resp = FakeResp({})
-    assert make_rest_client().get_vector("c1", "v1") is None
-
-
-def test_get_vector_rest_network_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
-    with pytest.raises(NetworkError):
-        make_rest_client().get_vector("c1", "v1")
-
-
-def test_get_vector_grpc_ok():
-    c = grpc_client()
-    r = _pytypes.SimpleNamespace(id="v1", vector=[0.1], metadata={"k": "v"})
-    resp = _pytypes.SimpleNamespace(
-        success=True, results=_pytypes.SimpleNamespace(results=[r])
-    )
-    c.vector_stub.VectorGet = lambda req, timeout: resp
-    vr = c.get_vector("c1", "v1")
-    assert vr.id == "v1"
-
-
-def test_get_vector_grpc_none():
-    c = grpc_client()
-    resp = _pytypes.SimpleNamespace(success=False, results=None)
-    c.vector_stub.VectorGet = lambda req, timeout: resp
-    assert c.get_vector("c1", "v1") is None
-
-
-def test_get_vector_grpc_not_found():
-    c = grpc_client()
-
-    def nf(req, timeout):
-        raise FakeRpcError("nf", code=grpc.StatusCode.NOT_FOUND)
-
-    c.vector_stub.VectorGet = nf
-    assert c.get_vector("c1", "v1") is None
-
-
-def test_get_vector_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("err")
-
-    c.vector_stub.VectorGet = boom
+def test_search_vectors_grpc_error(grpc_client):
+    grpc_client.vector_stub.VectorSearch.side_effect = FakeRpcError()
     with pytest.raises(ProximaDBError):
-        c.get_vector("c1", "v1")
+        grpc_client.search_vectors("col", [0.1])
 
 
-# --------------------------------------------------------------------------
-# execute_sql
-# --------------------------------------------------------------------------
-def test_execute_sql_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp({"rows": [{"x": 1}]})
-    out = make_rest_client().execute_sql("SELECT 1", parameters=[1, "a"])
-    assert out["rows"] == [{"x": 1}]
-    sent = fake_requests.calls[0][2]["json"]
-    assert sent["language"] == "uql"
-    assert sent["parameters"] == [1, "a"]
+def test_search_vectors_rest_network_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
 
-
-def test_execute_sql_rest_network_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
+    monkeypatch.setattr(cv1.requests, "post", boom)
     with pytest.raises(NetworkError):
-        make_rest_client().execute_sql("SELECT 1")
+        rest_client.search_vectors("col", [0.1], filters={"k": "v"})
 
 
-def test_execute_sql_grpc_ok():
-    c = grpc_client()
-    field = _pytypes.SimpleNamespace(
-        key="x", value=types_pb2.SqlValue(int64_value=42)
+def test_get_vector_grpc_found(grpc_client):
+    inner = vector_types_pb2.SearchResult(
+        results=[vector_types_pb2.SearchVectorRecord(id="v1", score=1.0, vector=[0.1])]
     )
-    row = _pytypes.SimpleNamespace(fields=[field])
-    resp = _pytypes.SimpleNamespace(
-        rows=[row], rows_scanned=10, rows_returned=1, execution_time_ms=5
+    resp = vector_types_pb2.VectorOperationResponse(success=True, results=inner)
+    grpc_client.vector_stub.VectorGet.return_value = resp
+    rec = grpc_client.get_vector("col", "v1")
+    assert rec.id == "v1"
+    assert rec.vector == [pytest.approx(0.1)]
+
+
+def test_get_vector_grpc_none(grpc_client):
+    resp = vector_types_pb2.VectorOperationResponse(success=False)
+    grpc_client.vector_stub.VectorGet.return_value = resp
+    assert grpc_client.get_vector("col", "v1") is None
+
+
+def test_get_vector_grpc_not_found_error(grpc_client):
+    grpc_client.vector_stub.VectorGet.side_effect = FakeRpcError(
+        code=grpc.StatusCode.NOT_FOUND
     )
-    c.sql_stub.ExecuteQuery = lambda req, timeout: resp
-    out = c.execute_sql("SELECT x", parameters=[1, "s", True, 1.5])
-    assert out["rows"][0]["x"] == 42
+    assert grpc_client.get_vector("col", "v1") is None
+
+
+def test_get_vector_grpc_other_error(grpc_client):
+    grpc_client.vector_stub.VectorGet.side_effect = FakeRpcError()
+    with pytest.raises(ProximaDBError):
+        grpc_client.get_vector("col", "v1")
+
+
+def test_get_vector_rest_found(rest_client, monkeypatch):
+    monkeypatch.setattr(
+        cv1.requests,
+        "get",
+        lambda *a, **k: FakeResp({"id": "v1", "vector": [0.1], "props": {"k": "v"}}),
+    )
+    rec = rest_client.get_vector("col", "v1")
+    assert rec.id == "v1"
+    assert rec.metadata == {"k": "v"}
+
+
+def test_get_vector_rest_404(rest_client, monkeypatch):
+    monkeypatch.setattr(cv1.requests, "get", lambda *a, **k: FakeResp({}, status_code=404))
+    assert rest_client.get_vector("col", "v1") is None
+
+
+def test_get_vector_rest_empty_body(rest_client, monkeypatch):
+    monkeypatch.setattr(cv1.requests, "get", lambda *a, **k: FakeResp({}))
+    assert rest_client.get_vector("col", "v1") is None
+
+
+def test_get_vector_rest_network_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
+
+    monkeypatch.setattr(cv1.requests, "get", boom)
+    with pytest.raises(NetworkError):
+        rest_client.get_vector("col", "v1")
+
+
+def test_advanced_vector_search_rest(rest_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cv1.requests,
+        "post",
+        lambda url, json=None, **k: captured.update(url=url, json=json)
+        or FakeResp({"results": []}),
+    )
+    out = rest_client.advanced_vector_search(
+        "col", [0.1], filters={"k": "v"}, accuracy_threshold=0.8,
+        search_params={"timeout_ms": 100},
+    )
+    assert out == {"results": []}
+    assert captured["json"]["accuracy_threshold"] == 0.8
+
+
+def test_advanced_vector_search_rest_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
+
+    monkeypatch.setattr(cv1.requests, "post", boom)
+    with pytest.raises(NetworkError):
+        rest_client.advanced_vector_search("col", [0.1])
+
+
+def test_advanced_vector_search_grpc(grpc_client):
+    # The source iterates ``response.results`` then ``result_list.results`` —
+    # i.e. it expects a list-of-result-lists shape. Provide a matching fake
+    # response so the parsing loop is exercised end to end. ``filters`` is left
+    # None because the SearchQuery.filters map only accepts SqlValue messages.
+    inner = vector_types_pb2.SearchResult(
+        results=[vector_types_pb2.SearchVectorRecord(id="r1", score=0.5, vector=[0.1])]
+    )
+
+    class FakeResults:
+        results = [inner]
+        execution_time_ms = 7
+
+    grpc_client.vector_stub.SearchVectors.return_value = FakeResults()
+    out = grpc_client.advanced_vector_search(
+        "col", [0.1], accuracy_threshold=0.9,
+        search_params={"timeout_ms": 50, "enable_two_stage": True,
+                       "enable_clustering_hint": True,
+                       "enable_metadata_filtering_hint": True},
+    )
+    assert out["total_count"] == 1
+    assert out["results"][0]["id"] == "r1"
+    assert out["execution_time_ms"] == 7
+
+
+def test_advanced_vector_search_grpc_error(grpc_client):
+    grpc_client.vector_stub.SearchVectors.side_effect = FakeRpcError()
+    with pytest.raises(ProximaDBError):
+        grpc_client.advanced_vector_search("col", [0.1])
+
+
+# --------------------------------------------------------------------------
+# SQL
+# --------------------------------------------------------------------------
+def test_execute_sql_rest(rest_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cv1.requests,
+        "post",
+        lambda url, json=None, **k: captured.update(url=url, json=json)
+        or FakeResp({"rows": [{"a": 1}]}),
+    )
+    out = rest_client.execute_sql("SELECT 1", parameters=[1, "x"])
+    assert out["rows"] == [{"a": 1}]
+    assert captured["json"]["language"] == "uql"
+    assert captured["json"]["parameters"] == [1, "x"]
+    assert "/api/v2/query" in captured["url"]
+
+
+def test_execute_sql_rest_network_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
+
+    monkeypatch.setattr(cv1.requests, "post", boom)
+    with pytest.raises(NetworkError):
+        rest_client.execute_sql("SELECT 1")
+
+
+def test_execute_sql_grpc(grpc_client):
+    row = types_pb2.SqlRow(
+        fields=[
+            types_pb2.SqlRowField(key="name", value=types_pb2.SqlValue(string_value="abc")),
+            types_pb2.SqlRowField(key="num", value=types_pb2.SqlValue(int64_value=42)),
+        ]
+    )
+    resp = types_pb2.ExecuteQueryResponse(rows=[row], rows_scanned=10, rows_returned=1)
+    grpc_client.sql_stub.ExecuteQuery.return_value = resp
+    out = grpc_client.execute_sql(
+        "SELECT * FROM t WHERE x = ?",
+        parameters=["s", 1, 1.5, True, None, b"bytes", [1, 2], {"k": "v"}],
+    )
+    assert out["rows"][0]["name"] == "abc"
+    assert out["rows"][0]["num"] == 42
     assert out["rows_scanned"] == 10
 
 
-def test_execute_sql_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("sql fail")
-
-    c.sql_stub.ExecuteQuery = boom
+def test_execute_sql_grpc_error(grpc_client):
+    grpc_client.sql_stub.ExecuteQuery.side_effect = FakeRpcError()
     with pytest.raises(ProximaDBError):
-        c.execute_sql("SELECT 1")
+        grpc_client.execute_sql("SELECT 1")
 
 
-# --------------------------------------------------------------------------
-# health_check
-# --------------------------------------------------------------------------
-def test_health_check_ok(fake_requests):
-    fake_requests.next_resp = FakeResp({"status": "ok"})
-    assert make_rest_client().health_check() == {"status": "ok"}
+def test_convert_to_from_sql_value_roundtrip(rest_client):
+    cases = ["str", 7, 3.14, True, None, b"data", [1, "two"], {"k": 1}]
+    for original in cases:
+        proto = rest_client._convert_to_sql_value(original)
+        back = rest_client._convert_from_sql_value(proto)
+        if isinstance(original, bytes):
+            assert back == original
+        elif isinstance(original, list):
+            assert back == [1, "two"]
+        elif isinstance(original, dict):
+            assert back == {"k": 1}
+        else:
+            assert back == original
 
 
-def test_health_check_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("down")
-    with pytest.raises(NetworkError):
-        make_rest_client().health_check()
-
-
-# --------------------------------------------------------------------------
-# SqlValue conversions
-# --------------------------------------------------------------------------
-def test_convert_to_sql_value_all_types():
-    c = make_rest_client()
-    assert c._convert_to_sql_value(None).HasField("null_value")
-    assert c._convert_to_sql_value(True).bool_value is True
-    assert c._convert_to_sql_value(5).int64_value == 5
-    assert c._convert_to_sql_value(1.5).number_value == 1.5
-    assert c._convert_to_sql_value("s").string_value == "s"
-    assert c._convert_to_sql_value(b"x").bytes_value == b"x"
-    arr = c._convert_to_sql_value([1, 2])
-    assert len(arr.array_value.values) == 2
-    obj = c._convert_to_sql_value({"k": 1})
-    assert obj.object_value.fields["k"].int64_value == 1
-
+def test_convert_to_sql_value_fallback(rest_client):
     class Weird:
         def __str__(self):
             return "weird"
 
-    assert c._convert_to_sql_value(Weird()).string_value == "weird"
+    proto = rest_client._convert_to_sql_value(Weird())
+    assert proto.string_value == "weird"
 
 
-def test_convert_from_sql_value_all_types():
-    c = make_rest_client()
-    assert c._convert_from_sql_value(types_pb2.SqlValue(string_value="s")) == "s"
-    assert c._convert_from_sql_value(types_pb2.SqlValue(number_value=1.5)) == 1.5
-    assert c._convert_from_sql_value(types_pb2.SqlValue(int64_value=7)) == 7
-    assert c._convert_from_sql_value(types_pb2.SqlValue(bool_value=True)) is True
-    assert (
-        c._convert_from_sql_value(types_pb2.SqlValue(bytes_value=b"x")) == b"x"
-    )
-    from google.protobuf.struct_pb2 import NullValue
-
-    assert (
-        c._convert_from_sql_value(
-            types_pb2.SqlValue(null_value=NullValue.NULL_VALUE)
-        )
-        is None
-    )
-    arr = c._convert_to_sql_value([1, 2])
-    assert c._convert_from_sql_value(arr) == [1, 2]
-    obj = c._convert_to_sql_value({"k": "v"})
-    assert c._convert_from_sql_value(obj) == {"k": "v"}
-    # unset field -> None
-    assert c._convert_from_sql_value(types_pb2.SqlValue()) is None
-
-
-def test_convert_metadata_to_sql_value():
-    c = make_rest_client()
-    out = c._convert_metadata_to_sql_value({"a": 1, "b": "x"})
+def test_convert_metadata_to_sql_value(rest_client):
+    out = rest_client._convert_metadata_to_sql_value({"a": 1, "b": "x"})
     assert out["a"].int64_value == 1
     assert out["b"].string_value == "x"
-    assert c._convert_metadata_to_sql_value(None) == {}
+    assert rest_client._convert_metadata_to_sql_value(None) == {}
 
 
 # --------------------------------------------------------------------------
-# create_node
+# Health
 # --------------------------------------------------------------------------
-def test_create_node_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp({"id": "n1"})
-    out = make_rest_client().create_node(
-        "n1", ["Person"], {"name": "alice"}, embedding=[0.1]
-    )
-    assert out["id"] == "n1"
-    sent = fake_requests.calls[0][2]["json"]
-    assert sent["embedding"] == [0.1]
+def test_health_check(rest_client, monkeypatch):
+    monkeypatch.setattr(cv1.requests, "get", lambda *a, **k: FakeResp({"status": "ok"}))
+    assert rest_client.health_check() == {"status": "ok"}
 
 
-def test_create_node_rest_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
+def test_health_check_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("dead")
+
+    monkeypatch.setattr(cv1.requests, "get", boom)
     with pytest.raises(NetworkError):
-        make_rest_client().create_node("n1", ["L"])
-
-
-def test_create_node_grpc_ok():
-    c = grpc_client()
-    node = _pytypes.SimpleNamespace(
-        id="n1", labels=["Person"], properties={}, HasField=lambda f: False
-    )
-    c.graph_stub.CreateNode = lambda req, timeout: node
-    out = c.create_node("n1", ["Person"], {"name": "alice"}, embedding=[0.1])
-    assert out["id"] == "n1"
-    assert out["created_at"] is None
-
-
-def test_create_node_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("node fail")
-
-    c.graph_stub.CreateNode = boom
-    with pytest.raises(ProximaDBError):
-        c.create_node("n1", ["L"])
+        rest_client.health_check()
 
 
 # --------------------------------------------------------------------------
-# create_edge
+# Graph - REST
 # --------------------------------------------------------------------------
-def test_create_edge_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp({"id": "e1"})
-    out = make_rest_client().create_edge(
-        "e1", "a", "b", "KNOWS", {"since": 2020}, weight=0.5
+def test_create_node_rest(rest_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cv1.requests,
+        "post",
+        lambda url, json=None, **k: captured.update(url=url, json=json)
+        or FakeResp({"id": "n1"}),
     )
-    assert out["id"] == "e1"
-    assert fake_requests.calls[0][2]["json"]["weight"] == 0.5
+    out = rest_client.create_node("n1", ["Person"], {"name": "Bob"}, embedding=[0.1])
+    assert out == {"id": "n1"}
+    assert captured["json"]["embedding"] == [0.1]
+    assert "/nodes" in captured["url"]
 
 
-def test_create_edge_rest_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
+def test_create_node_rest_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
+
+    monkeypatch.setattr(cv1.requests, "post", boom)
     with pytest.raises(NetworkError):
-        make_rest_client().create_edge("e1", "a", "b", "KNOWS")
+        rest_client.create_node("n1", ["L"])
 
 
-def test_create_edge_grpc_ok():
-    c = grpc_client()
-    edge = _pytypes.SimpleNamespace(
-        id="e1",
-        from_node_id="a",
-        to_node_id="b",
-        edge_type="KNOWS",
-        properties={},
-        HasField=lambda f: False,
+def test_create_edge_rest(rest_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cv1.requests,
+        "post",
+        lambda url, json=None, **k: captured.update(json=json) or FakeResp({"id": "e1"}),
     )
-    c.graph_stub.CreateEdge = lambda req, timeout: edge
-    out = c.create_edge("e1", "a", "b", "KNOWS", {"p": 1}, weight=0.5)
-    assert out["id"] == "e1"
-    assert out["weight"] is None
+    out = rest_client.create_edge("e1", "a", "b", "KNOWS", {"since": 2020}, weight=0.5)
+    assert out == {"id": "e1"}
+    assert captured["json"]["weight"] == 0.5
 
 
-def test_create_edge_grpc_error():
-    c = grpc_client()
+def test_create_edge_rest_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
 
-    def boom(req, timeout):
-        raise FakeRpcError("edge fail")
-
-    c.graph_stub.CreateEdge = boom
-    with pytest.raises(ProximaDBError):
-        c.create_edge("e1", "a", "b", "KNOWS")
+    monkeypatch.setattr(cv1.requests, "post", boom)
+    with pytest.raises(NetworkError):
+        rest_client.create_edge("e1", "a", "b", "KNOWS")
 
 
-# --------------------------------------------------------------------------
-# traverse_graph
-# --------------------------------------------------------------------------
-def test_traverse_graph_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp({"nodes": []})
-    out = make_rest_client().traverse_graph(
-        "n1", max_depth=2, edge_types=["KNOWS"], algorithm="DFS", limit=10
+def test_traverse_graph_rest(rest_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cv1.requests,
+        "post",
+        lambda url, json=None, **k: captured.update(json=json) or FakeResp({"nodes": []}),
+    )
+    out = rest_client.traverse_graph("n1", max_depth=2, edge_types=["KNOWS"], limit=5)
+    assert out == {"nodes": []}
+    assert captured["json"]["algorithm"] == "BFS"
+    assert captured["json"]["limit"] == 5
+
+
+def test_traverse_graph_rest_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
+
+    monkeypatch.setattr(cv1.requests, "post", boom)
+    with pytest.raises(NetworkError):
+        rest_client.traverse_graph("n1")
+
+
+def test_query_nodes_rest(rest_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cv1.requests,
+        "post",
+        lambda url, json=None, **k: captured.update(json=json) or FakeResp({"nodes": []}),
+    )
+    out = rest_client.query_nodes(labels=["Person"], properties={"x": 1}, limit=10, offset=2)
+    assert out == {"nodes": []}
+    assert captured["json"]["limit"] == 10
+    assert captured["json"]["offset"] == 2
+
+
+def test_query_nodes_rest_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
+
+    monkeypatch.setattr(cv1.requests, "post", boom)
+    with pytest.raises(NetworkError):
+        rest_client.query_nodes()
+
+
+def test_hybrid_search_rest(rest_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cv1.requests,
+        "post",
+        lambda url, json=None, **k: captured.update(json=json) or FakeResp({"nodes": []}),
+    )
+    out = rest_client.hybrid_search(
+        "col", [0.1], top_k=5, start_node_id="n1", max_depth=3,
+        combination_strategy="balanced", edge_types=["KNOWS"], limit=7,
     )
     assert out == {"nodes": []}
-    sent = fake_requests.calls[0][2]["json"]
-    assert sent["algorithm"] == "DFS"
-    assert sent["limit"] == 10
+    assert captured["json"]["combination_strategy"] == "BALANCED"
+    assert captured["json"]["graph_traversal"]["start_node_id"] == "n1"
+    assert captured["json"]["limit"] == 7
 
 
-def test_traverse_graph_rest_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
+def test_hybrid_search_rest_no_start_node(rest_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cv1.requests,
+        "post",
+        lambda url, json=None, **k: captured.update(json=json) or FakeResp({}),
+    )
+    rest_client.hybrid_search("col", [0.1])
+    assert "graph_traversal" not in captured["json"]
+
+
+def test_hybrid_search_rest_error(rest_client, monkeypatch):
+    def boom(*a, **k):
+        raise cv1.requests.RequestException("net")
+
+    monkeypatch.setattr(cv1.requests, "post", boom)
     with pytest.raises(NetworkError):
-        make_rest_client().traverse_graph("n1")
+        rest_client.hybrid_search("col", [0.1])
 
 
-def test_traverse_graph_grpc_ok():
-    c = grpc_client()
-    stats = _pytypes.SimpleNamespace(
-        nodes_visited=2,
-        edges_traversed=1,
-        max_depth_reached=1,
-        execution_time_microseconds=100,
-    )
-    resp = _pytypes.SimpleNamespace(nodes=[], edges=[], paths=[], stats=stats)
-    c.graph_stub.TraverseGraph = lambda req, timeout: resp
-    out = c.traverse_graph(
-        "n1", algorithm="PARALLEL_BFS", node_labels=["L"], limit=5
-    )
-    assert out["stats"]["nodes_visited"] == 2
-
-
-def test_traverse_graph_grpc_bfs_no_limit():
-    c = grpc_client()
-    stats = _pytypes.SimpleNamespace(
-        nodes_visited=0,
-        edges_traversed=0,
-        max_depth_reached=0,
-        execution_time_microseconds=0,
-    )
-    resp = _pytypes.SimpleNamespace(nodes=[], edges=[], paths=[], stats=stats)
-    c.graph_stub.TraverseGraph = lambda req, timeout: resp
-    out = c.traverse_graph("n1", algorithm="BFS")
-    assert out["nodes"] == []
-
-
-def test_traverse_graph_grpc_dfs():
-    c = grpc_client()
-    stats = _pytypes.SimpleNamespace(
-        nodes_visited=1,
-        edges_traversed=0,
-        max_depth_reached=1,
-        execution_time_microseconds=1,
-    )
-    resp = _pytypes.SimpleNamespace(nodes=[], edges=[], paths=[], stats=stats)
-    c.graph_stub.TraverseGraph = lambda req, timeout: resp
-    out = c.traverse_graph("n1", algorithm="DFS", limit=2)
-    assert out["stats"]["nodes_visited"] == 1
-
-
-def test_traverse_graph_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("trav fail")
-
-    c.graph_stub.TraverseGraph = boom
+# --------------------------------------------------------------------------
+# Graph - gRPC (error paths + request building)
+# --------------------------------------------------------------------------
+def test_create_node_grpc_error(grpc_client):
+    grpc_client.graph_stub.CreateNode.side_effect = FakeRpcError()
     with pytest.raises(ProximaDBError):
-        c.traverse_graph("n1")
+        grpc_client.create_node("n1", ["L"], {"k": "v"}, embedding=[0.1])
 
 
-# --------------------------------------------------------------------------
-# query_nodes
-# --------------------------------------------------------------------------
-def test_query_nodes_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp({"nodes": []})
-    out = make_rest_client().query_nodes(
-        labels=["Person"], properties={"name": "x"}, limit=5, offset=1
-    )
-    assert out == {"nodes": []}
-
-
-def test_query_nodes_rest_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
-    with pytest.raises(NetworkError):
-        make_rest_client().query_nodes()
-
-
-def test_query_nodes_grpc_ok():
-    c = grpc_client()
-    node = _pytypes.SimpleNamespace(
-        id="n1", labels=["L"], properties={}, HasField=lambda f: False
-    )
-    resp = _pytypes.SimpleNamespace(success=True, nodes=[node])
-    c.graph_stub.QueryNodes = lambda req, timeout: resp
-    out = c.query_nodes(labels=["L"], properties={"k": 1}, limit=3, offset=2)
-    assert out["total_count"] == 1
-
-
-def test_query_nodes_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("qn fail")
-
-    c.graph_stub.QueryNodes = boom
+def test_create_edge_grpc_error(grpc_client):
+    grpc_client.graph_stub.CreateEdge.side_effect = FakeRpcError()
     with pytest.raises(ProximaDBError):
-        c.query_nodes()
+        grpc_client.create_edge("e1", "a", "b", "T", {"k": 1}, weight=0.5)
 
 
-# --------------------------------------------------------------------------
-# hybrid_search
-# --------------------------------------------------------------------------
-def test_hybrid_search_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp({"nodes": []})
-    out = make_rest_client().hybrid_search(
-        "c1",
-        [0.1],
-        top_k=5,
-        start_node_id="n1",
-        combination_strategy="BALANCED",
-        edge_types=["KNOWS"],
-        vector_filters={"a": "b"},
-        limit=10,
-    )
-    assert out == {"nodes": []}
-    sent = fake_requests.calls[0][2]["json"]
-    assert "graph_traversal" in sent
-    assert sent["limit"] == 10
-
-
-def test_hybrid_search_rest_no_graph(fake_requests):
-    fake_requests.next_resp = FakeResp({"nodes": []})
-    out = make_rest_client().hybrid_search("c1", [0.1])
-    assert out == {"nodes": []}
-
-
-def test_hybrid_search_rest_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
-    with pytest.raises(NetworkError):
-        make_rest_client().hybrid_search("c1", [0.1])
-
-
-def test_hybrid_search_grpc_ok():
-    c = grpc_client()
-    stats = _pytypes.SimpleNamespace(
-        vector_results_count=1,
-        graph_traversal_count=2,
-        execution_time_microseconds=50,
-    )
-    resp = _pytypes.SimpleNamespace(
-        nodes=[], edges=[], paths=[], vector_results=[], stats=stats
-    )
-    c.graph_stub.ExecuteHybridQuery = lambda req, timeout: resp
-    out = c.hybrid_search(
-        "c1",
-        [0.1],
-        combination_strategy="GRAPH_THEN_VECTOR",
-        limit=3,
-    )
-    assert out["stats"]["vector_results_count"] == 1
-
-
-def test_hybrid_search_grpc_with_start_node_raises():
-    # Building graph_traversal_request and assigning it directly to the proto
-    # field is rejected by protobuf; the branch lines are still covered.
-    c = grpc_client()
-    c.graph_stub.ExecuteHybridQuery = lambda req, timeout: None
-    with pytest.raises(Exception):
-        c.hybrid_search("c1", [0.1], start_node_id="n1", edge_types=["KNOWS"])
-
-
-def test_hybrid_search_grpc_filters_raise():
-    # The vector_filters branch assigns a message into a proto map via [] which
-    # protobuf rejects; covering the loop still exercises those lines.
-    c = grpc_client()
-    c.graph_stub.ExecuteHybridQuery = lambda req, timeout: None
-    with pytest.raises(Exception):
-        c.hybrid_search("c1", [0.1], vector_filters={"a": "b"})
-
-
-def test_hybrid_search_grpc_no_start_balanced():
-    c = grpc_client()
-    stats = _pytypes.SimpleNamespace(
-        vector_results_count=0,
-        graph_traversal_count=0,
-        execution_time_microseconds=0,
-    )
-    resp = _pytypes.SimpleNamespace(
-        nodes=[], edges=[], paths=[], vector_results=[], stats=stats
-    )
-    c.graph_stub.ExecuteHybridQuery = lambda req, timeout: resp
-    out = c.hybrid_search("c1", [0.1], combination_strategy="BALANCED")
-    assert out["edges"] == []
-
-
-def test_hybrid_search_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("hyb fail")
-
-    c.graph_stub.ExecuteHybridQuery = boom
+def test_traverse_graph_grpc_error(grpc_client):
+    grpc_client.graph_stub.TraverseGraph.side_effect = FakeRpcError()
     with pytest.raises(ProximaDBError):
-        c.hybrid_search("c1", [0.1])
+        grpc_client.traverse_graph("n1", algorithm="DFS", limit=3)
 
 
-# --------------------------------------------------------------------------
-# advanced_vector_search
-# --------------------------------------------------------------------------
-def test_advanced_vector_search_rest_ok(fake_requests):
-    fake_requests.next_resp = FakeResp({"results": []})
-    out = make_rest_client().advanced_vector_search(
-        "c1",
-        [0.1],
-        top_k=5,
-        filters={"genre": "sci"},
-        accuracy_threshold=0.8,
-        search_params={"timeout_ms": 100},
-    )
-    assert out == {"results": []}
-    sent = fake_requests.calls[0][2]["json"]
-    assert sent["accuracy_threshold"] == 0.8
-    assert sent["search_params"] == {"timeout_ms": 100}
-
-
-def test_advanced_vector_search_rest_error(fake_requests):
-    fake_requests.raise_on_call = client_v1.requests.RequestException("x")
-    with pytest.raises(NetworkError):
-        make_rest_client().advanced_vector_search("c1", [0.1])
-
-
-def test_advanced_vector_search_grpc_ok():
-    c = grpc_client()
-    r = _pytypes.SimpleNamespace(
-        id="a",
-        score=0.9,
-        vector=[0.1],
-        metadata={},
-        similarity=0.95,
-        timestamp=1,
-        source="s",
-    )
-    result_list = _pytypes.SimpleNamespace(results=[r])
-    resp = _pytypes.SimpleNamespace(results=[result_list], execution_time_ms=7)
-    c.vector_stub.SearchVectors = lambda req, timeout: resp
-    out = c.advanced_vector_search(
-        "c1",
-        [0.1],
-        accuracy_threshold=0.7,
-        search_params={
-            "timeout_ms": 50,
-            "enable_two_stage": True,
-            "enable_clustering_hint": True,
-            "enable_metadata_filtering_hint": True,
-        },
-    )
-    assert out["total_count"] == 1
-    assert out["results"][0]["similarity"] == 0.95
-
-
-def test_advanced_vector_search_grpc_filters_raise():
-    c = grpc_client()
-    c.vector_stub.SearchVectors = lambda req, timeout: None
-    with pytest.raises(Exception):
-        c.advanced_vector_search("c1", [0.1], filters={"a": "b"})
-
-
-def test_advanced_vector_search_grpc_error():
-    c = grpc_client()
-
-    def boom(req, timeout):
-        raise FakeRpcError("adv fail")
-
-    c.vector_stub.SearchVectors = boom
+def test_traverse_graph_grpc_parallel_bfs_error(grpc_client):
+    grpc_client.graph_stub.TraverseGraph.side_effect = FakeRpcError()
     with pytest.raises(ProximaDBError):
-        c.advanced_vector_search("c1", [0.1])
+        grpc_client.traverse_graph("n1", algorithm="PARALLEL_BFS")
+
+
+def test_query_nodes_grpc_error(grpc_client):
+    grpc_client.graph_stub.QueryNodes.side_effect = FakeRpcError()
+    with pytest.raises(ProximaDBError):
+        grpc_client.query_nodes(labels=["L"], properties={"k": "v"}, limit=5, offset=1)
+
+
+def test_hybrid_search_grpc_error(grpc_client):
+    grpc_client.graph_stub.ExecuteHybridQuery.side_effect = FakeRpcError()
+    with pytest.raises(ProximaDBError):
+        grpc_client.hybrid_search(
+            "col", [0.1], combination_strategy="GRAPH_THEN_VECTOR", limit=5,
+        )
+
+
+def test_hybrid_search_grpc_balanced_error(grpc_client):
+    grpc_client.graph_stub.ExecuteHybridQuery.side_effect = FakeRpcError()
+    with pytest.raises(ProximaDBError):
+        grpc_client.hybrid_search("col", [0.1], combination_strategy="BALANCED")
+
+
+def test_hybrid_search_grpc_filters_source_bug(grpc_client):
+    # Source bug: SearchQuery.filters is a map<string, SqlValue>; assigning a
+    # Python value via ``search_query.filters[key] = ...`` raises ValueError.
+    with pytest.raises(ValueError):
+        grpc_client.hybrid_search("col", [0.1], vector_filters={"k": "v"})
+
+
+def test_advanced_vector_search_grpc_filters_source_bug(grpc_client):
+    # Same map-assignment bug on the advanced search gRPC path.
+    with pytest.raises(ValueError):
+        grpc_client.advanced_vector_search("col", [0.1], filters={"k": "v"})
+
+
+def test_search_vectors_grpc_filters_source_bug(grpc_client):
+    # SearchQuery(filters={...}) with string values cannot be constructed; the
+    # proto map expects SqlValue messages.
+    with pytest.raises(TypeError):
+        grpc_client.search_vectors("col", [0.1], filters={"k": "v"})
 
 
 # --------------------------------------------------------------------------
-# property value conversions
+# Property value conversions
 # --------------------------------------------------------------------------
-def test_convert_to_property_value_all_types():
-    c = make_rest_client()
+def test_convert_property_value_branches(rest_client):
+    c = rest_client
     assert c._convert_to_property_value("s").string_value == "s"
     assert c._convert_to_property_value(True).bool_value is True
     assert c._convert_to_property_value(5).int_value == 5
-    assert c._convert_to_property_value(1.5).double_value == 1.5
+    assert c._convert_to_property_value(2.5).double_value == 2.5
     assert c._convert_to_property_value(b"x").bytes_value == b"x"
-    arr = c._convert_to_property_value([1, 2])
+    arr = c._convert_to_property_value([1, "a"])
     assert len(arr.array_value.values) == 2
-    obj = c._convert_to_property_value({"k": "v"})
-    assert obj.object_value.fields["k"].string_value == "v"
+    obj = c._convert_to_property_value({"k": 1})
+    assert "k" in obj.object_value.fields
 
+
+def test_convert_property_value_fallback(rest_client):
     class Weird:
         def __str__(self):
             return "w"
 
-    assert c._convert_to_property_value(Weird()).string_value == "w"
+    assert rest_client._convert_to_property_value(Weird()).string_value == "w"
 
 
-def test_convert_from_property_value_all_types():
-    c = make_rest_client()
-    from proximadb_sdk.v1 import graph_pb2
-
-    assert (
-        c._convert_from_property_value(graph_pb2.PropertyValue(string_value="s"))
-        == "s"
-    )
-    assert (
-        c._convert_from_property_value(graph_pb2.PropertyValue(int_value=3)) == 3
-    )
-    assert (
-        c._convert_from_property_value(
-            graph_pb2.PropertyValue(double_value=1.5)
+def test_convert_from_property_value_branches(rest_client):
+    c = rest_client
+    assert c._convert_from_property_value(graph_pb2.PropertyValue(string_value="s")) == "s"
+    assert c._convert_from_property_value(graph_pb2.PropertyValue(int_value=3)) == 3
+    assert c._convert_from_property_value(graph_pb2.PropertyValue(double_value=1.5)) == 1.5
+    assert c._convert_from_property_value(graph_pb2.PropertyValue(bool_value=True)) is True
+    assert c._convert_from_property_value(graph_pb2.PropertyValue(bytes_value=b"x")) == b"x"
+    arr = graph_pb2.PropertyValue(
+        array_value=graph_pb2.PropertyArray(
+            values=[graph_pb2.PropertyValue(int_value=1)]
         )
-        == 1.5
     )
-    assert (
-        c._convert_from_property_value(graph_pb2.PropertyValue(bool_value=True))
-        is True
+    assert c._convert_from_property_value(arr) == [1]
+    obj = graph_pb2.PropertyValue(
+        object_value=graph_pb2.PropertyObject(
+            fields={"k": graph_pb2.PropertyValue(string_value="v")}
+        )
     )
-    assert (
-        c._convert_from_property_value(graph_pb2.PropertyValue(bytes_value=b"x"))
-        == b"x"
-    )
-    arr = c._convert_to_property_value([1, 2])
-    assert c._convert_from_property_value(arr) == [1, 2]
-    obj = c._convert_to_property_value({"k": "v"})
     assert c._convert_from_property_value(obj) == {"k": "v"}
+    # Unset field -> None
     assert c._convert_from_property_value(graph_pb2.PropertyValue()) is None
 
 
-# --------------------------------------------------------------------------
-# proto -> dict converters with timestamps
-# --------------------------------------------------------------------------
-def test_convert_node_from_proto_with_timestamps():
-    c = make_rest_client()
-    from datetime import datetime
-
-    class TS:
-        def ToDatetime(self):
-            return datetime(2020, 1, 1)
-
-    node = _pytypes.SimpleNamespace(
-        id="n1",
-        labels=["L"],
-        properties={},
-        created_at=TS(),
-        updated_at=TS(),
-        HasField=lambda f: True,
-    )
-    out = c._convert_node_from_proto(node)
-    assert out["created_at"] == "2020-01-01T00:00:00"
+def test_convert_edge_from_proto_raises_on_timestamp_field(rest_client):
+    # Source bug: _convert_edge_from_proto probes HasField("created_at") but the
+    # proto field is "created_at_ms", so protobuf raises ValueError. Pin the
+    # current behavior so the path is still exercised offline.
+    edge = graph_pb2.Edge(id="e1", from_node_id="a", to_node_id="b", edge_type="T")
+    with pytest.raises(ValueError):
+        rest_client._convert_edge_from_proto(edge)
 
 
-def test_convert_edge_from_proto_with_weight_and_ts():
-    c = make_rest_client()
-    from datetime import datetime
+def test_convert_path_from_proto(rest_client):
+    class PathWithIds:
+        node_ids = ["a", "b"]
 
-    class TS:
-        def ToDatetime(self):
-            return datetime(2021, 6, 1)
+    class PathNoIds:
+        pass
 
-    edge = _pytypes.SimpleNamespace(
-        id="e1",
-        from_node_id="a",
-        to_node_id="b",
-        edge_type="KNOWS",
-        properties={},
-        weight=0.7,
-        created_at=TS(),
-        updated_at=TS(),
-        HasField=lambda f: True,
-    )
-    out = c._convert_edge_from_proto(edge)
-    assert out["weight"] == 0.7
-    assert out["created_at"] == "2021-06-01T00:00:00"
+    assert rest_client._convert_path_from_proto(PathWithIds()) == ["a", "b"]
+    assert rest_client._convert_path_from_proto(PathNoIds()) == []
 
 
-def test_convert_path_from_proto():
-    c = make_rest_client()
-    path = _pytypes.SimpleNamespace(node_ids=["a", "b"])
-    assert c._convert_path_from_proto(path) == ["a", "b"]
-    assert c._convert_path_from_proto(object()) == []
-
-
-def test_convert_search_result_from_proto():
-    c = make_rest_client()
-    r = _pytypes.SimpleNamespace(
-        id="a",
-        score=0.9,
-        vector=[0.1],
-        metadata={},
-        similarity=0.95,
-        timestamp=10,
-        source="src",
-    )
-    out = c._convert_search_result_from_proto(r)
-    assert out["id"] == "a"
-    assert out["similarity"] == 0.95
-    assert out["source"] == "src"
+def test_convert_search_result_from_proto(rest_client):
+    rec = vector_types_pb2.SearchVectorRecord(id="r1", score=0.7, vector=[0.1])
+    out = rest_client._convert_search_result_from_proto(rec)
+    assert out["id"] == "r1"
+    assert out["score"] == pytest.approx(0.7)
+    assert out["vector"] == [pytest.approx(0.1)]

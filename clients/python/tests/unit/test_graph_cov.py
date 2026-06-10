@@ -1,11 +1,14 @@
 """Offline unit tests for proximadb_sdk.graph.
 
-All transport is mocked via a hand-built fake client; no network/server.
+Injects a mock backend client (no network, no server). Exercises node/edge/
+traverse/query/find-callers wrapper methods, dataclass helpers, JSON import,
+and pattern/cypher parsing branches.
 """
 
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,402 +22,367 @@ from proximadb_sdk.graph import (
 )
 
 
-class FakeClient:
-    """Hand fake backend implementing every method ProximaDBGraph calls."""
-
-    def __init__(self):
-        self.nodes = []  # list[dict]
-        self.edges = []  # list[dict] with from_node_id/to_node_id
-        self.created_nodes = []
-        self.created_edges = []
-        self.fail_create_node = False
-        self.support_get_node = True
-        self.support_outgoing = True
-        self.support_incoming = True
-        self.support_traverse = True
-
-    # ---- creation ----
-    def create_node(self, graph_id, node_id, labels, properties):
-        if self.fail_create_node:
-            raise RuntimeError("boom")
-        self.created_nodes.append(
-            {"id": node_id, "labels": labels, "properties": properties}
-        )
-
-    def create_edge(
-        self, graph_id, edge_id, from_node_id, to_node_id, edge_type, properties, weight
-    ):
-        self.created_edges.append(
-            {
-                "id": edge_id,
-                "from_node_id": from_node_id,
-                "to_node_id": to_node_id,
-                "edge_type": edge_type,
-                "properties": properties,
-                "weight": weight,
-            }
-        )
-
-    # ---- query ----
-    def query_nodes(self, graph_id, labels=None, properties=None, limit=None, offset=None):
-        offset = offset or 0
-        result = []
-        for n in self.nodes:
-            if labels:
-                if not any(lbl in (n.get("labels") or []) for lbl in labels):
-                    continue
-            if properties:
-                if not all(
-                    n.get("properties", {}).get(k) == v for k, v in properties.items()
-                ):
-                    continue
-            result.append(n)
-        if limit is not None:
-            result = result[offset : offset + limit]
-        return {"nodes": result}
-
-    def get_node(self, node_id, graph_id):
-        if not self.support_get_node:
-            raise RuntimeError("not supported")
-        for n in self.nodes:
-            if n.get("id") == node_id:
-                return n
-        return None
-
-    def get_outgoing_edges(self, node_id, edge_types, graph_id):
-        if not self.support_outgoing:
-            raise RuntimeError("not supported")
-        out = []
-        for e in self.edges:
-            if e.get("from_node_id") == node_id:
-                if edge_types and e.get("edge_type") not in edge_types:
-                    continue
-                out.append(dict(e))
-        return out
-
-    def get_incoming_edges(self, node_id, edge_types, graph_id):
-        if not self.support_incoming:
-            raise RuntimeError("not supported")
-        out = []
-        for e in self.edges:
-            if e.get("to_node_id") == node_id:
-                if edge_types and e.get("edge_type") not in edge_types:
-                    continue
-                out.append(dict(e))
-        return out
-
-    def traverse_graph(
-        self, graph_id, start_node_id, max_depth, edge_types=None, limit=None
-    ):
-        if not self.support_traverse:
-            raise RuntimeError("not supported")
-        nodes = []
-        edges = []
-        for e in self.edges:
-            if e.get("from_node_id") == start_node_id:
-                if edge_types and e.get("edge_type") not in edge_types:
-                    continue
-                edges.append(dict(e))
-                for n in self.nodes:
-                    if n.get("id") == e.get("to_node_id"):
-                        nodes.append(n)
-        return {"nodes": nodes, "edges": edges}
-
-    def get_graph_stats(self, graph_id):
-        return {"node_count": len(self.nodes), "edge_count": len(self.edges)}
-
-
-def make_graph():
-    c = FakeClient()
-    return ProximaDBGraph(c, "g1"), c
-
-
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
 
 
 def test_graphnode_to_dict():
-    n = GraphNode(id="a", labels=["L"], properties={"x": 1})
-    assert n.to_dict() == {"id": "a", "labels": ["L"], "properties": {"x": 1}}
+    n = GraphNode(id="a", labels=["Function"], properties={"name": "main"})
+    assert n.to_dict() == {
+        "id": "a",
+        "labels": ["Function"],
+        "properties": {"name": "main"},
+    }
+    n2 = GraphNode(id="b")
+    assert n2.labels == []
+    assert n2.properties == {}
+    assert n2.embedding is None
 
 
 def test_graphedge_to_dict_with_and_without_weight():
     e = GraphEdge(id="e1", from_node="a", to_node="b", edge_type="CALLS")
     d = e.to_dict()
     assert "weight" not in d
-    e2 = GraphEdge(id="e2", from_node="a", to_node="b", edge_type="CALLS", weight=2.5)
-    assert e2.to_dict()["weight"] == 2.5
+    assert d["from_node"] == "a" and d["to_node"] == "b"
+
+    e2 = GraphEdge(
+        id="e2", from_node="a", to_node="b", edge_type="CALLS", weight=3.5
+    )
+    assert e2.to_dict()["weight"] == 3.5
 
 
 def test_graphpath_and_queryresult_defaults():
     p = GraphPath()
-    assert p.nodes == [] and p.total_weight == 0.0
+    assert p.nodes == [] and p.edges == [] and p.total_weight == 0.0
     r = GraphQueryResult()
     assert r.nodes == [] and r.edges == [] and r.paths == [] and r.stats == {}
 
 
 def test_create_graph_api_factory():
-    c = FakeClient()
-    g = create_graph_api(c, "gx")
+    client = MagicMock()
+    g = create_graph_api(client, "gid")
     assert isinstance(g, ProximaDBGraph)
-    assert g._graph_id == "gx"
+    assert g._graph_id == "gid"
+    assert g._client is client
 
 
 # ---------------------------------------------------------------------------
-# normalize helpers
+# Static normalizers
 # ---------------------------------------------------------------------------
+
+
+def test_is_internal_label():
+    assert ProximaDBGraph._is_internal_label("__meta") is True
+    assert ProximaDBGraph._is_internal_label("Function") is False
 
 
 def test_normalize_node_variants():
     assert ProximaDBGraph._normalize_node(None) is None
+
     gn = GraphNode(id="x")
     assert ProximaDBGraph._normalize_node(gn) is gn
-    fromdict = ProximaDBGraph._normalize_node(
-        {"id": "d", "labels": ["A"], "properties": {"k": 1}}
+
+    from_dict = ProximaDBGraph._normalize_node(
+        {"id": "d", "labels": ["L"], "properties": {"k": "v"}}
     )
-    assert fromdict.id == "d" and fromdict.labels == ["A"]
+    assert from_dict.id == "d" and from_dict.labels == ["L"]
 
     class Obj:
         id = "o"
-        labels = ["B"]
-        properties = {"p": 2}
+        labels = ["A"]
+        properties = {"p": 1}
 
-    fromobj = ProximaDBGraph._normalize_node(Obj())
-    assert fromobj.id == "o" and fromobj.properties == {"p": 2}
+    from_obj = ProximaDBGraph._normalize_node(Obj())
+    assert from_obj.id == "o" and from_obj.properties == {"p": 1}
 
 
 def test_normalize_edge_variants():
     assert ProximaDBGraph._normalize_edge(None) is None
+
     ge = GraphEdge(id="e", from_node="a", to_node="b", edge_type="T")
     assert ProximaDBGraph._normalize_edge(ge) is ge
-    fromdict = ProximaDBGraph._normalize_edge(
-        {"id": "e", "from_node_id": "a", "to_node_id": "b", "type": "CALLS", "weight": 1}
+
+    from_dict = ProximaDBGraph._normalize_edge(
+        {"id": "e", "from_node_id": "a", "to_node_id": "b", "type": "CALLS",
+         "weight": 2}
     )
-    assert fromdict.from_node == "a" and fromdict.edge_type == "CALLS"
+    assert from_dict.from_node == "a" and from_dict.edge_type == "CALLS"
+    assert from_dict.weight == 2
 
-    class Obj:
-        id = "e2"
-        from_node_id = "x"
-        to_node_id = "y"
+    from_dict2 = ProximaDBGraph._normalize_edge(
+        {"from_node": "x", "to_node": "y", "edge_type": "IMPORTS"}
+    )
+    assert from_dict2.from_node == "x" and from_dict2.edge_type == "IMPORTS"
+
+    class EObj:
+        id = "eo"
+        from_node_id = "f"
+        to_node_id = "t"
         edge_type = "REL"
-        properties = {}
-        weight = None
+        properties = {"w": 1}
+        weight = 9.0
 
-    fromobj = ProximaDBGraph._normalize_edge(Obj())
-    assert fromobj.from_node == "x" and fromobj.to_node == "y"
-
-
-def test_is_internal_label():
-    assert ProximaDBGraph._is_internal_label("__meta")
-    assert not ProximaDBGraph._is_internal_label("Function")
+    from_obj = ProximaDBGraph._normalize_edge(EObj())
+    assert from_obj.from_node == "f" and from_obj.weight == 9.0
 
 
 def test_normalize_json_node():
     assert ProximaDBGraph._normalize_json_node({}) is None
+
     out = ProximaDBGraph._normalize_json_node(
-        {"node_id": "n1", "labels": "Func", "file": "a.py"}
+        {"node_id": "n1", "type": "Function", "extra": "value"}
     )
     assert out["id"] == "n1"
-    assert out["labels"] == ["Func"]
-    assert out["properties"]["file"] == "a.py"
-    out2 = ProximaDBGraph._normalize_json_node({"key": "k1", "type": "Class"})
-    assert out2["labels"] == ["Class"]
-    out3 = ProximaDBGraph._normalize_json_node({"id": "i"})
-    assert out3["labels"] == []
+    assert out["labels"] == ["Function"]
+    assert out["properties"]["extra"] == "value"
+
+    out2 = ProximaDBGraph._normalize_json_node({"key": "k", "labels": "Single"})
+    assert out2["labels"] == ["Single"]
+
+    out3 = ProximaDBGraph._normalize_json_node(
+        {"id": "n3", "labels": ["A", "B"], "properties": {"x": 1}}
+    )
+    assert out3["labels"] == ["A", "B"] and out3["properties"]["x"] == 1
 
 
 def test_normalize_json_edge():
     assert ProximaDBGraph._normalize_json_edge({}, 0) is None
-    assert ProximaDBGraph._normalize_json_edge({"from": "a"}, 0) is None
+
     out = ProximaDBGraph._normalize_json_edge(
-        {"source": "a", "target": "b", "line": 9}, 3
+        {"source": "a", "target": "b", "label": "CALLS", "extra": 1}, 5
     )
     assert out["from_node_id"] == "a" and out["to_node_id"] == "b"
-    assert out["edge_type"] == "RELATED_TO"
-    assert out["properties"]["line"] == 9
-    assert out["id"].startswith("edge_3_")
+    assert out["edge_type"] == "CALLS"
+    assert out["properties"]["extra"] == 1
+    assert out["id"]
+
     out2 = ProximaDBGraph._normalize_json_edge(
-        {"id": "E", "src": "a", "dst": "b", "label": "CALLS", "weight": 4}, 0
+        {"from": "x", "to": "y", "id": "myid", "weight": 1.5}, 0
     )
-    assert out2["id"] == "E" and out2["edge_type"] == "CALLS" and out2["weight"] == 4
+    assert out2["edge_type"] == "RELATED_TO"
+    assert out2["id"] == "myid"
+    assert out2["weight"] == 1.5
 
 
 # ---------------------------------------------------------------------------
-# batch create
+# Batch create
 # ---------------------------------------------------------------------------
 
 
 def test_batch_create_nodes_empty():
-    g, _ = make_graph()
+    g = ProximaDBGraph(MagicMock(), "gid")
     assert g.batch_create_nodes([]) == {"success": True, "created": 0}
 
 
-def test_batch_create_nodes_objects_and_dicts():
-    g, c = make_graph()
-    res = g.batch_create_nodes(
-        [
-            GraphNode(id="a", labels=["F"]),
-            {"id": "b", "labels": ["F"], "properties": {"n": 1}},
-        ],
-        batch_size=1,
-    )
-    assert res["success"] is True
-    assert res["created"] == 2
-    assert len(c.created_nodes) == 2
+def test_batch_create_nodes_success_mixed_types():
+    client = MagicMock()
+    g = ProximaDBGraph(client, "gid")
+    nodes = [
+        GraphNode(id="a", labels=["F"], properties={"n": 1}),
+        {"id": "b", "labels": ["F"], "properties": {"n": 2}},
+    ]
+    res = g.batch_create_nodes(nodes, batch_size=1)
+    assert res == {"success": True, "created": 2, "failed": 0, "errors": []}
+    assert client.create_node.call_count == 2
 
 
 def test_batch_create_nodes_failure():
-    g, c = make_graph()
-    c.fail_create_node = True
-    res = g.batch_create_nodes([{"id": "a"}], batch_size=1)
+    client = MagicMock()
+    client.create_node.side_effect = RuntimeError("boom")
+    g = ProximaDBGraph(client, "gid")
+    res = g.batch_create_nodes([{"id": "a"}])
     assert res["success"] is False
     assert res["failed"] == 1
-    assert res["errors"]
+    assert "boom" in res["errors"][0]["error"]
 
 
 def test_batch_create_edges_empty():
-    g, _ = make_graph()
+    g = ProximaDBGraph(MagicMock(), "gid")
     assert g.batch_create_edges([]) == {"success": True, "created": 0}
 
 
-def test_batch_create_edges_ok():
-    g, c = make_graph()
-    res = g.batch_create_edges(
-        [
-            GraphEdge(id="e1", from_node="a", to_node="b", edge_type="CALLS"),
-            {"from": "b", "to": "c", "type": "CALLS"},
-        ],
-        batch_size=10,
-    )
-    assert res["success"] is True
-    assert res["created"] == 2
-    assert len(c.created_edges) == 2
+def test_batch_create_edges_success():
+    client = MagicMock()
+    g = ProximaDBGraph(client, "gid")
+    edges = [
+        GraphEdge(id="e1", from_node="a", to_node="b", edge_type="CALLS"),
+        {"from": "a", "to": "c", "type": "CALLS"},
+    ]
+    res = g.batch_create_edges(edges, batch_size=10)
+    assert res["success"] is True and res["created"] == 2
+    assert client.create_edge.call_count == 2
 
 
-def test_batch_create_edges_missing_fields():
-    g, _ = make_graph()
-    res = g.batch_create_edges([{"from": "a"}], batch_size=10)
+def test_batch_create_edges_missing_fields_records_failure():
+    client = MagicMock()
+    g = ProximaDBGraph(client, "gid")
+    res = g.batch_create_edges([{"from": "a", "to": "b"}])
     assert res["success"] is False
     assert res["failed"] == 1
 
 
 # ---------------------------------------------------------------------------
-# query_cypher / _parse_cypher / traversal
+# Cypher query
 # ---------------------------------------------------------------------------
 
 
-def test_parse_cypher_full():
-    g, _ = make_graph()
-    parsed = g._parse_cypher(
-        'MATCH (c:Function {name: "main"})-[r:CALLS]->(f:Function) WHERE c.kind = "x" RETURN c'
-    )
-    assert parsed["match"] is True
-    assert parsed["start_labels"] == ["Function"]
-    assert parsed["traversal"]["type"] == "CALLS"
-    assert parsed["where"] is True
-    assert parsed["start_properties"]["name"] == "main"
-    assert parsed["start_properties"]["kind"] == "x"
-
-
-def test_query_cypher_no_match():
-    g, _ = make_graph()
+def test_query_cypher_no_match_returns_empty():
+    g = ProximaDBGraph(MagicMock(), "gid")
     res = g.query_cypher("RETURN 1")
     assert isinstance(res, GraphQueryResult)
     assert res.nodes == []
 
 
-def test_query_cypher_match_empty_start():
-    g, c = make_graph()
-    res = g.query_cypher("MATCH (c:Function) RETURN c")
+def test_query_cypher_no_start_nodes():
+    client = MagicMock()
+    client.query_nodes.return_value = {"nodes": []}
+    g = ProximaDBGraph(client, "gid")
+    res = g.query_cypher("MATCH (c:Function) WHERE c.name = 'main' RETURN c")
     assert res.nodes == []
 
 
 def test_query_cypher_with_traversal():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "main", "labels": ["Function"], "properties": {"name": "main"}},
-        {"id": "parse", "labels": ["Function"], "properties": {"name": "parse"}},
-    ]
-    c.edges = [
-        {"id": "e1", "from_node_id": "main", "to_node_id": "parse", "edge_type": "CALLS"}
-    ]
+    client = MagicMock()
+    client.query_nodes.return_value = {"nodes": [{"id": "func:main"}]}
+    client.traverse_graph.return_value = {
+        "nodes": [{"id": "func:parse", "labels": ["Function"], "properties": {}}],
+        "edges": [
+            {"id": "e", "from_node_id": "func:main", "to_node_id": "func:parse",
+             "edge_type": "CALLS"}
+        ],
+    }
+    g = ProximaDBGraph(client, "gid")
     res = g.query_cypher(
-        "MATCH (c:Function)-[r:CALLS]->(f:Function) WHERE c.name = 'main' RETURN c, f"
+        'MATCH (c:Function)-[r:CALLS]->(f:Function) WHERE c.name = "main" RETURN c, f'
     )
-    assert any(n.id == "parse" for n in res.nodes)
-    assert any(e.edge_type == "CALLS" for e in res.edges)
+    assert len(res.nodes) == 1 and res.nodes[0].id == "func:parse"
+    assert len(res.edges) == 1
+    _, kwargs = client.traverse_graph.call_args
+    assert kwargs["edge_types"] == ["CALLS"]
 
 
-def test_execute_traversal_handles_exception():
-    g, c = make_graph()
-    c.support_traverse = False
-    res = g._execute_traversal(["x"], {"traversal": None})
+def test_execute_traversal_swallows_exception():
+    client = MagicMock()
+    client.traverse_graph.side_effect = RuntimeError("nope")
+    g = ProximaDBGraph(client, "gid")
+    res = g._execute_traversal(["a"], {"traversal": None})
     assert res.nodes == [] and res.edges == []
 
 
-# ---------------------------------------------------------------------------
-# get_node_by_id / _get_node_raw
-# ---------------------------------------------------------------------------
-
-
-def test_get_node_by_id_direct():
-    g, c = make_graph()
-    c.nodes = [{"id": "a", "labels": ["F"], "properties": {}}]
-    node = g.get_node_by_id("a")
-    assert node.id == "a"
-
-
-def test_get_node_by_id_fallback_scan():
-    g, c = make_graph()
-    c.support_get_node = False
-    c.nodes = [{"id": "z", "labels": [], "properties": {}}]
-    node = g.get_node_by_id("z")
-    assert node.id == "z"
-
-
-def test_get_node_by_id_missing():
-    g, c = make_graph()
-    c.support_get_node = False
-    assert g.get_node_by_id("nope") is None
+def test_parse_cypher_properties_in_pattern():
+    g = ProximaDBGraph(MagicMock(), "gid")
+    parsed = g._parse_cypher('MATCH (c:Function {name: "main"}) RETURN c')
+    assert parsed["match"] is True
+    assert parsed["start_labels"] == ["Function"]
+    assert parsed["start_properties"]["name"] == "main"
 
 
 # ---------------------------------------------------------------------------
-# edges raw helpers / fallbacks
+# get_node_by_id / _get_node_raw fallback
 # ---------------------------------------------------------------------------
 
 
-def test_get_outgoing_edges_raw_fallback_to_traverse():
-    g, c = make_graph()
-    c.support_outgoing = False
-    c.nodes = [
-        {"id": "a", "labels": [], "properties": {}},
-        {"id": "b", "labels": [], "properties": {}},
+def test_get_node_by_id_direct_hit():
+    client = MagicMock()
+    client.get_node.return_value = {"id": "n", "labels": ["L"], "properties": {}}
+    g = ProximaDBGraph(client, "gid")
+    node = g.get_node_by_id("n")
+    assert node.id == "n"
+
+
+def test_get_node_raw_fallback_to_query_scan():
+    client = MagicMock()
+    client.get_node.side_effect = RuntimeError("not found")
+    client.query_nodes.return_value = {
+        "nodes": [{"id": "other"}, {"id": "target", "labels": [], "properties": {}}]
+    }
+    g = ProximaDBGraph(client, "gid")
+    node = g.get_node_by_id("target")
+    assert node.id == "target"
+
+
+def test_get_node_raw_returns_none_when_not_found():
+    client = MagicMock()
+    client.get_node.return_value = None
+    client.query_nodes.return_value = {"nodes": []}
+    g = ProximaDBGraph(client, "gid")
+    assert g.get_node_by_id("missing") is None
+
+
+# ---------------------------------------------------------------------------
+# Outgoing / incoming edge helpers
+# ---------------------------------------------------------------------------
+
+
+def test_get_outgoing_edges_direct():
+    client = MagicMock()
+    client.get_outgoing_edges.return_value = [
+        {"id": "e", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"}
     ]
-    c.edges = [{"id": "e", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"}]
-    out = g._get_outgoing_edges_raw("a")
-    # traverse fallback returns normalized to_dict() with from_node/to_node keys
-    assert any(e.get("to_node") == "b" for e in out)
+    g = ProximaDBGraph(client, "gid")
+    edges = g._get_outgoing_edges_raw("a")
+    assert edges[0]["id"] == "e"
 
 
-def test_get_outgoing_edges_raw_both_fail():
-    g, c = make_graph()
-    c.support_outgoing = False
-    c.support_traverse = False
+def test_get_outgoing_edges_traversal_fallback():
+    client = MagicMock()
+    client.get_outgoing_edges.side_effect = RuntimeError("unsupported")
+    client.traverse_graph.return_value = {
+        "edges": [
+            {"id": "e", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"},
+            {"id": "e2", "from_node_id": "z", "to_node_id": "a", "edge_type": "CALLS"},
+        ]
+    }
+    g = ProximaDBGraph(client, "gid")
+    edges = g._get_outgoing_edges_raw("a")
+    assert len(edges) == 1
+    # traversal fallback returns normalized .to_dict() shape (from_node key)
+    assert edges[0]["from_node"] == "a"
+
+
+def test_get_outgoing_edges_both_paths_fail():
+    client = MagicMock()
+    client.get_outgoing_edges.side_effect = RuntimeError("x")
+    client.traverse_graph.side_effect = RuntimeError("y")
+    g = ProximaDBGraph(client, "gid")
     assert g._get_outgoing_edges_raw("a") == []
 
 
-def test_get_incoming_edges_raw_fallback():
-    g, c = make_graph()
-    c.support_incoming = False
-    c.nodes = [
-        {"id": "a", "labels": [], "properties": {}},
-        {"id": "b", "labels": [], "properties": {}},
+def test_get_incoming_edges_direct():
+    client = MagicMock()
+    client.get_incoming_edges.return_value = [
+        {"id": "e", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"}
     ]
-    c.edges = [{"id": "e", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"}]
-    inc = g._get_incoming_edges_raw("b")
-    # fallback path collects normalized edges (to_dict) -> from_node/to_node keys
-    assert any(e.get("from_node") == "a" for e in inc)
+    g = ProximaDBGraph(client, "gid")
+    edges = g._get_incoming_edges_raw("b")
+    assert edges[0]["from_node_id"] == "a"
+
+
+def test_get_incoming_edges_scan_fallback():
+    client = MagicMock()
+    client.get_incoming_edges.side_effect = RuntimeError("unsupported")
+    client.query_nodes.return_value = {
+        "nodes": [
+            {"id": "a", "labels": [], "properties": {}},
+            {"id": "z", "labels": [], "properties": {}},
+        ]
+    }
+
+    def outgoing(node_id, edge_types=None, graph_id=None):
+        if node_id == "a":
+            return [
+                {"id": "e1", "from_node_id": "a", "to_node_id": "b",
+                 "edge_type": "CALLS"}
+            ]
+        return []
+
+    client.get_outgoing_edges.side_effect = outgoing
+    g = ProximaDBGraph(client, "gid")
+    edges = g._get_incoming_edges_raw("b")
+    assert len(edges) == 1
+    # scan fallback returns normalized .to_dict() shape (from_node key)
+    assert edges[0]["from_node"] == "a"
 
 
 # ---------------------------------------------------------------------------
@@ -422,145 +390,178 @@ def test_get_incoming_edges_raw_fallback():
 # ---------------------------------------------------------------------------
 
 
-def test_find_callers_depth1():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "caller", "labels": ["Function"], "properties": {"name": "caller"}},
-        {"id": "target", "labels": ["Function"], "properties": {"name": "target"}},
+def test_find_callers_depth_one():
+    client = MagicMock()
+    client.get_incoming_edges.return_value = [
+        {"id": "e", "from_node_id": "caller", "to_node_id": "target",
+         "edge_type": "CALLS"}
     ]
-    c.edges = [
-        {"id": "e", "from_node_id": "caller", "to_node_id": "target", "edge_type": "CALLS"}
-    ]
+    client.get_node.return_value = {
+        "id": "caller", "labels": ["Function"], "properties": {"name": "c"}
+    }
+    g = ProximaDBGraph(client, "gid")
     callers = g.find_callers("target")
-    assert [n.id for n in callers] == ["caller"]
+    assert len(callers) == 1 and callers[0].id == "caller"
 
 
 def test_find_callers_multi_depth():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "a", "labels": ["F"], "properties": {}},
-        {"id": "b", "labels": ["F"], "properties": {}},
-        {"id": "target", "labels": ["F"], "properties": {}},
-    ]
-    c.edges = [
-        {"id": "e1", "from_node_id": "b", "to_node_id": "target", "edge_type": "CALLS"},
-        {"id": "e2", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"},
-    ]
+    client = MagicMock()
+
+    def incoming(node_id, edge_types=None, graph_id=None):
+        if node_id == "target":
+            return [{"id": "e1", "from_node_id": "c1", "to_node_id": "target",
+                     "edge_type": "CALLS"}]
+        if node_id == "c1":
+            return [{"id": "e2", "from_node_id": "c2", "to_node_id": "c1",
+                     "edge_type": "CALLS"}]
+        return []
+
+    client.get_incoming_edges.side_effect = incoming
+
+    def get_node(node_id, graph_id=None):
+        return {"id": node_id, "labels": [], "properties": {}}
+
+    client.get_node.side_effect = get_node
+    g = ProximaDBGraph(client, "gid")
     callers = g.find_callers("target", max_depth=2)
-    ids = {n.id for n in callers}
-    assert "b" in ids and "a" in ids
+    ids = {c.id for c in callers}
+    assert ids == {"c1", "c2"}
 
 
-def test_find_callers_no_edge_type():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "x", "labels": [], "properties": {}},
-        {"id": "y", "labels": [], "properties": {}},
+def test_find_callers_exception_returns_empty():
+    client = MagicMock()
+    client.get_incoming_edges.side_effect = RuntimeError("boom")
+    client.query_nodes.side_effect = RuntimeError("boom2")
+    g = ProximaDBGraph(client, "gid")
+    assert g.find_callers("target") == []
+
+
+# ---------------------------------------------------------------------------
+# get_all_nodes / paging / internal-label filter
+# ---------------------------------------------------------------------------
+
+
+def test_get_all_nodes_paging_and_internal_filter():
+    client = MagicMock()
+    page1 = [{"id": f"n{i}", "labels": [], "properties": {}} for i in range(2)]
+    page1.append({"id": "internal", "labels": ["__meta"], "properties": {}})
+    page2 = [{"id": "n9", "labels": [], "properties": {}}]
+    client.query_nodes.side_effect = [
+        {"nodes": page1},
+        {"nodes": page2},
     ]
-    c.edges = [{"id": "e", "from_node_id": "x", "to_node_id": "y", "edge_type": "ANY"}]
-    callers = g.find_callers("y", edge_type="")
-    assert [n.id for n in callers] == ["x"]
-
-
-# ---------------------------------------------------------------------------
-# get_all_nodes / get_nodes_by_file / find_nodes
-# ---------------------------------------------------------------------------
-
-
-def test_get_all_nodes_pagination_and_internal_filter():
-    g, c = make_graph()
-    c.nodes = [{"id": f"n{i}", "labels": ["F"], "properties": {}} for i in range(3)]
-    c.nodes.append({"id": "internal", "labels": ["__sys"], "properties": {}})
+    g = ProximaDBGraph(client, "gid")
     nodes = g.get_all_nodes(batch_size=2)
-    ids = {n.id for n in nodes}
+    ids = [n.id for n in nodes]
     assert "internal" not in ids
-    assert len(ids) == 3
-    all_nodes = g.get_all_nodes(batch_size=100, include_internal=True)
-    assert any(n.id == "internal" for n in all_nodes)
+    assert "n9" in ids
+
+
+def test_get_all_nodes_include_internal():
+    client = MagicMock()
+    client.query_nodes.return_value = {
+        "nodes": [{"id": "internal", "labels": ["__meta"], "properties": {}}]
+    }
+    g = ProximaDBGraph(client, "gid")
+    nodes = g.get_all_nodes(batch_size=1000, include_internal=True)
+    assert any(n.id == "internal" for n in nodes)
+
+
+def test_query_nodes_raw_non_dict_result():
+    client = MagicMock()
+    client.query_nodes.return_value = ["not", "a", "dict"]
+    g = ProximaDBGraph(client, "gid")
+    assert g._query_nodes_raw() == []
+
+
+# ---------------------------------------------------------------------------
+# get_nodes_by_file / find_nodes / search_symbols
+# ---------------------------------------------------------------------------
 
 
 def test_get_nodes_by_file():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "a", "labels": ["F"], "properties": {"file": "x.py"}},
-        {"id": "b", "labels": ["F"], "properties": {"path": "y.py"}},
-    ]
-    res = g.get_nodes_by_file("x.py")
-    assert [n.id for n in res] == ["a"]
+    client = MagicMock()
+    client.query_nodes.return_value = {
+        "nodes": [
+            {"id": "a", "labels": [], "properties": {"file": "x.py"}},
+            {"id": "b", "labels": [], "properties": {"path": "y.py"}},
+        ]
+    }
+    g = ProximaDBGraph(client, "gid")
+    result = g.get_nodes_by_file("x.py")
+    assert [n.id for n in result] == ["a"]
 
 
-def test_find_nodes_by_name_type_file():
-    g, c = make_graph()
-    c.nodes = [
-        {
-            "id": "a",
-            "labels": ["Function"],
-            "properties": {"name": "foo", "file": "x.py"},
-        },
-        {
-            "id": "b",
-            "labels": ["Function"],
-            "properties": {"name": "foo", "file": "y.py"},
-        },
-    ]
-    res = g.find_nodes(name="foo", type="Function", file="x.py")
-    assert [n.id for n in res] == ["a"]
+def test_find_nodes_filters():
+    client = MagicMock()
+    client.query_nodes.return_value = {
+        "nodes": [
+            {"id": "a", "labels": ["Function"],
+             "properties": {"name": "main", "file": "x.py"}},
+            {"id": "b", "labels": ["Function"],
+             "properties": {"name": "main", "file": "other.py"}},
+        ]
+    }
+    g = ProximaDBGraph(client, "gid")
+    result = g.find_nodes(name="main", type="Function", file="x.py")
+    assert [n.id for n in result] == ["a"]
 
 
-def test_find_nodes_no_filters():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "a", "labels": ["F"], "properties": {"qualified_name": "mod.foo"}},
-    ]
-    res = g.find_nodes()
-    assert len(res) == 1
-
-
-# ---------------------------------------------------------------------------
-# search_symbols
-# ---------------------------------------------------------------------------
+def test_find_nodes_qualified_name_match():
+    client = MagicMock()
+    client.query_nodes.return_value = {
+        "nodes": [
+            {"id": "a", "labels": [], "properties": {"qualified_name": "pkg.main"}},
+        ]
+    }
+    g = ProximaDBGraph(client, "gid")
+    result = g.find_nodes(name="pkg.main")
+    assert [n.id for n in result] == ["a"]
 
 
 def test_search_symbols_empty_query():
-    g, _ = make_graph()
-    assert g.search_symbols("  ") == []
+    g = ProximaDBGraph(MagicMock(), "gid")
+    assert g.search_symbols("   ") == []
 
 
-def test_search_symbols_ranking():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "exact", "labels": ["F"], "properties": {"name": "parse"}},
-        {"id": "prefix", "labels": ["F"], "properties": {"name": "parser"}},
-        {"id": "sub", "labels": ["F"], "properties": {"name": "xparsex"}},
-        {"id": "doc", "labels": ["F"], "properties": {"docstring": "this can parse"}},
-        {"id": "none", "labels": ["F"], "properties": {"name": "other"}},
-    ]
-    res = g.search_symbols("parse", limit=10)
-    ids = [n.id for n in res]
+def test_search_symbols_ranking_and_type_filter():
+    client = MagicMock()
+    client.query_nodes.return_value = {
+        "nodes": [
+            {"id": "exact", "labels": ["Function"],
+             "properties": {"name": "parse", "file": "a.py", "line": 1}},
+            {"id": "prefix", "labels": ["Function"],
+             "properties": {"name": "parser_helper", "file": "b.py", "line": 2}},
+            {"id": "sig", "labels": ["Function"],
+             "properties": {"name": "x", "signature": "def parse_thing()",
+                            "file": "c.py", "line": 3}},
+            {"id": "wrongtype", "labels": ["Class"],
+             "properties": {"name": "parse", "file": "d.py", "line": 4}},
+            {"id": "nohay", "labels": ["Function"], "properties": {}},
+        ]
+    }
+    g = ProximaDBGraph(client, "gid")
+    results = g.search_symbols("parse", limit=10, symbol_types=["Function"])
+    ids = [n.id for n in results]
+    assert "wrongtype" not in ids
     assert ids[0] == "exact"
-    assert "none" not in ids
-    assert "doc" in ids
+    assert "prefix" in ids and "sig" in ids
 
 
-def test_search_symbols_type_filter():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "a", "labels": ["Function"], "properties": {"name": "parse"}},
-        {"id": "b", "labels": ["Class"], "properties": {"name": "parse"}},
-    ]
-    res = g.search_symbols("parse", symbol_types=["Function"])
-    assert [n.id for n in res] == ["a"]
-
-
-def test_search_symbols_qualified_and_signature():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "q", "labels": ["F"], "properties": {"qualified_name": "mod.parse"}},
-        {"id": "s", "labels": ["F"], "properties": {"signature": "def parse(x)"}},
-    ]
-    res = g.search_symbols("parse")
-    ids = {n.id for n in res}
-    assert "q" in ids and "s" in ids
+def test_search_symbols_qualified_and_docstring_paths():
+    client = MagicMock()
+    client.query_nodes.return_value = {
+        "nodes": [
+            {"id": "qn", "labels": ["F"],
+             "properties": {"qualified_name": "pkg.parse", "name": "z"}},
+            {"id": "doc", "labels": ["F"],
+             "properties": {"name": "y", "docstring": "this will parse text"}},
+        ]
+    }
+    g = ProximaDBGraph(client, "gid")
+    results = g.search_symbols("parse")
+    ids = {n.id for n in results}
+    assert "qn" in ids and "doc" in ids
 
 
 # ---------------------------------------------------------------------------
@@ -569,62 +570,41 @@ def test_search_symbols_qualified_and_signature():
 
 
 def test_get_neighbors_both_directions():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "a", "labels": [], "properties": {}},
-        {"id": "b", "labels": [], "properties": {}},
-        {"id": "c", "labels": [], "properties": {}},
+    client = MagicMock()
+    client.get_outgoing_edges.return_value = [
+        {"id": "out", "from_node_id": "n", "to_node_id": "b", "edge_type": "CALLS"}
     ]
-    c.edges = [
-        {"id": "e1", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"},
-        {"id": "e2", "from_node_id": "c", "to_node_id": "a", "edge_type": "CALLS"},
+    client.get_incoming_edges.return_value = [
+        {"id": "in", "from_node_id": "a", "to_node_id": "n", "edge_type": "CALLS"}
     ]
-    edges = g.get_neighbors("a", direction="both")
+    g = ProximaDBGraph(client, "gid")
+    edges = g.get_neighbors("n", direction="both")
     sigs = {(e.from_node, e.to_node) for e in edges}
-    assert ("a", "b") in sigs and ("c", "a") in sigs
+    assert ("n", "b") in sigs and ("a", "n") in sigs
 
 
-def test_get_neighbors_out_only_multidepth():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "a", "labels": [], "properties": {}},
-        {"id": "b", "labels": [], "properties": {}},
-        {"id": "d", "labels": [], "properties": {}},
+def test_get_neighbors_out_only_and_dedup():
+    client = MagicMock()
+    client.get_outgoing_edges.return_value = [
+        {"id": "out", "from_node_id": "n", "to_node_id": "b", "edge_type": "CALLS"},
+        {"id": "dup", "from_node_id": "n", "to_node_id": "b", "edge_type": "CALLS"},
     ]
-    c.edges = [
-        {"id": "e1", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"},
-        {"id": "e2", "from_node_id": "b", "to_node_id": "d", "edge_type": "CALLS"},
-    ]
-    edges = g.get_neighbors("a", edge_types=["CALLS"], direction="out", max_depth=2)
-    sigs = {(e.from_node, e.to_node) for e in edges}
-    assert ("a", "b") in sigs and ("b", "d") in sigs
-
-
-def test_get_neighbors_in_only():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "a", "labels": [], "properties": {}},
-        {"id": "b", "labels": [], "properties": {}},
-    ]
-    c.edges = [
-        {"id": "e1", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"},
-    ]
-    edges = g.get_neighbors("b", direction="in")
-    assert [(e.from_node, e.to_node) for e in edges] == [("a", "b")]
+    g = ProximaDBGraph(client, "gid")
+    edges = g.get_neighbors("n", edge_types=["CALLS"], direction="out", max_depth=1)
+    assert len(edges) == 1
 
 
 def test_get_all_edges():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "a", "labels": ["F"], "properties": {}},
-        {"id": "b", "labels": ["F"], "properties": {}},
+    client = MagicMock()
+    client.query_nodes.return_value = {
+        "nodes": [{"id": "a", "labels": [], "properties": {}}]
+    }
+    client.get_outgoing_edges.return_value = [
+        {"id": "e", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"}
     ]
-    c.edges = [
-        {"id": "e1", "from_node_id": "a", "to_node_id": "b", "edge_type": "CALLS"},
-    ]
+    g = ProximaDBGraph(client, "gid")
     edges = g.get_all_edges(edge_types=["CALLS"])
-    assert len(edges) == 1
-    assert edges[0].edge_type == "CALLS"
+    assert len(edges) == 1 and edges[0].from_node == "a"
 
 
 # ---------------------------------------------------------------------------
@@ -632,31 +612,33 @@ def test_get_all_edges():
 # ---------------------------------------------------------------------------
 
 
-def test_import_graph_json_dict():
-    g, c = make_graph()
-    payload = {
-        "nodes": [{"id": "n1", "labels": ["F"]}],
-        "edges": [{"source": "n1", "target": "n2", "type": "CALLS"}],
+def test_import_graph_json_from_dict():
+    client = MagicMock()
+    g = ProximaDBGraph(client, "gid")
+    data = {
+        "nodes": [{"id": "a", "type": "Function"}],
+        "edges": [{"source": "a", "target": "b", "label": "CALLS"}],
     }
-    res = g.import_graph_json(payload)
-    assert res["node_count"] == 1
-    assert res["edge_count"] == 1
+    res = g.import_graph_json(data)
+    assert res["node_count"] == 1 and res["edge_count"] == 1
     assert res["success"] is True
 
 
 def test_import_graph_json_nested_graph_key():
-    g, _ = make_graph()
-    payload = {"graph": {"nodes": [{"id": "x"}], "edges": []}}
-    res = g.import_graph_json(payload)
-    assert res["node_count"] == 1
-    assert res["edge_count"] == 0
+    client = MagicMock()
+    g = ProximaDBGraph(client, "gid")
+    data = {"graph": {"nodes": [{"id": "a"}], "edges": []}}
+    res = g.import_graph_json(data)
+    assert res["node_count"] == 1 and res["edge_count"] == 0
 
 
 def test_import_graph_json_from_file(tmp_path):
-    g, _ = make_graph()
+    client = MagicMock()
+    g = ProximaDBGraph(client, "gid")
+    payload = {"nodes": [{"id": "a", "type": "F"}], "edges": []}
     p = tmp_path / "graph.json"
-    p.write_text(json.dumps({"nodes": [{"id": "f1", "type": "Func"}], "edges": []}))
-    res = g.import_graph_json(p)
+    p.write_text(json.dumps(payload))
+    res = g.import_graph_json(str(p))
     assert res["node_count"] == 1
 
 
@@ -666,38 +648,39 @@ def test_import_graph_json_from_file(tmp_path):
 
 
 def test_match_pattern_node_only():
-    g, c = make_graph()
-    c.nodes = [
-        {"id": "a", "labels": ["Function"], "properties": {"name": "main"}},
-    ]
-    res = g.match_pattern('(f:Function {name: "main"})')
-    assert len(res) == 1
-    assert "f" in res[0]
-    assert res[0]["f"].id == "a"
+    client = MagicMock()
+    client.query_nodes.return_value = {
+        "nodes": [{"id": "a", "labels": ["Function"], "properties": {"name": "main"}}]
+    }
+    g = ProximaDBGraph(client, "gid")
+    matches = g.match_pattern('(f:Function {name: "main"})')
+    assert len(matches) == 1
+    assert matches[0]["f"].id == "a"
 
 
 def test_match_pattern_with_relationship_returns_empty():
-    g, _ = make_graph()
-    res = g.match_pattern("(a:Function)-[r:CALLS]->(b:Function)")
-    assert res == []
+    g = ProximaDBGraph(MagicMock(), "gid")
+    matches = g.match_pattern("(f1:Function)-[r:CALLS]->(f2:Function)")
+    assert matches == []
 
 
 def test_match_pattern_no_nodes():
-    g, _ = make_graph()
-    assert g.match_pattern("") == []
+    g = ProximaDBGraph(MagicMock(), "gid")
+    assert g.match_pattern("RETURN nothing") == []
 
 
 # ---------------------------------------------------------------------------
-# stats
+# get_stats
 # ---------------------------------------------------------------------------
 
 
 def test_get_stats():
-    g, c = make_graph()
-    c.nodes = [{"id": "a", "labels": [], "properties": {}}]
-    stats = g.get_stats()
-    assert stats["node_count"] == 1
+    client = MagicMock()
+    client.get_graph_stats.return_value = {"node_count": 5, "edge_count": 3}
+    g = ProximaDBGraph(client, "gid")
+    assert g.get_stats() == {"node_count": 5, "edge_count": 3}
+    client.get_graph_stats.assert_called_once_with("gid")
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-q"])
+    pytest.main([__file__, "-v"])

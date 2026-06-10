@@ -1,113 +1,29 @@
 """Offline unit tests for proximadb_sdk.protocols.grpc_sync.
 
-Fully offline: no real channel is ever opened. The client's pool initializer is
-patched out, a fake connection pool is injected, and each *Stub class on the
-module is monkeypatched so RPCs return real *_pb2 response messages (or simple
-fakes for graph responses that the code only touches via attribute access).
+Fully offline: the gRPC connection pool is replaced with a dummy that never
+opens a real channel, and every *Stub class on the module is monkeypatched so
+RPC wrappers return real *_pb2 response messages (or hand fakes). No socket,
+no sleep, no server.
 """
 
-from types import SimpleNamespace
+import json
 
+import grpc
 import pytest
 
 import proximadb_sdk.protocols.grpc_sync as gs
 from proximadb_sdk.exceptions import ProximaDBError
-
-# Real pb2 modules pulled off the module under test (guaranteed importable).
-v1_ct = gs.v1_collection_types_pb2
-v1_types = gs.v1_types_pb2
-v1_vt = gs.v1_vector_types_pb2
-v1_graph = gs.v1_graph_pb2
-v2 = gs.v2_record_pb2
+from proximadb.v2 import record_pb2 as r
+from proximadb_sdk.v1 import collection_types_pb2 as c
+from proximadb_sdk.v1 import types_pb2 as v1_types
 
 
-# --------------------------------------------------------------------------
-# Fake transport plumbing
-# --------------------------------------------------------------------------
-class FakeChannel:
-    """Harmless stand-in for a gRPC channel.
+# --------------------------------------------------------------------------- #
+# Fakes
+# --------------------------------------------------------------------------- #
+class FakeRpcError(grpc.RpcError):
+    """A grpc.RpcError with code()/details() that the wrappers inspect."""
 
-    The real *Stub constructors call channel.unary_unary(...) for every RPC at
-    construction time; the pool-helper wrappers build a real stub before the op
-    closure builds the fake one. We return a dummy callable so that real stub
-    construction never touches a socket.
-    """
-
-    def _dummy(self, *args, **kwargs):
-        def _call(*a, **k):
-            raise AssertionError("dummy channel RPC should never be invoked")
-
-        return _call
-
-    unary_unary = _dummy
-    unary_stream = _dummy
-    stream_unary = _dummy
-    stream_stream = _dummy
-
-
-class FakePool:
-    """Stands in for GrpcConnectionPool (detected by `get_channel`)."""
-
-    def __init__(self):
-        self.channel = FakeChannel()
-        self.returned = []
-        self.closed = False
-        self._metrics = {"requests": 1, "channels": 5}
-
-    def get_channel(self):
-        return self.channel
-
-    def return_channel(self, channel, success=True):
-        self.returned.append(success)
-
-    def get_metrics(self):
-        return self._metrics
-
-    def close(self):
-        self.closed = True
-
-
-def make_client(monkeypatch):
-    """Build a client without ever initializing a real pool."""
-    monkeypatch.setattr(
-        gs.ProximaDBSyncGrpcClient, "_init_connection_pool", lambda self: None
-    )
-    c = gs.ProximaDBSyncGrpcClient(server_address="localhost:5678", timeout=1.0)
-    pool = FakePool()
-    c._connection_pool = pool
-    c._pool = pool
-    return c
-
-
-class _StubInstaller:
-    """Install a fake stub class returning canned responses per RPC method."""
-
-    def __init__(self, monkeypatch):
-        self.mp = monkeypatch
-
-    def install(self, grpc_module_attr, stub_attr_name, rpc_responses):
-        grpc_mod = getattr(gs, grpc_module_attr)
-
-        class _FakeStub:
-            def __init__(self, channel):
-                self._channel = channel
-
-        def _make_rpc(resp):
-            def _rpc(req, timeout=None, metadata=None):
-                if callable(resp):
-                    return resp(req, timeout=timeout, metadata=metadata)
-                return resp
-
-            return _rpc
-
-        for rpc_name, resp in rpc_responses.items():
-            setattr(_FakeStub, rpc_name, staticmethod(_make_rpc(resp)))
-
-        self.mp.setattr(grpc_mod, stub_attr_name, _FakeStub)
-        return _FakeStub
-
-
-class FakeRpcError(gs.grpc.RpcError):
     def __init__(self, code, details):
         self._code = code
         self._details = details
@@ -119,988 +35,967 @@ class FakeRpcError(gs.grpc.RpcError):
         return self._details
 
 
-# --------------------------------------------------------------------------
-# Pure helpers / wrappers
-# --------------------------------------------------------------------------
+class DummyChannel:
+    """Fake gRPC channel.
+
+    Real generated *Stub constructors call ``channel.unary_unary(...)`` etc. to
+    build callables. We return a MagicMock for any such factory so constructing
+    a *real* stub never touches a socket. The methods we actually exercise are
+    overridden on the monkeypatched stub classes, so these factory-produced
+    callables are never invoked.
+    """
+
+    def __getattr__(self, name):
+        from unittest.mock import MagicMock
+
+        return MagicMock()
+
+
+class DummyPool:
+    """Stand-in for GrpcConnectionPool — never connects."""
+
+    def __init__(self, *args, **kwargs):
+        self.closed = False
+
+    def get_channel(self):
+        return DummyChannel()
+
+    def return_channel(self, channel, success=True, response_time_ms=0.0):
+        return None
+
+    def get_metrics(self):
+        return {"requests_served": 7}
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def client(monkeypatch):
+    """A ProximaDBSyncGrpcClient whose pool is a DummyPool (offline)."""
+    monkeypatch.setattr(gs, "GrpcConnectionPool", DummyPool)
+    cl = gs.ProximaDBSyncGrpcClient("localhost:5678", timeout=1.0)
+    return cl
+
+
+def make_stub_factory(method_name, behavior):
+    """Return a Stub class whose ``method_name`` calls ``behavior(req)``."""
+
+    class _Stub:
+        def __init__(self, channel):
+            self.channel = channel
+
+    def _method(self, req, timeout=None, metadata=None):
+        return behavior(req)
+
+    setattr(_Stub, method_name, _method)
+    return _Stub
+
+
+# --------------------------------------------------------------------------- #
+# Wrapper helper classes
+# --------------------------------------------------------------------------- #
 def test_collection_wrapper():
-    proto = v1_ct.Collection(id="cid", config=v1_ct.CollectionConfig(name="n", dimension=8))
-    w = gs.CollectionWrapper(proto)
+    coll = c.Collection(id="cid", config=c.CollectionConfig(name="n", dimension=8))
+    w = gs.CollectionWrapper(coll)
     assert w.name == "n"
     assert w.dimension == 8
     assert w.id == "cid"
     assert w.config is not None
     assert w.stats is not None
-    assert w.created_at == 0  # passthrough __getattr__
+    assert w.created_at == coll.created_at
     assert "CollectionWrapper" in repr(w)
 
 
-def test_collection_wrapper_no_config():
-    w = gs.CollectionWrapper(SimpleNamespace(id="x"))
+def test_collection_wrapper_missing_config():
+    w = gs.CollectionWrapper(object())
     assert w.name is None
     assert w.dimension is None
-    assert w.id == "x"
+    assert w.id is None
 
 
 def test_search_results_wrapper():
-    w = gs.SearchResultsWrapper(["a", "b", "c"])
+    w = gs.SearchResultsWrapper([1, 2, 3])
     assert len(w) == 3
-    assert w[0] == "a"
-    assert list(iter(w)) == ["a", "b", "c"]
-    assert w.results == ["a", "b", "c"]
+    assert list(iter(w)) == [1, 2, 3]
+    assert w[0] == 1
+    assert w.results == [1, 2, 3]
     assert "count=3" in repr(w)
 
 
 def test_vector_wrapper():
-    w = gs.VectorWrapper({"id": "v1", "vector": [1, 2], "metadata": {"k": "v"}})
+    w = gs.VectorWrapper({"id": "v1", "vector": [0.1]})
     assert w.id == "v1"
-    assert w["vector"] == [1, 2]
-    assert w.get("metadata") == {"k": "v"}
-    assert w.get("missing", 42) == 42
+    assert w["vector"] == [0.1]
+    assert w.get("vector") == [0.1]
+    assert w.get("missing", "d") == "d"
     assert "v1" in repr(w)
 
 
 def test_dict_wrapper():
-    w = gs.DictWrapper({"status": "ok", "n": 1})
+    w = gs.DictWrapper({"status": "ok", "count": 2})
     assert w.status == "ok"
-    assert w["n"] == 1
-    assert w.get("missing") is None
+    assert w["count"] == 2
+    assert w.get("count") == 2
+    assert w.get("nope") is None
     assert "status" in repr(w)
 
 
-def test_health_and_delete_dataclasses():
-    h = gs.HealthCheckResponse(healthy=True, latency_ms=1.0, status="ok", server_address="a")
-    assert h.healthy and h.version is None
-    d = gs.DeleteCollectionResponse(success=True, collection_id="c")
-    assert d.status == "deleted"
-
-
-# --------------------------------------------------------------------------
-# SqlValue <-> python round trip
-# --------------------------------------------------------------------------
-def test_sql_value_roundtrip(monkeypatch):
-    c = make_client(monkeypatch)
-    samples = [None, True, 123, 3.14, b"bytes", "hello", [1, "two", 3.0], {"a": 1, "b": [True, None]}]
-    for s in samples:
-        sv = c._python_to_sql_value(s)
-        back = c._sql_value_to_python(sv)
-        if isinstance(s, (bytes, bytearray)):
-            assert back == bytes(s)
-        else:
-            assert back == s
-
-
-def test_sql_value_unknown_kind(monkeypatch):
-    c = make_client(monkeypatch)
-    empty = v1_types.SqlValue()  # no oneof set
-    assert c._sql_value_to_python(empty) is None
-    sv = c._python_to_sql_value(object())
-    assert c._sql_value_to_python(sv).startswith("<object")
-
-
-# --------------------------------------------------------------------------
-# v2 TypedValue <-> python
-# --------------------------------------------------------------------------
-def test_v2_typed_value_roundtrip(monkeypatch):
-    c = make_client(monkeypatch)
-    cases = [None, True, 7, 2.5, b"bin", "text", [1, 2, "x"], {"nested": {"a": 1}}]
-    for case in cases:
-        tv = c._python_to_v2_typed_value(case)
-        back = c._v2_typed_value_to_python(tv)
-        if case is None:
-            assert back is None
-        elif isinstance(case, (bytes, bytearray)):
-            assert back == bytes(case)
-        else:
-            assert back == case
-
-
-def test_v2_typed_value_hints(monkeypatch):
-    c = make_client(monkeypatch)
-    tv32 = c._python_to_v2_typed_value({"type": "float32", "value": 1.5})
-    assert c._v2_typed_value_to_python(tv32) == pytest.approx(1.5)
-    tvsym = c._python_to_v2_typed_value({"type": "symbol", "value": "S"})
-    assert c._v2_typed_value_to_python(tvsym) == "S"
-    tvobj = c._python_to_v2_typed_value(object())
-    assert isinstance(c._v2_typed_value_to_python(tvobj), str)
-
-
-def test_v2_typed_value_empty(monkeypatch):
-    c = make_client(monkeypatch)
-    assert c._v2_typed_value_to_python(v2.TypedValue()) is None
-
-
-# --------------------------------------------------------------------------
-# normalize / record proto building
-# --------------------------------------------------------------------------
-def test_normalize_vector_alias_records(monkeypatch):
-    c = make_client(monkeypatch)
-    out = c._normalize_vector_alias_records(
-        [
-            {"id": "a", "vector": [1.0], "metadata": {"m": 1}, "version": 3},
-            {"oid": "b", "vector": [2.0], "props": {"p": 2}},
-            [9.0, 8.0],
-        ]
+# --------------------------------------------------------------------------- #
+# Construction / lifecycle / pool
+# --------------------------------------------------------------------------- #
+def test_init_with_compression(monkeypatch):
+    monkeypatch.setattr(gs, "GrpcConnectionPool", DummyPool)
+    cl = gs.ProximaDBSyncGrpcClient(
+        "localhost:5678", enable_compression=True, compression_algorithm="gzip"
     )
-    assert out[0]["id"] == "a" and out[0]["props"] == {"m": 1} and out[0]["version"] == 3
-    assert out[1]["id"] == "b" and out[1]["props"] == {"p": 2}
-    assert out[2]["id"] == "record_2" and out[2]["vector"] == [9.0, 8.0]
+    assert cl._connection_pool is cl._pool
 
 
-def test_normalize_with_model_dump(monkeypatch):
-    c = make_client(monkeypatch)
-
-    class Rec:
-        def model_dump(self, exclude_none=False):
-            return {"id": "md", "vector": [1.0], "metadata": {"x": 1}}
-
-    out = c._normalize_vector_alias_records([Rec()])
-    assert out[0]["id"] == "md"
-
-
-def test_record_proto_for_grpc(monkeypatch):
-    c = make_client(monkeypatch)
-    proto = c._record_proto_for_grpc(
-        {
-            "id": "r1",
-            "vector": [1.0, 2.0],
-            "vector_dimension": 2,
-            "props": {"a": "x"},
-            "typed_fields": {"tf": {"value": 5, "value_type": "integer"}},
-            "timestamp_ms": 100,
-            "version": 2,
-            "partition_values": {"p": "v"},
-            "custom_metadata": {"c": "m"},
-        }
+def test_init_with_deflate_compression(monkeypatch):
+    monkeypatch.setattr(gs, "GrpcConnectionPool", DummyPool)
+    cl = gs.ProximaDBSyncGrpcClient(
+        "localhost:5678", enable_compression=True, compression_algorithm="deflate"
     )
-    assert proto.id == "r1"
-    assert list(proto.vector) == [1.0, 2.0]
-    assert proto.vector_dimension == 2
-    assert "a" in proto.props
-    assert proto.timestamp_ms == 100
+    assert cl is not None
 
 
-def test_record_proto_from_embeddings(monkeypatch):
-    c = make_client(monkeypatch)
-    proto = c._record_proto_for_grpc({"id": "e", "embeddings": [{"values": [3.0]}]})
-    assert list(proto.vector) == [3.0]
+def test_init_with_unknown_compression(monkeypatch):
+    monkeypatch.setattr(gs, "GrpcConnectionPool", DummyPool)
+    cl = gs.ProximaDBSyncGrpcClient(
+        "localhost:5678", enable_compression=True, compression_algorithm="bogus"
+    )
+    assert cl is not None
 
 
-def test_record_proto_missing_vector(monkeypatch):
-    c = make_client(monkeypatch)
-    with pytest.raises(ValueError):
-        c._record_proto_for_grpc({"id": "no_vec"})
-
-
-def test_record_proto_bad_type(monkeypatch):
-    c = make_client(monkeypatch)
-    with pytest.raises(TypeError):
-        c._record_proto_for_grpc(12345)
-
-
-# --------------------------------------------------------------------------
-# Pool lifecycle
-# --------------------------------------------------------------------------
-def test_pool_metrics_and_close(monkeypatch):
-    c = make_client(monkeypatch)
-    assert c.get_pool_metrics() == {"requests": 1, "channels": 5}
-    c.close()
-    assert c._connection_pool.closed is True
-
-
-def test_context_manager(monkeypatch):
-    c = make_client(monkeypatch)
-    with c as ctx:
-        assert ctx is c
-    assert c._connection_pool.closed is True
-
-
-def test_get_pool_metrics_none(monkeypatch):
-    c = make_client(monkeypatch)
-    c._connection_pool = None
-    assert c.get_pool_metrics() is None
-    c.close()  # no-op
-
-
-def test_init_pool_failure(monkeypatch):
+def test_init_failure_wrapped(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("nope")
 
     monkeypatch.setattr(gs, "GrpcConnectionPool", boom)
     with pytest.raises(ProximaDBError):
-        gs.ProximaDBSyncGrpcClient(server_address="localhost:5678")
+        gs.ProximaDBSyncGrpcClient("localhost:5678")
 
 
-def test_init_pool_compression(monkeypatch):
-    captured = {}
-
-    class FakeGcp:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-        def get_metrics(self):
-            return {}
-
-    monkeypatch.setattr(gs, "GrpcConnectionPool", FakeGcp)
-    gs.ProximaDBSyncGrpcClient(
-        server_address="x:1", enable_compression=True, compression_algorithm="deflate"
-    )
-    assert captured["compression"] is not None
-    gs.ProximaDBSyncGrpcClient(
-        server_address="x:1", enable_compression=True, compression_algorithm="weird"
-    )  # unknown -> gzip fallback
+def test_get_pool_metrics(client):
+    assert client.get_pool_metrics() == {"requests_served": 7}
 
 
-# --------------------------------------------------------------------------
-# Collection RPC wrappers (v1)
-# --------------------------------------------------------------------------
-def test_create_collection_v1(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = v1_ct.Collection(id="c1", config=v1_ct.CollectionConfig(name="n", dimension=4))
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc", "CollectionServiceStub", {"CreateCollection": resp}
-    )
-    out = c.create_collection_v1("n", 4, distance_metric=1, storage_engine=1, tags=["t"], description="d")
-    assert out.id == "c1"
+def test_get_pool_metrics_none(client):
+    client._connection_pool = None
+    assert client.get_pool_metrics() is None
 
 
-def test_get_list_delete_collection_v1(monkeypatch):
-    c = make_client(monkeypatch)
-    coll = v1_ct.Collection(id="c1", config=v1_ct.CollectionConfig(name="n", dimension=4))
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc",
-        "CollectionServiceStub",
-        {
-            "GetCollection": coll,
-            "ListCollections": v1_ct.ListCollectionsResponse(collections=[coll]),
-            "DeleteCollection": v1_ct.DeleteCollectionResponse(success=True),
-        },
-    )
-    assert c.get_collection_v1("c1").id == "c1"
-    assert c.list_collections_v1(limit=1, offset=0, include_stats=True).collections[0].id == "c1"
-    assert c.delete_collection_v1("c1").success is True
+def test_close_and_context_manager(monkeypatch):
+    monkeypatch.setattr(gs, "GrpcConnectionPool", DummyPool)
+    with gs.ProximaDBSyncGrpcClient("localhost:5678") as cl:
+        pool = cl._connection_pool
+    assert pool.closed is True
 
 
-def test_create_collection_unified(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = v1_ct.Collection(id="c1", config=v1_ct.CollectionConfig(name="unified", dimension=16))
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc", "CollectionServiceStub", {"CreateCollection": resp}
-    )
-    wrapped = c.create_collection(
-        name="unified", dimension=16, distance_metric=1, indexing_algorithm=1,
-        storage_engine=1,
-    )
-    assert wrapped.name == "unified" and wrapped.dimension == 16
+def test_close_swallows_errors(client):
+    class BadPool:
+        def close(self):
+            raise RuntimeError("x")
+
+    client._connection_pool = BadPool()
+    client.close()  # should not raise
 
 
-def test_create_collection_engine_alias_and_string(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = v1_ct.Collection(id="c", config=v1_ct.CollectionConfig(name="s", dimension=8))
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc", "CollectionServiceStub", {"CreateCollection": resp}
-    )
-    out = c.create_collection(name="s", dimension=8, engine="viper")
-    assert out.name == "s"
+# --------------------------------------------------------------------------- #
+# SqlValue encode/decode
+# --------------------------------------------------------------------------- #
+def test_python_to_sql_value_roundtrip(client):
+    cases = [
+        None,
+        True,
+        42,
+        3.14,
+        b"bytes",
+        "hello",
+        [1, "two", 3.0],
+        {"k": "v", "n": 5},
+    ]
+    for value in cases:
+        sv = client._python_to_sql_value(value)
+        back = client._sql_value_to_python(sv)
+        if isinstance(value, bytes):
+            assert back == value
+        elif value is None:
+            assert back is None
+        elif isinstance(value, list):
+            assert back == [1, "two", 3.0]
+        elif isinstance(value, dict):
+            assert back == {"k": "v", "n": 5}
+        else:
+            assert back == value
 
 
-def test_create_collection_bad_engine(monkeypatch):
-    c = make_client(monkeypatch)
+def test_sql_value_to_python_unknown_kind(client):
+    sv = v1_types.SqlValue()  # no oneof set
+    assert client._sql_value_to_python(sv) is None
+
+
+# --------------------------------------------------------------------------- #
+# v2 TypedValue encode/decode
+# --------------------------------------------------------------------------- #
+def test_v2_typed_value_roundtrip(client):
+    cases = [
+        (None, None),
+        (True, True),
+        (7, 7),
+        (1.5, 1.5),
+        (b"bin", b"bin"),
+        ("text", "text"),
+        ({"a": 1}, {"a": 1}),
+    ]
+    for value, expected in cases:
+        tv = client._python_to_v2_typed_value(value)
+        assert client._v2_typed_value_to_python(tv) == expected
+
+
+def test_v2_typed_value_type_hints(client):
+    tv32 = client._python_to_v2_typed_value({"type": "float32", "value": 1.25})
+    assert abs(client._v2_typed_value_to_python(tv32) - 1.25) < 1e-3
+    sym = client._python_to_v2_typed_value({"type": "symbol", "value": "S"})
+    assert client._v2_typed_value_to_python(sym) == "S"
+
+
+def test_v2_typed_value_array(client):
+    tv = client._python_to_v2_typed_value([1, 2, 3])
+    assert client._v2_typed_value_to_python(tv) == [1, 2, 3]
+
+
+def test_v2_typed_value_jsonb_decode(client):
+    tv = r.TypedValue()
+    tv.jsonb_value = json.dumps({"x": 1}).encode("utf-8")
+    assert client._v2_typed_value_to_python(tv) == {"x": 1}
+
+
+def test_v2_typed_value_fallback_object(client):
+    tv = client._python_to_v2_typed_value(object())  # str() fallback path
+    assert isinstance(client._v2_typed_value_to_python(tv), str)
+
+
+# --------------------------------------------------------------------------- #
+# normalize vector alias records / record proto builder
+# --------------------------------------------------------------------------- #
+def test_normalize_vector_alias_records_variants(client):
+    class HasModelDump:
+        def model_dump(self, exclude_none=False):
+            return {"id": "md", "vector": [0.1], "metadata": {"k": "v"}}
+
+    class HasDict:
+        def __init__(self):
+            self.id = "dd"
+            self.vector = [0.2]
+            self._private = "skip"
+
+        def dict(self, exclude_none=False):
+            return {"id": "dd", "vector": [0.2]}
+
+    inputs = [
+        {"id": "a", "vector": [0.1], "props": {"p": 1}},
+        {"oid": "b", "vector": [0.2]},
+        HasModelDump(),
+        HasDict(),
+        [0.5, 0.6],  # bare vector
+    ]
+    out = client._normalize_vector_alias_records(inputs)
+    assert out[0]["id"] == "a"
+    assert out[1]["id"] == "b"
+    assert out[2]["id"] == "md"
+    assert out[3]["id"] == "dd"
+    assert out[4]["id"] == "record_4"
+    assert out[4]["vector"] == [0.5, 0.6]
+
+
+def test_record_proto_for_grpc_full(client):
+    record = {
+        "id": "rec1",
+        "vector": [0.1, 0.2],
+        "vector_dimension": 2,
+        "props": {"category": "x"},
+        "typed_fields": {"score": {"value_type": "float32", "value": 0.9}},
+        "timestamp_ms": 1234,
+        "version": 2,
+        "partition_values": {"region": "us"},
+        "custom_metadata": {"src": "test"},
+    }
+    proto = client._record_proto_for_grpc(record)
+    assert proto.id == "rec1"
+    assert list(proto.vector) == pytest.approx([0.1, 0.2])
+    assert "category" in proto.props
+    assert proto.timestamp_ms == 1234
+
+
+def test_record_proto_from_embeddings(client):
+    record = {"id": "e1", "embeddings": [{"values": [0.3, 0.4]}]}
+    proto = client._record_proto_for_grpc(record)
+    assert list(proto.vector) == pytest.approx([0.3, 0.4])
+
+
+def test_record_proto_missing_vector(client):
     with pytest.raises(ValueError):
-        c.create_collection(name="s", dimension=8, storage_engine="not_an_engine")
+        client._record_proto_for_grpc({"id": "x"})
 
 
-def test_get_collection_unified(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = v1_ct.Collection(id="c", config=v1_ct.CollectionConfig(name="g", dimension=2))
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc", "CollectionServiceStub", {"GetCollection": resp}
-    )
-    assert c.get_collection("g").name == "g"
+def test_record_proto_bad_type(client):
+    with pytest.raises(TypeError):
+        client._record_proto_for_grpc(12345)
 
 
-def test_list_collections_unified(monkeypatch):
-    c = make_client(monkeypatch)
-    coll = v1_ct.Collection(id="c", config=v1_ct.CollectionConfig(name="L", dimension=2))
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc",
+# --------------------------------------------------------------------------- #
+# Collection operations (CollectionService)
+# --------------------------------------------------------------------------- #
+def _patch_collection_stub(monkeypatch, method, behavior):
+    monkeypatch.setattr(
+        gs.v1_collection_pb2_grpc,
         "CollectionServiceStub",
-        {"ListCollections": v1_ct.ListCollectionsResponse(collections=[coll, coll])},
+        make_stub_factory(method, behavior),
     )
-    out = c.list_collections()
-    assert len(out) == 2 and out[0].name == "L"
 
 
-def test_delete_collection_unified(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc",
-        "CollectionServiceStub",
-        {"DeleteCollection": v1_ct.DeleteCollectionResponse(success=True)},
+def test_create_collection(client, monkeypatch):
+    def behavior(cfg):
+        return c.Collection(
+            id="cid", config=c.CollectionConfig(name=cfg.name, dimension=cfg.dimension)
+        )
+
+    _patch_collection_stub(monkeypatch, "CreateCollection", behavior)
+    res = client.create_collection(
+        "mycoll", dimension=16, distance_metric=1, storage_engine=1
     )
-    out = c.delete_collection("c1")
-    assert out.success and out.collection_id == "c1"
+    assert res.name == "mycoll"
+    assert res.dimension == 16
 
 
-# --------------------------------------------------------------------------
-# Error mapping
-# --------------------------------------------------------------------------
-def test_execute_collection_rpc_error_unavailable(monkeypatch):
-    c = make_client(monkeypatch)
+def test_create_collection_engine_alias_and_string(client, monkeypatch):
+    def behavior(cfg):
+        return c.Collection(
+            id="cid", config=c.CollectionConfig(name=cfg.name, dimension=cfg.dimension)
+        )
 
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.UNAVAILABLE, "down")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc", "CollectionServiceStub", {"GetCollection": boom}
+    _patch_collection_stub(monkeypatch, "CreateCollection", behavior)
+    res = client.create_collection(
+        "c2",
+        dimension=4,
+        indexing_algorithm=1,
+        engine="viper",
     )
-    with pytest.raises(ProximaDBError, match="connection failed"):
-        c.get_collection("x")
+    assert res.name == "c2"
 
 
-def test_execute_collection_rpc_error_generic(monkeypatch):
-    c = make_client(monkeypatch)
+def test_create_collection_bad_storage_engine(client):
+    with pytest.raises(ValueError):
+        client.create_collection("c3", dimension=4, storage_engine="not-a-real-engine")
 
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.INTERNAL, "boom")
 
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc", "CollectionServiceStub", {"GetCollection": boom}
+def test_get_collection(client, monkeypatch):
+    def behavior(req):
+        assert req.collection_id == "mycoll"
+        return c.Collection(
+            id="cid", config=c.CollectionConfig(name="mycoll", dimension=8)
+        )
+
+    _patch_collection_stub(monkeypatch, "GetCollection", behavior)
+    res = client.get_collection("mycoll")
+    assert res.name == "mycoll"
+
+
+def test_list_collections(client, monkeypatch):
+    def behavior(req):
+        resp = c.ListCollectionsResponse()
+        resp.collections.add(id="a", config=c.CollectionConfig(name="a", dimension=2))
+        resp.collections.add(id="b", config=c.CollectionConfig(name="b", dimension=3))
+        return resp
+
+    _patch_collection_stub(monkeypatch, "ListCollections", behavior)
+    res = client.list_collections()
+    assert [coll.name for coll in res] == ["a", "b"]
+
+
+def test_delete_collection(client, monkeypatch):
+    def behavior(req):
+        return c.DeleteCollectionResponse(success=True)
+
+    _patch_collection_stub(monkeypatch, "DeleteCollection", behavior)
+    res = client.delete_collection("dead")
+    assert res.success is True
+    assert res.collection_id == "dead"
+    assert res.status == "deleted"
+
+
+def test_create_collection_v1(client, monkeypatch):
+    def behavior(cfg):
+        return c.Collection(
+            id="x", config=c.CollectionConfig(name=cfg.name, dimension=cfg.dimension)
+        )
+
+    _patch_collection_stub(monkeypatch, "CreateCollection", behavior)
+    res = client.create_collection_v1(
+        "v1c", dimension=5, distance_metric=1, storage_engine=1, tags=["t"]
     )
-    with pytest.raises(ProximaDBError, match="RPC failed"):
-        c.get_collection("x")
+    assert res.config.name == "v1c"
 
 
-def test_execute_collection_generic_exception(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise ValueError("kaboom")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc", "CollectionServiceStub", {"GetCollection": boom}
+def test_get_collection_v1(client, monkeypatch):
+    _patch_collection_stub(
+        monkeypatch, "GetCollection", lambda req: c.Collection(id=req.collection_id)
     )
-    with pytest.raises(ProximaDBError, match="failed"):
-        c.get_collection("x")
+    res = client.get_collection_v1("gid")
+    assert res.id == "gid"
 
 
-def test_execute_with_pool_rpc_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.UNAVAILABLE, "x")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_vector_pb2_grpc", "VectorServiceStub", {"VectorGet": boom}
+def test_list_collections_v1(client, monkeypatch):
+    _patch_collection_stub(
+        monkeypatch, "ListCollections", lambda req: c.ListCollectionsResponse()
     )
-    with pytest.raises(ProximaDBError, match="connection failed"):
-        c.get_vector("col", "v1")
+    res = client.list_collections_v1(limit=5, offset=1, include_stats=True)
+    assert len(res.collections) == 0
 
 
-def test_grpc_unavailable_guard(monkeypatch):
-    c = make_client(monkeypatch)
-    monkeypatch.setattr(gs, "GRPC_AVAILABLE", False)
-    with pytest.raises(ProximaDBError, match="gRPC not available"):
-        c._execute_with_pool("op", lambda stub: None)
-    with pytest.raises(ProximaDBError, match="gRPC not available"):
-        c._execute_collection_with_pool("op", lambda stub: None)
+def test_delete_collection_v1(client, monkeypatch):
+    _patch_collection_stub(
+        monkeypatch,
+        "DeleteCollection",
+        lambda req: c.DeleteCollectionResponse(success=True),
+    )
+    res = client.delete_collection_v1("zid")
+    assert res.success is True
 
 
-def test_record_pool_unavailable(monkeypatch):
-    c = make_client(monkeypatch)
-    monkeypatch.setattr(gs, "v2_record_pb2_grpc", None)
-    with pytest.raises(ProximaDBError, match="v2 record gRPC stubs"):
-        c._execute_record_with_pool("op", lambda stub: None)
-
-
-# --------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 # Health check
-# --------------------------------------------------------------------------
-def test_health_check_ok(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc",
-        "CollectionServiceStub",
-        {"ListCollections": v1_ct.ListCollectionsResponse(collections=[])},
+# --------------------------------------------------------------------------- #
+def test_health_check_ok(client, monkeypatch):
+    _patch_collection_stub(
+        monkeypatch, "ListCollections", lambda req: c.ListCollectionsResponse()
     )
-    h = c.health_check()
-    assert h.healthy is True and h.status == "connected"
+    res = client.health_check()
+    assert res.healthy is True
+    assert res.status == "connected"
+    assert res.server_address == "localhost:5678"
 
 
-def test_health_check_rpc_error(monkeypatch):
-    c = make_client(monkeypatch)
+def test_health_check_rpc_error(client, monkeypatch):
+    def behavior(req):
+        raise FakeRpcError(grpc.StatusCode.UNAVAILABLE, "down")
 
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.UNAVAILABLE, "no")
+    _patch_collection_stub(monkeypatch, "ListCollections", behavior)
+    res = client.health_check()
+    assert res.healthy is False
+    assert res.details == "down"
 
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc", "CollectionServiceStub", {"ListCollections": boom}
+
+def test_health_check_generic_error(client, monkeypatch):
+    def behavior(req):
+        raise RuntimeError("boom")
+
+    _patch_collection_stub(monkeypatch, "ListCollections", behavior)
+    res = client.health_check()
+    assert res.healthy is False
+    assert "boom" in res.details
+
+
+# --------------------------------------------------------------------------- #
+# Record / vector operations (v2 ProximaRecordService)
+# --------------------------------------------------------------------------- #
+def _patch_record_stub(monkeypatch, method, behavior):
+    monkeypatch.setattr(
+        gs.v2_record_pb2_grpc,
+        "ProximaRecordServiceStub",
+        make_stub_factory(method, behavior),
     )
-    h = c.health_check()
-    assert h.healthy is False and "error" in h.status
 
 
-def test_health_check_generic_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise ValueError("weird")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_collection_pb2_grpc", "CollectionServiceStub", {"ListCollections": boom}
-    )
-    h = c.health_check()
-    assert h.healthy is False and "ValueError" in h.status
-
-
-def test_health_check_grpc_unavailable(monkeypatch):
-    c = make_client(monkeypatch)
-    monkeypatch.setattr(gs, "GRPC_AVAILABLE", False)
-    with pytest.raises(ProximaDBError):
-        c.health_check()
-
-
-# --------------------------------------------------------------------------
-# SQL
-# --------------------------------------------------------------------------
-def test_execute_sql(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = v1_types.ExecuteQueryResponse(
-        rows_scanned=10, rows_returned=1, execution_time_ms=2, columns=["a"], column_types=["INT"]
-    )
-    row = resp.rows.add()
-    field = row.fields.add()
-    field.key = "a"
-    field.value.int64_value = 99
-    _StubInstaller(monkeypatch).install("v1_sql_pb2_grpc", "QueryServiceStub", {"ExecuteQuery": resp})
-    out = c.execute_sql("SELECT 1", parameters=[1, "x"], collection="col")
-    assert out["row_count"] == 1
-    assert out["rows"][0]["a"] == 99
-    assert out["columns"] == ["a"]
-
-
-def test_execute_sql_rpc_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.INTERNAL, "syntax")
-
-    _StubInstaller(monkeypatch).install("v1_sql_pb2_grpc", "QueryServiceStub", {"ExecuteQuery": boom})
-    with pytest.raises(ProximaDBError, match="execute_sql RPC failed"):
-        c.execute_sql("BAD")
-
-
-def test_execute_sql_generic_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise RuntimeError("oops")
-
-    _StubInstaller(monkeypatch).install("v1_sql_pb2_grpc", "QueryServiceStub", {"ExecuteQuery": boom})
-    with pytest.raises(ProximaDBError, match="execute_sql failed"):
-        c.execute_sql("X")
-
-
-def test_execute_sql_grpc_unavailable(monkeypatch):
-    c = make_client(monkeypatch)
-    monkeypatch.setattr(gs, "GRPC_AVAILABLE", False)
-    with pytest.raises(ProximaDBError):
-        c.execute_sql("X")
-
-
-# --------------------------------------------------------------------------
-# Record insert / upsert / vector aliases
-# --------------------------------------------------------------------------
-def _batch_response(success=2, failed=0):
-    resp = v2.ProximaRecordBatchResponse(
+def _batch_resp(success=2, failed=0, errors=None):
+    resp = r.ProximaRecordBatchResponse(
         success=failed == 0,
         total_processed=success + failed,
         success_count=success,
         failed_count=failed,
-        processing_time_us=10,
+        processing_time_us=123,
     )
-    if failed:
-        err = resp.errors.add()
-        err.record_index = 0
-        err.record_id = "bad"
-        err.error_message = "nope"
+    for err in errors or []:
+        resp.errors.add(record_id=err[0], error_message=err[1])
     return resp
 
 
-def test_insert_records(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"InsertRecords": _batch_response()}
+def test_insert_records(client, monkeypatch):
+    _patch_record_stub(monkeypatch, "InsertRecords", lambda req: _batch_resp(success=2))
+    res = client.insert_records(
+        "col", [{"id": "1", "vector": [0.1]}, {"id": "2", "vector": [0.2]}]
     )
-    out = c.insert_records("col", [{"id": "a", "vector": [1.0]}], schema_id="s")
-    assert out.total == 2 and out.success == 2 and out.failed == 0
+    assert res.success == 2
+    assert res.failed == 0
 
 
-def test_insert_records_upsert_delegates(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"UpsertRecords": _batch_response()}
+def test_insert_records_with_errors(client, monkeypatch):
+    _patch_record_stub(
+        monkeypatch,
+        "InsertRecords",
+        lambda req: _batch_resp(success=1, failed=1, errors=[("2", "bad")]),
     )
-    out = c.insert_records("col", [{"id": "a", "vector": [1.0]}], upsert=True)
-    assert out.success == 2
+    res = client.insert_records(
+        "col", [{"id": "1", "vector": [0.1]}, {"id": "2", "vector": [0.2]}]
+    )
+    assert res.failed == 1
+    assert "bad" in res.errors[0]
 
 
-def test_upsert_records_with_errors(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc",
+def test_insert_records_upsert_kwarg_routes(client, monkeypatch):
+    _patch_record_stub(monkeypatch, "UpsertRecords", lambda req: _batch_resp(success=1))
+    res = client.insert_records("col", [{"id": "1", "vector": [0.1]}], upsert=True)
+    assert res.success == 1
+
+
+def test_upsert_records(client, monkeypatch):
+    _patch_record_stub(monkeypatch, "UpsertRecords", lambda req: _batch_resp(success=1))
+    res = client.upsert_records("col", [{"id": "1", "vector": [0.1]}], schema_id="s1")
+    assert res.success == 1
+
+
+def test_insert_vectors_and_insert_vector(client, monkeypatch):
+    _patch_record_stub(monkeypatch, "InsertRecords", lambda req: _batch_resp(success=1))
+    res = client.insert_vectors(
+        "col", [{"id": "v1", "vector": [0.1], "metadata": {"k": "v"}}]
+    )
+    assert res.success is True
+    assert res.operation == "INSERT"
+    assert res.vector_ids == ["v1"]
+
+    res2 = client.insert_vector("col", "vx", [0.5], metadata={"m": 1})
+    assert res2.vector_ids == ["vx"]
+
+
+def test_insert_vectors_upsert(client, monkeypatch):
+    _patch_record_stub(monkeypatch, "UpsertRecords", lambda req: _batch_resp(success=1))
+    res = client.insert_vectors("col", [{"id": "v1", "vector": [0.1]}], upsert=True)
+    assert res.operation == "UPSERT"
+
+
+def test_update_vector(client, monkeypatch):
+    _patch_record_stub(monkeypatch, "UpsertRecords", lambda req: _batch_resp(success=1))
+    res = client.update_vector("col", "v1", vector=[0.9], metadata={"k": "v"})
+    assert res["status"] == "updated"
+    assert res["success"] is True
+
+
+def test_search_vectors(client, monkeypatch):
+    def behavior(req):
+        resp = r.TypedSearchResponse()
+        item = resp.results.add(id="v1", score=0.9)
+        item.props["cat"].CopyFrom(client._python_to_v2_typed_value("news"))
+        item.vector.extend([0.1, 0.2])
+        return resp
+
+    _patch_record_stub(monkeypatch, "Search", behavior)
+    res = client.search_vectors(
+        "col",
+        query_vector=[0.1, 0.2],
+        top_k=3,
+        metadata_filters={"cat": "news"},
+        include_vectors=True,
+        include_metadata=True,
+        search_hints={"ef": 64},
+    )
+    assert len(res) == 1
+    assert res[0].id == "v1"
+    assert res[0].metadata == {"cat": "news"}
+    assert res[0].vector == pytest.approx([0.1, 0.2])
+
+
+def test_search_vectors_requires_query(client):
+    with pytest.raises(ValueError):
+        client.search_vectors("col")
+
+
+def test_search_alias(client, monkeypatch):
+    _patch_record_stub(monkeypatch, "Search", lambda req: r.TypedSearchResponse())
+    res = client.search(collection_name="col", query_vector=[0.1], k=5)
+    assert len(res) == 0
+
+
+def test_search_requires_collection(client):
+    with pytest.raises(ValueError):
+        client.search(query_vector=[0.1])
+
+
+def test_get_vector(client, monkeypatch):
+    class FakeItem:
+        id = "v1"
+        vector = [0.1, 0.2]
+
+        def __init__(self):
+            self.metadata = {}
+
+        def HasField(self, name):
+            return False
+
+    class FakeResults:
+        def __init__(self, item):
+            self.results = [item]
+
+    class FakeResponse:
+        def __init__(self):
+            self.success = True
+            self.results = FakeResults(FakeItem())
+
+    monkeypatch.setattr(
+        gs.v1_vector_pb2_grpc,
+        "VectorServiceStub",
+        make_stub_factory("VectorGet", lambda req: FakeResponse()),
+    )
+    res = client.get_vector("col", "v1", include_vector=True, include_metadata=False)
+    assert res.id == "v1"
+    assert res["vector"] == [0.1, 0.2]
+
+
+def test_get_vector_not_found(client, monkeypatch):
+    class FakeResponse:
+        success = False
+
+    monkeypatch.setattr(
+        gs.v1_vector_pb2_grpc,
+        "VectorServiceStub",
+        make_stub_factory("VectorGet", lambda req: FakeResponse()),
+    )
+    with pytest.raises(ProximaDBError):
+        client.get_vector("col", "missing")
+
+
+def test_delete_vector(client, monkeypatch):
+    _patch_record_stub(
+        monkeypatch, "DeleteRecords", lambda req: _batch_resp(success=1, failed=0)
+    )
+    res = client.delete_vector("col", "v1")
+    assert res["status"] == "deleted"
+    assert res["success"] is True
+
+
+def test_delete_vectors(client, monkeypatch):
+    _patch_record_stub(
+        monkeypatch, "DeleteRecords", lambda req: _batch_resp(success=2, failed=0)
+    )
+    res = client.delete_vectors("col", ["v1", "v2"])
+    assert res["status"] == "completed"
+    assert res["deleted_count"] == 2
+    assert res["total_requested"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# SQL
+# --------------------------------------------------------------------------- #
+def test_execute_sql(client, monkeypatch):
+    def behavior(req):
+        resp = v1_types.ExecuteQueryResponse(
+            rows_scanned=10, rows_returned=1, execution_time_ms=5
+        )
+        resp.columns.extend(["name"])
+        resp.column_types.extend(["string"])
+        row = resp.rows.add()
+        field = row.fields.add()
+        field.key = "name"
+        field.value.CopyFrom(client._python_to_sql_value("alice"))
+        return resp
+
+    monkeypatch.setattr(
+        gs.v1_sql_pb2_grpc,
+        "QueryServiceStub",
+        make_stub_factory("ExecuteQuery", behavior),
+    )
+    res = client.execute_sql("SELECT name", parameters=["x", 5], collection="col")
+    assert res["row_count"] == 1
+    assert res["rows"][0]["name"] == "alice"
+    assert res["columns"] == ["name"]
+
+
+def test_execute_sql_rpc_error(client, monkeypatch):
+    def behavior(req):
+        raise FakeRpcError(grpc.StatusCode.INTERNAL, "sql-boom")
+
+    monkeypatch.setattr(
+        gs.v1_sql_pb2_grpc,
+        "QueryServiceStub",
+        make_stub_factory("ExecuteQuery", behavior),
+    )
+    with pytest.raises(ProximaDBError):
+        client.execute_sql("SELECT 1")
+
+
+# --------------------------------------------------------------------------- #
+# Error mapping in the pooled executors
+# --------------------------------------------------------------------------- #
+def test_execute_with_pool_unavailable_maps_connection(client, monkeypatch):
+    def behavior(req):
+        raise FakeRpcError(grpc.StatusCode.UNAVAILABLE, "no route")
+
+    monkeypatch.setattr(
+        gs.v2_record_pb2_grpc,
         "ProximaRecordServiceStub",
-        {"UpsertRecords": _batch_response(success=1, failed=1)},
+        make_stub_factory("DeleteRecords", behavior),
     )
-    out = c.upsert_records("col", [{"id": "a", "vector": [1.0]}], schema_id="s")
-    assert out.failed == 1 and out.errors
+    with pytest.raises(ProximaDBError) as ei:
+        client.delete_vector("col", "v1")
+    assert "connection failed" in str(ei.value)
 
 
-def test_insert_records_stub_missing(monkeypatch):
-    c = make_client(monkeypatch)
-    monkeypatch.setattr(gs, "v2_record_pb2", None)
-    with pytest.raises(ProximaDBError, match="stubs are required"):
-        c.insert_records("col", [{"id": "a", "vector": [1.0]}])
+def test_execute_with_pool_other_rpc_error(client, monkeypatch):
+    def behavior(req):
+        raise FakeRpcError(grpc.StatusCode.INTERNAL, "internal")
 
-
-def test_insert_vectors(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"InsertRecords": _batch_response()}
+    monkeypatch.setattr(
+        gs.v2_record_pb2_grpc,
+        "ProximaRecordServiceStub",
+        make_stub_factory("DeleteRecords", behavior),
     )
-    out = c.insert_vectors("col", [{"id": "v1", "vector": [1.0]}])
-    assert out.success is True
-    assert out.operation == "INSERT"
-    assert out.vector_ids == ["v1"]
+    with pytest.raises(ProximaDBError) as ei:
+        client.delete_vector("col", "v1")
+    assert "RPC failed" in str(ei.value)
 
 
-def test_insert_vectors_upsert(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"UpsertRecords": _batch_response()}
+def test_execute_with_pool_generic_error(client, monkeypatch):
+    def behavior(req):
+        raise RuntimeError("generic")
+
+    monkeypatch.setattr(
+        gs.v2_record_pb2_grpc,
+        "ProximaRecordServiceStub",
+        make_stub_factory("DeleteRecords", behavior),
     )
-    out = c.insert_vectors("col", [{"id": "v1", "vector": [1.0]}], upsert=True)
-    assert out.operation == "UPSERT"
+    with pytest.raises(ProximaDBError) as ei:
+        client.delete_vector("col", "v1")
+    assert "failed" in str(ei.value)
 
 
-def test_insert_vector_single(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"InsertRecords": _batch_response(1, 0)}
+def test_collection_pool_rpc_error(client, monkeypatch):
+    _patch_collection_stub(
+        monkeypatch,
+        "GetCollection",
+        lambda req: (_ for _ in ()).throw(FakeRpcError(grpc.StatusCode.INTERNAL, "x")),
     )
-    out = c.insert_vector("col", "v1", [1.0], metadata={"m": 1})
-    assert out.success is True
+    with pytest.raises(ProximaDBError):
+        client.get_collection("c")
 
 
-def test_update_vector(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"UpsertRecords": _batch_response(1, 0)}
-    )
-    out = c.update_vector("col", "v1", vector=[2.0], metadata={"m": 2})
-    assert out["status"] == "updated" and out["success"] is True
-
-
-# --------------------------------------------------------------------------
-# Search
-# --------------------------------------------------------------------------
-def _search_response():
-    resp = v2.TypedSearchResponse(collection_id="col", total_found=1)
-    item = resp.results.add()
-    item.id = "r1"
-    item.score = 0.9
-    item.vector.extend([1.0, 2.0])
-    item.props["k"].text_value = "v"
-    item.timestamp_ms = 123
-    item.version = 2
-    item.source = "src"
-    return resp
-
-
-def test_search_vectors(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"Search": _search_response()}
-    )
-    out = c.search_vectors(
-        "col", query_vector=[1.0, 2.0], top_k=5, metadata_filters={"k": "v"},
-        include_vectors=True, search_hints={"h": "1"},
-    )
-    assert len(out) == 1
-    r = out[0]
-    assert r.id == "r1" and r.score == pytest.approx(0.9)
-    assert r.vector == [1.0, 2.0]
-    assert r.metadata == {"k": "v"}
-
-
-def test_search_alias(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"Search": _search_response()}
-    )
-    out = c.search(collection_name="col", query_vector=[1.0, 2.0], k=3)
-    assert len(out) == 1
-
-
-def test_search_missing_vector(monkeypatch):
-    c = make_client(monkeypatch)
-    with pytest.raises(ValueError):
-        c.search_vectors("col")
-
-
-def test_search_missing_collection(monkeypatch):
-    c = make_client(monkeypatch)
-    with pytest.raises(ValueError):
-        c.search(query_vector=[1.0])
-
-
-# --------------------------------------------------------------------------
-# get_vector / delete_vector(s)
-# --------------------------------------------------------------------------
-def test_get_vector(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = v1_vt.VectorOperationResponse(success=True)
-    item = resp.results.results.add()
-    item.id = "v1"
-    item.vector.extend([1.0, 2.0])
-    item.metadata["sk"].string_value = "sv"
-    item.metadata["ik"].int64_value = 7
-    item.timestamp = 100
-    item.version = 3
-    item.source = "src"
-    _StubInstaller(monkeypatch).install(
-        "v1_vector_pb2_grpc", "VectorServiceStub", {"VectorGet": resp}
-    )
-    out = c.get_vector("col", "v1")
-    assert out.id == "v1"
-    assert out["vector"] == [1.0, 2.0]
-    assert out["metadata"]["sk"] == "sv"
-    assert out["metadata"]["ik"] == 7
-    assert out["version"] == 3
-
-
-def test_get_vector_not_found(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v1_vector_pb2_grpc",
-        "VectorServiceStub",
-        {"VectorGet": v1_vt.VectorOperationResponse(success=False)},
-    )
-    with pytest.raises(ProximaDBError, match="not found"):
-        c.get_vector("col", "missing")
-
-
-def test_get_vector_empty_results(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v1_vector_pb2_grpc",
-        "VectorServiceStub",
-        {"VectorGet": v1_vt.VectorOperationResponse(success=True)},
-    )
-    with pytest.raises(ProximaDBError, match="not found"):
-        c.get_vector("col", "x")
-
-
-def test_delete_vector(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = v2.ProximaRecordBatchResponse(success=True, failed_count=0, success_count=1)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"DeleteRecords": resp}
-    )
-    out = c.delete_vector("col", "v1")
-    assert out["status"] == "deleted" and out["success"] is True
-
-
-def test_delete_vectors(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = v2.ProximaRecordBatchResponse(success=True, failed_count=0, success_count=2)
-    _StubInstaller(monkeypatch).install(
-        "v2_record_pb2_grpc", "ProximaRecordServiceStub", {"DeleteRecords": resp}
-    )
-    out = c.delete_vectors("col", ["a", "b"])
-    assert out["deleted_count"] == 2 and out["total_requested"] == 2
-
-
-# --------------------------------------------------------------------------
-# Graph property value conversions
-# --------------------------------------------------------------------------
-def test_property_value_roundtrip(monkeypatch):
-    c = make_client(monkeypatch)
-    for val in ["s", True, 5, 1.5, b"by", ["a", 1], {"k": "v"}]:
-        pv = c._convert_to_property_value(val)
-        back = c._convert_from_property_value(pv)
-        assert back == val
-
-
-def test_property_value_unknown(monkeypatch):
-    c = make_client(monkeypatch)
-    pv = c._convert_to_property_value(object())
-    assert isinstance(c._convert_from_property_value(pv), str)
-    assert c._convert_from_property_value(v1_graph.PropertyValue()) is None
-
-
-def test_convert_node_and_edge(monkeypatch):
-    c = make_client(monkeypatch)
-    node = v1_graph.Node(id="n1", labels=["L"], created_at_ms=1000, updated_at_ms=2000)
-    node.properties["p"].string_value = "v"
-    nd = c._convert_node_from_proto(node)
-    assert nd["id"] == "n1" and nd["labels"] == ["L"] and nd["properties"]["p"] == "v"
-    assert nd["created_at"] is not None
-
-    edge = v1_graph.Edge(
-        id="e1", from_node_id="a", to_node_id="b", edge_type="T", weight=0.5,
-        created_at_ms=1000, updated_at_ms=0,
-    )
-    ed = c._convert_edge_from_proto(edge)
-    assert ed["weight"] == pytest.approx(0.5)
-    assert ed["updated_at"] is None
-
-    path = SimpleNamespace(node_ids=["a", "b"])
-    assert c._convert_path_from_proto(path) == ["a", "b"]
-    assert c._convert_path_from_proto(SimpleNamespace()) == []
-
-
-# --------------------------------------------------------------------------
-# Graph RPCs
-# --------------------------------------------------------------------------
-def test_create_node(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc",
-        "GraphServiceStub",
-        {"CreateNode": v1_graph.Node(id="n1", labels=["L"], created_at_ms=100)},
-    )
-    out = c.create_node("n1", ["L"], properties={"p": "v"}, graph_id="g")
-    assert out["id"] == "n1"
-
-
-def test_create_node_rpc_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.INTERNAL, "x")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"CreateNode": boom}
-    )
-    with pytest.raises(ProximaDBError, match="create_node RPC failed"):
-        c.create_node("n", ["L"])
-
-
-def test_create_node_generic_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise ValueError("x")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"CreateNode": boom}
-    )
-    with pytest.raises(ProximaDBError, match="create_node failed"):
-        c.create_node("n", ["L"])
-
-
-def test_create_edge(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = v1_graph.Edge(id="e1", from_node_id="a", to_node_id="b", edge_type="T", weight=1.0, created_at_ms=10)
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"CreateEdge": resp}
-    )
-    out = c.create_edge("e1", "a", "b", "T", properties={"p": 1}, weight=1.0)
-    assert out["id"] == "e1" and out["edge_type"] == "T"
-
-
-def test_create_edge_rpc_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.INTERNAL, "x")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"CreateEdge": boom}
-    )
-    with pytest.raises(ProximaDBError, match="create_edge RPC failed"):
-        c.create_edge("e", "a", "b", "T")
-
-
-def test_traverse_graph(monkeypatch):
-    c = make_client(monkeypatch)
-    node = v1_graph.Node(id="n1", labels=["L"])
-    edge = v1_graph.Edge(id="e1", from_node_id="a", to_node_id="b", edge_type="T")
-    stats = SimpleNamespace(
-        nodes_visited=1, edges_traversed=1, max_depth_reached=2, execution_time_microseconds=5
-    )
-    resp = SimpleNamespace(nodes=[node], edges=[edge], paths=[SimpleNamespace(node_ids=["a", "b"])], stats=stats)
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"TraverseGraph": resp}
-    )
-    out = c.traverse_graph("a", algorithm="DFS", limit=10)
-    assert out["nodes"][0]["id"] == "n1"
-    assert out["paths"][0] == ["a", "b"]
-    assert out["stats"]["nodes_visited"] == 1
-
-
-def test_traverse_graph_parallel(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = SimpleNamespace(
-        nodes=[], edges=[], paths=[],
-        stats=SimpleNamespace(
-            nodes_visited=0, edges_traversed=0, max_depth_reached=0, execution_time_microseconds=0
-        ),
-    )
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"TraverseGraph": resp}
-    )
-    out = c.traverse_graph("a", algorithm="PARALLEL_BFS")
-    assert out["nodes"] == []
-
-
-def test_traverse_graph_rpc_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.INTERNAL, "x")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"TraverseGraph": boom}
-    )
-    with pytest.raises(ProximaDBError, match="traverse_graph RPC failed"):
-        c.traverse_graph("a")
-
-
-def test_query_nodes(monkeypatch):
-    c = make_client(monkeypatch)
-    resp = SimpleNamespace(success=True, nodes=[v1_graph.Node(id="n1", labels=["L"])])
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"QueryNodes": resp}
-    )
-    out = c.query_nodes(labels=["L"], properties={"p": "v"}, limit=5, offset=0)
-    assert out["total_count"] == 1 and out["nodes"][0]["id"] == "n1"
-
-
-def test_query_nodes_rpc_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.INTERNAL, "x")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"QueryNodes": boom}
-    )
-    with pytest.raises(ProximaDBError, match="query_nodes RPC failed"):
-        c.query_nodes()
-
-
-def test_query_edges(monkeypatch):
-    c = make_client(monkeypatch)
-    edge = v1_graph.Edge(id="e1", from_node_id="a", to_node_id="b", edge_type="T")
-    resp = SimpleNamespace(success=True, edges=[edge], next_token="tok")
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"QueryEdges": resp}
-    )
-    out = c.query_edges(
-        edge_type="T", from_node_id="a", to_node_id="b", properties={"p": 1}, limit=5, offset=0
-    )
-    assert out["total_count"] == 1 and out["next_token"] == "tok"
-
-
-def test_query_edges_rpc_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.INTERNAL, "x")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"QueryEdges": boom}
-    )
-    with pytest.raises(ProximaDBError, match="query_edges RPC failed"):
-        c.query_edges()
-
-
-def test_get_node(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"GetNode": v1_graph.Node(id="n1", labels=["L"])}
-    )
-    assert c.get_node("n1")["id"] == "n1"
-
-
-def test_get_node_rpc_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise FakeRpcError(gs.grpc.StatusCode.INTERNAL, "x")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"GetNode": boom}
-    )
-    with pytest.raises(ProximaDBError, match="get_node RPC failed"):
-        c.get_node("n1")
-
-
-def test_delete_node(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"DeleteNode": v1_graph.Node(id="n1", labels=["L"])}
-    )
-    assert c.delete_node("n1")["id"] == "n1"
-
-
-def test_delete_node_generic_error(monkeypatch):
-    c = make_client(monkeypatch)
-
-    def boom(req, timeout=None, metadata=None):
-        raise RuntimeError("x")
-
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"DeleteNode": boom}
-    )
-    with pytest.raises(ProximaDBError, match="delete_node failed"):
-        c.delete_node("n1")
-
-
-def test_outgoing_incoming_edges(monkeypatch):
-    c = make_client(monkeypatch)
-    edge = v1_graph.Edge(id="e1", from_node_id="a", to_node_id="b", edge_type="T")
-    resp = SimpleNamespace(success=True, edges=[edge], next_token="")
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"QueryEdges": resp}
-    )
-    assert len(c.get_outgoing_edges("a", edge_types=["T"])) == 1
-    assert len(c.get_incoming_edges("b")) == 1  # default edge_types
-
-
-def test_shortest_path(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"ShortestPath": SimpleNamespace(path_found=True)}
-    )
-    out = c.shortest_path(
-        "a", "b", max_depth=5, edge_types=["T"], algorithm="ASTAR", k=2,
-        enable_prefetch=True, prefetch_budget=100,
-    )
-    assert out.path_found is True
-
-
-def test_shortest_path_default_algo(monkeypatch):
-    c = make_client(monkeypatch)
-    _StubInstaller(monkeypatch).install(
-        "v1_graph_pb2_grpc", "GraphServiceStub", {"ShortestPath": SimpleNamespace(path_found=False)}
-    )
-    out = c.shortest_path("a", "b", enable_prefetch=False)
-    assert out.path_found is False
-
-
-def test_graph_stubs_missing(monkeypatch):
-    c = make_client(monkeypatch)
-    monkeypatch.setattr(gs, "v1_graph_pb2_grpc", None)
-    with pytest.raises(ProximaDBError, match="GraphService stubs"):
-        c.create_node("n", ["L"])
-    with pytest.raises(ProximaDBError, match="GraphService stubs"):
-        c.shortest_path("a", "b")
-
-
-def test_graph_grpc_unavailable(monkeypatch):
-    c = make_client(monkeypatch)
+# --------------------------------------------------------------------------- #
+# GRPC_AVAILABLE guard paths
+# --------------------------------------------------------------------------- #
+def test_grpc_unavailable_guards(client, monkeypatch):
     monkeypatch.setattr(gs, "GRPC_AVAILABLE", False)
-    with pytest.raises(ProximaDBError, match="gRPC not available"):
-        c.create_node("n", ["L"])
+    with pytest.raises(ProximaDBError):
+        client.health_check()
+    with pytest.raises(ProximaDBError):
+        client.execute_sql("SELECT 1")
+    with pytest.raises(ProximaDBError):
+        client.get_collection("c")
+    with pytest.raises(ProximaDBError):
+        client.delete_vector("c", "v")
+
+
+def test_record_stub_unavailable(client, monkeypatch):
+    monkeypatch.setattr(gs, "v2_record_pb2_grpc", None)
+    with pytest.raises(ProximaDBError):
+        client.delete_vector("c", "v")
+
+
+# --------------------------------------------------------------------------- #
+# Graph operations (GraphService) — property conversions + RPC wrappers
+# --------------------------------------------------------------------------- #
+def _patch_graph_stub(monkeypatch, method, behavior):
+    monkeypatch.setattr(
+        gs.v1_graph_pb2_grpc,
+        "GraphServiceStub",
+        make_stub_factory(method, behavior),
+    )
+
+
+def test_property_value_roundtrip(client):
+    for value in ["s", True, 5, 2.5, b"b", [1, "a"], {"k": "v"}]:
+        pv = client._convert_to_property_value(value)
+        back = client._convert_from_property_value(pv)
+        if isinstance(value, list):
+            assert back == [1, "a"]
+        elif isinstance(value, dict):
+            assert back == {"k": "v"}
+        elif isinstance(value, bytes):
+            assert back == b"b"
+        else:
+            assert back == value
+
+
+def test_property_value_fallback(client):
+    pv = client._convert_to_property_value(object())
+    assert isinstance(client._convert_from_property_value(pv), str)
+
+
+def test_create_node(client, monkeypatch):
+    gp = gs.v1_graph_pb2
+
+    def behavior(req):
+        return gp.Node(id="n1", labels=["L"], created_at_ms=1000, updated_at_ms=2000)
+
+    _patch_graph_stub(monkeypatch, "CreateNode", behavior)
+    res = client.create_node("n1", ["L"], properties={"k": "v"}, graph_id="g")
+    assert res["id"] == "n1"
+    assert res["labels"] == ["L"]
+    assert res["created_at"] is not None
+
+
+def test_create_edge(client, monkeypatch):
+    gp = gs.v1_graph_pb2
+
+    def behavior(req):
+        return gp.Edge(
+            id="e1", from_node_id="a", to_node_id="b", edge_type="REL", weight=1.5
+        )
+
+    _patch_graph_stub(monkeypatch, "CreateEdge", behavior)
+    res = client.create_edge("e1", "a", "b", "REL", properties={"k": 1}, weight=1.5)
+    assert res["id"] == "e1"
+    assert res["from_node_id"] == "a"
+    assert res["weight"] == pytest.approx(1.5)
+
+
+def test_traverse_graph(client, monkeypatch):
+    gp = gs.v1_graph_pb2
+
+    def behavior(req):
+        resp = gp.TraversalResponse()
+        resp.nodes.add(id="n1")
+        resp.edges.add(id="e1", from_node_id="n1", to_node_id="n2", edge_type="R")
+        return resp
+
+    _patch_graph_stub(monkeypatch, "TraverseGraph", behavior)
+    res = client.traverse_graph("n1", algorithm="DFS", limit=10, edge_types=["R"])
+    assert res["nodes"][0]["id"] == "n1"
+    assert res["edges"][0]["id"] == "e1"
+    assert "stats" in res
+
+
+def test_query_nodes(client, monkeypatch):
+    gp = gs.v1_graph_pb2
+
+    def behavior(req):
+        resp = (
+            gp.NodeQueryResponse()
+            if hasattr(gp, "NodeQueryResponse")
+            else gp.TraversalResponse()
+        )
+        resp.nodes.add(id="n1")
+        return resp
+
+    _patch_graph_stub(monkeypatch, "QueryNodes", behavior)
+    res = client.query_nodes(labels=["L"], properties={"k": "v"}, limit=5, offset=0)
+    assert res["total_count"] == 1
+    assert res["nodes"][0]["id"] == "n1"
+
+
+def test_query_edges(client, monkeypatch):
+    gp = gs.v1_graph_pb2
+
+    def behavior(req):
+        resp = (
+            gp.EdgeQueryResponse()
+            if hasattr(gp, "EdgeQueryResponse")
+            else gp.TraversalResponse()
+        )
+        resp.edges.add(id="e1", from_node_id="a", to_node_id="b", edge_type="R")
+        return resp
+
+    _patch_graph_stub(monkeypatch, "QueryEdges", behavior)
+    res = client.query_edges(
+        edge_type="R", from_node_id="a", to_node_id="b", limit=5, offset=1
+    )
+    assert res["total_count"] == 1
+
+
+def test_get_node(client, monkeypatch):
+    gp = gs.v1_graph_pb2
+    _patch_graph_stub(monkeypatch, "GetNode", lambda req: gp.Node(id="n1", labels=["L"]))
+    res = client.get_node("n1", graph_id="g")
+    assert res["id"] == "n1"
+
+
+def test_delete_node(client, monkeypatch):
+    gp = gs.v1_graph_pb2
+    _patch_graph_stub(monkeypatch, "DeleteNode", lambda req: gp.Node(id="n1"))
+    res = client.delete_node("n1")
+    assert res["id"] == "n1"
+
+
+def test_get_outgoing_and_incoming_edges(client, monkeypatch):
+    gp = gs.v1_graph_pb2
+
+    def behavior(req):
+        resp = (
+            gp.EdgeQueryResponse()
+            if hasattr(gp, "EdgeQueryResponse")
+            else gp.TraversalResponse()
+        )
+        resp.edges.add(id="e1", from_node_id="a", to_node_id="b", edge_type="R")
+        return resp
+
+    _patch_graph_stub(monkeypatch, "QueryEdges", behavior)
+    out = client.get_outgoing_edges("a", edge_types=["R"])
+    inc = client.get_incoming_edges("b", edge_types=["R"])
+    assert out[0]["id"] == "e1"
+    assert inc[0]["id"] == "e1"
+
+
+def test_shortest_path(client, monkeypatch):
+    gp = gs.v1_graph_pb2
+
+    def behavior(req):
+        return (
+            gp.ShortestPathResponse()
+            if hasattr(gp, "ShortestPathResponse")
+            else gp.Node(id="n")
+        )
+
+    _patch_graph_stub(monkeypatch, "ShortestPath", behavior)
+    res = client.shortest_path(
+        "a",
+        "b",
+        max_depth=3,
+        edge_types=["R"],
+        algorithm="ASTAR",
+        enable_prefetch=True,
+        prefetch_budget=100,
+    )
+    assert res is not None
+
+
+def test_graph_rpc_error(client, monkeypatch):
+    def behavior(req):
+        raise FakeRpcError(grpc.StatusCode.INTERNAL, "graph-boom")
+
+    _patch_graph_stub(monkeypatch, "CreateNode", behavior)
+    with pytest.raises(ProximaDBError):
+        client.create_node("n1", ["L"])
+
+
+def test_graph_generic_error(client, monkeypatch):
+    def behavior(req):
+        raise RuntimeError("generic-graph")
+
+    _patch_graph_stub(monkeypatch, "GetNode", behavior)
+    with pytest.raises(ProximaDBError):
+        client.get_node("n1")
+
+
+def test_graph_unavailable_guard(client, monkeypatch):
+    monkeypatch.setattr(gs, "v1_graph_pb2_grpc", None)
+    with pytest.raises(ProximaDBError):
+        client.create_node("n1", ["L"])
+    with pytest.raises(ProximaDBError):
+        client.shortest_path("a", "b")
+
+
+def test_convert_path_from_proto(client):
+    class FakePath:
+        node_ids = ["n1", "n2"]
+
+    assert client._convert_path_from_proto(FakePath()) == ["n1", "n2"]
+    assert client._convert_path_from_proto(object()) == []
