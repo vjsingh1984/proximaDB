@@ -306,6 +306,31 @@ async fn pgwire_relational_engine_serves_joins_and_aggregates_over_real_data() {
         "WHERE qty > (SELECT avg(qty)) keeps only above-average rows"
     );
 
+    // (2e) Part B gate tweak — a scalar subquery in the PROJECTION (no WHERE
+    // subquery / join / aggregate / group-by) must engage PATH B so the Stage 1
+    // hoist serves it. `(SELECT max(qty) FROM inv)` = 35 for every row. Before the
+    // gate tweak this routed to the legacy single-table path, which can't serve a
+    // scalar subquery.
+    let rows = client
+        .simple_query(&format!(
+            "SELECT id, (SELECT max(qty) FROM {inv}) AS m FROM {inv}"
+        ))
+        .await
+        .expect("SELECT projection scalar subquery");
+    assert_eq!(
+        col_set(&rows, "m"),
+        ["35".to_string()].into_iter().collect::<BTreeSet<_>>(),
+        "projection scalar subquery yields the global max (35) on every row"
+    );
+    assert_eq!(
+        col_set(&rows, "id"),
+        ["i1", "i2", "i3", "i4"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<BTreeSet<_>>(),
+        "projection scalar subquery preserves all base rows"
+    );
+
     // (3) INNER JOIN over real rows from two tables → 3 joined rows.
     let rows = client
         .simple_query(&format!(

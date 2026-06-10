@@ -1371,11 +1371,20 @@ fn set_expr_engages(body: &SetExpr) -> bool {
             // unliftable (correlated/NOT IN), lowering declines and the caller falls
             // through to legacy anyway, so engaging on ANY subquery is safe.
             let has_where_subquery = select.selection.as_ref().is_some_and(where_has_subquery);
+            // A scalar subquery in the projection list (e.g.
+            // `SELECT a, (SELECT max(x) FROM t)`) is hoisted by PATH B into a LEFT
+            // JOIN; the legacy single-table path can't serve it. Same safety as the
+            // WHERE case — an unliftable shape declines back to legacy.
+            let has_projection_subquery = select
+                .projection
+                .iter()
+                .any(select_item_has_subquery);
             has_join
                 || has_group_by
                 || select.having.is_some()
                 || has_aggregate
                 || has_where_subquery
+                || has_projection_subquery
         }
         _ => false,
     }
@@ -1391,6 +1400,19 @@ fn where_has_subquery(expr: &SqlExpr) -> bool {
             where_has_subquery(left) || where_has_subquery(right)
         }
         SqlExpr::UnaryOp { expr, .. } | SqlExpr::Nested(expr) => where_has_subquery(expr),
+        _ => false,
+    }
+}
+
+/// True if a projection item's expression contains a subquery (scalar `(SELECT …)`,
+/// `EXISTS`, or `IN (SELECT …)`) anywhere in its tree — routes a SELECT whose output
+/// list carries a subquery onto PATH B, which hoists it into a join. Reuses the
+/// general subquery-detection of [`where_has_subquery`].
+fn select_item_has_subquery(item: &SelectItem) -> bool {
+    match item {
+        SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => {
+            where_has_subquery(e)
+        }
         _ => false,
     }
 }
