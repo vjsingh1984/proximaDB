@@ -127,9 +127,10 @@ fn lower<'a>(
                             .cross_join(right_plan)?
                             .build();
                     }
-                    // Semi/Anti come from IN / NOT IN / EXISTS subqueries — leave to
-                    // the `ctx.sql` fallback until subquery lowering exists.
-                    JoinKind::Semi | JoinKind::Anti => {
+                    // Semi/Anti (incl. the null-aware NOT IN variant) come from
+                    // IN / NOT IN / EXISTS subqueries — leave to the `ctx.sql`
+                    // fallback until subquery lowering exists on this path.
+                    JoinKind::Semi | JoinKind::Anti | JoinKind::AntiNullAware => {
                         return Err(unsupported("Semi/Anti join (use ctx.sql path)"));
                     }
                 };
@@ -171,6 +172,12 @@ fn lower<'a>(
             LogicalNode::Values { .. } => Err(unsupported("Values")),
             LogicalNode::CteBind { .. } => Err(unsupported("CteBind")),
             LogicalNode::CteRef { .. } => Err(unsupported("CteRef")),
+            // Decorrelation outputs (scalar-subquery cardinality guard + generalized
+            // set ops) — DataFusion serves these via the `ctx.sql` fallback until they
+            // are lowered on the shared path. Explicit arms (not a wildcard) so the next
+            // new LogicalNode variant forces a deliberate decision here, not silent rot.
+            LogicalNode::AssertMaxOneRow { .. } => Err(unsupported("AssertMaxOneRow")),
+            LogicalNode::SetOp { .. } => Err(unsupported("SetOp")),
         }
     })
 }
