@@ -474,8 +474,13 @@ impl CrossModelTransactionCoordinator {
         let cleanup_interval_secs = self.config.cleanup_interval_secs;
 
         tokio::spawn(async move {
+            let period = tokio::time::Duration::from_secs(cleanup_interval_secs);
+            // Skip the immediate first tick `interval` emits. cleanup_old_transactions
+            // GCs committed/aborted transactions, so firing at t=0 can race with — and
+            // discard — state that callers still query right after commit. Start one
+            // full period out.
             let mut interval =
-                tokio::time::interval(tokio::time::Duration::from_secs(cleanup_interval_secs));
+                tokio::time::interval_at(tokio::time::Instant::now() + period, period);
 
             loop {
                 interval.tick().await;
