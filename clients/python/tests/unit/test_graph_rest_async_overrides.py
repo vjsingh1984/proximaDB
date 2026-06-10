@@ -34,7 +34,7 @@ async def test_async_graph_shortest_path_headers_and_body():
             prefetch_budget=11,
         )
         assert resp["ok"] is True
-        assert captured["path"] == "/api/v2/graphs/default/shortest_path"
+        assert captured["path"] == "/api/v2/graphs/default/shortest-path"
         # Headers set
         assert captured["headers"]["x-graph-prefetch-enabled"] == "true"
         assert captured["headers"]["x-graph-prefetch-budget"] == "11"

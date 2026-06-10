@@ -5,34 +5,33 @@
 //! ## Endpoint Overview
 //!
 //! ```text
-//! POST   /api/v1/graph/graphs/{graph_id}/nodes              - Create node
-//! GET    /api/v1/graph/graphs/{graph_id}/nodes/{id}         - Get node
-//! PUT    /api/v1/graph/graphs/{graph_id}/nodes/{id}         - Update node
-//! DELETE /api/v1/graph/graphs/{graph_id}/nodes/{id}         - Delete node
-//! GET    /api/v1/graph/graphs/{graph_id}/nodes/{id}/neighbors - Get neighbors
-//! POST   /api/v1/graph/graphs/{graph_id}/edges              - Create edge
-//! GET    /api/v1/graph/graphs/{graph_id}/edges/{id}         - Get edge
-//! PUT    /api/v1/graph/graphs/{graph_id}/edges/{id}         - Update edge
-//! DELETE /api/v1/graph/graphs/{graph_id}/edges/{id}         - Delete edge
-//! POST   /api/v1/graph/graphs/{graph_id}/traverse           - Graph traversal
-//! POST   /api/v1/graph/graphs/{graph_id}/walk               - BFS walk (agentic)
-//! POST   /api/v1/graph/graphs/{graph_id}/step               - Single-step navigation
-//! POST   /api/v1/graph/graphs/{graph_id}/shortest_path      - Shortest path
-//! POST   /api/v1/graph/graphs/{graph_id}/query/nodes        - Query nodes
-//! POST   /api/v1/graph/graphs/{graph_id}/query/edges        - Query edges
-//! POST   /api/v1/graph/graphs/{graph_id}/query              - Declarative query
-//! GET    /api/v1/graph/graphs/{graph_id}/stats              - Graph statistics
-//! POST   /api/v1/graph/graphs/{graph_id}/nodes/batch        - Batch create nodes
-//! POST   /api/v1/graph/graphs/{graph_id}/edges/batch        - Batch create edges
-//! GET    /api/v1/graph/graphs/{graph_id}/components         - Connected components
-//! GET    /api/v1/graph/graphs/{graph_id}/cycles             - Cycle detection
-//! POST   /api/v1/graph/graphs/{graph_id}/constraints/unique - Add unique constraint
-//! DELETE /api/v1/graph/graphs/{graph_id}/constraints/unique - Remove unique constraint
+//! POST   /api/v2/graphs/{graph_id}/nodes              - Create node
+//! GET    /api/v2/graphs/{graph_id}/nodes/{id}         - Get node
+//! PUT    /api/v2/graphs/{graph_id}/nodes/{id}         - Update node
+//! DELETE /api/v2/graphs/{graph_id}/nodes/{id}         - Delete node
+//! GET    /api/v2/graphs/{graph_id}/nodes/{id}/neighbors - Get neighbors
+//! POST   /api/v2/graphs/{graph_id}/edges              - Create edge
+//! GET    /api/v2/graphs/{graph_id}/edges/{id}         - Get edge
+//! PUT    /api/v2/graphs/{graph_id}/edges/{id}         - Update edge
+//! DELETE /api/v2/graphs/{graph_id}/edges/{id}         - Delete edge
+//! POST   /api/v2/graphs/{graph_id}/traverse           - Graph traversal
+//! POST   /api/v2/graphs/{graph_id}/walk               - BFS walk (agentic)
+//! POST   /api/v2/graphs/{graph_id}/step               - Single-step navigation
+//! POST   /api/v2/graphs/{graph_id}/shortest_path      - Shortest path
+//! POST   /api/v2/graphs/{graph_id}/query/nodes        - Query nodes
+//! POST   /api/v2/graphs/{graph_id}/query/edges        - Query edges
+//! POST   /api/v2/graphs/{graph_id}/query              - Declarative query
+//! GET    /api/v2/graphs/{graph_id}/stats              - Graph statistics
+//! POST   /api/v2/graphs/{graph_id}/nodes/batch        - Batch create nodes
+//! POST   /api/v2/graphs/{graph_id}/edges/batch        - Batch create edges
+//! GET    /api/v2/graphs/{graph_id}/components         - Connected components
+//! GET    /api/v2/graphs/{graph_id}/cycles             - Cycle detection
+//! POST   /api/v2/graphs/{graph_id}/constraints/unique - Add unique constraint
+//! DELETE /api/v2/graphs/{graph_id}/constraints/unique - Remove unique constraint
 //! ```
 //!
-//! Graph collection management, RAG, and PULSAR/QUASAR endpoints return
-//! `501 Not Implemented` — they require root-crate concrete services not yet
-//! exposed through a platform port.
+//! Graph collection management and RAG endpoints return `501 Not Implemented`
+//! until they are exposed through a platform port.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -720,7 +719,7 @@ pub fn create_graph_router() -> Router<GraphRestState> {
             .route("/graphs/:graph_id/walk", post(walk_graph))
             .route("/graphs/:graph_id/step", post(step_graph))
             // Shortest path
-            .route("/graphs/:graph_id/shortest_path", post(shortest_path))
+            .route("/graphs/:graph_id/shortest-path", post(shortest_path))
             // Queries
             .route("/graphs/:graph_id/query/nodes", post(query_nodes))
             .route("/graphs/:graph_id/query/edges", post(query_edges))
@@ -746,32 +745,7 @@ pub fn create_graph_router() -> Router<GraphRestState> {
                 "/graphs/:graph_id/constraints/unique",
                 delete(remove_unique_constraint),
             )
-            // PULSAR / QUASAR (not in GraphPort → 501)
-            .route("/graphs/:graph_id/engine", post(not_implemented_handler))
-            .route(
-                "/graphs/:graph_id/pulsar/stats",
-                get(not_implemented_handler),
-            )
-            .route(
-                "/graphs/:graph_id/pulsar/query",
-                post(not_implemented_handler),
-            )
-            .route(
-                "/graphs/:graph_id/pulsar/rebalance",
-                post(not_implemented_handler),
-            )
-            .route(
-                "/graphs/:graph_id/quasar/stats",
-                get(not_implemented_handler),
-            )
-            .route(
-                "/graphs/:graph_id/quasar/tiers",
-                get(not_implemented_handler),
-            )
-            .route(
-                "/graphs/:graph_id/quasar/migrate",
-                post(not_implemented_handler),
-            )
+            // Engine selection is ORION-only; retired engine-specific endpoints are not exposed.
             // Legacy redirects (self-contained, no port needed)
             .route("/nodes", post(create_node_legacy))
             .route("/nodes/:id", get(get_node_legacy))
@@ -1789,21 +1763,19 @@ fn legacy_redirect(canonical_path: impl Into<String>) -> Response {
 }
 
 async fn create_node_legacy() -> impl IntoResponse {
-    legacy_redirect(format!("/api/v1/graph/graphs/{DEFAULT_GRAPH_ID}/nodes"))
+    legacy_redirect(format!("/api/v2/graphs/{DEFAULT_GRAPH_ID}/nodes"))
 }
 
 async fn get_node_legacy(Path(node_id): Path<String>) -> impl IntoResponse {
-    legacy_redirect(format!(
-        "/api/v1/graph/graphs/{DEFAULT_GRAPH_ID}/nodes/{node_id}"
-    ))
+    legacy_redirect(format!("/api/v2/graphs/{DEFAULT_GRAPH_ID}/nodes/{node_id}"))
 }
 
 async fn create_edge_legacy() -> impl IntoResponse {
-    legacy_redirect(format!("/api/v1/graph/graphs/{DEFAULT_GRAPH_ID}/edges"))
+    legacy_redirect(format!("/api/v2/graphs/{DEFAULT_GRAPH_ID}/edges"))
 }
 
 async fn get_graph_stats_legacy() -> impl IntoResponse {
-    legacy_redirect(format!("/api/v1/graph/graphs/{DEFAULT_GRAPH_ID}/stats"))
+    legacy_redirect(format!("/api/v2/graphs/{DEFAULT_GRAPH_ID}/stats"))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -2664,7 +2636,7 @@ mod tests {
         assert_eq!(legacy.status(), StatusCode::PERMANENT_REDIRECT);
         assert_eq!(
             legacy.headers().get(header::LOCATION).unwrap(),
-            "/api/v1/graph/graphs/default/nodes/n1"
+            "/api/v2/graphs/default/nodes/n1"
         );
         assert_eq!(
             create_node_legacy().await.into_response().status(),

@@ -1864,7 +1864,7 @@ class ProximaDBClient:
 
         resp = self._make_request(
             "POST",
-            f"/api/v2/graphs/{graph_id}/shortest_path",
+            f"/api/v2/graphs/{graph_id}/shortest-path",
             json=body,
             headers=headers,
             timeout=timeout or self.config.timeout,

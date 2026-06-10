@@ -55,7 +55,7 @@ class ProximaDBAsyncClient:
             body["prefetch_budget"] = int(prefetch_budget)
 
         resp = await self._client.post(
-            f"/api/v2/graphs/{graph_id}/shortest_path", json=body, headers=headers
+            f"/api/v2/graphs/{graph_id}/shortest-path", json=body, headers=headers
         )
         resp.raise_for_status()
         return resp.json()

@@ -30,7 +30,7 @@ def test_rest_sync_graph_shortest_path_headers_and_body(monkeypatch):
         prefetch_budget=12,
     )
     assert resp["ok"] is True
-    assert captured["path"] == "/api/v2/graphs/default/shortest_path"
+    assert captured["path"] == "/api/v2/graphs/default/shortest-path"
     assert captured["headers"]["x-graph-prefetch-enabled"] == "true"
     assert captured["headers"]["x-graph-prefetch-budget"] == "12"
     assert captured["json"]["enable_prefetch"] is True

@@ -1355,29 +1355,17 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     // Graph routes — port-backed (always wired in production since Phase 9.12).
     //
-    // The same router is mounted at two prefixes: `/api/v1/graph` (legacy
-    // mount kept for backwards compatibility with existing clients) and
-    // `/api/v2` (canonical v2 mount added 2026-05-29 to align with the
-    // v2 OpenAPI document — the spec paths are `/api/v2/graphs/...`).
-    // New SDK code should target the v2 mount.
-    //
-    // NOTE: dropping the legacy `/api/v1/graph` mount + kebab-casing
-    // `shortest_path` is deferred to the graph slice — `graph.rs` currently
-    // carries another session's in-flight refactor of `create_graph_router`.
+    // Mounted only at the canonical `/api/v2` prefix (`/api/v2/graphs/...`).
+    // The legacy `/api/v1/graph` mount (which produced the awkward doubled
+    // `/api/v1/graph/graphs/...` paths) was removed in the API standardization
+    // hard-rename; the in-router `*_legacy` redirects now point at `/api/v2`.
     if let Some(ref gp) = state.graph_port {
         use proximadb_api::rest::{GraphRestState, create_graph_router};
         let graph_state = GraphRestState {
             graph_port: gp.clone(),
         };
-        router = router
-            .nest(
-                "/api/v1/graph",
-                create_graph_router().with_state(graph_state.clone()),
-            )
-            .nest("/api/v2", create_graph_router().with_state(graph_state));
-        info!(
-            "✅ Graph API routing via port-based handler (proximadb-api) — mounted at /api/v1/graph (legacy) + /api/v2 (canonical)"
-        );
+        router = router.nest("/api/v2", create_graph_router().with_state(graph_state));
+        info!("✅ Graph API routing via port-based handler (proximadb-api) — /api/v2/graphs/*");
     }
 
     // Collection and vector CRUD are served exclusively by the canonical v2
@@ -2517,7 +2505,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/graph/graphs/ws1_graph/shortest_path")
+            .uri("/api/v2/graphs/ws1_graph/shortest-path")
             .header("content-type", "application/json")
             .body(Body::from(r#"{}"#))
             .expect("failed to build request");
@@ -2535,7 +2523,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/graph/nodes")
+            .uri("/api/v2/nodes")
             .header("content-type", "application/json")
             .body(Body::from(r#"{}"#))
             .expect("failed to build request");
@@ -2549,7 +2537,7 @@ mod tests {
             .headers()
             .get("location")
             .and_then(|v| v.to_str().ok());
-        assert_eq!(location, Some("/api/v1/graph/graphs/default/nodes"));
+        assert_eq!(location, Some("/api/v2/graphs/default/nodes"));
         let deprecation = response
             .headers()
             .get("deprecation")
@@ -2563,7 +2551,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/graph/edges")
+            .uri("/api/v2/edges")
             .header("content-type", "application/json")
             .body(Body::from(r#"{}"#))
             .expect("failed to build request");
@@ -2577,7 +2565,7 @@ mod tests {
             .headers()
             .get("location")
             .and_then(|v| v.to_str().ok());
-        assert_eq!(location, Some("/api/v1/graph/graphs/default/edges"));
+        assert_eq!(location, Some("/api/v2/graphs/default/edges"));
         let deprecation = response
             .headers()
             .get("deprecation")
