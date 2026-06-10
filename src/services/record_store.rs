@@ -471,6 +471,145 @@ pub trait TableRecordStore: Send + Sync {
         });
         Ok(all)
     }
+
+    /// TD-110 Slice C: detect a UNIQUE/PK conflict for a batch of candidate
+    /// tuples against committed rows. `sets` carries one entry per unique column
+    /// set with the (NULL-exempt, within-batch-deduped) candidate tuples the
+    /// caller intends to insert; `primary_key` lets the PK column be read from
+    /// `oid` rather than `props`.
+    ///
+    /// Default impl is a single short-circuiting `scan_records_filtered` per set
+    /// (O(N)); index-backed stores (e.g. `DirectWalTableRecordStore`) override
+    /// this with an O(1) probe.
+    async fn check_unique_conflict(
+        &self,
+        table_schema: &CatalogTableSchema,
+        table_id: &str,
+        primary_key: Option<&str>,
+        sets: &[UniqueCandidateSet],
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Option<UniqueConflict>> {
+        for set in sets {
+            if set.candidates.is_empty() {
+                continue;
+            }
+            let cols = set.columns.clone();
+            let pk = primary_key.map(str::to_string);
+            let wanted = set.candidates.clone();
+            let pred = move |existing: &ProximaRecord| {
+                record_unique_tuple(existing, &cols, pk.as_deref())
+                    .is_some_and(|tuple| wanted.contains(&tuple))
+            };
+            let predicate: Option<&RecordScanPredicate<'_>> = Some(&pred);
+            let hits = self
+                .scan_records_filtered(
+                    table_schema,
+                    TableRecordScanRequest {
+                        table_id: table_id.to_string(),
+                        limit: Some(1),
+                        include_vector: false,
+                        include_props: true,
+                    },
+                    predicate,
+                    tenant_context,
+                )
+                .await?;
+            if let Some(existing) = hits.first() {
+                let tuple =
+                    record_unique_tuple(existing, &set.columns, primary_key).unwrap_or_default();
+                return Ok(Some(UniqueConflict {
+                    columns: set.columns.clone(),
+                    tuple,
+                }));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// One unique column set plus the candidate tuples a write intends to insert
+/// (already NULL-exempt + deduped within the statement). See
+/// [`TableRecordStore::check_unique_conflict`].
+#[derive(Debug, Clone)]
+pub struct UniqueCandidateSet {
+    /// The unique constraint/index columns, in catalog order.
+    pub columns: Vec<String>,
+    /// Candidate tuple-reprs (from [`record_unique_tuple`]) to check.
+    pub candidates: std::collections::HashSet<Vec<String>>,
+}
+
+/// A detected uniqueness violation: which column set, and the existing tuple.
+#[derive(Debug, Clone)]
+pub struct UniqueConflict {
+    /// The violated unique constraint/index columns.
+    pub columns: Vec<String>,
+    /// The committed tuple that the candidate collided with.
+    pub tuple: Vec<String>,
+}
+
+/// Canonical comparable-text rendering of a scalar `ProximaValue` for UNIQUE/PK
+/// tuple comparison and predicate evaluation. Shared by the record store and
+/// `DmlService` so the value seen at write time (index maintenance) matches the
+/// value seen at check time.
+pub(crate) fn proxima_value_to_unique_text(value: &proximadb_data_model::ProximaValue) -> String {
+    use proximadb_data_model::ProximaValue;
+    match value {
+        ProximaValue::Boolean(value) => {
+            if *value {
+                "t".to_string()
+            } else {
+                "f".to_string()
+            }
+        }
+        ProximaValue::Int8(value) => value.to_string(),
+        ProximaValue::Int16(value) => value.to_string(),
+        ProximaValue::Int32(value) => value.to_string(),
+        ProximaValue::Int64(value) => value.to_string(),
+        ProximaValue::UInt8(value) => value.to_string(),
+        ProximaValue::UInt16(value) => value.to_string(),
+        ProximaValue::UInt32(value) => value.to_string(),
+        ProximaValue::UInt64(value) => value.to_string(),
+        ProximaValue::Float16(value) => value.to_string(),
+        ProximaValue::Float32(value) => value.to_string(),
+        ProximaValue::Float64(value) => value.to_string(),
+        ProximaValue::Decimal(value) => value.clone(),
+        ProximaValue::String(value) | ProximaValue::Symbol(value) => value.clone(),
+        ProximaValue::DenseVector(values) => values
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+        ProximaValue::Null => String::new(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Render a record's value tuple for `columns` as comparable text for UNIQUE/PK
+/// checks. Returns `None` when ANY column is NULL or absent — SQL UNIQUE permits
+/// multiple NULL tuples, so such rows are exempt. The primary key is read from
+/// `oid` (it is not stored in `props`); other columns must be scalar `props`.
+pub(crate) fn record_unique_tuple(
+    record: &ProximaRecord,
+    columns: &[String],
+    primary_key: Option<&str>,
+) -> Option<Vec<String>> {
+    use proximadb_data_model::ProximaValue;
+    let mut tuple = Vec::with_capacity(columns.len());
+    for column in columns {
+        if primary_key.is_some_and(|pk| column.eq_ignore_ascii_case(pk)) {
+            tuple.push(record.oid.clone());
+            continue;
+        }
+        match record.props.get(column) {
+            Some(ProximaTreeNode::Value(ProximaValue::Null)) | None => return None,
+            Some(ProximaTreeNode::Value(value)) => {
+                tuple.push(proxima_value_to_unique_text(value));
+            }
+            // Non-scalar (nested tree / array) — not a scalar unique key.
+            Some(_) => return None,
+        }
+    }
+    Some(tuple)
 }
 
 /// xCatalog-routed table-record store.

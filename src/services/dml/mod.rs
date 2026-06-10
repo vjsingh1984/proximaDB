@@ -39,7 +39,7 @@ use crate::services::record_store::{
     CatalogRoutingTableRecordStore, DirectWalTableRecordStore, ObjectStoreIcebergRecordStore,
     ObjectStoreVectorRecordStore, TableRecordGetRequest, TableRecordMutation,
     TableRecordMutationKind, TableRecordScanRequest, TableRecordStore, TableWalAppender,
-    VectorOpsTableRecordStore,
+    VectorOpsTableRecordStore, proxima_value_to_unique_text, record_unique_tuple,
 };
 use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLaneDecision, WriteLaneRouter, WriteOperationKind,
@@ -1566,35 +1566,10 @@ impl DmlService {
     }
 
     fn proxima_value_to_predicate_text(value: &ProximaValue) -> String {
-        match value {
-            ProximaValue::Boolean(value) => {
-                if *value {
-                    "t".to_string()
-                } else {
-                    "f".to_string()
-                }
-            }
-            ProximaValue::Int8(value) => value.to_string(),
-            ProximaValue::Int16(value) => value.to_string(),
-            ProximaValue::Int32(value) => value.to_string(),
-            ProximaValue::Int64(value) => value.to_string(),
-            ProximaValue::UInt8(value) => value.to_string(),
-            ProximaValue::UInt16(value) => value.to_string(),
-            ProximaValue::UInt32(value) => value.to_string(),
-            ProximaValue::UInt64(value) => value.to_string(),
-            ProximaValue::Float16(value) => value.to_string(),
-            ProximaValue::Float32(value) => value.to_string(),
-            ProximaValue::Float64(value) => value.to_string(),
-            ProximaValue::Decimal(value) => value.clone(),
-            ProximaValue::String(value) | ProximaValue::Symbol(value) => value.clone(),
-            ProximaValue::DenseVector(values) => values
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(","),
-            ProximaValue::Null => String::new(),
-            other => format!("{other:?}"),
-        }
+        // Single source of truth shared with the record store (TD-110 Slice C),
+        // so the value rendered for a UNIQUE/PK index/probe matches the value
+        // rendered for predicate evaluation.
+        proxima_value_to_unique_text(value)
     }
 
     fn compare_catalog_value(
@@ -1834,32 +1809,26 @@ impl DmlService {
             }
         }
 
-        // TD-110: enforce non-PK UNIQUE constraints / indexes on INSERT. For each
-        // unique column set, reject a tuple that repeats within this statement OR
-        // already exists as a committed row. NULL tuples are exempt (SQL permits
-        // multiple NULLs).
-        //
-        // Slice-C increment: the within-batch tuples are collected ONCE into a
-        // candidate set, then a SINGLE short-circuiting `scan_records_filtered`
-        // per column set checks the whole batch against committed rows — an
-        // M-row INSERT now does one scan per unique set instead of M. (The
-        // persistent index that turns this O(N) scan into an O(1) probe + survives
-        // deletes/recovery is the remaining Slice-C work; it belongs in the
-        // RecordStorage layer, which is schema-agnostic today.)
+        // TD-110: enforce non-PK UNIQUE constraints / indexes on INSERT. Build the
+        // within-batch candidate tuples per unique column set (rejecting a repeat
+        // within this statement; NULL tuples exempt), then ask the record store
+        // for any cross-existing conflict. The store's default impl scans;
+        // index-backed stores (DirectWalTableRecordStore) probe an O(1) index
+        // (Slice C) — so this enforcement gets faster purely at the store layer.
         let unique_sets = Self::unique_column_sets(&table_schema);
         if !unique_sets.is_empty() {
             let primary_key = Self::primary_key_column(&table_schema);
             let pk_ref = primary_key.as_deref();
+            let mut candidate_sets: Vec<crate::services::record_store::UniqueCandidateSet> =
+                Vec::with_capacity(unique_sets.len());
             for columns in &unique_sets {
-                // 1. Within-batch dedup: collect candidate tuples; a repeat in the
-                //    same statement is rejected without touching storage.
-                let mut candidate_tuples: std::collections::HashSet<Vec<String>> =
+                let mut candidates: std::collections::HashSet<Vec<String>> =
                     std::collections::HashSet::new();
                 for record in &records {
-                    let Some(tuple) = Self::unique_tuple_repr(record, columns, pk_ref) else {
+                    let Some(tuple) = record_unique_tuple(record, columns, pk_ref) else {
                         continue; // NULL/absent in the tuple → exempt
                     };
-                    if !candidate_tuples.insert(tuple.clone()) {
+                    if !candidates.insert(tuple.clone()) {
                         return Err(anyhow!(
                             "duplicate key value violates unique constraint on ({}) for table '{}': ({}) appears more than once in this INSERT",
                             columns.join(", "),
@@ -1868,45 +1837,31 @@ impl DmlService {
                         ));
                     }
                 }
-                if candidate_tuples.is_empty() {
-                    continue; // every row in this set was NULL/exempt
+                if !candidates.is_empty() {
+                    candidate_sets.push(crate::services::record_store::UniqueCandidateSet {
+                        columns: columns.clone(),
+                        candidates,
+                    });
                 }
-
-                // 2. Cross-existing: ONE short-circuiting scan — does any committed
-                //    row collide with any candidate tuple? limit=1; presence suffices.
-                let cols = columns.clone();
-                let pk_owned = primary_key.clone();
-                let wanted = candidate_tuples;
-                let pred = move |existing: &ProximaRecord| {
-                    Self::unique_tuple_repr(existing, &cols, pk_owned.as_deref())
-                        .is_some_and(|existing_tuple| wanted.contains(&existing_tuple))
-                };
-                let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
-                let hits = self
+            }
+            if !candidate_sets.is_empty()
+                && let Some(conflict) = self
                     .record_store
-                    .scan_records_filtered(
+                    .check_unique_conflict(
                         &table_schema,
-                        TableRecordScanRequest {
-                            table_id: table_id.name.clone(),
-                            limit: Some(1),
-                            include_vector: false,
-                            include_props: true,
-                        },
-                        predicate,
+                        &table_id.name,
+                        pk_ref,
+                        &candidate_sets,
                         None,
                     )
-                    .await?;
-                if let Some(existing) = hits.first() {
-                    let collided = Self::unique_tuple_repr(existing, columns, pk_ref)
-                        .map(|tuple| tuple.join(", "))
-                        .unwrap_or_default();
-                    return Err(anyhow!(
-                        "duplicate key value violates unique constraint on ({}) for table '{}': ({}) already exists",
-                        columns.join(", "),
-                        table_schema.name,
-                        collided
-                    ));
-                }
+                    .await?
+            {
+                return Err(anyhow!(
+                    "duplicate key value violates unique constraint on ({}) for table '{}': ({}) already exists",
+                    conflict.columns.join(", "),
+                    table_schema.name,
+                    conflict.tuple.join(", ")
+                ));
             }
         }
 
@@ -2918,34 +2873,6 @@ impl DmlService {
             }
         }
         sets
-    }
-
-    /// TD-110: render a record's value tuple for `columns` as comparable text for
-    /// UNIQUE checks. Returns `None` when ANY column is NULL or absent — SQL
-    /// UNIQUE permits multiple NULL tuples, so such rows are exempt. The primary
-    /// key is read from `oid` (it is not stored in `props`); other columns are
-    /// read from `props` and must be scalar.
-    fn unique_tuple_repr(
-        record: &ProximaRecord,
-        columns: &[String],
-        primary_key: Option<&str>,
-    ) -> Option<Vec<String>> {
-        let mut tuple = Vec::with_capacity(columns.len());
-        for column in columns {
-            if primary_key.is_some_and(|pk| column.eq_ignore_ascii_case(pk)) {
-                tuple.push(record.oid.clone());
-                continue;
-            }
-            match record.props.get(column) {
-                Some(ProximaTreeNode::Value(ProximaValue::Null)) | None => return None,
-                Some(ProximaTreeNode::Value(value)) => {
-                    tuple.push(Self::proxima_value_to_predicate_text(value));
-                }
-                // Non-scalar (nested tree / array) — not a scalar unique key.
-                Some(_) => return None,
-            }
-        }
-        Some(tuple)
     }
 
     /// Extract IDs from WHERE clause using the catalog primary key.
