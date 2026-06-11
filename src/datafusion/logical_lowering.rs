@@ -10,13 +10,14 @@
 //! ## Scope
 //! Covers the OLAP shapes the P1 route targets:
 //! `Scan / Filter / Project / Aggregate / Sort / Limit / Distinct / Union` and
-//! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`), with `Expr`
-//! translation for `Column / Literal / BinaryOp / UnaryOp / IsNull / Cast / Between /
-//! In / Like / Case / Coalesce / NullIf` and the common scalar functions
-//! `UPPER/LOWER/LENGTH/ABS/CEIL/FLOOR/SQRT/CONCAT`. Anything else (Semi/Anti join,
-//! Values, CTEs; uncommon/variadic `FuncCall`s; `StringAgg/Custom` aggregates)
-//! returns [`DataFusionError::NotImplemented`] so the caller keeps the existing
-//! `ctx.sql(...)` path for those — additive, never wrong.
+//! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`, plus
+//! Semi/Anti via `LeftSemi`/`LeftAnti` — the decorrelated IN/EXISTS targets),
+//! with `Expr` translation for `Column / Literal / BinaryOp / UnaryOp / IsNull /
+//! Cast / Between / In / Like / Case / Coalesce / NullIf` and the common scalar
+//! functions `UPPER/LOWER/LENGTH/ABS/CEIL/FLOOR/SQRT/CONCAT`. Anything else
+//! (null-aware anti join / `NOT IN`, Values, CTEs; uncommon/variadic `FuncCall`s;
+//! `StringAgg/Custom` aggregates) returns [`DataFusionError::NotImplemented`] so
+//! the caller keeps the existing `ctx.sql(...)` path for those — additive, never wrong.
 
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::{
