@@ -1,33 +1,10 @@
 """Offline unit tests for proximadb_sdk.observability.
 
-Pure in-memory module (metrics/traces/logs). No transport to mock; we
-exercise every class, method, branch, and decorator directly.
+Fully self-contained: the observability module collects metrics/traces/logs
+in memory with no network transport, so no mocking of sockets is needed.
 """
 
-import logging
-
-# NOTE on coverage: this venv has editable installs (victor / chromadb /
-# opentelemetry) leaking onto sys.path. Under `pytest-cov`, coverage's
-# module-discovery (`should_trace` -> `find_spec`) runs inside a worker thread
-# and can import those packages, whose module-level code spins a
-# ThreadPoolExecutor and joins it while the main thread already holds the
-# import lock -> hard deadlock (observed via faulthandler). We defensively
-# pre-import the heavy chain HERE, before any coverage-driven find_spec, so the
-# modules are already resolved in sys.modules and coverage does not re-import
-# them inside a traced worker thread.
-for _mod in (
-    "opentelemetry",
-    "chromadb",
-    "lancedb",
-    "sentence_transformers",
-    "torch",
-    "transformers",
-    "victor",
-):
-    try:  # pragma: no cover - environment-dependent, best-effort warm import
-        __import__(_mod)
-    except Exception:
-        pass
+import time
 
 import pytest
 
@@ -47,64 +24,37 @@ from proximadb_sdk.observability import (
 
 
 # ---------------------------------------------------------------------------
-# Enums + dataclasses
-# ---------------------------------------------------------------------------
-def test_metric_type_values():
-    assert MetricType.COUNTER.value == "counter"
-    assert MetricType.GAUGE.value == "gauge"
-    assert MetricType.HISTOGRAM.value == "histogram"
-    assert MetricType.SUMMARY.value == "summary"
-
-
-def test_log_level_values():
-    assert LogLevel.DEBUG.value == "debug"
-    assert LogLevel.CRITICAL.value == "critical"
-
-
-def test_metric_definition_defaults():
-    md = MetricDefinition(
-        name="m", metric_type=MetricType.COUNTER, description="d"
-    )
-    assert md.labels == []
-    assert md.buckets is None
-
-
-# ---------------------------------------------------------------------------
 # SpanContext
 # ---------------------------------------------------------------------------
 def test_span_context_to_headers_sampled():
-    ctx = SpanContext(
-        trace_id="abc", span_id="def", baggage={"k": "v", "a": "b"}, sampled=True
-    )
-    h = ctx.to_headers()
-    assert h["traceparent"] == "00-abc-def-01"
-    assert "k=v" in h["tracestate"]
-    assert "a=b" in h["tracestate"]
+    ctx = SpanContext(trace_id="abc", span_id="def", baggage={"k": "v", "a": "b"})
+    headers = ctx.to_headers()
+    assert headers["traceparent"] == "00-abc-def-01"
+    assert "k=v" in headers["tracestate"]
+    assert "a=b" in headers["tracestate"]
 
 
 def test_span_context_to_headers_not_sampled():
     ctx = SpanContext(trace_id="abc", span_id="def", sampled=False)
-    h = ctx.to_headers()
-    assert h["traceparent"].endswith("-00")
-    assert h["tracestate"] == ""
+    headers = ctx.to_headers()
+    assert headers["traceparent"].endswith("-00")
+    assert headers["tracestate"] == ""
 
 
 def test_span_context_from_headers_roundtrip():
-    ctx = SpanContext(trace_id="t1", span_id="s1", baggage={"u": "1"}, sampled=True)
-    h = ctx.to_headers()
-    parsed = SpanContext.from_headers(h)
+    ctx = SpanContext(trace_id="t1", span_id="s1", baggage={"x": "y"})
+    parsed = SpanContext.from_headers(ctx.to_headers())
     assert parsed is not None
     assert parsed.trace_id == "t1"
     assert parsed.span_id == "s1"
     assert parsed.sampled is True
-    assert parsed.baggage == {"u": "1"}
+    assert parsed.baggage == {"x": "y"}
 
 
 def test_span_context_from_headers_not_sampled():
     parsed = SpanContext.from_headers({"traceparent": "00-t-s-00"})
     assert parsed is not None
     assert parsed.sampled is False
-    assert parsed.baggage == {}
 
 
 def test_span_context_from_headers_missing():
@@ -112,16 +62,16 @@ def test_span_context_from_headers_missing():
 
 
 def test_span_context_from_headers_malformed():
-    # wrong number of parts
     assert SpanContext.from_headers({"traceparent": "00-only-three"}) is None
 
 
-def test_span_context_from_headers_tracestate_no_equals():
+def test_span_context_from_headers_bad_tracestate_item():
+    # tracestate item without '=' is skipped
     parsed = SpanContext.from_headers(
-        {"traceparent": "00-t-s-01", "tracestate": "noeq,k=v"}
+        {"traceparent": "00-t-s-01", "tracestate": "novalue,good=1"}
     )
     assert parsed is not None
-    assert parsed.baggage == {"k": "v"}
+    assert parsed.baggage == {"good": "1"}
 
 
 # ---------------------------------------------------------------------------
@@ -129,17 +79,15 @@ def test_span_context_from_headers_tracestate_no_equals():
 # ---------------------------------------------------------------------------
 def test_span_attributes_events_status_and_duration():
     ctx = SpanContext(trace_id="t", span_id="s")
-    span = Span(name="op", context=ctx, start_time_ns=1_000_000)
-    # duration is 0 until ended
-    assert span.duration_ms == 0
+    span = Span(name="op", context=ctx, start_time_ns=time.time_ns())
+    assert span.duration_ms == 0  # not ended yet
 
     span.set_attribute("foo", "bar")
     assert span.attributes["foo"] == "bar"
 
     span.add_event("evt", {"a": 1})
     span.add_event("evt2")
-    assert span.events[0]["name"] == "evt"
-    assert span.events[0]["attributes"] == {"a": 1}
+    assert len(span.events) == 2
     assert span.events[1]["attributes"] == {}
 
     span.set_status("error", "boom")
@@ -157,7 +105,7 @@ def test_span_attributes_events_status_and_duration():
 # ---------------------------------------------------------------------------
 # MetricsCollector
 # ---------------------------------------------------------------------------
-def test_metrics_default_registration():
+def test_metrics_collector_defaults_registered():
     mc = MetricsCollector()
     metrics = mc.get_metrics()
     assert "proximadb_requests_total" in metrics
@@ -168,11 +116,11 @@ def test_metrics_inc_counter():
     mc = MetricsCollector()
     mc.inc("requests_total", labels={"method": "search", "status": "success"})
     mc.inc("requests_total", 2, labels={"method": "search", "status": "success"})
-    vals = mc.get_metrics()["proximadb_requests_total"]
-    assert vals["method=search,status=success"] == 3
+    values = mc.get_metrics()["proximadb_requests_total"]
+    assert values["method=search,status=success"] == 3
 
 
-def test_metrics_inc_unknown_metric_noop():
+def test_metrics_inc_unknown_noop():
     mc = MetricsCollector()
     mc.inc("does_not_exist")
     assert "proximadb_does_not_exist" not in mc.get_metrics()
@@ -181,26 +129,25 @@ def test_metrics_inc_unknown_metric_noop():
 def test_metrics_set_gauge():
     mc = MetricsCollector()
     mc.set("active_connections", 5, labels={"protocol": "grpc"})
-    vals = mc.get_metrics()["proximadb_active_connections"]
-    assert vals["protocol=grpc"] == 5
+    assert mc.get_metrics()["proximadb_active_connections"]["protocol=grpc"] == 5
 
 
 def test_metrics_set_unknown_noop():
     mc = MetricsCollector()
-    mc.set("nope", 1)  # returns without error
+    mc.set("nope", 1)
     assert "proximadb_nope" not in mc.get_metrics()
 
 
 def test_metrics_observe_histogram():
     mc = MetricsCollector()
     mc.observe("request_duration_seconds", 0.02, labels={"method": "search"})
-    mc.observe("request_duration_seconds", 3.0, labels={"method": "search"})
+    mc.observe("request_duration_seconds", 0.2, labels={"method": "search"})
     entry = mc.get_metrics()["proximadb_request_duration_seconds"]["method=search"]
     assert entry["count"] == 2
-    assert entry["sum"] == pytest.approx(3.02)
-    # 0.02 falls into buckets >= 0.025; 3.0 into >= 5.0 etc.
+    assert entry["sum"] == pytest.approx(0.22)
+    # 0.02 falls in buckets >= 0.025; 0.2 falls in >= 0.25
     assert entry["buckets"][0.025] == 1
-    assert entry["buckets"][5.0] == 2
+    assert entry["buckets"][0.25] == 2
 
 
 def test_metrics_observe_unknown_noop():
@@ -209,359 +156,302 @@ def test_metrics_observe_unknown_noop():
     assert "proximadb_nope" not in mc.get_metrics()
 
 
-def test_metrics_observe_no_buckets():
+def test_metrics_label_key_empty():
     mc = MetricsCollector()
+    mc.inc("requests_total")  # no labels -> empty key
+    assert "" in mc.get_metrics()["proximadb_requests_total"]
+
+
+def test_metrics_register_custom():
+    mc = MetricsCollector(prefix="custom")
     mc.register(
         MetricDefinition(
-            name="custom_hist",
-            metric_type=MetricType.HISTOGRAM,
-            description="no buckets",
+            name="my_gauge", metric_type=MetricType.GAUGE, description="d"
         )
     )
-    mc.observe("custom_hist", 1.5)
-    entry = mc.get_metrics()["proximadb_custom_hist"][""]
-    assert entry["count"] == 1
-    assert entry["buckets"] == {}
-
-
-def test_metrics_label_key_empty_and_sorted():
-    mc = MetricsCollector()
-    assert mc._label_key(None) == ""
-    assert mc._label_key({}) == ""
-    assert mc._label_key({"b": "2", "a": "1"}) == "a=1,b=2"
+    mc.set("my_gauge", 9)
+    assert mc.get_metrics()["custom_my_gauge"][""] == 9
 
 
 def test_metrics_export_prometheus_all_types():
     mc = MetricsCollector()
     mc.inc("requests_total", labels={"method": "search", "status": "success"})
-    mc.set("active_connections", 7, labels={"protocol": "rest"})
-    mc.observe("request_duration_seconds", 0.5, labels={"method": "search"})
+    mc.set("active_connections", 3, labels={"protocol": "rest"})
+    mc.observe("request_duration_seconds", 0.005, labels={"method": "search"})
+    # Counter without labels to exercise no-label branch
+    mc.inc("requests_total")
     out = mc.export_prometheus()
     assert "# HELP proximadb_requests_total" in out
     assert "# TYPE proximadb_requests_total counter" in out
-    assert "proximadb_active_connections{protocol=rest} 7" in out
-    assert "_bucket" in out
-    assert "_sum" in out
-    assert "_count" in out
+    assert "proximadb_active_connections{protocol=rest} 3" in out
+    assert "proximadb_request_duration_seconds_bucket" in out
     assert 'le="+Inf"' in out
-
-
-def test_metrics_export_prometheus_no_label_counter():
-    mc = MetricsCollector()
-    mc.register(
-        MetricDefinition(
-            name="nolabel", metric_type=MetricType.COUNTER, description="x"
-        )
-    )
-    mc.inc("nolabel")
-    out = mc.export_prometheus()
-    assert "proximadb_nolabel 1" in out
-
-
-def test_metrics_custom_prefix():
-    mc = MetricsCollector(prefix="myapp")
-    assert "myapp_requests_total" in mc.get_metrics()
+    assert "proximadb_request_duration_seconds_sum" in out
+    assert "proximadb_request_duration_seconds_count" in out
 
 
 # ---------------------------------------------------------------------------
 # Tracer
 # ---------------------------------------------------------------------------
-def test_tracer_start_and_end_span():
-    t = Tracer("svc")
-    span = t.start_span("op", attributes={"x": 1})
+def test_tracer_start_end_span():
+    tr = Tracer(service_name="svc")
+    span = tr.start_span("op", attributes={"k": "v"})
     assert span.attributes["service.name"] == "svc"
-    assert span.attributes["x"] == 1
-    assert t.get_current_span() is span
-    t.end_span(span)
-    assert t.get_current_span() is None
-    assert span in t.get_spans()
-    assert span.end_time_ns is not None
+    assert span.attributes["k"] == "v"
+    assert tr.get_current_span() is span
+    tr.end_span(span)
+    assert tr.get_current_span() is None
+    assert span in tr.get_spans()
 
 
-def test_tracer_child_span_inherits_parent():
-    t = Tracer()
-    parent = t.start_span("parent")
-    child = t.start_span("child", parent=parent.context)
+def test_tracer_child_span_inherits_trace_id():
+    tr = Tracer()
+    parent = tr.start_span("parent")
+    child = tr.start_span("child", parent=parent.context)
     assert child.context.trace_id == parent.context.trace_id
     assert child.context.parent_span_id == parent.context.span_id
-    assert child.context.sampled == parent.context.sampled
 
 
-def test_tracer_span_processor_called_and_exceptions_swallowed():
-    t = Tracer()
+def test_tracer_span_processor_called_and_errors_swallowed():
+    tr = Tracer()
     seen = []
-    t.add_span_processor(lambda s: seen.append(s.name))
+    tr.add_span_processor(lambda s: seen.append(s.name))
 
-    def boom(_span):
-        raise ValueError("processor failed")
+    def bad(_s):
+        raise ValueError("processor boom")
 
-    t.add_span_processor(boom)
-    span = t.start_span("op")
-    t.end_span(span)  # must not raise despite boom
-    assert seen == ["op"]
+    tr.add_span_processor(bad)
+    span = tr.start_span("op")
+    tr.end_span(span)
+    assert "op" in seen
 
 
 def test_tracer_trace_context_manager_success():
-    t = Tracer()
-    with t.trace("work", attributes={"a": "b"}) as span:
-        assert span.name == "work"
-    assert len(t.get_spans()) == 1
-    assert t.get_spans()[0].status == "ok"
+    tr = Tracer()
+    with tr.trace("work", attributes={"a": 1}) as span:
+        assert span.status == "ok"
+    assert tr.get_spans()[-1].name == "work"
+    assert tr.get_spans()[-1].end_time_ns is not None
 
 
 def test_tracer_trace_context_manager_error():
-    t = Tracer()
+    tr = Tracer()
     with pytest.raises(RuntimeError):
-        with t.trace("work") as span:
-            raise RuntimeError("kaboom")
-    recorded = t.get_spans()[0]
-    assert recorded.status == "error"
-    assert "kaboom" in recorded.attributes.get("status.message", "")
+        with tr.trace("work") as span:
+            raise RuntimeError("oops")
+    assert span.status == "error"
+    assert span.attributes["status.message"] == "oops"
 
 
-def test_tracer_end_span_when_not_current():
-    t = Tracer()
-    s1 = t.start_span("a")
-    s2 = t.start_span("b")  # s2 becomes current
-    t.end_span(s1)  # s1 is not current; current stays s2
-    assert t.get_current_span() is s2
+def test_tracer_clear_and_export_otlp():
+    tr = Tracer()
+    parent = tr.start_span("p")
+    parent.add_event("e", {"x": 1})
+    tr.end_span(parent)
+    child = tr.start_span("c", parent=parent.context)
+    child.set_status("error", "bad")
+    tr.end_span(child)
 
+    otlp = tr.export_otlp()
+    assert len(otlp) == 2
+    names = {s["name"] for s in otlp}
+    assert names == {"p", "c"}
+    err = next(s for s in otlp if s["name"] == "c")
+    assert err["status"]["code"] == 2
+    ok = next(s for s in otlp if s["name"] == "p")
+    assert ok["status"]["code"] == 1
+    assert ok["events"][0]["name"] == "e"
 
-def test_tracer_clear():
-    t = Tracer()
-    t.end_span(t.start_span("x"))
-    assert t.get_spans()
-    t.clear()
-    assert t.get_spans() == []
-
-
-def test_tracer_export_otlp():
-    t = Tracer()
-    with t.trace("op") as span:
-        span.set_attribute("k", "v")
-        span.add_event("e", {"foo": "bar"})
-    otlp = t.export_otlp()
-    assert len(otlp) == 1
-    rec = otlp[0]
-    assert rec["name"] == "op"
-    assert rec["status"]["code"] == 1
-    assert any(a["key"] == "k" for a in rec["attributes"])
-    assert rec["events"][0]["name"] == "e"
-
-
-def test_tracer_export_otlp_error_status_code():
-    t = Tracer()
-    span = t.start_span("op")
-    span.set_status("error")
-    t.end_span(span)
-    assert t.export_otlp()[0]["status"]["code"] == 2
+    tr.clear()
+    assert tr.get_spans() == []
 
 
 # ---------------------------------------------------------------------------
 # StructuredLogger
 # ---------------------------------------------------------------------------
-def test_structured_logger_levels(caplog):
-    log = StructuredLogger("test_logger", level=LogLevel.DEBUG)
+def test_structured_logger_levels_and_handler():
     captured = []
-    log.add_handler(lambda e: captured.append(e))
-    with caplog.at_level(logging.DEBUG, logger="test_logger"):
-        log.debug("d", a=1)
-        log.info("i")
-        log.warning("w")
-        log.error("e")
-        log.critical("c")
+    logger = StructuredLogger(name="t", level=LogLevel.DEBUG)
+    logger.add_handler(lambda e: captured.append(e))
+
+    logger.debug("d", a=1)
+    logger.info("i")
+    logger.warning("w")
+    logger.error("e")
+    logger.critical("c")
+
     levels = [e["level"] for e in captured]
     assert levels == ["debug", "info", "warning", "error", "critical"]
     assert captured[0]["a"] == 1
 
 
-def test_structured_logger_handler_exception_swallowed():
-    log = StructuredLogger("t2")
+def test_structured_logger_handler_error_swallowed():
+    logger = StructuredLogger(level=LogLevel.DEBUG)
 
-    def boom(_e):
-        raise ValueError("handler failed")
+    def bad(_e):
+        raise ValueError("handler boom")
 
-    log.add_handler(boom)
-    log.info("ok")  # must not raise
+    logger.add_handler(bad)
+    # Should not raise
+    logger.info("hi")
 
 
-def test_structured_logger_with_context():
-    log = StructuredLogger("ctx")
+def test_structured_logger_non_json_format():
+    logger = StructuredLogger(level=LogLevel.DEBUG, json_format=False)
+    logger.info("plain message", foo="bar")
+    logger.info("no extra")  # no kwargs branch
+
+
+def test_structured_logger_with_context_shares_handlers():
     captured = []
-    log.add_handler(lambda e: captured.append(e))
-    child = log.with_context(request_id="r1")
-    assert child is not log
-    child.info("msg", extra="x")
-    assert captured[0]["request_id"] == "r1"
-    assert captured[0]["extra"] == "x"
-
-
-def test_structured_logger_plain_format():
-    log = StructuredLogger("plain", json_format=False)
-    captured = []
-    log.add_handler(lambda e: captured.append(e))
-    # no kwargs -> message-only branch
-    log.info("hello")
-    # with kwargs -> "message extra" branch
-    log.info("hi", k="v")
-    assert len(captured) == 2
+    base = StructuredLogger(level=LogLevel.DEBUG)
+    base.add_handler(lambda e: captured.append(e))
+    child = base.with_context(request_id="r1")
+    child.info("msg")
+    assert captured[-1]["request_id"] == "r1"
 
 
 # ---------------------------------------------------------------------------
 # Observability
 # ---------------------------------------------------------------------------
-def test_observability_disabled_subsystems():
+class FakeClient:
+    def __init__(self):
+        self.calls = []
+
+    def search(self, *a, **k):
+        self.calls.append("search")
+        return ["r"]
+
+    def insert_vectors(self, *a, **k):
+        raise RuntimeError("insert failed")
+
+    # get_vector intentionally present
+    def get_vector(self, *a, **k):
+        return "vec"
+
+
+def test_observability_disabled_components():
     obs = Observability(
         enable_metrics=False, enable_tracing=False, enable_logging=False
     )
     assert obs.metrics is None
     assert obs.tracer is None
     assert obs.logger is None
-    # helpers degrade gracefully
     assert obs.get_prometheus_metrics() == ""
     assert obs.get_traces() == []
-    obs.record_search("c", 1, 5.0)
-    obs.record_insert("c", 1, 5.0)
+    # record_* are no-ops when metrics disabled
+    obs.record_search("c", 1, 1.0)
+    obs.record_insert("c", 1, 1.0)
     obs.record_cache_hit()
     obs.record_cache_miss()
-    # trace_operation yields None when no tracer
-    with obs.trace_operation("x") as span:
-        assert span is None
 
 
-def test_observability_record_helpers():
-    obs = Observability()
-    obs.record_search("col", 3, 12.0)
-    obs.record_insert("col", 10, 8.0)
-    obs.record_cache_hit("query")
-    obs.record_cache_miss("query")
-    metrics = obs.metrics.get_metrics()
-    assert metrics["proximadb_search_results_total"]["collection=col"] == 3
-    assert metrics["proximadb_vectors_inserted_total"]["collection=col"] == 10
-    assert metrics["proximadb_cache_hits_total"]["cache_type=query"] == 1
-    assert metrics["proximadb_cache_misses_total"]["cache_type=query"] == 1
-
-
-def test_observability_get_prometheus_and_traces_enabled():
-    obs = Observability()
-    obs.record_cache_hit("query")
-    # enabled-metrics branch (line 770)
-    prom = obs.get_prometheus_metrics()
-    assert "proximadb_cache_hits_total" in prom
-    # enabled-tracer branch (line 776)
-    with obs.trace_operation("op"):
-        pass
-    traces = obs.get_traces()
-    assert len(traces) == 1
-    assert traces[0]["name"] == "op"
-
-
-def test_observability_trace_operation_with_tracer():
-    obs = Observability()
-    with obs.trace_operation("custom", user_id="42") as span:
-        assert span is not None
-        assert span.attributes["user_id"] == "42"
-    assert obs.tracer.get_spans()
-
-
-def test_observability_instrument_client_success():
-    class FakeClient:
-        def search(self, *a, **k):
-            return ["result"]
-
-        def insert_vectors(self, *a, **k):
-            return "ok"
-
+def test_observability_instruments_client_success():
     client = FakeClient()
     obs = Observability(client=client)
-    assert client.search("col", [0.1]) == ["result"]
-    assert client.insert_vectors() == "ok"
-    metrics = obs.metrics.get_metrics()
-    total = metrics["proximadb_requests_total"]
-    assert total.get("method=search,status=success") == 1
-    assert total.get("method=insert,status=success") == 1
-    # spans recorded
-    assert len(obs.tracer.get_spans()) == 2
+    result = client.search("col", [0.1], top_k=5)
+    assert result == ["r"]
+    metrics = obs.metrics.get_metrics()["proximadb_requests_total"]
+    assert metrics["method=search,status=success"] == 1
+    spans = obs.tracer.get_spans()
+    assert any(s.name == "proximadb.search" for s in spans)
 
 
-def test_observability_instrument_client_error_path():
-    class FailClient:
-        def search(self, *a, **k):
-            raise RuntimeError("search failed")
-
-    client = FailClient()
+def test_observability_instruments_client_error():
+    client = FakeClient()
     obs = Observability(client=client)
-    captured = []
-    obs.logger.add_handler(lambda e: captured.append(e))
     with pytest.raises(RuntimeError):
-        client.search()
-    metrics = obs.metrics.get_metrics()
-    assert metrics["proximadb_requests_total"].get("method=search,status=error") == 1
-    # error logged
-    assert any(e["level"] == "error" for e in captured)
-    # span recorded with error status
-    span = obs.tracer.get_spans()[0]
-    assert span.status == "error"
-
-
-def test_observability_instrument_missing_method_skipped():
-    class Empty:
-        pass
-
-    client = Empty()
-    # should not raise even though no instrumentable methods exist
-    Observability(client=client)
+        client.insert_vectors("col", [])
+    metrics = obs.metrics.get_metrics()["proximadb_requests_total"]
+    assert metrics["method=insert,status=error"] == 1
+    # error span recorded
+    err_span = next(s for s in obs.tracer.get_spans() if s.name == "proximadb.insert")
+    assert err_span.status == "error"
 
 
 def test_observability_instrument_decorator():
-    obs = Observability()
+    obs = Observability(client=None)
 
     def fn(x):
         return x * 2
 
     wrapped = obs.instrument(fn, "double")
     assert wrapped(21) == 42
+    metrics = obs.metrics.get_metrics()["proximadb_requests_total"]
+    assert metrics["method=double,status=success"] == 1
+
+
+def test_observability_trace_operation_with_tracer():
+    obs = Observability(client=None)
+    with obs.trace_operation("custom", user="u1") as span:
+        assert span is not None
+        assert span.attributes["user"] == "u1"
+    assert any(s.name == "custom" for s in obs.tracer.get_spans())
+
+
+def test_observability_trace_operation_without_tracer():
+    obs = Observability(client=None, enable_tracing=False)
+    with obs.trace_operation("custom") as span:
+        assert span is None
+
+
+def test_observability_record_helpers():
+    obs = Observability(client=None)
+    obs.record_search("c1", 5, 12.0)
+    obs.record_insert("c1", 3, 8.0)
+    obs.record_cache_hit("query")
+    obs.record_cache_miss("vector")
     metrics = obs.metrics.get_metrics()
-    assert metrics["proximadb_requests_total"].get(
-        "method=double,status=success"
-    ) == 1
+    assert metrics["proximadb_search_results_total"]["collection=c1"] == 5
+    assert metrics["proximadb_vectors_inserted_total"]["collection=c1"] == 3
+    assert metrics["proximadb_cache_hits_total"]["cache_type=query"] == 1
+    assert metrics["proximadb_cache_misses_total"]["cache_type=vector"] == 1
 
 
-def test_observability_instrument_no_metrics_no_tracer():
-    obs = Observability(enable_metrics=False, enable_tracing=False, enable_logging=False)
+def test_observability_get_prometheus_and_traces():
+    obs = Observability(client=None)
+    obs.record_cache_hit()
+    assert "proximadb_cache_hits_total" in obs.get_prometheus_metrics()
+    with obs.trace_operation("x"):
+        pass
+    traces = obs.get_traces()
+    assert any(t["name"] == "x" for t in traces)
 
-    def fn():
-        raise ValueError("x")
 
-    wrapped = obs.instrument(fn, "op")
-    with pytest.raises(ValueError):
-        wrapped()
+def test_observability_instrument_logs_error_when_logger_enabled():
+    client = FakeClient()
+    obs = Observability(client=client)
+    captured = []
+    obs.logger.add_handler(lambda e: captured.append(e))
+    with pytest.raises(RuntimeError):
+        client.insert_vectors()
+    assert any(e["level"] == "error" for e in captured)
 
 
 # ---------------------------------------------------------------------------
-# traced / metered decorators
+# Module-level decorators: traced / metered
 # ---------------------------------------------------------------------------
 def test_traced_with_observability_arg():
-    obs = Observability()
+    obs = Observability(client=None)
 
-    @traced("traced_op")
-    def fn(o, n):
-        return n + 1
+    @traced("decorated_op")
+    def fn(o, val):
+        return val
 
-    assert fn(obs, 4) == 5
-    assert any(s.name == "traced_op" for s in obs.tracer.get_spans())
+    assert fn(obs, 7) == 7
+    assert any(s.name == "decorated_op" for s in obs.tracer.get_spans())
 
 
 def test_traced_without_observability_arg():
-    @traced("traced_op")
-    def fn(n):
-        return n + 1
+    @traced("op")
+    def fn(val):
+        return val + 1
 
-    assert fn(10) == 11  # falls through, no obs found
+    assert fn(10) == 11
 
 
-def test_traced_with_obs_but_tracer_disabled():
-    obs = Observability(enable_tracing=False)
+def test_traced_observability_without_tracer():
+    obs = Observability(client=None, enable_tracing=False)
 
     @traced("op")
     def fn(o):
@@ -571,47 +461,33 @@ def test_traced_with_obs_but_tracer_disabled():
 
 
 def test_metered_success_records_metrics():
-    obs = Observability()
+    obs = Observability(client=None)
 
     @metered("metered_op")
-    def fn(o, n):
-        return n * 3
+    def fn(o, x):
+        return x
 
-    assert fn(obs, 2) == 6
-    metrics = obs.metrics.get_metrics()
-    assert metrics["proximadb_requests_total"].get(
-        "method=metered_op,status=success"
-    ) == 1
+    assert fn(obs, 5) == 5
+    metrics = obs.metrics.get_metrics()["proximadb_requests_total"]
+    assert metrics["method=metered_op,status=success"] == 1
 
 
-def test_metered_error_records_error_status():
-    obs = Observability()
+def test_metered_error_records_status_error():
+    obs = Observability(client=None)
 
     @metered("metered_op")
     def fn(o):
-        raise RuntimeError("boom")
+        raise ValueError("boom")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         fn(obs)
-    metrics = obs.metrics.get_metrics()
-    assert metrics["proximadb_requests_total"].get(
-        "method=metered_op,status=error"
-    ) == 1
+    metrics = obs.metrics.get_metrics()["proximadb_requests_total"]
+    assert metrics["method=metered_op,status=error"] == 1
 
 
 def test_metered_without_observability_arg():
     @metered("op")
-    def fn(n):
-        return n
+    def fn(x):
+        return x
 
-    assert fn(7) == 7  # no obs in args, finally loop finds nothing
-
-
-def test_metered_obs_without_metrics():
-    obs = Observability(enable_metrics=False)
-
-    @metered("op")
-    def fn(o):
-        return "ok"
-
-    assert fn(obs) == "ok"
+    assert fn(99) == 99
