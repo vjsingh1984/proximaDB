@@ -646,6 +646,24 @@ impl Catalog for NativeCatalog {
         Ok(())
     }
 
+    async fn set_storage_layouts(
+        &self,
+        identifier: &TableIdentifier,
+        layouts: Vec<crate::CatalogStorageLayout>,
+    ) -> Result<CatalogTableSchema> {
+        // Read-modify-write the per-table metadata, mirroring set_primary_pod:
+        // load (cache or disk), replace storage_layouts, persist, invalidate.
+        // A physical/publication attribute → no schema_version bump. The
+        // updated_at bump matters so catalog-cache watchers see the new state.
+        let mut meta = self.load_table(identifier).await?;
+        meta.schema.storage_layouts = layouts;
+        meta.updated_at = Self::now_millis();
+        self.save_table(&meta).await?;
+        self.cache
+            .invalidate_table_in_catalog(&self.name, identifier);
+        Ok(meta.schema)
+    }
+
     async fn get_schema_version(&self, identifier: &TableIdentifier) -> Result<i32> {
         let meta = self.load_table(identifier).await?;
         Ok(meta.schema.schema_version)
@@ -1007,5 +1025,103 @@ mod tests {
             read.primary_pod.as_ref().unwrap().reason,
             crate::CatalogPrimaryPodReason::Rebalance
         ));
+    }
+
+    // ── P3.1: set_storage_layouts (NativeCatalog override) ───────────
+    //
+    // The warehouse-materialization catalog hook: flip a native table to a
+    // Parquet + published-authority layout so the OLAP router treats it as
+    // Parquet-backed. Mirrors the set_primary_pod test shape.
+
+    fn parquet_published_layout(location: &str) -> crate::CatalogStorageLayout {
+        crate::CatalogStorageLayout {
+            name: "parquet-snapshot".to_string(),
+            authority: crate::CatalogAuthorityMode::ProjectionPublication,
+            physical_format: crate::CatalogPhysicalFormat::Parquet,
+            location: Some(location.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn set_storage_layouts_writes_and_returns_updated_schema() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let id = make_table(&cat, "users").await;
+
+        // A freshly created table defaults to one InternalCanonical/ProximaBlock layout.
+        let before = cat.get_table(&id).await.unwrap();
+        assert_eq!(before.storage_layouts.len(), 1);
+        assert!(matches!(
+            before.storage_layouts[0].physical_format,
+            crate::CatalogPhysicalFormat::ProximaBlock
+        ));
+
+        let layout = parquet_published_layout("data/tenant_a/ns/users/_manifests");
+        let returned = cat
+            .set_storage_layouts(&id, vec![layout])
+            .await
+            .expect("set succeeds on existing table");
+
+        // The returned schema reflects the change immediately…
+        assert_eq!(returned.storage_layouts.len(), 1);
+        assert!(matches!(
+            returned.storage_layouts[0].physical_format,
+            crate::CatalogPhysicalFormat::Parquet
+        ));
+        assert!(matches!(
+            returned.storage_layouts[0].authority,
+            crate::CatalogAuthorityMode::ProjectionPublication
+        ));
+        assert_eq!(
+            returned.storage_layouts[0].location.as_deref(),
+            Some("data/tenant_a/ns/users/_manifests")
+        );
+        // …and so does a fresh read.
+        let read = cat.get_table(&id).await.unwrap();
+        assert!(matches!(
+            read.storage_layouts[0].physical_format,
+            crate::CatalogPhysicalFormat::Parquet
+        ));
+        // Physical/publication attribute → no schema_version bump.
+        assert_eq!(read.schema_version, before.schema_version);
+    }
+
+    #[tokio::test]
+    async fn set_storage_layouts_persists_across_reload() {
+        // Reloading drops the in-memory cache, forcing a disk read — verifies
+        // the change went through save_table, not just the cache.
+        let tmp = tempfile::tempdir().unwrap();
+        let id = {
+            let cat = fresh_catalog(&tmp).await;
+            let id = make_table(&cat, "events").await;
+            cat.set_storage_layouts(&id, vec![parquet_published_layout("data/t/ns/events")])
+                .await
+                .unwrap();
+            id
+        };
+
+        let cat2 = fresh_catalog(&tmp).await;
+        let read = cat2.get_table(&id).await.expect("reload table");
+        assert!(matches!(
+            read.storage_layouts[0].physical_format,
+            crate::CatalogPhysicalFormat::Parquet
+        ));
+        assert_eq!(
+            read.storage_layouts[0].location.as_deref(),
+            Some("data/t/ns/events")
+        );
+    }
+
+    #[tokio::test]
+    async fn set_storage_layouts_returns_err_for_unknown_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+
+        let id = TableIdentifier::new(vec!["nope".to_string()], "ghost");
+        let res = cat
+            .set_storage_layouts(&id, vec![parquet_published_layout("x")])
+            .await;
+        assert!(res.is_err(), "missing table must error, got: {:?}", res);
     }
 }

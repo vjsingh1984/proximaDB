@@ -4060,6 +4060,31 @@ pub trait Catalog: Send + Sync {
         ))
     }
 
+    /// Replace the table's `storage_layouts` (the materialization / publication
+    /// descriptor set) and persist the change, returning the updated schema.
+    ///
+    /// This is the catalog side of warehouse materialization: after a table's
+    /// rows are published as a Parquet snapshot to object storage, the caller
+    /// records a `Parquet` + published-authority layout (with the snapshot
+    /// `location`) here, so the OLAP router's `catalog_table_is_parquet_backed`
+    /// check passes and SELECTs over the table route to DataFusion. It is a
+    /// physical/publication attribute (like [`set_primary_pod`]), not a logical
+    /// schema evolution, so it does not bump `schema_version`.
+    ///
+    /// Default: unsupported (backends that don't own native table metadata).
+    ///
+    /// [`set_primary_pod`]: Catalog::set_primary_pod
+    async fn set_storage_layouts(
+        &self,
+        identifier: &TableIdentifier,
+        layouts: Vec<CatalogStorageLayout>,
+    ) -> anyhow::Result<CatalogTableSchema> {
+        let _ = (identifier, layouts);
+        Err(anyhow::anyhow!(
+            "storage layout mutation not supported by this catalog"
+        ))
+    }
+
     // Note: cache() / invalidate_cache were on the legacy local Catalog
     // trait, but had zero external trait-method callers (CatalogManager::cache()
     // is a separate struct method). Not ported — implementors that want
