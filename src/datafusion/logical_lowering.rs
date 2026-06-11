@@ -11,12 +11,13 @@
 //! Covers the OLAP shapes the P1 route targets:
 //! `Scan / Filter / Project / Aggregate / Sort / Limit / Distinct / Union` and
 //! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`, plus
-//! Semi/Anti via `LeftSemi`/`LeftAnti` — the decorrelated IN/EXISTS targets) and
-//! `SetOp` (`INTERSECT`/`EXCEPT`, `ALL` preserving multiset dups),
+//! Semi/Anti via `LeftSemi`/`LeftAnti` — the decorrelated IN/EXISTS targets),
+//! `SetOp` (`INTERSECT`/`EXCEPT`, `ALL` preserving multiset dups) and
+//! `Values` (inline literal rows, aliased to the algebra's output names),
 //! with `Expr` translation for `Column / Literal / BinaryOp / UnaryOp / IsNull /
 //! Cast / Between / In / Like / Case / Coalesce / NullIf` and the common scalar
 //! functions `UPPER/LOWER/LENGTH/ABS/CEIL/FLOOR/SQRT/CONCAT`. Anything else
-//! (null-aware anti join / `NOT IN`, Values, CTEs; uncommon/variadic `FuncCall`s;
+//! (null-aware anti join / `NOT IN`, CTEs; uncommon/variadic `FuncCall`s;
 //! `StringAgg/Custom` aggregates) returns [`DataFusionError::NotImplemented`] so
 //! the caller keeps the existing `ctx.sql(...)` path for those — additive, never wrong.
 
@@ -210,7 +211,31 @@ fn lower<'a>(
                     SetOpKind::Except => LogicalPlanBuilder::except(left_plan, right_plan, *all),
                 }
             }
-            LogicalNode::Values { .. } => Err(unsupported("Values")),
+            LogicalNode::Values {
+                rows,
+                output_schema,
+            } => {
+                if rows.is_empty() {
+                    return Err(unsupported("empty Values"));
+                }
+                // Lower each literal row to DataFusion exprs.
+                let lowered_rows = rows
+                    .iter()
+                    .map(|row| row.iter().map(lower_expr).collect::<DFResult<Vec<_>>>())
+                    .collect::<DFResult<Vec<_>>>()?;
+                // DataFusion names VALUES columns `column1`, `column2`, … (Postgres
+                // convention). Re-alias to the algebra's `output_schema` names so
+                // downstream column references resolve.
+                let aliases = output_schema
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| col(format!("column{}", i + 1)).alias(&c.name))
+                    .collect::<Vec<Expr>>();
+                LogicalPlanBuilder::values(lowered_rows)?
+                    .project(aliases)?
+                    .build()
+            }
             LogicalNode::CteBind { .. } => Err(unsupported("CteBind")),
             LogicalNode::CteRef { .. } => Err(unsupported("CteRef")),
             // Scalar-subquery cardinality guard — DataFusion serves this via the
@@ -913,6 +938,44 @@ mod tests {
         assert_eq!(row_count(&ctx, &set_op(SetOpKind::Except, false)).await, 1);
         // EXCEPT ALL: multiset diff → a:max(2−2,0)=0, b:max(1−0,0)=1 → {b} → 1 row.
         assert_eq!(row_count(&ctx, &set_op(SetOpKind::Except, true)).await, 1);
+    }
+
+    #[tokio::test]
+    async fn lowers_values() {
+        // VALUES (1,'a'), (2,'b'), (3,'a')  with output names (n, s).
+        let ctx = ctx_with_t().await; // ctx needs no table — VALUES is self-contained.
+        let int_lit = |n: i64| RExpr::Literal {
+            value: ProximaValue::Int64(n),
+            ty: ProximaType::Int64,
+        };
+        let str_lit = |s: &str| RExpr::Literal {
+            value: ProximaValue::String(s.to_string()),
+            ty: ProximaType::String,
+        };
+        let values = || LogicalNode::Values {
+            rows: vec![
+                vec![int_lit(1), str_lit("a")],
+                vec![int_lit(2), str_lit("b")],
+                vec![int_lit(3), str_lit("a")],
+            ],
+            output_schema: RelationalSchema::new(vec![
+                ColumnInfo::new("n", ProximaType::Int64, false),
+                ColumnInfo::new("s", ProximaType::String, false),
+            ]),
+        };
+        // Bare VALUES → 3 rows.
+        assert_eq!(row_count(&ctx, &values()).await, 3);
+        // Filtering on the aliased column `s` proves the output_schema names carry
+        // through (DataFusion's default column1/column2 are re-aliased to n/s).
+        let filtered = LogicalNode::Filter {
+            input: Box::new(values()),
+            predicate: RExpr::BinaryOp {
+                op: RBinOp::Eq,
+                left: Box::new(RExpr::Column(colref("s", 1, ProximaType::String))),
+                right: Box::new(str_lit("a")),
+            },
+        };
+        assert_eq!(row_count(&ctx, &filtered).await, 2); // rows 1 and 3
     }
 
     #[tokio::test]
