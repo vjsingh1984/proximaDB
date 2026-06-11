@@ -1809,60 +1809,31 @@ impl DmlService {
             }
         }
 
-        // TD-110: enforce non-PK UNIQUE constraints / indexes on INSERT. Build the
-        // within-batch candidate tuples per unique column set (rejecting a repeat
-        // within this statement; NULL tuples exempt), then ask the record store
-        // for any cross-existing conflict. The store's default impl scans;
-        // index-backed stores (DirectWalTableRecordStore) probe an O(1) index
-        // (Slice C) — so this enforcement gets faster purely at the store layer.
-        let unique_sets = Self::unique_column_sets(&table_schema);
-        if !unique_sets.is_empty() {
-            let primary_key = Self::primary_key_column(&table_schema);
-            let pk_ref = primary_key.as_deref();
-            let mut candidate_sets: Vec<crate::services::record_store::UniqueCandidateSet> =
-                Vec::with_capacity(unique_sets.len());
-            for columns in &unique_sets {
-                let mut candidates: std::collections::HashSet<Vec<String>> =
-                    std::collections::HashSet::new();
-                for record in &records {
-                    let Some(tuple) = record_unique_tuple(record, columns, pk_ref) else {
-                        continue; // NULL/absent in the tuple → exempt
-                    };
-                    if !candidates.insert(tuple.clone()) {
-                        return Err(anyhow!(
-                            "duplicate key value violates unique constraint on ({}) for table '{}': ({}) appears more than once in this INSERT",
-                            columns.join(", "),
-                            table_schema.name,
-                            tuple.join(", ")
-                        ));
-                    }
-                }
-                if !candidates.is_empty() {
-                    candidate_sets.push(crate::services::record_store::UniqueCandidateSet {
-                        columns: columns.clone(),
-                        candidates,
-                    });
-                }
-            }
-            if !candidate_sets.is_empty()
-                && let Some(conflict) = self
-                    .record_store
-                    .check_unique_conflict(
-                        &table_schema,
-                        &table_id.name,
-                        pk_ref,
-                        &candidate_sets,
-                        None,
-                    )
-                    .await?
-            {
-                return Err(anyhow!(
-                    "duplicate key value violates unique constraint on ({}) for table '{}': ({}) already exists",
-                    conflict.columns.join(", "),
-                    table_schema.name,
-                    conflict.tuple.join(", ")
-                ));
-            }
+        // TD-110: enforce non-PK UNIQUE constraints/indexes on INSERT — within-batch
+        // dedup + cross-existing probe (O(1) on index-backed stores, Slice C). No
+        // rows are excluded: every candidate is a brand-new row.
+        let primary_key = Self::primary_key_column(&table_schema);
+        let candidate_sets =
+            Self::build_unique_candidate_sets(&table_schema, &records, primary_key.as_deref())?;
+        if !candidate_sets.is_empty()
+            && let Some(conflict) = self
+                .record_store
+                .check_unique_conflict(
+                    &table_schema,
+                    &table_id.name,
+                    primary_key.as_deref(),
+                    &candidate_sets,
+                    &std::collections::HashSet::new(),
+                    None,
+                )
+                .await?
+        {
+            return Err(anyhow!(
+                "duplicate key value violates unique constraint on ({}) for table '{}': ({}) already exists",
+                conflict.columns.join(", "),
+                table_schema.name,
+                conflict.tuple.join(", ")
+            ));
         }
 
         // Compute per-column min/max and NDV from the canonical record props before moving records
@@ -1980,6 +1951,38 @@ impl DmlService {
 
         if records.is_empty() {
             return Ok(DmlResult::success(0, "No rows matched WHERE clause"));
+        }
+
+        // TD-110: enforce non-PK UNIQUE constraints on UPDATE. The rows' NEW
+        // values must not collide with OTHER rows (or each other). The updated
+        // rows are excluded so a row keeping or vacating its own unique value is
+        // not flagged as a self-conflict. (PK is immutable on UPDATE — rejected by
+        // validate_update_assignments — so only non-PK UNIQUE sets apply here.)
+        let primary_key = Self::primary_key_column(&table_schema);
+        let candidate_sets =
+            Self::build_unique_candidate_sets(&table_schema, &records, primary_key.as_deref())?;
+        if !candidate_sets.is_empty() {
+            let exclude_oids: std::collections::HashSet<String> =
+                records.iter().map(|record| record.oid.clone()).collect();
+            if let Some(conflict) = self
+                .record_store
+                .check_unique_conflict(
+                    &table_schema,
+                    &table_id.name,
+                    primary_key.as_deref(),
+                    &candidate_sets,
+                    &exclude_oids,
+                    None,
+                )
+                .await?
+            {
+                return Err(anyhow!(
+                    "duplicate key value violates unique constraint on ({}) for table '{}': ({}) already exists",
+                    conflict.columns.join(", "),
+                    table_schema.name,
+                    conflict.tuple.join(", ")
+                ));
+            }
         }
 
         let updated_count = records.len();
@@ -2857,6 +2860,42 @@ impl DmlService {
     /// enforce exactly the same sets.
     fn unique_column_sets(table_schema: &CatalogTableSchema) -> Vec<Vec<String>> {
         crate::services::record_store::schema_unique_column_sets(table_schema)
+    }
+
+    /// TD-110: build the per-set candidate tuples for `records`, rejecting a tuple
+    /// that repeats within this statement (NULL tuples exempt). Shared by INSERT
+    /// and UPDATE; the caller passes the result to `check_unique_conflict`.
+    fn build_unique_candidate_sets(
+        table_schema: &CatalogTableSchema,
+        records: &[ProximaRecord],
+        primary_key: Option<&str>,
+    ) -> Result<Vec<crate::services::record_store::UniqueCandidateSet>> {
+        let unique_sets = Self::unique_column_sets(table_schema);
+        let mut candidate_sets = Vec::with_capacity(unique_sets.len());
+        for columns in &unique_sets {
+            let mut candidates: std::collections::HashSet<Vec<String>> =
+                std::collections::HashSet::new();
+            for record in records {
+                let Some(tuple) = record_unique_tuple(record, columns, primary_key) else {
+                    continue; // NULL/absent in the tuple → exempt
+                };
+                if !candidates.insert(tuple.clone()) {
+                    return Err(anyhow!(
+                        "duplicate key value violates unique constraint on ({}) for table '{}': ({}) appears more than once in this statement",
+                        columns.join(", "),
+                        table_schema.name,
+                        tuple.join(", ")
+                    ));
+                }
+            }
+            if !candidates.is_empty() {
+                candidate_sets.push(crate::services::record_store::UniqueCandidateSet {
+                    columns: columns.clone(),
+                    candidates,
+                });
+            }
+        }
+        Ok(candidate_sets)
     }
 
     /// Extract IDs from WHERE clause using the catalog primary key.
@@ -4772,6 +4811,82 @@ mod tests {
                 .contains("duplicate key value violates unique constraint"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn update_rejects_duplicate_unique_value() {
+        // TD-110: UPDATE that sets a UNIQUE column to a value owned by ANOTHER row
+        // is rejected; setting it to the row's OWN current value (or a free value)
+        // is allowed (the updated row is excluded from its own conflict check).
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE members (id TEXT NOT NULL, email TEXT, PRIMARY KEY (id), UNIQUE (email));",
+            )
+            .expect("parse create")
+            .expect("ddl");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("update_unique.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+
+        dml.execute(run("INSERT INTO members (id, email) VALUES ('a', 'a@x.com');"))
+            .await
+            .expect("insert a");
+        dml.execute(run("INSERT INTO members (id, email) VALUES ('b', 'b@x.com');"))
+            .await
+            .expect("insert b");
+
+        // UPDATE a -> b@x.com (owned by b) must be rejected.
+        let err = dml
+            .execute(run("UPDATE members SET email = 'b@x.com' WHERE id = 'a';"))
+            .await
+            .expect_err("UPDATE to another row's unique value must be rejected");
+        assert!(
+            err.to_string()
+                .contains("duplicate key value violates unique constraint"),
+            "unexpected error: {err}"
+        );
+
+        // UPDATE a -> its OWN current value (a@x.com) is a no-op conflict-wise → allowed.
+        dml.execute(run("UPDATE members SET email = 'a@x.com' WHERE id = 'a';"))
+            .await
+            .expect("UPDATE to the row's own current value must be allowed");
+
+        // UPDATE a -> a free value is allowed.
+        dml.execute(run("UPDATE members SET email = 'c@x.com' WHERE id = 'a';"))
+            .await
+            .expect("UPDATE to a free unique value must be allowed");
     }
 
     /// SQL UPDATE and DELETE through `DirectWalTableRecordStore` — T9 conformance.

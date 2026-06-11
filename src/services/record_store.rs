@@ -487,6 +487,7 @@ pub trait TableRecordStore: Send + Sync {
         table_id: &str,
         primary_key: Option<&str>,
         sets: &[UniqueCandidateSet],
+        exclude_oids: &std::collections::HashSet<String>,
         tenant_context: Option<&TenantContext>,
     ) -> Result<Option<UniqueConflict>> {
         for set in sets {
@@ -496,9 +497,11 @@ pub trait TableRecordStore: Send + Sync {
             let cols = set.columns.clone();
             let pk = primary_key.map(str::to_string);
             let wanted = set.candidates.clone();
+            let excluded = exclude_oids.clone();
             let pred = move |existing: &ProximaRecord| {
-                record_unique_tuple(existing, &cols, pk.as_deref())
-                    .is_some_and(|tuple| wanted.contains(&tuple))
+                !excluded.contains(&existing.oid)
+                    && record_unique_tuple(existing, &cols, pk.as_deref())
+                        .is_some_and(|tuple| wanted.contains(&tuple))
             };
             let predicate: Option<&RecordScanPredicate<'_>> = Some(&pred);
             let hits = self
@@ -1066,16 +1069,23 @@ impl TableUniqueIndex {
     }
 
     /// First candidate tuple in `candidates` that already exists for the set
-    /// matching `columns`, if any.
+    /// matching `columns`, owned by some oid NOT in `exclude_oids`, if any.
+    /// `exclude_oids` lets an UPDATE ignore the rows it is itself rewriting (so a
+    /// row keeping or vacating its own unique value is not a self-conflict).
     fn conflict(
         &self,
         columns: &[String],
         candidates: &std::collections::HashSet<Vec<String>>,
+        exclude_oids: &std::collections::HashSet<String>,
     ) -> Option<Vec<String>> {
         let set = self.sets.iter().find(|set| set.columns == columns)?;
         candidates
             .iter()
-            .find(|candidate| set.tuple_to_oids.contains_key(*candidate))
+            .find(|candidate| {
+                set.tuple_to_oids
+                    .get(*candidate)
+                    .is_some_and(|owners| owners.iter().any(|oid| !exclude_oids.contains(oid)))
+            })
             .cloned()
     }
 }
@@ -1311,6 +1321,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
         _table_id: &str,
         _primary_key: Option<&str>,
         sets: &[UniqueCandidateSet],
+        exclude_oids: &std::collections::HashSet<String>,
         _tenant_context: Option<&TenantContext>,
     ) -> Result<Option<UniqueConflict>> {
         self.ensure_unique_index_built(table_schema).await?;
@@ -1319,7 +1330,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
             return Ok(None); // table has no UNIQUE/PK sets
         };
         for set in sets {
-            if let Some(tuple) = table_index.conflict(&set.columns, &set.candidates) {
+            if let Some(tuple) = table_index.conflict(&set.columns, &set.candidates, exclude_oids) {
                 return Ok(Some(UniqueConflict {
                     columns: set.columns.clone(),
                     tuple,
