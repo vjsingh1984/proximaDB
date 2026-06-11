@@ -183,7 +183,6 @@ impl CatalogRow {
         };
         row.primary_key_values(schema)?;
         row.validate_check_constraints(schema)?;
-        row.reject_unenforced_stateful_constraints(schema)?;
         Ok(row)
     }
 
@@ -212,35 +211,6 @@ impl CatalogRow {
                 validate_check_expression(schema, self, expression)?;
             }
         }
-        Ok(())
-    }
-
-    fn reject_unenforced_stateful_constraints(&self, schema: &CatalogTableSchema) -> Result<()> {
-        // TD-110: UNIQUE / PRIMARY KEY uniqueness is now ENFORCED on the DML
-        // insert path (within-statement dedup + a cross-existing duplicate scan
-        // in `DmlService::execute_insert`), so it no longer fail-closes here.
-        // FOREIGN KEY reference checking is still unimplemented, so a non-null
-        // FK tuple keeps fail-closing — rejecting the write is safer than
-        // silently accepting an unverified cross-table reference.
-        for constraint in &schema.relational_capabilities.constraints {
-            if let ColumnConstraint::ForeignKey {
-                columns,
-                references_table,
-                references_columns,
-                ..
-            } = constraint
-                && tuple_is_complete_non_null(self, columns)
-            {
-                return Err(anyhow!(
-                    "FOREIGN KEY ({}) REFERENCES {}({}) on table '{}' is cataloged but native reference enforcement is not available yet",
-                    columns.join(", "),
-                    references_table,
-                    references_columns.join(", "),
-                    schema.name
-                ));
-            }
-        }
-
         Ok(())
     }
 
@@ -601,15 +571,6 @@ fn combine_and(left: CheckOutcome, right: CheckOutcome) -> CheckOutcome {
     } else {
         Pass
     }
-}
-
-fn tuple_is_complete_non_null(row: &CatalogRow, columns: &[String]) -> bool {
-    !columns.is_empty()
-        && columns.iter().all(|column| {
-            row.values
-                .get(column)
-                .is_some_and(|value| !matches!(value, ProximaValue::Null))
-        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1411,18 +1372,18 @@ mod tests {
     }
 
     #[test]
-    fn foreign_key_rejects_non_null_tuple_until_reference_enforcement_exists() {
+    fn foreign_key_no_longer_fails_closed_in_row_validation() {
+        // TD-110: FK reference enforcement moved to the DML path
+        // (DmlService::enforce_foreign_keys does the cross-table parent lookup,
+        // which row-local validation cannot). Validation therefore accepts a
+        // non-null FK tuple and lets the DML path verify the reference.
         let schema = orders_schema_with_foreign_key();
         let mut values = HashMap::new();
         values.insert("id".to_string(), ProximaValue::Int64(42));
         values.insert("customer_id".to_string(), ProximaValue::Int64(7));
 
-        let err = CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
-            .expect_err("non-null FK tuple should fail closed");
-        assert!(
-            err.to_string()
-                .contains("native reference enforcement is not available yet")
-        );
+        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
+            .expect("non-null FK tuple is now accepted by row validation (DML enforces references)");
     }
 
     #[test]

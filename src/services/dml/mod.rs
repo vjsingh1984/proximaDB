@@ -1836,6 +1836,9 @@ impl DmlService {
             ));
         }
 
+        // TD-110: enforce FOREIGN KEY references (same-partition cross-table).
+        self.enforce_foreign_keys(&table_schema, &records).await?;
+
         // Compute per-column min/max and NDV from the canonical record props before moving records
         // into mutations. Only orderable types (String, integers) tracked for min/max; floats and
         // booleans are additionally included in the NDV pass.
@@ -1984,6 +1987,9 @@ impl DmlService {
                 ));
             }
         }
+
+        // TD-110: an UPDATE may change a FOREIGN KEY column — re-verify references.
+        self.enforce_foreign_keys(&table_schema, &records).await?;
 
         let updated_count = records.len();
         let mutations = records
@@ -2896,6 +2902,100 @@ impl DmlService {
             }
         }
         Ok(candidate_sets)
+    }
+
+    /// TD-110: enforce FOREIGN KEY references for `records` against parent tables
+    /// in the same partition (cross-table state the row-local catalog validator
+    /// cannot check). Supported shape: a single-column FK referencing the parent
+    /// PRIMARY KEY — verified by a point `get_by_key` on the parent. NULL FK
+    /// values are exempt. Unsupported shapes (composite FK, or a referenced
+    /// column that is not the parent PK) are cleanly rejected rather than
+    /// silently accepted.
+    async fn enforce_foreign_keys(
+        &self,
+        table_schema: &CatalogTableSchema,
+        records: &[ProximaRecord],
+    ) -> Result<()> {
+        let child_primary_key = Self::primary_key_column(table_schema);
+        for constraint in &table_schema.relational_capabilities.constraints {
+            let proximadb_catalog::ColumnConstraint::ForeignKey {
+                columns,
+                references_table,
+                references_columns,
+                ..
+            } = constraint
+            else {
+                continue;
+            };
+            if columns.len() != 1 || references_columns.len() != 1 {
+                return Err(anyhow!(
+                    "composite FOREIGN KEY ({}) on table '{}' is not supported yet",
+                    columns.join(", "),
+                    table_schema.name
+                ));
+            }
+            let fk_column = &columns[0];
+            let referenced_column = &references_columns[0];
+
+            let (parent_catalog, parent_table_id) = self
+                .catalog_manager
+                .resolve_table(references_table)
+                .await
+                .map_err(|err| {
+                    anyhow!(
+                        "FOREIGN KEY ({}) on table '{}' references table '{}' which cannot be resolved: {err}",
+                        fk_column, table_schema.name, references_table
+                    )
+                })?;
+            if !parent_catalog.table_exists(&parent_table_id).await? {
+                return Err(anyhow!(
+                    "FOREIGN KEY ({}) on table '{}' references missing table '{}'",
+                    fk_column,
+                    table_schema.name,
+                    references_table
+                ));
+            }
+            let parent_schema = parent_catalog.get_table(&parent_table_id).await?;
+            if Self::primary_key_column(&parent_schema).as_deref() != Some(referenced_column.as_str())
+            {
+                return Err(anyhow!(
+                    "FOREIGN KEY ({}) REFERENCES {}({}) on table '{}' is only supported when it references the parent primary key",
+                    fk_column, references_table, referenced_column, table_schema.name
+                ));
+            }
+
+            for record in records {
+                let Some(values) = record_unique_tuple(
+                    record,
+                    std::slice::from_ref(fk_column),
+                    child_primary_key.as_deref(),
+                ) else {
+                    continue; // NULL/absent FK → no reference required
+                };
+                let key = values.into_iter().next().unwrap_or_default();
+                let referenced_exists = self
+                    .record_store
+                    .get_by_key(
+                        &parent_schema,
+                        TableRecordGetRequest {
+                            table_id: parent_table_id.name.clone(),
+                            key: key.clone(),
+                            include_vector: false,
+                            include_props: false,
+                        },
+                        None,
+                    )
+                    .await?
+                    .is_some();
+                if !referenced_exists {
+                    return Err(anyhow!(
+                        "FOREIGN KEY ({}) on table '{}' violates reference: '{}' is not present in {}({})",
+                        fk_column, table_schema.name, key, references_table, referenced_column
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Extract IDs from WHERE clause using the catalog primary key.
@@ -4889,6 +4989,87 @@ mod tests {
             .expect("UPDATE to a free unique value must be allowed");
     }
 
+    #[tokio::test]
+    async fn insert_enforces_foreign_key_reference() {
+        // TD-110: a FOREIGN KEY referencing the parent PK is enforced on INSERT —
+        // present parent ok, missing parent rejected, NULL FK exempt; an UPDATE
+        // re-checks. Parent + child live in the same store (same-partition).
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        for create in [
+            "CREATE TABLE customers (id TEXT NOT NULL, name TEXT, PRIMARY KEY (id));",
+            "CREATE TABLE orders (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id));",
+        ] {
+            let stmt = parser.parse_ddl(create).expect("parse create").expect("ddl");
+            ddl.execute(stmt).await.expect("create table");
+        }
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("fk.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+
+        // Parent row, then a child referencing it — allowed.
+        dml.execute(run("INSERT INTO customers (id, name) VALUES ('c1', 'Alice');"))
+            .await
+            .expect("insert parent customer");
+        dml.execute(run("INSERT INTO orders (id, customer_id) VALUES ('o1', 'c1');"))
+            .await
+            .expect("child referencing existing parent must insert");
+
+        // Child referencing a missing parent — rejected.
+        let err = dml
+            .execute(run("INSERT INTO orders (id, customer_id) VALUES ('o2', 'c99');"))
+            .await
+            .expect_err("FK to a missing parent must be rejected");
+        assert!(
+            err.to_string().contains("violates reference"),
+            "unexpected error: {err}"
+        );
+
+        // NULL FK (customer_id omitted) is exempt.
+        dml.execute(run("INSERT INTO orders (id) VALUES ('o3');"))
+            .await
+            .expect("NULL foreign key is exempt from the reference check");
+
+        // UPDATE re-checks: pointing an order at a missing parent is rejected.
+        let err = dml
+            .execute(run("UPDATE orders SET customer_id = 'c99' WHERE id = 'o1';"))
+            .await
+            .expect_err("UPDATE to a missing FK parent must be rejected");
+        assert!(
+            err.to_string().contains("violates reference"),
+            "unexpected error: {err}"
+        );
+    }
+
     /// SQL UPDATE and DELETE through `DirectWalTableRecordStore` — T9 conformance.
     ///
     /// Verifies that UPDATE rewrites the current visible record and DELETE leaves
@@ -6623,7 +6804,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dml_rejects_non_null_fk_until_stateful_enforcement_exists() {
+    async fn dml_enforces_foreign_key_rejecting_missing_parent() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let manager = Arc::new(CatalogManager::new());
         manager
@@ -6657,9 +6838,10 @@ mod tests {
             Arc::new(PlannedOnlyTableWriteExecutor::new()),
         );
 
-        // UNIQUE is now enforced natively (see `insert_rejects_duplicate_unique_constraint`),
-        // so a non-null UNIQUE tuple no longer fails closed. FK enforcement is still
-        // pending, so an FK insert must continue to fail closed.
+        // TD-110: FK references are now enforced (DmlService::enforce_foreign_keys).
+        // No parent row exists (the explain-only store has no records), so the
+        // child insert is rejected as a reference violation rather than the old
+        // "not enforced yet" fail-close.
         let fk_insert = parser
             .parse_dml("INSERT INTO orders_with_fk (id, customer_id) VALUES ('o1', 'c1');")
             .expect("parse fk insert")
@@ -6667,11 +6849,10 @@ mod tests {
         let fk_err = dml
             .execute(fk_insert)
             .await
-            .expect_err("non-null FK tuple should fail closed");
+            .expect_err("FK to a non-existent parent must be rejected");
         assert!(
-            fk_err
-                .to_string()
-                .contains("native reference enforcement is not available yet")
+            fk_err.to_string().contains("violates reference"),
+            "unexpected error: {fk_err}"
         );
     }
 
