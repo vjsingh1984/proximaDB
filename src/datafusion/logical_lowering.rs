@@ -12,14 +12,16 @@
 //! `Scan / Filter / Project / Aggregate / Sort / Limit / Distinct / Union` and
 //! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`, plus
 //! Semi/Anti via `LeftSemi`/`LeftAnti` — the decorrelated IN/EXISTS targets),
-//! `SetOp` (`INTERSECT`/`EXCEPT`, `ALL` preserving multiset dups) and
-//! `Values` (inline literal rows, aliased to the algebra's output names),
+//! `SetOp` (`INTERSECT`/`EXCEPT`, `ALL` preserving multiset dups),
+//! `Values` (inline literal rows, aliased to the algebra's output names) and
+//! `WITH` CTEs (`CteBind`/`CteRef`, resolved by inlining the body at each ref),
 //! with `Expr` translation for `Column / Literal / BinaryOp / UnaryOp / IsNull /
 //! Cast / Between / In / Like / Case / Coalesce / NullIf` and the common scalar
 //! functions `UPPER/LOWER/LENGTH/ABS/CEIL/FLOOR/SQRT/CONCAT`. Anything else
-//! (null-aware anti join / `NOT IN`, CTEs; uncommon/variadic `FuncCall`s;
-//! `StringAgg/Custom` aggregates) returns [`DataFusionError::NotImplemented`] so
-//! the caller keeps the existing `ctx.sql(...)` path for those — additive, never wrong.
+//! (null-aware anti join / `NOT IN`, scalar-subquery `AssertMaxOneRow` guard;
+//! uncommon/variadic `FuncCall`s; `StringAgg/Custom` aggregates) returns
+//! [`DataFusionError::NotImplemented`] so the caller keeps the existing
+//! `ctx.sql(...)` path for those — additive, never wrong.
 
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::{
@@ -42,7 +44,111 @@ fn unsupported(what: impl Into<String>) -> DataFusionError {
 /// Lower a relational `LogicalNode` to a DataFusion `LogicalPlan`, resolving `Scan` leaves
 /// against the tables registered in `ctx`.
 pub async fn lower_logical_node(ctx: &SessionContext, node: &LogicalNode) -> DFResult<LogicalPlan> {
-    lower(ctx, node).await
+    // Resolve CTEs first (inline each `CteRef` with its bound body) so `lower`
+    // only ever sees a `CteBind`/`CteRef`-free tree.
+    let inlined = inline_ctes(node, &[])?;
+    lower(ctx, &inlined).await
+}
+
+/// Resolve `WITH` CTEs by inlining: substitute every `CteRef` with a clone of its
+/// bound body, producing a `CteBind`/`CteRef`-free tree. This is the "single-use
+/// always inline" cut — DataFusion's optimizer can re-share identical subtrees, and
+/// any unbound reference returns `NotImplemented` so the caller keeps the `ctx.sql`
+/// fallback. `env` is the lexical binding stack (innermost last); a CTE body is
+/// resolved in the scope where it is bound, so later/inner CTEs may reference earlier
+/// ones and inner names shadow outer ones.
+fn inline_ctes(node: &LogicalNode, env: &[(String, LogicalNode)]) -> DFResult<LogicalNode> {
+    let recur = |n: &LogicalNode| inline_ctes(n, env);
+    Ok(match node {
+        LogicalNode::CteBind {
+            name,
+            body,
+            usages,
+        } => {
+            // Resolve the body in the CURRENT scope, then bind it for `usages`.
+            let resolved_body = inline_ctes(body, env)?;
+            let mut inner_env = env.to_vec();
+            inner_env.push((name.clone(), resolved_body));
+            inline_ctes(usages, &inner_env)?
+        }
+        LogicalNode::CteRef { name, .. } => env
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .map(|(_, body)| body.clone())
+            .ok_or_else(|| unsupported(format!("unbound CTE reference {name}")))?,
+        // Leaves: no `LogicalNode` children to descend into.
+        LogicalNode::Scan { .. } | LogicalNode::Values { .. } => node.clone(),
+        LogicalNode::Filter { input, predicate } => LogicalNode::Filter {
+            input: Box::new(recur(input)?),
+            predicate: predicate.clone(),
+        },
+        LogicalNode::Project { input, outputs } => LogicalNode::Project {
+            input: Box::new(recur(input)?),
+            outputs: outputs.clone(),
+        },
+        LogicalNode::Join {
+            left,
+            right,
+            kind,
+            on,
+            strategy,
+        } => LogicalNode::Join {
+            left: Box::new(recur(left)?),
+            right: Box::new(recur(right)?),
+            kind: *kind,
+            on: on.clone(),
+            strategy: *strategy,
+        },
+        LogicalNode::Aggregate {
+            input,
+            group_by,
+            aggregates,
+            having,
+        } => LogicalNode::Aggregate {
+            input: Box::new(recur(input)?),
+            group_by: group_by.clone(),
+            aggregates: aggregates.clone(),
+            having: having.clone(),
+        },
+        LogicalNode::Sort { input, keys } => LogicalNode::Sort {
+            input: Box::new(recur(input)?),
+            keys: keys.clone(),
+        },
+        LogicalNode::Limit {
+            input,
+            limit,
+            offset,
+        } => LogicalNode::Limit {
+            input: Box::new(recur(input)?),
+            limit: *limit,
+            offset: *offset,
+        },
+        LogicalNode::Distinct { input } => LogicalNode::Distinct {
+            input: Box::new(recur(input)?),
+        },
+        LogicalNode::AssertMaxOneRow { input } => LogicalNode::AssertMaxOneRow {
+            input: Box::new(recur(input)?),
+        },
+        LogicalNode::Union { inputs, all } => LogicalNode::Union {
+            inputs: inputs
+                .iter()
+                .map(|n| inline_ctes(n, env))
+                .collect::<DFResult<Vec<_>>>()?,
+            all: *all,
+        },
+        LogicalNode::SetOp {
+            op,
+            left,
+            right,
+            all,
+        } => LogicalNode::SetOp {
+            op: *op,
+            left: Box::new(recur(left)?),
+            right: Box::new(recur(right)?),
+            all: *all,
+        },
+    })
 }
 
 // Boxed recursion: an `async fn` calling itself needs an explicit boxed future.
@@ -236,8 +342,11 @@ fn lower<'a>(
                     .project(aliases)?
                     .build()
             }
-            LogicalNode::CteBind { .. } => Err(unsupported("CteBind")),
-            LogicalNode::CteRef { .. } => Err(unsupported("CteRef")),
+            // `inline_ctes` (run by `lower_logical_node` before `lower`) strips these,
+            // so they are unreachable here — kept as a defensive guard in case `lower`
+            // is ever reached on an un-inlined tree.
+            LogicalNode::CteBind { .. } => Err(unsupported("CteBind (should be inlined)")),
+            LogicalNode::CteRef { .. } => Err(unsupported("CteRef (should be inlined)")),
             // Scalar-subquery cardinality guard — DataFusion serves this via the
             // `ctx.sql` fallback until it is lowered on the shared path. Explicit arm
             // (not a wildcard) so the next new LogicalNode variant forces a deliberate
@@ -976,6 +1085,35 @@ mod tests {
             },
         };
         assert_eq!(row_count(&ctx, &filtered).await, 2); // rows 1 and 3
+    }
+
+    #[tokio::test]
+    async fn lowers_cte_inlined_at_each_ref() {
+        // WITH cte AS (SELECT k FROM t WHERE k='a')        -- body = {a, a}
+        //   (SELECT k FROM cte) UNION ALL (SELECT k FROM cte)
+        // Inlining the body at BOTH refs → 2 + 2 = 4 rows.
+        let ctx = ctx_with_t().await;
+        let cte_schema =
+            || RelationalSchema::new(vec![ColumnInfo::new("k", ProximaType::String, false)]);
+        let cte_ref = || LogicalNode::CteRef {
+            name: "cte".to_string(),
+            output_schema: cte_schema(),
+        };
+        let node = LogicalNode::CteBind {
+            name: "cte".to_string(),
+            body: Box::new(project_k_where("a")),
+            usages: Box::new(LogicalNode::Union {
+                inputs: vec![cte_ref(), cte_ref()],
+                all: true,
+            }),
+        };
+        assert_eq!(row_count(&ctx, &node).await, 4);
+
+        // An unbound CTE reference must error so the caller keeps the ctx.sql fallback.
+        assert!(
+            lower_logical_node(&ctx, &cte_ref()).await.is_err(),
+            "unbound CteRef must NOT lower"
+        );
     }
 
     #[tokio::test]
