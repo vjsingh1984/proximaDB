@@ -110,7 +110,6 @@ pub use observability::ObservabilityRestState;
 // Re-exports — router builders
 pub use analytics::create_analytics_router;
 pub use document::create_document_router;
-pub use entities::{parse_batch_request, parse_search_request};
 pub use graph::create_graph_router;
 pub use hybrid::{
     create_health_router, create_hybrid_search_router, execute_sql, sql_value_to_json,
@@ -120,9 +119,6 @@ pub use observability::create_observability_router;
 
 // Re-exports — handler functions (for direct registration in existing root-crate routers)
 pub use catalog::{collection_operation, delete_collection, get_collection, list_collections};
-pub use entities::{
-    delete_vector, get_vector, vector_batch, vector_search, vector_search_with_metadata,
-};
 pub use hybrid::{liveness_check, readiness_check};
 
 #[cfg(test)]
