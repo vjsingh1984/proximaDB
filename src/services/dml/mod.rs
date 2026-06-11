@@ -757,6 +757,89 @@ impl DmlService {
         Ok((table_schema, rows))
     }
 
+    /// Materialize a relational table's current rows as a Parquet snapshot on object
+    /// storage and flip its catalog storage layout to `Parquet` /
+    /// `ProjectionPublication`, so the OLAP router's `catalog_table_is_parquet_backed`
+    /// check passes and SELECTs over the table route to DataFusion.
+    ///
+    /// This is the explicit-publish half of the dual-path design (course-correction
+    /// §6 P3): OLTP rows stay authoritative in RecordStorage; this publishes a
+    /// read-optimized Parquet projection of the current snapshot. It is triggered
+    /// explicitly (e.g. `ALTER TABLE … MATERIALIZE`), not on every write.
+    ///
+    /// `bridge` is the object store to write into; `warehouse_root_url` is the URL the
+    /// OLAP reader reopens that same physical store from, so the published
+    /// `location = {warehouse_root_url}/{tenant-isolated prefix}` resolves back to the
+    /// data the reader lists as `{location}/data/*.parquet`. Returns the published
+    /// `location`.
+    ///
+    /// MVP scope: a single Parquet object per materialization (full overwrite
+    /// snapshot), schema inferred from the rows. Incremental/atomic manifest
+    /// publication (`IcebergObjectStoreBridge::publish_snapshot`) and the
+    /// catalog-authoritative write schema are follow-ups.
+    pub async fn materialize_table_to_parquet(
+        &self,
+        bridge: &dyn ObjectStoreBridge,
+        warehouse_root_url: &str,
+        table_name: &str,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<String> {
+        // 1. Snapshot the table's current rows (all columns, no predicate/limit).
+        let (schema, rows) = self
+            .scan_table_relational(table_name, None, None, None)
+            .await?;
+
+        // 2. Column-order ProximaValue rows → ProximaRecord envelopes (props keyed by
+        //    column name; relational tables carry no vectors). NULLs are omitted —
+        //    the schema-driven Arrow mapping null-fills any absent column.
+        let col_names: Vec<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
+        let records: Vec<ProximaRecord> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let mut rec = ProximaRecord {
+                    oid: i.to_string(),
+                    ..Default::default()
+                };
+                for (name, value) in col_names.iter().zip(row.into_iter()) {
+                    if !matches!(value, ProximaValue::Null) {
+                        rec.props
+                            .insert(name.clone(), ProximaTreeNode::Value(value));
+                    }
+                }
+                rec
+            })
+            .collect();
+
+        // 3. Tenant-isolated object prefix (DrPathBuilder mandate: data/{tenant}/{ns}/{table}).
+        let tenant_id = tenant_context
+            .map(|tc| tc.tenant_id.as_str())
+            .unwrap_or("default_tenant");
+        let prefix = format!("data/{tenant_id}/default/{}", schema.name);
+
+        // 4. Write the snapshot under `{prefix}/data/` — exactly where the OLAP reader
+        //    lists `{location}/data/*.parquet`.
+        let data_object =
+            object_store::path::Path::from(format!("{prefix}/data/part-0.parquet"));
+        bridge
+            .write_records_to_parquet(&data_object, &records, Some(tenant_id))
+            .await?;
+
+        // 5. Flip the catalog layout to a published Parquet projection at the location.
+        let location = format!("{}/{prefix}", warehouse_root_url.trim_end_matches('/'));
+        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let layout = CatalogStorageLayout {
+            name: "parquet-snapshot".to_string(),
+            authority: proximadb_catalog::CatalogAuthorityMode::ProjectionPublication,
+            physical_format: proximadb_catalog::CatalogPhysicalFormat::Parquet,
+            location: Some(location.clone()),
+            ..Default::default()
+        };
+        catalog.set_storage_layouts(&table_id, vec![layout]).await?;
+
+        Ok(location)
+    }
+
     /// Point-lookup a single relational row by primary key, projected into the
     /// FULL `schema.columns` order (the executor re-applies any projection).
     ///
@@ -5662,6 +5745,101 @@ mod tests {
             .await
             .expect("scan limit");
         assert_eq!(rows.len(), 2, "limit caps the scan");
+    }
+
+    /// P3.2: `materialize_table_to_parquet` snapshots the table's rows to a Parquet
+    /// object on the bridge AND flips the catalog layout to Parquet/ProjectionPublication
+    /// at the published location, so the OLAP router will treat it as Parquet-backed.
+    #[tokio::test]
+    async fn materialize_table_writes_parquet_and_flips_catalog_layout() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+        use futures::StreamExt;
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-materialize.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        for (id, status, qty) in [("i1", "active", 5), ("i2", "active", 15), ("i3", "idle", 25)] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO inv (id, status, qty) VALUES ('{id}', '{status}', {qty});"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // A shared in-memory bridge: we reuse the SAME handle to read the snapshot
+        // back (from_url("memory://") would open a fresh, empty store).
+        let bridge = Arc::new(IcebergObjectStoreBridge::from_url("memory:///warehouse").unwrap());
+
+        let location = dml
+            .materialize_table_to_parquet(&*bridge, "memory:///warehouse", "inv", None)
+            .await
+            .expect("materialize");
+
+        // The published location is the tenant-isolated base URL.
+        assert_eq!(location, "memory:///warehouse/data/default_tenant/default/inv");
+
+        // The Parquet snapshot landed where the OLAP reader lists `{location}/data/*.parquet`,
+        // and reads back all three rows.
+        let data_object = object_store::path::Path::from(
+            "data/default_tenant/default/inv/data/part-0.parquet",
+        );
+        let mut stream = bridge
+            .read_parquet_batches(&data_object, Arc::new(arrow_schema::Schema::empty()), 1024, None)
+            .await
+            .expect("read materialized parquet");
+        let mut total = 0usize;
+        while let Some(batch) = stream.next().await {
+            total += batch.expect("batch").num_rows();
+        }
+        assert_eq!(total, 3, "all rows materialized into the snapshot");
+
+        // The catalog layout is now a published Parquet projection at the location.
+        let (catalog, id) = manager.resolve_table("inv").await.expect("resolve");
+        let schema = catalog.get_table(&id).await.expect("get table");
+        assert_eq!(schema.storage_layouts.len(), 1);
+        let layout = &schema.storage_layouts[0];
+        assert!(matches!(
+            layout.physical_format,
+            proximadb_catalog::CatalogPhysicalFormat::Parquet
+        ));
+        assert!(matches!(
+            layout.authority,
+            proximadb_catalog::CatalogAuthorityMode::ProjectionPublication
+        ));
+        assert_eq!(layout.location.as_deref(), Some(location.as_str()));
     }
 
     /// `point_lookup_relational` (PATH B PkLookup backend) returns the full row by
