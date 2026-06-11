@@ -5842,6 +5842,86 @@ mod tests {
         assert_eq!(layout.location.as_deref(), Some(location.as_str()));
     }
 
+    /// P3 end-to-end: materialize a table to a Parquet snapshot on a REOPENABLE
+    /// (file://) object store, then read it back through the DataFusion OLAP reader
+    /// (`ObjectStoreParquetTable::open(location)` + `ctx.sql`) — proving the published
+    /// `location` is exactly what the router registers and queries. Feature-gated
+    /// because the DataFusion reader lives behind `datafusion-integration`.
+    #[cfg(feature = "datafusion-integration")]
+    #[tokio::test]
+    async fn materialized_table_is_readable_through_datafusion_reader() {
+        use crate::datafusion::create_session_context;
+        use crate::datafusion::engine_adapters::register_object_store_parquet_location;
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-mat-e2e.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        for (id, status, qty) in [("i1", "active", 5), ("i2", "active", 15), ("i3", "idle", 25)] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO inv (id, status, qty) VALUES ('{id}', '{status}', {qty});"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // A file:// store the OLAP reader can REOPEN from the published URL.
+        let store_dir = tempfile::tempdir().expect("store tempdir");
+        let root_url = format!("file://{}", store_dir.path().display());
+        let bridge = Arc::new(IcebergObjectStoreBridge::from_url(&root_url).expect("bridge"));
+
+        let location = dml
+            .materialize_table_to_parquet(&*bridge, &root_url, "inv", None)
+            .await
+            .expect("materialize");
+
+        // Read the published location back through the DataFusion OLAP reader.
+        let ctx = create_session_context().expect("session ctx");
+        register_object_store_parquet_location(&ctx, "inv_parquet", &location)
+            .await
+            .expect("register parquet location");
+        let batches = ctx
+            .sql("SELECT * FROM inv_parquet")
+            .await
+            .expect("plan select")
+            .collect()
+            .await
+            .expect("collect");
+        let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total, 3, "DataFusion reads all materialized rows from the published location");
+    }
+
     /// `point_lookup_relational` (PATH B PkLookup backend) returns the full row by
     /// primary key in `schema.columns` order, and `None` for a missing key.
     #[tokio::test]
