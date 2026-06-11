@@ -612,6 +612,40 @@ pub(crate) fn record_unique_tuple(
     Some(tuple)
 }
 
+/// The column sets carrying a UNIQUE guarantee for a table — cataloged unique
+/// indexes plus inline `UNIQUE (...)` constraints. Shared by `DmlService`
+/// (candidate construction) and `DirectWalTableRecordStore` (index maintenance)
+/// so both agree on exactly which sets are enforced. (TD-110 Slice C.)
+pub(crate) fn schema_unique_column_sets(table_schema: &CatalogTableSchema) -> Vec<Vec<String>> {
+    let mut sets: Vec<Vec<String>> = Vec::new();
+    for index in &table_schema.relational_capabilities.unique_indexes {
+        if !index.columns.is_empty() {
+            sets.push(index.columns.clone());
+        }
+    }
+    for constraint in &table_schema.relational_capabilities.constraints {
+        if let proximadb_catalog::ColumnConstraint::Unique { columns } = constraint
+            && !columns.is_empty()
+        {
+            sets.push(columns.clone());
+        }
+    }
+    sets
+}
+
+/// The single-column primary key for a table (explicit, else conventional
+/// `id`/`record_id`). The PK value lives in `oid`, not `props` — see
+/// [`record_unique_tuple`].
+pub(crate) fn schema_primary_key_column(table_schema: &CatalogTableSchema) -> Option<String> {
+    table_schema.primary_key.first().cloned().or_else(|| {
+        table_schema
+            .columns
+            .iter()
+            .find(|column| column.name == "id" || column.name == "record_id")
+            .map(|column| column.name.clone())
+    })
+}
+
 /// xCatalog-routed table-record store.
 ///
 /// The router makes the migration rule explicit: DML chooses a writer from
@@ -953,9 +987,106 @@ impl TableRecordStore for RecordStorageTableRecordStore {
 /// to the canonical `RecordStorage` row/delta spine. Layer-2 projections such
 /// as PAX stripes, columnar blocks, HNSW, JSON, graph topology, and open-format
 /// manifests are driven from WAL `ProjectionDirective`s and remain rebuildable.
+/// TD-110 Slice C: in-memory UNIQUE/PK index for one unique column set —
+/// `tuple-repr → owning oids`. A set may transiently hold >1 oid only across the
+/// pre-existing uniqueness TOCTOU (also present in the scan path); steady state
+/// is one oid per tuple.
+#[derive(Default)]
+struct UniqueSetIndex {
+    columns: Vec<String>,
+    tuple_to_oids: std::collections::HashMap<Vec<String>, std::collections::HashSet<String>>,
+}
+
+/// Per-table UNIQUE/PK index. Each oid self-tracks its current per-set tuple
+/// (`oid_tuples`) so an update or delete can remove the OLD tuples without
+/// re-reading storage. Built lazily on first check (scanning the WAL-rebuilt
+/// current state) and maintained incrementally on every subsequent write.
+#[derive(Default)]
+struct TableUniqueIndex {
+    /// One per unique column set, in `schema_unique_column_sets` order.
+    sets: Vec<UniqueSetIndex>,
+    /// oid → its current per-set tuple (`None` = NULL-exempt for that set).
+    oid_tuples: std::collections::HashMap<String, Vec<Option<Vec<String>>>>,
+}
+
+impl TableUniqueIndex {
+    fn with_sets(set_columns: &[Vec<String>]) -> Self {
+        Self {
+            sets: set_columns
+                .iter()
+                .map(|columns| UniqueSetIndex {
+                    columns: columns.clone(),
+                    tuple_to_oids: std::collections::HashMap::new(),
+                })
+                .collect(),
+            oid_tuples: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Insert/update `record`: drop its previous per-set tuples (if any) then add
+    /// its current ones. Uniform across INSERT/UPSERT/UPDATE.
+    fn upsert(&mut self, record: &ProximaRecord, primary_key: Option<&str>) {
+        self.remove_oid_tuples(&record.oid);
+        let mut per_set = Vec::with_capacity(self.sets.len());
+        for set in &mut self.sets {
+            let tuple = record_unique_tuple(record, &set.columns, primary_key);
+            if let Some(tuple) = &tuple {
+                set.tuple_to_oids
+                    .entry(tuple.clone())
+                    .or_default()
+                    .insert(record.oid.clone());
+            }
+            per_set.push(tuple);
+        }
+        self.oid_tuples.insert(record.oid.clone(), per_set);
+    }
+
+    /// Remove `oid` entirely (DELETE).
+    fn delete(&mut self, oid: &str) {
+        self.remove_oid_tuples(oid);
+        self.oid_tuples.remove(oid);
+    }
+
+    /// Detach `oid`'s currently-indexed tuples from `tuple_to_oids` (shared by
+    /// upsert's replace and delete). Leaves `oid_tuples[oid]` for the caller.
+    fn remove_oid_tuples(&mut self, oid: &str) {
+        let Some(previous) = self.oid_tuples.get(oid).cloned() else {
+            return;
+        };
+        for (set, tuple) in self.sets.iter_mut().zip(previous.iter()) {
+            if let Some(tuple) = tuple
+                && let Some(oids) = set.tuple_to_oids.get_mut(tuple)
+            {
+                oids.remove(oid);
+                if oids.is_empty() {
+                    set.tuple_to_oids.remove(tuple);
+                }
+            }
+        }
+    }
+
+    /// First candidate tuple in `candidates` that already exists for the set
+    /// matching `columns`, if any.
+    fn conflict(
+        &self,
+        columns: &[String],
+        candidates: &std::collections::HashSet<Vec<String>>,
+    ) -> Option<Vec<String>> {
+        let set = self.sets.iter().find(|set| set.columns == columns)?;
+        candidates
+            .iter()
+            .find(|candidate| set.tuple_to_oids.contains_key(*candidate))
+            .cloned()
+    }
+}
+
 pub struct DirectWalTableRecordStore {
     storage: Arc<dyn RecordStorage>,
     wal_appender: Arc<dyn TableWalAppender>,
+    /// TD-110 Slice C: per-table UNIQUE/PK index (keyed by `table_schema.name`).
+    /// Presence of a table key == "index built". Lazily built on first
+    /// `check_unique_conflict`, then maintained on every `write_mutations`.
+    unique_index: parking_lot::RwLock<std::collections::HashMap<String, TableUniqueIndex>>,
 }
 
 impl DirectWalTableRecordStore {
@@ -964,7 +1095,44 @@ impl DirectWalTableRecordStore {
         Self {
             storage,
             wal_appender,
+            unique_index: parking_lot::RwLock::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// Build the UNIQUE/PK index for `table_schema` if not already built, by
+    /// scanning current visible state (which the WAL recovery has rebuilt). A
+    /// no-op when the table has no UNIQUE/PK sets.
+    async fn ensure_unique_index_built(&self, table_schema: &CatalogTableSchema) -> Result<()> {
+        if self.unique_index.read().contains_key(&table_schema.name) {
+            return Ok(());
+        }
+        let set_columns = schema_unique_column_sets(table_schema);
+        if set_columns.is_empty() {
+            return Ok(());
+        }
+        let primary_key = schema_primary_key_column(table_schema);
+        let existing = self
+            .scan_records(
+                table_schema,
+                TableRecordScanRequest {
+                    table_id: table_schema.name.clone(),
+                    limit: None,
+                    include_vector: false,
+                    include_props: true,
+                },
+                None,
+            )
+            .await?;
+        let mut index = TableUniqueIndex::with_sets(&set_columns);
+        for record in &existing {
+            index.upsert(record, primary_key.as_deref());
+        }
+        // Double-checked insert: keep an index another writer built meanwhile.
+        self.unique_index
+            .write()
+            .entry(table_schema.name.clone())
+            .or_insert(index);
+        Ok(())
     }
 }
 
@@ -1053,19 +1221,40 @@ impl TableRecordStore for DirectWalTableRecordStore {
             .append_operations(operations, tenant_id)
             .await?;
 
+        // TD-110 Slice C: maintain the UNIQUE/PK index incrementally — but only
+        // once it has been built (first `check_unique_conflict`). Until then the
+        // lazy build captures these writes from current state, so skipping is
+        // safe; checking once avoids per-write work for tables never probed.
+        let index_primary_key = schema_primary_key_column(table_schema);
+        let maintain_index = !schema_unique_column_sets(table_schema).is_empty()
+            && self.unique_index.read().contains_key(&table_schema.name);
+
         let mut record_ids = Vec::with_capacity(storage_actions.len());
         for (kind, record) in storage_actions {
             match kind {
                 TableRecordMutationKind::Insert
                 | TableRecordMutationKind::Upsert
                 | TableRecordMutationKind::Update => {
-                    let written = self.storage.upsert_record(record).await?;
-                    record_ids.push(written.oid);
+                    if maintain_index {
+                        let written = self.storage.upsert_record(record.clone()).await?;
+                        record_ids.push(written.oid);
+                        if let Some(index) = self.unique_index.write().get_mut(&table_schema.name) {
+                            index.upsert(&record, index_primary_key.as_deref());
+                        }
+                    } else {
+                        let written = self.storage.upsert_record(record).await?;
+                        record_ids.push(written.oid);
+                    }
                 }
                 TableRecordMutationKind::Delete => {
                     self.storage
                         .delete_record(&RecordKey::from(&record))
                         .await?;
+                    if maintain_index
+                        && let Some(index) = self.unique_index.write().get_mut(&table_schema.name)
+                    {
+                        index.delete(&record.oid);
+                    }
                     record_ids.push(record.oid);
                 }
                 TableRecordMutationKind::OverwriteSnapshot
@@ -1111,6 +1300,33 @@ impl TableRecordStore for DirectWalTableRecordStore {
         RecordStorageTableRecordStore::new(self.storage.clone())
             .scan_records_filtered(table_schema, request, predicate, tenant_context)
             .await
+    }
+
+    /// TD-110 Slice C: O(1) index-backed override of the default scan. Builds the
+    /// per-table index on first use (from WAL-recovered current state), then
+    /// probes candidate tuples directly.
+    async fn check_unique_conflict(
+        &self,
+        table_schema: &CatalogTableSchema,
+        _table_id: &str,
+        _primary_key: Option<&str>,
+        sets: &[UniqueCandidateSet],
+        _tenant_context: Option<&TenantContext>,
+    ) -> Result<Option<UniqueConflict>> {
+        self.ensure_unique_index_built(table_schema).await?;
+        let index = self.unique_index.read();
+        let Some(table_index) = index.get(&table_schema.name) else {
+            return Ok(None); // table has no UNIQUE/PK sets
+        };
+        for set in sets {
+            if let Some(tuple) = table_index.conflict(&set.columns, &set.candidates) {
+                return Ok(Some(UniqueConflict {
+                    columns: set.columns.clone(),
+                    tuple,
+                }));
+            }
+        }
+        Ok(None)
     }
 }
 

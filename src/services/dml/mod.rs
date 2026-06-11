@@ -2846,33 +2846,17 @@ impl DmlService {
     }
 
     fn primary_key_column(table_schema: &CatalogTableSchema) -> Option<String> {
-        table_schema.primary_key.first().cloned().or_else(|| {
-            table_schema
-                .columns
-                .iter()
-                .find(|column| column.name == "id" || column.name == "record_id")
-                .map(|column| column.name.clone())
-        })
+        // Shared with the record-store index (TD-110 Slice C) so candidate and
+        // indexed tuples derive their PK column identically.
+        crate::services::record_store::schema_primary_key_column(table_schema)
     }
 
     /// TD-110: the column sets that carry a UNIQUE guarantee — cataloged unique
-    /// indexes plus inline `UNIQUE (...)` column constraints. Each is enforced
-    /// independently on INSERT.
+    /// indexes plus inline `UNIQUE (...)` column constraints. Delegates to the
+    /// shared store-layer helper so DmlService candidates and the store's index
+    /// enforce exactly the same sets.
     fn unique_column_sets(table_schema: &CatalogTableSchema) -> Vec<Vec<String>> {
-        let mut sets: Vec<Vec<String>> = Vec::new();
-        for index in &table_schema.relational_capabilities.unique_indexes {
-            if !index.columns.is_empty() {
-                sets.push(index.columns.clone());
-            }
-        }
-        for constraint in &table_schema.relational_capabilities.constraints {
-            if let proximadb_catalog::ColumnConstraint::Unique { columns } = constraint
-                && !columns.is_empty()
-            {
-                sets.push(columns.clone());
-            }
-        }
-        sets
+        crate::services::record_store::schema_unique_column_sets(table_schema)
     }
 
     /// Extract IDs from WHERE clause using the catalog primary key.
@@ -4703,6 +4687,91 @@ mod tests {
         ))
         .await
         .expect("fully-distinct batch insert");
+    }
+
+    #[tokio::test]
+    async fn unique_index_frees_value_on_delete_and_update() {
+        // TD-110 Slice C: the store-layer UNIQUE index must release a value when
+        // its owning row is DELETEd or UPDATEd off it, and re-claim it on the new
+        // value — otherwise a duplicate would be wrongly rejected (stale index) or
+        // wrongly accepted (missed update). Exercises the index maintenance path
+        // (DirectWalTableRecordStore::check_unique_conflict override).
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE members (id TEXT NOT NULL, email TEXT, PRIMARY KEY (id), UNIQUE (email));",
+            )
+            .expect("parse create")
+            .expect("ddl");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("unique_idx.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+
+        // DELETE frees the value: insert d1=x@x.com, delete it, then d2=x@x.com inserts.
+        dml.execute(run("INSERT INTO members (id, email) VALUES ('d1', 'x@x.com');"))
+            .await
+            .expect("insert d1");
+        dml.execute(run("DELETE FROM members WHERE id = 'd1';"))
+            .await
+            .expect("delete d1");
+        dml.execute(run("INSERT INTO members (id, email) VALUES ('d2', 'x@x.com');"))
+            .await
+            .expect("x@x.com is free after delete — d2 must insert");
+
+        // UPDATE moves a value: u3 holds y@x.com, update it to z@x.com.
+        dml.execute(run("INSERT INTO members (id, email) VALUES ('u3', 'y@x.com');"))
+            .await
+            .expect("insert u3");
+        dml.execute(run("UPDATE members SET email = 'z@x.com' WHERE id = 'u3';"))
+            .await
+            .expect("update u3 email");
+
+        // The vacated value (y@x.com) is now insertable…
+        dml.execute(run("INSERT INTO members (id, email) VALUES ('u4', 'y@x.com');"))
+            .await
+            .expect("y@x.com freed by update — u4 must insert");
+
+        // …and the new value (z@x.com) is now claimed by u3 → rejected.
+        let err = dml
+            .execute(run("INSERT INTO members (id, email) VALUES ('u5', 'z@x.com');"))
+            .await
+            .expect_err("z@x.com taken by u3 after update — must be rejected");
+        assert!(
+            err.to_string()
+                .contains("duplicate key value violates unique constraint"),
+            "unexpected error: {err}"
+        );
     }
 
     /// SQL UPDATE and DELETE through `DirectWalTableRecordStore` — T9 conformance.
