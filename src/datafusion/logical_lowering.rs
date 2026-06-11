@@ -127,11 +127,30 @@ fn lower<'a>(
                             .cross_join(right_plan)?
                             .build();
                     }
-                    // Semi/Anti (incl. the null-aware NOT IN variant) come from
-                    // IN / NOT IN / EXISTS subqueries — leave to the `ctx.sql`
-                    // fallback until subquery lowering exists on this path.
-                    JoinKind::Semi | JoinKind::Anti | JoinKind::AntiNullAware => {
-                        return Err(unsupported("Semi/Anti join (use ctx.sql path)"));
+                    // Semi/Anti come from decorrelated IN / EXISTS / NOT EXISTS
+                    // subqueries (correlated EXISTS/IN decorrelation is live in the
+                    // relational engine). They carry the correlation/IN-key ON
+                    // predicate and project only the left schema → lower directly to
+                    // DataFusion's LeftSemi / LeftAnti instead of the ctx.sql fallback.
+                    JoinKind::Semi | JoinKind::Anti => {
+                        let semi_join_type = if matches!(kind, JoinKind::Semi) {
+                            JoinType::LeftSemi
+                        } else {
+                            JoinType::LeftAnti
+                        };
+                        let predicate = on.as_ref().ok_or_else(|| {
+                            unsupported("semi/anti join without ON predicate (use ctx.sql path)")
+                        })?;
+                        return LogicalPlanBuilder::from(left_plan)
+                            .join_on(right_plan, semi_join_type, [lower_expr(predicate)?])?
+                            .build();
+                    }
+                    // Null-aware anti join is the `NOT IN (subquery)` target, whose
+                    // SQL three-valued logic (a NULL in the right relation makes
+                    // `NOT IN` yield no rows) DataFusion's LeftAnti does NOT
+                    // implement. Keep it on the `ctx.sql` fallback (correct, never wrong).
+                    JoinKind::AntiNullAware => {
+                        return Err(unsupported("null-aware anti join (use ctx.sql path)"));
                     }
                 };
                 match on {
@@ -220,8 +239,7 @@ fn lower_aggregate(named: &NamedAggregate) -> DFResult<Expr> {
             }
             match proximadb_functions::builtins().lookup_aggregate(name) {
                 Some(def) => {
-                    let udf =
-                        std::sync::Arc::new(super::registry_udf::proxima_aggregate_udf(def));
+                    let udf = std::sync::Arc::new(super::registry_udf::proxima_aggregate_udf(def));
                     let lowered = args.iter().map(lower_expr).collect::<DFResult<Vec<_>>>()?;
                     udf.call(lowered)
                 }
@@ -578,6 +596,83 @@ mod tests {
         let total: usize = batches.iter().map(|b| b.num_rows()).sum();
         // a⋈a (t has 2 a-rows × u has 1 a-row = 2) + b⋈b (1 × 2 = 2) = 4.
         assert_eq!(total, 4);
+    }
+
+    #[tokio::test]
+    async fn lowers_semi_and_anti_join() {
+        // t(k,x) = {a,a,b}; u(j) = {a}. SEMI t ON k=j keeps t rows with a match
+        // (the two a-rows → 2); ANTI keeps t rows with NO match (the b-row → 1).
+        // These are the decorrelated IN / NOT EXISTS lowering targets — they now
+        // lower to DataFusion LeftSemi/LeftAnti instead of the ctx.sql fallback.
+        let ctx = ctx_with_t().await; // registers t(k,x) = a/a/b
+        let u_schema = Arc::new(Schema::new(vec![Field::new("j", DataType::Utf8, false)]));
+        let u_batch = RecordBatch::try_new(
+            u_schema.clone(),
+            vec![Arc::new(StringArray::from(vec!["a"]))],
+        )
+        .unwrap();
+        ctx.register_table(
+            "u",
+            Arc::new(MemTable::try_new(u_schema, vec![vec![u_batch]]).unwrap()),
+        )
+        .unwrap();
+
+        let scan_u = LogicalNode::Scan {
+            table: TableId::new("u"),
+            table_schema: RelationalSchema::new(vec![ColumnInfo::new(
+                "j",
+                ProximaType::String,
+                false,
+            )]),
+            projected_columns: None,
+            predicate: None,
+        };
+        let on = RExpr::BinaryOp {
+            op: RBinOp::Eq,
+            left: Box::new(RExpr::Column(colref("k", 0, ProximaType::String))),
+            right: Box::new(RExpr::Column(colref("j", 0, ProximaType::String))),
+        };
+        let mk = |kind| LogicalNode::Join {
+            left: Box::new(scan_t()),
+            right: Box::new(scan_u.clone()),
+            kind,
+            on: Some(on.clone()),
+            strategy: JoinStrategy::Auto,
+        };
+
+        let semi_plan = lower_logical_node(&ctx, &mk(JoinKind::Semi)).await.unwrap();
+        let semi_rows: usize = ctx
+            .execute_logical_plan(semi_plan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(semi_rows, 2, "SEMI keeps the two matching a-rows");
+
+        let anti_plan = lower_logical_node(&ctx, &mk(JoinKind::Anti)).await.unwrap();
+        let anti_rows: usize = ctx
+            .execute_logical_plan(anti_plan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(anti_rows, 1, "ANTI keeps the non-matching b-row");
+
+        // Null-aware anti (NOT IN) must remain on the ctx.sql fallback (errors here).
+        assert!(
+            lower_logical_node(&ctx, &mk(JoinKind::AntiNullAware))
+                .await
+                .is_err(),
+            "null-aware anti must NOT be lowered (correctness: NOT IN three-valued logic)"
+        );
     }
 
     #[tokio::test]
