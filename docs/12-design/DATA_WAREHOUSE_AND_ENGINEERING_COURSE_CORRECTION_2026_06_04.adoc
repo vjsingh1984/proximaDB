@@ -168,7 +168,9 @@ yet; WIRE = code exists but unwired; LIVE = extend an existing live path).
   `compute_route`/`workload_profile`/`freshness_sla` + an `EXPLAIN` line, and register
   the multi-engine seam in `CONVERGENCE_AUDIT_2026_05_30.adoc`. Pure additive; locks
   the contract before any second executor exists. _(scheduler = NEW; route fields reuse
-  the existing typed route surface.)_
+  the existing typed route surface.)_ +
+  Update 2026-06-05: the read-side typed route/explain artifact now exists as
+  `src/query/read_route.rs`; live read paths still need to emit it.
 . **P1 — First LIVE DataFusion OLAP read.** Teach the scheduler one real OLAP rule
   (e.g. multi-table join / large aggregate over a Parquet-backed table) and route it to
   a DataFusion `SessionContext` over the existing `FilesystemParquetSplitReader` —
@@ -280,3 +282,25 @@ To sustain development and fund the complex, fully distributed MPP roadmap, Prox
 ### 9.2. Commercial Go-to-Market
 * **Primary Wedge:** Position ProximaDB as a **Postgres-compatible AI Database**. It functions as a drop-in replacement for standard analytics and vector search, eliminating the need to sync data between Postgres and a standalone Vector DB like Pinecone or Qdrant.
 * **Revenue Engine:** The MVP provides the core capabilities needed for Agentic Intelligence (RAG, memory) and data warehousing on a consumption-based pricing model. The revenue generated will fund Phase 6 (Active Memory & Collective Reasoning) and the fully distributed cluster consensus mechanisms (Raft, distributed sharding) required for petabyte-scale MPP.
+
+== 10. Operational SaaS Mandates (The Non-Negotiables)
+
+To execute the SaaS MVP securely and profitably, the codebase must adhere to three strict operational mandates. These bridge the gap between "it works locally" and "it is a secure, billable SaaS platform".
+
+### 10.1. SaaS Path Isolation & Security
+Bypassing the tenant path hierarchy is a critical multi-tenant security risk.
+* **Mandate:** The `ObjectStoreBridge` and all underlying `TableRecordStore` implementations **MUST** utilize `DrPathBuilder` (from `src/storage/trait_components/path_resolver.rs`) to resolve paths. 
+* **Structure:** Every object written to decoupled storage must strictly adhere to the `data/{tenant_id}/{namespace_id}/{collection_id}/` prefix. Code must never use `schema.location` directly for internal ProximaDB tables.
+
+### 10.2. Financial Accuracy & Billing Telemetry
+To support a consumption-based pricing model, resource usage must be auditable and strictly attributed to the correct tenant.
+* **Mandate:** The `ObjectStoreBridge` must emit Prometheus metrics for every I/O operation.
+* **Required Metrics:** 
+  - `proximadb_object_store_ops_total{tenant_id="..."}` (counters for put/get/delete).
+  - `proximadb_storage_bytes_seconds{tenant_id="..."}` (gauge for GB-seconds stored).
+* **DataFusion Overhead:** The `DataFusionTableWriteExecutor` must capture `task_execution_time_ms` attributed to `TenantContext` to bill for analytical compute separately from storage.
+
+### 10.3. Operational Robustness & The Bootstrap Problem
+The `tenant_tier` collection defines the tenant's capabilities, budget, and storage limits.
+* **Gotcha:** If the SDK/read path for system collections moves to Object Storage, we risk a cyclic dependency (deadlock): we cannot resolve the tenant's tier to get their storage path because we need their storage path to read the tier database.
+* **Mandate:** System configuration and the `TenantTierStore` must maintain a highly available, aggressively cached (or memory-pinned) tier registry that does not rely on heavy DataFusion execution or complex object-store lookups in the critical bootstrap path.

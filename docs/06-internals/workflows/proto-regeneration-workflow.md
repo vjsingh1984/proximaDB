@@ -59,10 +59,9 @@ This script:
 After regeneration, verify that new types are available:
 
 ```bash
-# Check for specific proto types
-grep -c "CreateGraphWithEngineRequest" crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
-grep -c "PulsarGraphStats" crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
-grep -c "CrossShardQueryRequest" crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
+# Check for graph proto types
+grep -c "CreateGraphRequest" crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
+grep -c "TraversalRequest" crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
 ```
 
 Expected output: Count should be > 0 for each type.

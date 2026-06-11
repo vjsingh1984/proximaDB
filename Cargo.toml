@@ -626,21 +626,6 @@ graph-first-sks = []
 # DataFusion 51.x uses Arrow 57.x — versions are aligned as of 2026-04
 datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
 
-# ============================================================================
-# EXPERIMENTAL GRAPH ENGINE FEATURES
-# ============================================================================
-# These engines are experimental and not production-ready. Use ORION for production.
-
-# PULSAR: Distributed sharded graph engine (experimental)
-# WARNING: Cross-shard queries may miss edges, no distributed WAL
-# For production, use ORION with application-level sharding
-distributed-graph = []
-
-# QUASAR: Hybrid hot/cold tiering graph engine (experimental)
-# WARNING: No WAL for cold tier, simple LRU tiering, not integrated with storage engines
-# For production, use ORION with appropriate memory sizing
-tiered-graph = []
-
 # Hardware acceleration features
 gpu = ["metal"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
 metal = ["dep:metal"]  # Enable Metal/MPS GPU support on macOS ARM64

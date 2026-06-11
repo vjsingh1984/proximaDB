@@ -97,9 +97,7 @@ impl FormatRegistry {
             | FormatType::Nova
             | FormatType::Swift
             | FormatType::Raptor
-            | FormatType::Orion
-            | FormatType::Pulsar
-            | FormatType::Quasar => {}
+            | FormatType::Orion => {}
             _ => {
                 return Err(anyhow!(
                     "Format type {:?} is not an internal format",
@@ -292,8 +290,6 @@ impl FormatRegistry {
                 | FormatType::Swift
                 | FormatType::Raptor
                 | FormatType::Orion
-                | FormatType::Pulsar
-                | FormatType::Quasar
         )
     }
 

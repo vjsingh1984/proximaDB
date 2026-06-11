@@ -841,10 +841,11 @@ graph LR
 
 === Graph Layer (src/graph)
 
-Legend: engines/{orion,pulsar,quasar}, generic_traversal.rs, service.rs (+ service_*.rs),
+Legend: engines/{orion}, generic_traversal.rs, service.rs (+ service_*.rs),
 adjacency_projection.rs, canonical/, query/{parser,planner,executor,operators}, rag/
-(engine_impls.rs), hybrid/{semantic_traversal,ranking}.rs. ORION is the in-memory+WAL production
-engine; PULSAR (distributed) and QUASAR (hybrid tiering) are experimental / feature-gated.
+(engine_impls.rs), hybrid/{semantic_traversal,ranking}.rs. ORION is the graph runtime.
+Distributed coordination belongs to the relational substrate; tiering belongs to
+xCatalog/storage projection policy.
 
 [source,mermaid]
 ----
@@ -854,10 +855,8 @@ graph TB
     OPS["GraphOperationsService (service.rs)"]
     FACT["GraphEngineFactory"]
   end
-  subgraph Eng["Engines (engines/)"]
+  subgraph Eng["Runtime (engines/)"]
     ORION["ORION (in-memory CSR + WAL)"]
-    PULSAR["PULSAR (distributed, experimental)"]
-    QUASAR["QUASAR (hybrid tiering, experimental)"]
   end
   subgraph Proj["Topology projections"]
     CANON["Canonical ProximaRecord nodes/edges"]
@@ -874,9 +873,11 @@ graph TB
     PLANNER["planner.rs"]
     EXEC["executor.rs"]
   end
-  OPS --> FACT --> ORION & PULSAR & QUASAR
+  OPS --> FACT --> ORION
   ORION --> ADJ --> CANON
   ORION --> CSR
+  ORION -. planning hints .-> REL["Relational distributed substrate"]
+  ORION -. projection policy .-> CAT["xCatalog/storage policy"]
   NR --> NF --> SG --> ORION
   PARSER --> PLANNER --> EXEC --> ORION
 ----

@@ -44,11 +44,9 @@
 //! │  │ • Transaction support      │    │
 //! │  └─────────────────────────────┘    │
 //! ├─────────────────────────────────────┤
-//! │              Engines                │
-//! │  ┌─────────┬─────────┬───────────┐  │
-//! │  │ ORION   │ PULSAR  │  QUASAR   │  │
-//! │  │(Memory) │(Distrib)│ (Hybrid)  │  │
-//! │  └─────────┴─────────┴───────────┘  │
+//! │         ORION Graph Runtime         │
+//! │  (relational/storage substrate for  │
+//! │   distributed routing and tiering)   │
 //! ├─────────────────────────────────────┤
 //! │           Arc Memory Pool           │
 //! │    ┌────────────┬─────────────┐     │
@@ -67,8 +65,6 @@
 //! - **Transaction Management**: ACID transactions with rollback support
 //! - **Performance Optimization**: SIMD-ready operations and cache-friendly access patterns
 
-#[path = "service_advanced.rs"]
-pub mod service_advanced;
 #[path = "service_edge_ops.rs"]
 mod service_edge_ops;
 #[path = "service_engine_factory.rs"]
@@ -323,8 +319,9 @@ impl GraphOperationsService {
             |loc| loc.url.clone(),
         );
 
-        // Engine selection: PULSAR requires 'distributed-graph' feature, QUASAR requires 'tiered-graph'
-        // Engine is determined per-graph from collection metadata during recovery
+        // Engine is determined per-graph from collection metadata during recovery.
+        // ORION is the only graph runtime; distributed/tiered behavior belongs
+        // to the relational/storage substrate.
         tracing::info!(
             "GraphOperationsService engine selection: {}, storage: {}",
             engine_name,
@@ -678,7 +675,7 @@ impl GraphOperationsService {
     /// Recover a single graph from persistent storage
     ///
     /// This method detects the engine type from the stored collection metadata
-    /// and creates the appropriate engine (ORION, PULSAR, or QUASAR).
+    /// and creates the ORION graph runtime.
     async fn recover_graph(&self, graph_id: &str) -> Result<()> {
         // Get collection metadata to determine engine type
         let collection = self.collection_service.get_graph(graph_id).await?;
@@ -694,60 +691,14 @@ impl GraphOperationsService {
         );
 
         let engine_impl = match engine_type.as_str() {
-            "PULSAR" => {
-                #[cfg(feature = "distributed-graph")]
-                {
-                    use crate::graph::engines::pulsar::{PulsarConfig, PulsarGraphEngine};
-                    let config = PulsarConfig::default();
-                    // Create with persistence enabled for WAL recovery
-                    let engine = PulsarGraphEngine::with_persistence(
-                        config,
-                        graph_id.to_string(),
-                        self.base_storage_url.clone(),
-                    )
-                    .await?;
-                    engine.recover().await?;
-                    crate::graph::engines::GraphEngineImpl::Pulsar(engine)
-                }
-                #[cfg(not(feature = "distributed-graph"))]
-                {
-                    return Err(ProximaDBError::NotImplemented(
-                        "PULSAR engine requires 'distributed-graph' feature".to_string(),
-                    ));
-                }
+            "PULSAR" | "QUASAR" => {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "{engine_type} graph engine metadata is retired; use ORION. \
+                     Distributed placement and projection tiering are relational/storage \
+                     substrate features."
+                )));
             }
-            "QUASAR" => {
-                #[cfg(feature = "tiered-graph")]
-                {
-                    use crate::graph::engines::quasar::{QuasarConfig, QuasarGraphEngine};
-                    let cold_tier_path = std::path::PathBuf::from(format!(
-                        "{}/graphs/{}/cold",
-                        self.base_storage_url.trim_start_matches("file://"),
-                        graph_id
-                    ));
-                    let config = QuasarConfig {
-                        cold_tier_path,
-                        ..QuasarConfig::default()
-                    };
-                    // Create with persistence enabled for WAL recovery
-                    let engine = QuasarGraphEngine::with_persistence(
-                        config,
-                        graph_id.to_string(),
-                        self.base_storage_url.clone(),
-                    )
-                    .await?;
-                    engine.recover().await?;
-                    crate::graph::engines::GraphEngineImpl::Quasar(engine)
-                }
-                #[cfg(not(feature = "tiered-graph"))]
-                {
-                    return Err(ProximaDBError::NotImplemented(
-                        "QUASAR engine requires 'tiered-graph' feature".to_string(),
-                    ));
-                }
-            }
-            _ => {
-                // Default to ORION (includes "ORION" and any unknown types)
+            "ORION" | "" => {
                 let engine = OrionGraphEngine::with_persistence_for_graph(
                     graph_id.to_string(),
                     self.base_storage_url.clone(),
@@ -756,6 +707,11 @@ impl GraphOperationsService {
                 .await?;
                 engine.recover().await?;
                 crate::graph::engines::GraphEngineImpl::Orion(engine)
+            }
+            other => {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "Unknown graph engine type '{other}' in metadata. Valid option: ORION"
+                )));
             }
         };
 
@@ -1032,25 +988,11 @@ impl GraphOperationsService {
             );
         }
 
-        // Step 2 — flush the engine-specific WAL as a compatibility buffer.
+        // Step 2 — flush ORION's projection WAL as a compatibility buffer.
         if let Some(engine) = self.graphs.get(graph_id) {
             match engine.value().as_ref() {
                 crate::graph::engines::GraphEngineImpl::Orion(orion) => {
                     orion.flush_wal().await?;
-                }
-                #[cfg(feature = "distributed-graph")]
-                crate::graph::engines::GraphEngineImpl::Pulsar(pulsar) => {
-                    pulsar.flush_wal().await?;
-                }
-                #[cfg(feature = "tiered-graph")]
-                crate::graph::engines::GraphEngineImpl::Quasar(quasar) => {
-                    quasar.flush_wal().await?;
-                }
-                #[allow(unreachable_patterns)]
-                _ => {
-                    tracing::debug!(
-                        "WAL flush not supported for this engine type (feature disabled)"
-                    );
                 }
             }
         }
@@ -2967,80 +2909,6 @@ mod tests {
         service.create_node("g_uniq", n1).await?;
         assert!(service.create_node("g_uniq", n2).await.is_err());
         assert!(service.create_node("g_uniq", n3).await.is_ok());
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[cfg(feature = "distributed-graph")]
-    async fn test_pulsar_traversal_path() -> anyhow::Result<()> {
-        let service = GraphOperationsService::new();
-        // Create graph with PULSAR engine
-        let engine_cfg = crate::proto::proximadb_v1::GraphEngineConfig {
-            engine_type: "PULSAR".to_string(),
-            memory_pool_size_mb: 0,
-            csr_cache_size_mb: 0,
-            enable_parallel_operations: true,
-            max_traversal_depth: 10,
-            advanced_config: std::collections::HashMap::new(),
-        };
-        let req = crate::proto::proximadb_v1::CreateGraphRequest {
-            graph_id: "g_pulsar".to_string(),
-            name: Some("g_pulsar".to_string()),
-            description: None,
-            schema: None,
-            storage_config: None,
-            engine_config: Some(engine_cfg),
-            access_control: None,
-        };
-        service.create_graph_collection(req).await?;
-        // Create small chain A->B->C
-        let mk = |id: &str| crate::proto::proximadb_v1::Node {
-            id: id.to_string(),
-            labels: vec!["N".to_string()],
-            properties: std::collections::HashMap::new(),
-            embedding: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_node("g_pulsar", mk("A")).await?;
-        service.create_node("g_pulsar", mk("B")).await?;
-        service.create_node("g_pulsar", mk("C")).await?;
-        let eab = crate::proto::proximadb_v1::Edge {
-            id: "eab".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "B".to_string(),
-            edge_type: "X".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        let ebc = crate::proto::proximadb_v1::Edge {
-            id: "ebc".to_string(),
-            from_node_id: "B".to_string(),
-            to_node_id: "C".to_string(),
-            edge_type: "X".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_edge("g_pulsar", eab).await?;
-        service.create_edge("g_pulsar", ebc).await?;
-        let tr = crate::proto::proximadb_v1::TraversalRequest {
-            graph_id: "g_pulsar".to_string(),
-            start_node_id: "A".to_string(),
-            max_depth: 2,
-            edge_types: vec![],
-            node_labels: vec![],
-            filters: vec![],
-            algorithm: crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32,
-            limit: None,
-            timeout_ms: None,
-            max_frontier: None,
-        };
-        let resp = service.traverse("g_pulsar", tr).await?;
-        assert!(resp.nodes.len() >= 2);
         Ok(())
     }
 

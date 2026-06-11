@@ -148,9 +148,8 @@ that's flushed periodically as a perf optimization. On recovery:
   durable truth; same model as records/document path; recovery is
   uniform across all modalities.
 * **Cons**: huge scope; every write path doubles its I/O cost (canonical
-  WAL append + engine state update) unless the canonical WAL append is
-  buffered/batched; PULSAR/QUASAR engines also need the same treatment
-  for consistency.
+  WAL append + projection update) unless the canonical WAL append is
+  buffered/batched.
 
 === Option D — Empty the engine WAL on canonical checkpoint witness
 
@@ -250,8 +249,8 @@ Single multi-slice workstream after v0.2 release:
 * Whether to also move toward Option C (canonical write log) as the
   ultimate end-state. ADR-020 says yes eventually; Option A is a
   stepping stone, not a permanent answer.
-* PULSAR and QUASAR engine integration. Both have their own WAL
-  semantics; the design here is ORION-specific.
+* Relational distributed graph placement and storage projection tiering.
+  The design here is ORION projection-WAL-specific.
 * Engine WAL truncation tied to canonical checkpoint LSN (TD-066 (d)).
   That depends on Option A being in place (the marker frame is what
   makes truncation safe).

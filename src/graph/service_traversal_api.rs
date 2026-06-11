@@ -59,56 +59,6 @@ impl super::GraphOperationsService {
                 )
                 .await?
             }
-            #[cfg(feature = "distributed-graph")]
-            crate::graph::engines::GraphEngineImpl::Pulsar(p) => {
-                let nodes = p
-                    .cross_shard_traversal(&request.start_node_id, request.max_depth)
-                    .await?;
-                crate::graph::engines::orion::traversal::TraversalResult {
-                    nodes,
-                    node_ids: vec![],
-                    edges: Vec::new(),
-                    paths: Vec::new(),
-                    stats: crate::graph::engines::orion::traversal::TraversalStats {
-                        nodes_visited: 0,
-                        edges_traversed: 0,
-                        max_depth_reached: request.max_depth,
-                        execution_time_microseconds: 0,
-                        memory_used_bytes: 0,
-                    },
-                }
-            }
-            _ => {
-                let allowed = if request.edge_types.is_empty() {
-                    None
-                } else {
-                    Some(request.edge_types.as_slice())
-                };
-                let gtr = crate::graph::engines::generic_traversal::bfs_generic(
-                    engine.as_ref(),
-                    &request.start_node_id,
-                    allowed,
-                    if request.max_depth > 0 {
-                        Some(request.max_depth)
-                    } else {
-                        None
-                    },
-                    request.limit.map(|l| l as usize),
-                )?;
-                crate::graph::engines::orion::traversal::TraversalResult {
-                    nodes: gtr.nodes,
-                    node_ids: vec![],
-                    edges: gtr.edges,
-                    paths: gtr.paths,
-                    stats: crate::graph::engines::orion::traversal::TraversalStats {
-                        nodes_visited: gtr.nodes_visited,
-                        edges_traversed: gtr.edges_traversed,
-                        max_depth_reached: gtr.max_depth_reached,
-                        execution_time_microseconds: 0,
-                        memory_used_bytes: 0,
-                    },
-                }
-            }
         };
 
         let proto_nodes: Vec<crate::proto::proximadb_v1::Node> = traversal_result
@@ -226,11 +176,8 @@ impl super::GraphOperationsService {
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
-        if let crate::graph::engines::GraphEngineImpl::Orion(e) = &*engine {
-            crate::graph::engines::orion::traversal::connected_components(e).await
-        } else {
-            crate::graph::engines::generic_traversal::connected_components_generic(engine.as_ref())
-        }
+        let crate::graph::engines::GraphEngineImpl::Orion(e) = &*engine;
+        crate::graph::engines::orion::traversal::connected_components(e).await
     }
 
     /// Check for cycles (basic implementation)
@@ -241,11 +188,8 @@ impl super::GraphOperationsService {
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
-        if let crate::graph::engines::GraphEngineImpl::Orion(e) = &*engine {
-            crate::graph::engines::orion::traversal::has_cycle(e).await
-        } else {
-            crate::graph::engines::generic_traversal::has_cycle_generic(engine.as_ref())
-        }
+        let crate::graph::engines::GraphEngineImpl::Orion(e) = &*engine;
+        crate::graph::engines::orion::traversal::has_cycle(e).await
     }
 
     /// Compute shortest path (Dijkstra/A*) with optional k-shortest and overrides
@@ -282,57 +226,29 @@ impl super::GraphOperationsService {
                 crate::graph::engines::orion::traversal::AStarHeuristic::EuclideanEmbedding,
         };
         let engine = self.get_or_create_graph_engine(graph_id).await?;
-        let orion_engine = match &*engine {
-            crate::graph::engines::GraphEngineImpl::Orion(e) => Some(e),
-            _ => None,
-        };
+        let crate::graph::engines::GraphEngineImpl::Orion(orion_engine) = &*engine;
 
         if let Some(kk) = k
             && kk > 1
         {
-            if let Some(eng) = orion_engine {
-                let paths =
-                    k_shortest_paths(eng, start_node_id, target_node_id, kk as usize, config)
-                        .await?;
-                return Ok(paths.first().cloned());
-            } else {
-                let res = crate::graph::engines::generic_traversal::dijkstra_generic(
-                    engine.as_ref(),
-                    start_node_id,
-                    target_node_id,
-                    config.edge_types.as_deref(),
-                )?;
-                return Ok(res);
-            }
+            let paths = k_shortest_paths(
+                orion_engine,
+                start_node_id,
+                target_node_id,
+                kk as usize,
+                config,
+            )
+            .await?;
+            return Ok(paths.first().cloned());
         }
 
         let result = match algorithm
             .unwrap_or(crate::proto::proximadb_v1::ShortestPathAlgorithm::Dijkstra)
         {
             crate::proto::proximadb_v1::ShortestPathAlgorithm::Astar => {
-                if let Some(eng) = orion_engine {
-                    astar_shortest_path(eng, start_node_id, target_node_id, config).await
-                } else {
-                    Ok(crate::graph::engines::generic_traversal::dijkstra_generic(
-                        engine.as_ref(),
-                        start_node_id,
-                        target_node_id,
-                        config.edge_types.as_deref(),
-                    )?)
-                }
+                astar_shortest_path(orion_engine, start_node_id, target_node_id, config).await
             }
-            _ => {
-                if let Some(eng) = orion_engine {
-                    dijkstra_shortest_path(eng, start_node_id, target_node_id, config).await
-                } else {
-                    Ok(crate::graph::engines::generic_traversal::dijkstra_generic(
-                        engine.as_ref(),
-                        start_node_id,
-                        target_node_id,
-                        config.edge_types.as_deref(),
-                    )?)
-                }
-            }
+            _ => dijkstra_shortest_path(orion_engine, start_node_id, target_node_id, config).await,
         }?;
 
         if let Some(updater) = &self.metrics_updater {

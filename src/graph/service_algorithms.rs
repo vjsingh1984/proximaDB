@@ -166,15 +166,7 @@ impl GraphOperationsService {
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // Extract ORION engine (algorithms are ORION-specific for now)
-        let orion_engine = match engine.as_ref() {
-            crate::graph::engines::GraphEngineImpl::Orion(e) => e,
-            _ => {
-                return Err(ProximaDBError::InvalidInput(
-                    "Centrality algorithms currently only support ORION engine".to_string(),
-                ));
-            }
-        };
+        let crate::graph::engines::GraphEngineImpl::Orion(orion_engine) = engine.as_ref();
 
         let scores = match algorithm {
             CentralityAlgorithm::PageRank => {
@@ -264,16 +256,7 @@ impl GraphOperationsService {
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // Extract ORION engine (algorithms are ORION-specific for now)
-        let orion_engine = match engine.as_ref() {
-            crate::graph::engines::GraphEngineImpl::Orion(e) => e,
-            _ => {
-                return Err(ProximaDBError::InvalidInput(
-                    "Community detection algorithms currently only support ORION engine"
-                        .to_string(),
-                ));
-            }
-        };
+        let crate::graph::engines::GraphEngineImpl::Orion(orion_engine) = engine.as_ref();
 
         let (communities, modularity) = match algorithm {
             CommunityAlgorithm::Louvain => {

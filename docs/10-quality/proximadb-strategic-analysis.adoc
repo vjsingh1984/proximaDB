@@ -216,10 +216,10 @@ ____
 | PostgreSQL/MySQL/MongoDB connectors are stubs. Recommends Debezium externally.
 | Either complete native connectors or build Debezium-compatible CDC proxy
 
-| *PULSAR Distributed Graph*
-| 3/10
-| Code exists but not wired to service layer (TD-001). Network I/O incomplete.
-| Either complete or remove from documentation to avoid misleading users
+| *Distributed graph runtime*
+| Substrate requirement
+| PULSAR graph engine retired. Placement, fanout/fanin, and rebalancing belong to relational distributed planning.
+| Track as relational distributed substrate work, not graph engine work
 
 | *External Catalogs*
 | 2/10
@@ -294,8 +294,8 @@ ____
 | 1-2 months
 
 | *Mixed Maturity Modules*
-| PULSAR/QUASAR advertised alongside production-grade ORION. Erodes trust.
-| Gate experimental features behind `experimental-*` feature flags. Document maturity levels.
+| PULSAR/QUASAR were advertised alongside production-grade ORION. Eroded trust.
+| Retired PULSAR/QUASAR as graph engines; ORION is the graph runtime and distributed/tiered behavior moved to substrate requirements.
 | 1 week
 
 | *No Connection Pool*
@@ -693,9 +693,9 @@ flowchart LR
 | Production-ready single-node.
 | Add property graph schema enforcement. openCypher parser.
 
-| graph (PULSAR/QUASAR)
-| ~20%
-| Stubs. Not production-ready.
+| graph distributed/tiered behavior
+| substrate
+| PULSAR/QUASAR retired as graph engines.
 | Either complete or remove. Gate behind `experimental` feature.
 
 | query (federated)
@@ -787,7 +787,7 @@ flowchart LR
 
 | Fraud Detection
 | Banking, Insurance
-| Graph traversal at scale (PULSAR) + real-time streaming
+| Graph traversal at scale via ORION plus relational distributed substrate + real-time streaming
 
 | Genomics Research
 | Healthcare, Pharma
@@ -888,7 +888,7 @@ flowchart LR
 | P0
 
 | Gate experimental features
-| PULSAR, QUASAR, inbound CDC, external catalogs behind `experimental-*` feature flags.
+| Inbound CDC and external catalogs behind `experimental-*` feature flags; PULSAR/QUASAR graph engines retired.
 | P0
 
 | ibkrtrading: Replace JSONL

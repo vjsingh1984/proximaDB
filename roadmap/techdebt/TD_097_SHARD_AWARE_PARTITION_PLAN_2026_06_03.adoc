@@ -3,6 +3,13 @@
 :toclevels: 3
 :status: POST-MVP / EXPERIMENTAL; REFINED 2026-06-04 AGAINST RUST-NATIVE MPP CANONICAL SEAM
 
+Implementation update 2026-06-05: Slice A has an initial ProximaDB-side implementation anchor in
+`src/query/read_route.rs`. It defines `RoutedReadPlan`, `ReadRouteExplanation`, split strategy,
+policy boundary, freshness SLA, selected/rejected route metadata, and optional distributed placement
+metadata for future Ballista-backed `DataFusionDistributed` execution.
+`src/query/compute_scheduler.rs` can now materialize the typed plan, and pgwire `EXPLAIN SELECT`
+includes the nested read-route payload. Runtime read behavior is unchanged.
+
 [IMPORTANT]
 .MVP BOUNDARY
 ====
@@ -21,6 +28,8 @@ shifted to a Rust-native DataFusion/MPP-first direction:
 
 * `docs/12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc`
   makes Rust-native DataFusion/MPP the primary data-engineering route.
+* `docs/12-design/DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc`
+  defines the ProximaDB-owned route contract and Ballista integration boundary.
 * `docs/12-design/PROXIMA_NOTEBOOK_PSEUDO_DISTRIBUTED_BLUEPRINT_2026_06_04.adoc`
   defines the shared split-generation seam for notebook/DataFusion and Spark.
 * `docs/12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc`
@@ -248,11 +257,14 @@ governed by ADR-004.
 
 === Slice A: Document and Type the Read-Route Contract
 
+Status: PARTIAL 2026-06-05 — `src/query/read_route.rs` now carries the typed route/explain
+contract and unit tests. `ComputeScheduler` materializes it, and pgwire `EXPLAIN SELECT` emits a
+nested read-route payload. Split-aware execution paths still need to consume it.
+
 Critical files:
 
-* `src/query/table_write_plan.rs` or a sibling read-plan module — add
-  `RoutedReadPlan` / `ReadRouteExplanation` using the same `ComputeBackend`
-  vocabulary.
+* `src/query/read_route.rs` — add/extend `RoutedReadPlan` / `ReadRouteExplanation` using the same
+  `ComputeBackend` vocabulary.
 * `src/observability/route_explain.rs` / `src/query/explain.rs` — expose read
   route diagnostics in ADR-004 shape.
 * This TD and the notebook blueprint — keep the seam named once.

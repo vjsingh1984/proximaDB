@@ -32,7 +32,7 @@ flowchart TB
 |---------|-------------|--------|
 | [Architecture](./architecture.adoc) | Multi-model data-plane overview and high-level flow | Current |
 | [Storage Engines](./storage-engines.adoc) | Engine selection and storage tradeoffs | Current |
-| [Graph Engines](./graph-engines.adoc) | ORION, PULSAR, and QUASAR selection guide | Current |
+| [Graph Runtime](./graph-engines.adoc) | ORION runtime and relational/storage substrate layering | Current |
 | [Unified WAL](./unified-wal.md) | Shared durability path for data models | Current |
 | [Query Planner](./query-planner.md) | Query optimization and execution concepts | Current |
 | [Quantization](./quantization.md) | Vector compression and recall tradeoffs | Current |

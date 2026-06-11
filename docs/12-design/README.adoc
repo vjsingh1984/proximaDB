@@ -37,42 +37,46 @@ Read these in order for future-shaping architecture work:
 
 1. `DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc` +
    Strategic course correction prioritizing Postgres-wire compatibility, Rust-native distributed MPP (Spark-like data engineering), and decoupled object storage to compete with Snowflake, Databricks, and Trino.
-2. `DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc` +
+2. `DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc` +
+   Active ProximaDB-side blueprint for DataFusionLocal to Ballista-backed
+   DataFusionDistributed execution, including the repo boundary between database route contracts and
+   external AKS/Kubernetes operations.
+3. `DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc` +
    Product/platform anchor for ProximaDB as a data and AI platform. Use for roadmap and ecosystem
    shape.
-3. `COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc` +
+4. `COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc` +
    Competitive architecture trajectory for OLTP, OLAP, HTAP, MPP, open compute routing, and the
    implementation knobs that xCatalog and the planner must expose.
-4. `VECTOR_OBJECT_ECONOMY_ROUTE_HLD_LLD_2026_05_27.adoc` +
+5. `VECTOR_OBJECT_ECONOMY_ROUTE_HLD_LLD_2026_05_27.adoc` +
    Active HLD/LLD for object-storage vector economics, SST/HELIX centroid block pruning, cache
    affinity, WAL freshness, EXPLAIN visibility, and cataloged vector access-method projections.
-5. `TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc` +
+6. `TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc` +
    Active TD-064 blueprint for predicate-aware vector search correctness, ADR-011 route selection,
    tenant/RLS predicate pushdown, record-aware ANN predicates, and fallback/shortfall disclosure.
-6. `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` +
+7. `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` +
    Accepted stacked-durability mandate for records, storage authority, modality facades, and
    projection/access-method boundaries. (Updated 2026-06-04 for Multi-Engine routing).
-7. `RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc` +
+8. `RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc` +
    Relational/PAX/MVCC/open-format storage shape. (Updated 2026-06-04 for tiered HTAP:
    OLTP row/delta authority, PAX as an internal HTAP candidate, and Parquet/Iceberg for analytics).
-8. `PAX_CODEC_LAYOUT_COMPRESSION_LLD_2026_05_20.adoc` +
+9. `PAX_CODEC_LAYOUT_COMPRESSION_LLD_2026_05_20.adoc` +
    Active HLD/LLD tracker for Iceberg statistics, Parquet shredding, and PAX block-layout work.
    Subordinate to the storage-format HTAP decision above.
-9. `RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc` +
+10. `RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc` +
    Active HLD/LLD tracker for pgwire DML, legacy VectorOps routing, table-record execution, and compute-engine routing (DataFusion integration).
-10. `roadmap/techdebt/TD_110_OLTP_OLAP_HTAP_STORAGE_AND_CONSTRAINTS_PLAN_2026_06_04.adoc` +
+11. `roadmap/techdebt/TD_110_OLTP_OLAP_HTAP_STORAGE_AND_CONSTRAINTS_PLAN_2026_06_04.adoc` +
    Active roadmap tracker for PostgreSQL-style OLTP constraints, native row/delta commit,
    Volcano strong-freshness execution, DataFusion snapshot-plus-delta reads, and distributed
    consistency gates.
-11. `PROXIMA_NOTEBOOK_PSEUDO_DISTRIBUTED_BLUEPRINT_2026_06_04.adoc` +
+12. `PROXIMA_NOTEBOOK_PSEUDO_DISTRIBUTED_BLUEPRINT_2026_06_04.adoc` +
    Active HLD/LLD tracker for Python notebook/procedural APIs, PySpark-style lazy planning,
    Rust-backed embedded execution, DataFusion routes, and single-node pseudo-distributed proof mode.
-12. `OPEN_FORMAT_CATALOG_2026_05_17.adoc` +
+13. `OPEN_FORMAT_CATALOG_2026_05_17.adoc` +
    Iceberg REST catalog, OLTP catalog backends, open-format compatibility, and xCatalog ownership
    for external engines.
-13. `COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` +
+14. `COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` +
    Engine contract for collection-level disaster recovery and cross-region object replication.
-14. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
+15. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
    Legacy foundational mandate. Superseded by the Data Warehouse course correction on 2026-06-04.
 
 == Stable Reference Docs

@@ -237,8 +237,8 @@ impl Default for DistributedLockManager {
 /// Local transaction coordinator for single-node transactions
 ///
 /// This provides transaction coordination without requiring distributed
-/// consensus. For distributed transactions with the PULSAR engine,
-/// use the full TwoPhaseCommitCoordinator from pulsar::transactions.
+/// consensus. Distributed graph transaction coordination belongs to the
+/// relational distributed substrate.
 pub struct LocalTransactionCoordinator {
     /// Active transactions
     transactions: Arc<RwLock<HashMap<TransactionId, TransactionMetadata>>>,

@@ -60,7 +60,7 @@ const VIRTUAL_NODES_PER_NODE: u32 = 100;
 
 /// HMGI consistent hash ring for partition distribution
 ///
-/// Simple consistent hashing implementation for HMGI that doesn't depend on PULSAR.
+/// Simple consistent hashing implementation for HMGI.
 /// Uses SHA-256 for uniform distribution across cluster nodes.
 #[derive(Debug, Clone)]
 pub struct ConsistentHashRing {

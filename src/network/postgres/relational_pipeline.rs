@@ -129,6 +129,7 @@ pub struct PipelineResult {
 pub async fn try_run_select(
     sql: &str,
     dml: Option<&Arc<DmlService>>,
+    #[cfg_attr(not(feature = "datafusion-integration"), allow(unused_variables))]
     vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
 ) -> Option<Result<PipelineResult, String>> {
     // ADR-018 Phase 2: Allow opting out with explicit "0" value
@@ -1076,6 +1077,10 @@ pub struct SelectRouteExplanation {
     pub freshness_sla: String,
     /// Human-readable reason for the choice.
     pub reason: String,
+    /// Typed read-route contract that future split-aware DataFusion/Ballista
+    /// execution will consume. Kept nested so existing top-level fields remain
+    /// stable while ADR-004 diagnostics converge on `RoutedReadPlan`.
+    pub read_route: crate::query::read_route::ReadRouteExplanation,
     /// Structural disclosure of the planned physical plan (one string per
     /// operator, indented), when the query engages the native (Volcano) PATH B
     /// engine. `None` for simple/legacy SELECTs and non-native routes. No cost
@@ -1100,19 +1105,15 @@ pub struct SelectRouteExplanation {
 fn decision_to_explanation(
     decision: &crate::query::compute_scheduler::SelectRouteDecision,
 ) -> SelectRouteExplanation {
-    let freshness_sla = match decision.backend {
-        crate::query::table_write_plan::ComputeBackend::Native => {
-            "strong (Volcano over WAL+RecordStorage)".to_string()
-        }
-        _ => "base-snapshot (engine read path)".to_string(),
-    };
+    let read_route = decision.routed_read_plan().route_explanation();
     SelectRouteExplanation {
         compute_route: decision.compute_route_label(),
         workload_profile: format!("{:?}", decision.workload_profile),
-        authority_mode: "control-plane-route (no durable authority moved)".to_string(),
-        policy_boundary: "query-plan (one engine per plan)".to_string(),
-        freshness_sla,
+        authority_mode: read_route.authority_mode.clone(),
+        policy_boundary: read_route.policy_boundary.clone(),
+        freshness_sla: read_route.freshness_sla.clone(),
         reason: decision.reason.clone(),
+        read_route,
         // Populated by the catalog-aware EXPLAIN once the plan is built; the
         // catalog-free route disclosure has no plan to render. ANALYZE metrics are
         // filled only when the catalog-aware ANALYZE path actually executes.
@@ -1292,7 +1293,9 @@ mod route_explain_tests {
         assert_eq!(expl.workload_profile, "Olap");
         // P0 invariant: OLAP shape still executes on Volcano.
         assert_eq!(expl.compute_route, "Native(Volcano)");
-        assert!(expl.freshness_sla.to_lowercase().contains("strong"));
+        assert_eq!(expl.freshness_sla, "synchronous");
+        assert_eq!(expl.read_route.selected_backend, "Native");
+        assert_eq!(expl.read_route.split_strategy, "whole_collection");
     }
 
     #[test]

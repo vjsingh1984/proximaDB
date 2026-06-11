@@ -102,7 +102,7 @@ flowchart TB
 | Reuse
 
 | Entity-linking / graph memory
-| Graph RAG (RGL) — `src/graph/rag/{mod.rs,engine_impls.rs}`; ORION/PULSAR/QUASAR
+| Graph RAG (RGL) — `src/graph/rag/{mod.rs,engine_impls.rs}`; ORION
 | Reuse
 
 | Hybrid retrieval (semantic + lexical)

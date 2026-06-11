@@ -636,8 +636,8 @@ impl OrionGraphEngine {
         GraphEngine::delete_edge(self, edge_id).await
     }
 
-    /// Insert edge without validation - for use by PULSAR when cross-shard validation
-    /// has already been performed at the distributed layer
+    /// Insert edge without validation for callers that have already performed
+    /// graph-level validation.
     pub async fn insert_edge_unchecked(&self, edge: Edge) -> Result<Arc<Edge>> {
         tracing::debug!("insert_edge_unchecked called for edge: {}", edge.id);
 

@@ -1064,14 +1064,15 @@ constituents. No HO-graph engine; lifting/lowering happens in `proximadb-graph::
 
 NaviX-aligned: vector index over a graph collection becomes a relationship table over the
 graph CSR. The graph buffer manager loans frames directly; distance computation reads
-on-frame bytes (zero copy). Engine: ORION (in-memory) with optional QUASAR (hybrid
-hot/cold) for size-bound deployments.
+on-frame bytes (zero copy). Runtime: ORION. Size-bound deployments use xCatalog/storage
+projection tiering rather than a separate graph engine.
 
-==== 6.2.5 PULSAR Productionization
+==== 6.2.5 Distributed Graph Requirements
 
-Distributed graph engine roadmap unchanged from STRATEGIC_ROADMAP.adoc Phase 3. Constraint:
-PULSAR must consume the same `ProximaRecord` envelope; sharding key is `(oid, tenant_id,
-hash(local_id))`.
+Distributed graph scale-out is a relational substrate requirement. ORION supplies graph
+planning hints; the relational distributed planner owns placement, fanout/fanin, shard
+movement, and consistency. Graph partitioning keys remain based on canonical identity:
+`(oid, tenant_id, hash(local_id))`.
 
 === 6.3 Document Modality (`proximadb-document`)
 

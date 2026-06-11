@@ -45,8 +45,6 @@ cargo build --features ai_endpoints,sales_endpoints
 ⚠️ **WARNING**: Experimental features are incomplete and may cause panics or data loss.
 
 - **`experimental-engines`** - SWIFT and RAPTOR storage engines (archived research engines)
-- **`distributed-graph`** - PULSAR distributed graph engine (cross-shard traversal incomplete)
-- **`tiered-graph`** - QUASAR hybrid vector+graph engine (tiered storage incomplete)
 - **`simd-experimental`** - Experimental SIMD optimizations (unstable)
 - **`avx512`** - AVX-512 intrinsics (requires nightly Rust)
 
@@ -54,16 +52,14 @@ cargo build --features ai_endpoints,sales_endpoints
 **Test Coverage**: 30-50%  
 **Backward Compatibility**: NOT guaranteed  
 **Known Issues**:
-- PULSAR: May miss edges during cross-shard traversal, no distributed WAL
-- QUASAR: No WAL for cold tier, simple LRU tiering
 - SWIFT/RAPTOR: Archived research engines, superseded by SST/VIPER
 
 **How to Enable**:
 ```bash
-cargo build --features experimental-engines,distributed-graph
+cargo build --features experimental-engines
 ```
 
-**Recommendation**: Use ORION for production graph workloads, application-level sharding for distributed scenarios
+**Graph note**: PULSAR and QUASAR graph engine flags have been removed. Use ORION; distributed placement is a relational substrate concern and tiering is catalog/storage policy.
 
 ### 4. Distributed Features
 
@@ -237,7 +233,7 @@ cargo build --features cluster,enterprise-catalogs,network-rest,cdc-kafka,python
 
 **Experimental Development**:
 ```bash
-cargo build --features experimental-engines,distributed-graph,tiered-graph
+cargo build --features experimental-engines
 ```
 
 ### Incompatible Combinations
@@ -267,15 +263,10 @@ cargo build --features python,pylib
 - Production-ready, most mature (253+ tests)
 - In-memory CSR format with WAL persistence
 
-**PULSAR** (distributed):
-- Enable with `distributed-graph` feature
-- ⚠️ Experimental: cross-shard traversal incomplete, no distributed WAL
-- Recommendation: Use ORION with application-level sharding instead
-
-**QUASAR** (tiered storage):
-- Enable with `tiered-graph` feature  
-- ⚠️ Experimental: no WAL for cold tier, simple LRU tiering
-- Recommendation: Use ORION with appropriate memory sizing instead
+**Retired names**:
+- `PULSAR` and `QUASAR` are no longer Cargo features or graph engine modules.
+- Former PULSAR behavior maps to relational distributed planning requirements.
+- Former QUASAR behavior maps to xCatalog/storage projection policy requirements.
 
 ### CDC Connector Features
 

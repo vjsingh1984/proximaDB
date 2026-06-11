@@ -38,7 +38,7 @@ already ships the substrate an agent-memory layer needs:
 
 | Auditable retrieval / provenance | AQL + RUBICON audit trails — `src/query/aql/` (TD-050), `RUBICON_ALIGNMENT.adoc`
 | Salience / re-ranking | RERANK SRF — `crates/modalities/proximadb-rank-{core,features,onnx,profile,expr}`, `ProductionHybridBackend`
-| Entity-linking / graph memory | Graph RAG (RGL) + ORION/PULSAR/QUASAR — `src/graph/rag/` (TD-045)
+| Entity-linking / graph memory | Graph RAG (RGL) + ORION — `src/graph/rag/` (TD-045)
 | Hybrid retrieval (semantic + lexical) | RRF + 11 fusion strategies — `src/core/search/hybrid/fusion.rs`; BM25 leg `crates/modalities/proximadb-rank-features/src/bm25.rs`
 | Typed memory categories | `ProximaRecord.memory_type` (Memanto 13-category, TD-055) — `crates/foundation/proximadb-records/src/lib.rs`
 | Scope (user/tenant/actor) | `ProximaRecord.tenant_id` / `actor` + engine-level RLS — `src/security/rls/`

@@ -10,7 +10,7 @@
 //! │  ┌───────────────────────────────────────┐  ┌─────────────────────────────┐ │
 //! │  │         INTERNAL FORMATS              │  │    OPEN TABLE FORMATS       │ │
 //! │  │  SST, Helix, Viper, Nova, Swift,     │  │  Delta Lake, Iceberg, Hudi, │ │
-//! │  │  Raptor, Orion, Pulsar, Quasar       │  │  LanceDB, DuckDB, Parquet   │ │
+//! │  │  Raptor, Orion                       │  │  LanceDB, DuckDB, Parquet   │ │
 //! │  └───────────────────────────────────────┘  └─────────────────────────────┘ │
 //! │                          │                              │                    │
 //! │                          └──────────────┬───────────────┘                    │
@@ -203,8 +203,6 @@ mod tests {
         assert!(FormatRegistry::is_internal_format(FormatType::Swift));
         assert!(FormatRegistry::is_internal_format(FormatType::Raptor));
         assert!(FormatRegistry::is_internal_format(FormatType::Orion));
-        assert!(FormatRegistry::is_internal_format(FormatType::Pulsar));
-        assert!(FormatRegistry::is_internal_format(FormatType::Quasar));
 
         // Open formats
         assert!(FormatRegistry::is_open_format(FormatType::DeltaLake));

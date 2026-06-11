@@ -3370,7 +3370,11 @@ pub(crate) fn try_parse_create_function(sql: &str) -> Result<Option<DdlStatement
         let mut it = part.splitn(2, char::is_whitespace);
         let pname = it.next().unwrap_or("").trim().to_string();
         let ptype = it.next().ok_or_else(|| {
-            anyhow!("CREATE FUNCTION '{}': parameter '{}' is missing a type", name, pname)
+            anyhow!(
+                "CREATE FUNCTION '{}': parameter '{}' is missing a type",
+                name,
+                pname
+            )
         })?;
         params.push((pname, parse_function_param_type(ptype)?));
     }
@@ -3378,7 +3382,10 @@ pub(crate) fn try_parse_create_function(sql: &str) -> Result<Option<DdlStatement
     // RETURNS <ty> AS '<body>'
     let rest = after[close + 1..].trim_start();
     if !rest.to_ascii_uppercase().starts_with("RETURNS") {
-        return Err(anyhow!("CREATE FUNCTION '{}': expected RETURNS <type>", name));
+        return Err(anyhow!(
+            "CREATE FUNCTION '{}': expected RETURNS <type>",
+            name
+        ));
     }
     let after_returns = rest["RETURNS".len()..].trim_start();
     let as_pos = after_returns
@@ -3386,8 +3393,14 @@ pub(crate) fn try_parse_create_function(sql: &str) -> Result<Option<DdlStatement
         .find(" AS ")
         .ok_or_else(|| anyhow!("CREATE FUNCTION '{}': expected AS '<body>'", name))?;
     let return_ty = parse_function_param_type(after_returns[..as_pos].trim())?;
-    let body = extract_single_quoted_literal(after_returns[as_pos + 4..].trim_start())
-        .map_err(|e| anyhow!("CREATE FUNCTION '{}': expected single-quoted body after AS: {}", name, e))?;
+    let body =
+        extract_single_quoted_literal(after_returns[as_pos + 4..].trim_start()).map_err(|e| {
+            anyhow!(
+                "CREATE FUNCTION '{}': expected single-quoted body after AS: {}",
+                name,
+                e
+            )
+        })?;
 
     Ok(Some(DdlStatement::CreateFunction {
         name,
@@ -3653,9 +3666,10 @@ mod rank_profile_ddl_tests {
     #[test]
     fn parse_create_function_lowers_signature_and_body() {
         // F5 slice 4: CREATE FUNCTION text → DdlStatement::CreateFunction.
-        let stmt = try_parse_create_function("CREATE FUNCTION double(x BIGINT) RETURNS BIGINT AS 'x * 2'")
-            .unwrap()
-            .unwrap();
+        let stmt =
+            try_parse_create_function("CREATE FUNCTION double(x BIGINT) RETURNS BIGINT AS 'x * 2'")
+                .unwrap()
+                .unwrap();
         match stmt {
             DdlStatement::CreateFunction {
                 name,

@@ -50,7 +50,7 @@ Prefer prefixes in this priority order:
 
 1. *Engine / layer name* (most specific): `SstQueryCacheStats`,
    `ViperFactoryCompactionConfig`, `OrionTraversalStats`,
-   `PulsarReplicationStats`.
+   `RelationalRouteStats`.
 2. *Module path leaf* when no canonical engine name exists:
    `MultimodalGraphStoreParticipant`, `ColumnarUtilsOperationMetrics`,
    `MetadataFilterAnalyzer`.
@@ -134,8 +134,7 @@ field are client-visible contract and stay as-is.
 existing `engines/core/formats/` on-disk-format subtree), plus
 migration of the ~421 `UnifiedStorageEngine` / ~262
 `StorageEngineStrategy` call sites. Unrelated `*Engine`/`*EngineType`
-enums (metrics, RL planner, storage-common) and the graph ORION/PULSAR
-engine subsystem are out of scope.
+enums (metrics and RL planner) and the ORION graph runtime are out of scope.
 
 == Substring-regression hazard
 

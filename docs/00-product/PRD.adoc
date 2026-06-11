@@ -63,7 +63,7 @@ For AI/ML engineers, platform engineers, data engineers, and trading system deve
 | None
 
 | Graph Engine
-| Native (3 engines)
+| Native ORION runtime
 | None
 | None
 | Basic
@@ -103,7 +103,7 @@ For AI/ML engineers, platform engineers, data engineers, and trading system deve
 | Embedded (Java)
 
 | Hybrid Search (BM25+Vector)
-| Planned (P0)
+| Beta
 | None
 | Basic
 | None
@@ -111,7 +111,7 @@ For AI/ML engineers, platform engineers, data engineers, and trading system deve
 | None
 
 | Framework Integration
-| Planned (P0)
+| Implemented / Beta
 | Native
 | Native
 | Community
@@ -335,8 +335,8 @@ These features represent strategic investments that expand ProximaDB's addressab
 
 | openCypher Support
 | As a graph developer, I want to use standard Cypher syntax instead of embedded string queries.
-| Native Cypher parser (subset: MATCH, WHERE, RETURN, CREATE, MERGE); query planning integration with existing graph engines; parameter binding; index hints
-| Graph engine (existing ORION/PULSAR/QUASAR)
+| Native Cypher parser (subset: MATCH, WHERE, RETURN, CREATE, MERGE); query planning integration with ORION; parameter binding; index hints
+| ORION graph runtime and relational planner
 | 2 months
 
 | DataFusion / Arrow OLAP Execution
@@ -592,7 +592,7 @@ graph TD
     K["Cross-Model ACID"] --> |"coordination"| K1["Transaction Coordinator"]
     K --> |"all engines"| J2
     L["Multi-Modal<br/>Embeddings"] --> |"model execution"| E
-    M["openCypher Support"] --> |"graph engines"| M1["ORION / PULSAR / QUASAR"]
+    M["openCypher Support"] --> |"graph runtime"| M1["ORION"]
     N["DataFusion / Arrow OLAP"] --> |"snapshot reads"| N1["Parquet / Iceberg / Arrow"]
 
     subgraph "ibkrtrading Full Integration"

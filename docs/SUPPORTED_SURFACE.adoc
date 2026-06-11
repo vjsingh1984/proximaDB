@@ -62,7 +62,7 @@ This matrix is the product support contract.
 | ORION graph operations
 | Beta
 | Node/edge CRUD, traversal, neighbors, shortest-path APIs, canonical node/edge mapping, and adjacency projections are usable.
-| Declarative graph query execution is still incomplete on the canonical gRPC path. ORION/PULSAR/QUASAR remain projections or compatibility engines unless an ADR promotes additional durable semantics.
+| Declarative graph query execution is still incomplete on the canonical gRPC path. ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
 
 | Observability ingestion and query
 | Beta
@@ -79,10 +79,10 @@ This matrix is the product support contract.
 | tantivy BM25 integration, RRF/weighted fusion, and compatibility REST `/api/v1/hybrid/search` facade (TD-008 resolved).
 | Backend integration improved; REST v1 remains a deprecated compatibility surface and gRPC path parity is still in progress. Projection Fusion is a shared planner contract only until runtime implementation, explain output, and benchmarks are complete.
 
-| PULSAR and QUASAR graph engines
-| Experimental
-| Distributed and hybrid graph foundations exist in code.
-| They are not the canonical product graph path and are not fully wired end-to-end.
+| PULSAR and QUASAR graph engine names
+| Retired / Not supported
+| Separate PULSAR and QUASAR engine code, feature flags, REST routes, and dedicated tests have been removed.
+| Use ORION. Former distributed-graph behavior belongs to the relational distributed substrate; former tiered-graph behavior belongs to xCatalog/storage projection policy.
 
 | Distributed cluster execution
 | Experimental
@@ -152,7 +152,7 @@ These surfaces have code foundations but are not part of the v0.2 product story.
 must not list them under "supported", "production", or "ready":
 
 * Distributed cluster execution (Raft transport / remote execution placeholders).
-* PULSAR and QUASAR graph engines.
+* PULSAR and QUASAR graph engines (retired; use ORION).
 * Full SQL parity (ADR-018 Phase 2/3 — Postgres parity).
 * PostgreSQL-style OLTP/HTAP parity: full MVCC transactions, FK/PK/unique/check enforcement,
   native row/delta indexes, DataFusion snapshot-plus-delta reads, and distributed consistency gates

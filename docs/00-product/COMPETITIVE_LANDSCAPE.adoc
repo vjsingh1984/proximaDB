@@ -224,7 +224,7 @@ The following matrix compares ProximaDB against databases that also target multi
 
 | W4 | *11,536 unwrap/expect calls in codebase* -- production code quality concern that increases crash risk under edge conditions.
 
-| W5 | *Experimental features advertised as production* -- PULSAR and QUASAR graph engines are at ~60% completion but are visible in the public API surface.
+| W5 | *Experimental features advertised as production* -- addressed for graph by retiring PULSAR/QUASAR as public engine surfaces and consolidating on ORION.
 
 | W6 | *No framework integrations* (LangChain, LlamaIndex) -- blocks adoption by the largest developer segment building RAG and agentic AI applications.
 

@@ -90,19 +90,19 @@ language and one data plane_.
 |===
 | Engine | Capability
 
-| ORION | In-memory with WAL persistence (1M+ edges/sec traversal)
-| PULSAR | Distributed graph engine
-| QUASAR | Hybrid vector + graph unified queries
+| ORION | Graph projection runtime with WAL-backed compatibility recovery
+| Relational distributed substrate | Placement, routing, fanout/fanin, and scale-out coordination below ORION
+| xCatalog/storage policy | Projection retention, freshness, and hot/cold placement below ORION
 |===
 
-**Planned Engines**:
+**Time and Event Foundations**:
 
 [cols="1,2"]
 |===
 | Engine | Capability
 
-| TST (Time-Series) | First-class time-series with ASOF joins, downsampling, time-partitioning
-| Event Store | Append-only immutable event logs for compliance and audit
+| TST (Time-Series) | Beta time-series foundation with ASOF joins, downsampling, time-partitioning
+| Event Store | Beta append-only immutable event-log foundation for compliance and audit
 |===
 
 All engines share the same catalog, the same query planner, and the same wire protocols (REST,

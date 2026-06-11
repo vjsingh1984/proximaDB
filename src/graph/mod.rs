@@ -26,7 +26,8 @@
 //! - **Record-First**: Nodes and edges map to canonical `ProximaRecord`
 //! - **Arc-Based Sharing**: Zero-copy memory sharing between vector and graph engines
 //! - **CSR Projection**: Compressed Sparse Row is a rebuildable topology projection
-//! - **Modular Engines**: ORION (in-memory), PULSAR (distributed), QUASAR (hybrid)
+//! - **ORION Runtime**: Graph projection over canonical records; distributed
+//!   coordination and tiering are relational/storage substrate concerns
 //!
 //! ## Performance Characteristics
 //!
@@ -42,11 +43,11 @@
 //! │            GraphService             │
 //! │        (Business Logic Layer)       │
 //! ├─────────────────────────────────────┤
-//! │              Engines                │
-//! │  ┌─────────┬─────────┬───────────┐  │
-//! │  │  ORION  │ PULSAR  │  QUASAR   │  │
-//! │  │(Memory) │(Distrib)│ (Hybrid)  │  │
-//! │  └─────────┴─────────┴───────────┘  │
+//! │          ORION Graph Runtime        │
+//! │  ┌───────────────────────────────┐  │
+//! │  │ CSR projection + graph planner│  │
+//! │  └───────────────────────────────┘  │
+//! │   Relational routing/tiering below  │
 //! ├─────────────────────────────────────┤
 //! │           Arc Memory Pool           │
 //! │    ┌────────────┬─────────────┐     │
@@ -73,10 +74,6 @@ pub mod service_algorithms;
 
 // Re-export public types
 pub use engines::orion::OrionGraphEngine;
-#[cfg(feature = "distributed-graph")]
-pub use engines::pulsar::PulsarGraphEngine;
-#[cfg(feature = "tiered-graph")]
-pub use engines::quasar::QuasarGraphEngine;
 pub use engines::{
     EmbeddingMode, EngineCapabilities, GraphEngineConfig, GraphEngineFactory, GraphEngineType,
 };

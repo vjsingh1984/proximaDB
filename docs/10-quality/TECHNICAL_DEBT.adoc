@@ -29,13 +29,13 @@ Technical debt items are prioritized based on their impact on the four developme
 | *RESOLVED May 2026*: **Cross-layer dependency resolved**. `StorageEngineType` moved from `index/axis/eventlog` to `core/types/storage.rs`. Storage layer now imports from shared types module instead of index layer. See `src/core/types/storage.rs:16-20` for documentation.
 
 | TD-001
-| PULSAR/QUASAR wiring
+| PULSAR/QUASAR engine retirement
 | P3
 | Medium
 | *Resolved*
 | Users see advertised features that don't work
 | 2-3 months
-| *RESOLVED Mar 2026*: **PULSAR/QUASAR fully wired to service layer**. `src/graph/service_engine_factory.rs:82-130` implements complete engine creation with feature gates and warnings. Both engines properly integrated into GraphOperationsService via `get_or_create_graph_engine()`. Experimental warnings logged when PULSAR/QUASAR selected. ORION remains default and recommended for production.
+| *RESOLVED Jun 2026*: Separate PULSAR/QUASAR engine modules, feature flags, REST routes, and dedicated tests were removed. `GraphOperationsService` and `GraphEngineFactory` now expose ORION only and reject retired engine names with a compatibility error. Former distributed graph behavior belongs to the relational distributed substrate; former tiered graph behavior belongs to xCatalog/storage projection policy.
 
 | TD-002
 | External catalog integration
@@ -281,7 +281,7 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Documentation and feature dashboard advertise these as available. Erodes trust when users try them.
 | 1 week
-| *Resolved*: Gated behind `distributed-graph` / `tiered-graph` feature flags with warnings (commit `cd42e8db`).
+| *Resolved Jun 2026*: Retired as graph engines. Feature flags, modules, REST routes, and dedicated tests removed; ORION is the graph runtime.
 
 | TD-018
 | OTLP trace ingestion incomplete
@@ -492,13 +492,13 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | P1
 
 | TD-R18
-| PULSAR/QUASAR feature gating (TD-017)
-| Gated behind `distributed-graph` / `tiered-graph` feature flags with experimental warnings
+| PULSAR/QUASAR engine retirement (TD-017)
+| Retired instead of feature-gated; behavior folded into relational/storage substrate requirements
 | P3
 
 | TD-R19
-| PULSAR/QUASAR service layer wiring (TD-001)
-| Fully wired in `src/graph/service_engine_factory.rs` with feature gates, warnings, and engine creation
+| ORION-only graph service layer (TD-001)
+| `src/graph/service_engine_factory.rs` accepts ORION and rejects retired PULSAR/QUASAR names
 | P3
 
 | TD-R20
@@ -1007,7 +1007,7 @@ physical layouts.
 | P5
 | HIGH
 | Partial (emission + production wiring + recovery read-side + Option E metrics landed; recovery behavior-change + truncation remain)
-| `OrionGraphEngine::flush_wal()` and `OrionPersistence::save_snapshot()` write graph facts to ORION's own WAL and snapshot files (`src/graph/engines/orion/persistence.rs`). `GraphOperationsService::flush_wal()` dispatches to ORION/PULSAR/QUASAR engine WALs. These engine WALs are a parallel durable authority alongside the canonical `RecordUpsert` WAL entries; recovery from the engine WAL alone would miss the canonical record semantics (tenant/RLS, versioning, provenance). The convergence spec states ORION WAL should be demoted to a compatibility projection recovery path.
+| `OrionGraphEngine::flush_wal()` and `OrionPersistence::save_snapshot()` write graph facts to ORION's own WAL and snapshot files (`src/graph/engines/orion/persistence.rs`). `GraphOperationsService::flush_wal()` now dispatches only to ORION's projection WAL. This WAL is a compatibility recovery buffer alongside canonical `RecordUpsert` WAL entries; recovery from the projection WAL alone would miss canonical record semantics (tenant/RLS, versioning, provenance). The convergence spec states ORION WAL should be demoted to a compatibility projection recovery path.
 | 3-5 weeks (≈3/4 landed)
 | **EMISSION HALF RESOLVED 2026-05-27** by commit `b36a24b17`: added `canonical_wal_appender: Option<Arc<dyn TableWalAppender>>` injection on `GraphOperationsService` plus `with_canonical_wal_appender` builder. `flush_wal` now persists `CanonicalOperation::Checkpoint(SnapshotManifest)` to the canonical WAL via `FramedTableWalAppender::append_operations` before the engine WAL flush, returning `ProximaDBError::Internal` on append failure. Verified by 3 cycles in `tests/graph_canonical_checkpoint_test.rs`. **PRODUCTION WIRING RESOLVED 2026-05-28** by commit `4ece74250`: added `canonical_wal_appender: Option<Arc<FramedTableWalAppender>>` field to `SharedServices`, opened ONCE in `SharedServices::new` from `cfg.server.data_dir`, and shared with both consumers — graph (via the builder) and pgwire direct writes (via `multi_server.rs`). Sharing the single appender instance is required for correctness: two independent `open()` calls on the same WAL file would each maintain independent `next_sequence: AtomicU64`, risking duplicate sequence numbers and silent recovery corruption. The pgwire path falls back to opening locally when the operator overrides `direct_record_wal_path` to a non-default location (no conflict — different paths). **RECOVERY READ-SIDE RESOLVED 2026-05-28** by commit `18c846ae8`: added `canonical_wal_path: Option<PathBuf>` field + `with_canonical_wal_path` builder + `canonical_checkpoint_lsn(&self) -> Option<u64>` async method on `OrionPersistence` (reads canonical WAL, filters checkpoints by `self.graph_id` in `manifest.collection_ids`, returns max LSN). `OrionGraphEngine::recover` now logs the result via `tracing::info!` for operator visibility. Threaded through `GraphOperationsService::canonical_wal_path` → `service_engine_factory.rs` → new `OrionGraphEngine::with_persistence_for_graph_and_canonical_wal` constructor variant (the original 3-arg signature is preserved for 24+ existing callers). Verified by 3 cycles in `tests/orion_canonical_checkpoint_read_test.rs` (none for no-path; max-LSN selection; per-graph_id filtering including multi-graph checkpoints). **Recovery BEHAVIOR is intentionally unchanged in Part 1** — the LSN is logged but not used to scope engine WAL replay. **OPTION E METRICS RESOLVED 2026-05-28** by commit `cd662ceea`: added `src/metrics/td066_metrics.rs` exposing three Prometheus metrics — `orion_recovery_canonical_checkpoint_age_seconds` (gauge), `orion_recovery_canonical_checkpoint_present_total` (counter), `orion_recovery_canonical_checkpoint_absent_total` (counter) — so operators can detect "is canonical emission + production wiring healthy?" without log scraping. Metrics fire on every `OrionGraphEngine::recover` call. Verified by 2 unit tests in `td066_metrics::tests`. LSN-correlation design captured in `docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc` (5 options surveyed; recommend Option E now [landed] + Option A as a post-v0.2 phase-2 workstream). **Remaining to fully close TD-066:** (c) Part 2 Option A — tag engine WAL frames with `canonical_emission_lsn` marker so recovery can scope engine WAL replay by canonical checkpoint LSN; (d) engine WAL truncation tied to canonical checkpoint LSN (depends on (c) Part 2). Coordinates with `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` Phase 3.
 
@@ -1024,10 +1024,10 @@ physical layouts.
 | QUASAR Cold-Tier Path Has No Canonical Record Binding
 | P6
 | MEDIUM
-| Open
-| `QuasarGraphEngine` cold-tier storage (`src/graph/engines/quasar/`) writes hot-tier graph data via ORION and cold-tier data via a separate JSON/SST file path. Cold-tier writes bypass the canonical `RecordUpsert` WAL path entirely. `SUPPORTED_SURFACES.adoc` marks QUASAR as a demotion candidate pending an ADR and benchmark evidence.
-| 2-4 weeks
-| Option A: rewrite QUASAR cold tier to write through the canonical WAL + projection directives (ColumnarVariation or external-authority xCatalog table). Option B: retire QUASAR and replace with canonical-record-backed tiering policy governed by xCatalog freshness/retention. ADR required before implementation. Benchmark evidence of cold-tier benefit required for Option A.
+| Resolved
+| The separate `QuasarGraphEngine` cold-tier path was removed with the PULSAR/QUASAR engine retirement.
+| N/A
+| Canonical-record-backed tiering remains a storage/catalog projection-policy requirement, not a graph engine path.
 
 | TD-069
 | Standalone unit test files migrated to inline `#[cfg(test)]` blocks

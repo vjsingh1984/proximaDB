@@ -6,7 +6,7 @@
 // Test Coverage:
 // - Graph service creation and management
 // - ORION engine (production-ready)
-// - PULSAR and QUASAR engines (experimental)
+// - Retired engine-name rejection for PULSAR and QUASAR
 // - Graph metadata and statistics
 // - Engine type validation
 
@@ -88,16 +88,12 @@ mod grpc_methods_tests {
         service.remove_graph(graph_id);
     }
 
-    /// Test graph creation with PULSAR engine (experimental)
+    /// Test graph operation rejection with retired PULSAR engine metadata
     #[tokio::test]
-    async fn test_create_graph_with_pulsar_engine() {
+    async fn test_create_graph_with_pulsar_engine_rejected() {
         let graph_id = "test_pulsar_graph";
-
-        // PULSAR is experimental - this test verifies that we can create
-        // a graph with PULSAR engine type (even if it falls back to ORION)
         let service = create_test_graph_with_engine(graph_id, "PULSAR").await;
 
-        // Add a test node
         let node = Node {
             id: "node1".to_string(),
             labels: vec!["Test".to_string()],
@@ -107,34 +103,21 @@ mod grpc_methods_tests {
             updated_at_ms: 0,
         };
 
-        service
+        let err = service
             .create_node(graph_id, node)
             .await
-            .expect("Failed to create node");
+            .expect_err("PULSAR metadata should be rejected");
+        assert!(err.to_string().contains("retired"));
 
-        // Verify node was created
-        let retrieved_node = service
-            .get_node(graph_id, &"node1".to_string())
-            .await
-            .expect("Failed to get node")
-            .expect("Node not found");
-
-        assert_eq!(retrieved_node.id, "node1");
-
-        // Cleanup
         service.remove_graph(graph_id);
     }
 
-    /// Test graph creation with QUASAR engine (experimental)
+    /// Test graph operation rejection with retired QUASAR engine metadata
     #[tokio::test]
-    async fn test_create_graph_with_quasar_engine() {
+    async fn test_create_graph_with_quasar_engine_rejected() {
         let graph_id = "test_quasar_graph";
-
-        // QUASAR is experimental - this test verifies that we can create
-        // a graph with QUASAR engine type (even if it falls back to ORION)
         let service = create_test_graph_with_engine(graph_id, "QUASAR").await;
 
-        // Add a test node
         let node = Node {
             id: "node1".to_string(),
             labels: vec!["Test".to_string()],
@@ -144,21 +127,12 @@ mod grpc_methods_tests {
             updated_at_ms: 0,
         };
 
-        service
+        let err = service
             .create_node(graph_id, node)
             .await
-            .expect("Failed to create node");
+            .expect_err("QUASAR metadata should be rejected");
+        assert!(err.to_string().contains("retired"));
 
-        // Verify node was created
-        let retrieved_node = service
-            .get_node(graph_id, &"node1".to_string())
-            .await
-            .expect("Failed to get node")
-            .expect("Node not found");
-
-        assert_eq!(retrieved_node.id, "node1");
-
-        // Cleanup
         service.remove_graph(graph_id);
     }
 
@@ -268,31 +242,32 @@ mod grpc_methods_tests {
     /// Test graph engine type validation
     #[tokio::test]
     async fn test_graph_engine_type_validation() {
-        // Test that different engine types are accepted
-        let engine_types = vec!["ORION", "PULSAR", "QUASAR"];
+        let graph_id = "test_orion_engine";
+        let service = create_test_graph_with_engine(graph_id, "ORION").await;
+        let node = Node {
+            id: "node1".to_string(),
+            labels: vec!["Test".to_string()],
+            properties: HashMap::new(),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
 
-        for engine_type in engine_types {
-            let graph_id = format!("test_{}_engine", engine_type.to_lowercase());
-            let service = create_test_graph_with_engine(&graph_id, engine_type).await;
+        service
+            .create_node(graph_id, node)
+            .await
+            .expect("ORION should remain the valid graph engine");
 
-            // Verify graph was created
-            let node = Node {
-                id: "node1".to_string(),
-                labels: vec!["Test".to_string()],
-                properties: HashMap::new(),
-                embedding: None,
-                created_at_ms: 0,
-                updated_at_ms: 0,
-            };
+        assert_eq!(
+            proximadb::graph::GraphEngineFactory::engine_type_from_string("PULSAR"),
+            None
+        );
+        assert_eq!(
+            proximadb::graph::GraphEngineFactory::engine_type_from_string("QUASAR"),
+            None
+        );
 
-            service
-                .create_node(&graph_id, node)
-                .await
-                .expect("Failed to create node");
-
-            // Cleanup
-            service.remove_graph(&graph_id);
-        }
+        service.remove_graph(graph_id);
     }
 
     /// Test graph cleanup and removal

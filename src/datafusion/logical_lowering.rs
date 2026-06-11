@@ -11,7 +11,8 @@
 //! Covers the OLAP shapes the P1 route targets:
 //! `Scan / Filter / Project / Aggregate / Sort / Limit / Distinct / Union` and
 //! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`, plus
-//! Semi/Anti via `LeftSemi`/`LeftAnti` — the decorrelated IN/EXISTS targets),
+//! Semi/Anti via `LeftSemi`/`LeftAnti` — the decorrelated IN/EXISTS targets) and
+//! `SetOp` (`INTERSECT`/`EXCEPT`, `ALL` preserving multiset dups),
 //! with `Expr` translation for `Column / Literal / BinaryOp / UnaryOp / IsNull /
 //! Cast / Between / In / Like / Case / Coalesce / NullIf` and the common scalar
 //! functions `UPPER/LOWER/LENGTH/ABS/CEIL/FLOOR/SQRT/CONCAT`. Anything else
@@ -28,7 +29,9 @@ use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 
 use proximadb_data_model::{ProximaType, ProximaValue};
-use proximadb_relational_algebra::{AggregateExpr, JoinKind, LogicalNode, NamedAggregate};
+use proximadb_relational_algebra::{
+    AggregateExpr, JoinKind, LogicalNode, NamedAggregate, SetOpKind,
+};
 use proximadb_relational_types::{BinaryOp as RBinOp, Expr as RExpr, UnaryOp as RUnOp};
 
 fn unsupported(what: impl Into<String>) -> DataFusionError {
@@ -189,15 +192,32 @@ fn lower<'a>(
                 }
                 builder.build()
             }
+            LogicalNode::SetOp {
+                op,
+                left,
+                right,
+                all,
+            } => {
+                let left_plan = lower(ctx, left).await?;
+                let right_plan = lower(ctx, right).await?;
+                // Both inputs share a schema (algebra invariant); `all` selects
+                // multiset (preserve dups) vs set semantics. `intersect`/`except`
+                // are static assoc fns returning the finished `LogicalPlan`.
+                match op {
+                    SetOpKind::Intersect => {
+                        LogicalPlanBuilder::intersect(left_plan, right_plan, *all)
+                    }
+                    SetOpKind::Except => LogicalPlanBuilder::except(left_plan, right_plan, *all),
+                }
+            }
             LogicalNode::Values { .. } => Err(unsupported("Values")),
             LogicalNode::CteBind { .. } => Err(unsupported("CteBind")),
             LogicalNode::CteRef { .. } => Err(unsupported("CteRef")),
-            // Decorrelation outputs (scalar-subquery cardinality guard + generalized
-            // set ops) — DataFusion serves these via the `ctx.sql` fallback until they
-            // are lowered on the shared path. Explicit arms (not a wildcard) so the next
-            // new LogicalNode variant forces a deliberate decision here, not silent rot.
+            // Scalar-subquery cardinality guard — DataFusion serves this via the
+            // `ctx.sql` fallback until it is lowered on the shared path. Explicit arm
+            // (not a wildcard) so the next new LogicalNode variant forces a deliberate
+            // decision here, not silent rot.
             LogicalNode::AssertMaxOneRow { .. } => Err(unsupported("AssertMaxOneRow")),
-            LogicalNode::SetOp { .. } => Err(unsupported("SetOp")),
         }
     })
 }
@@ -843,6 +863,56 @@ mod tests {
             all: false,
         };
         assert_eq!(row_count(&ctx, &union_distinct).await, 2);
+    }
+
+    // SELECT k FROM t WHERE k = <val>  — a filtered projection of just `k`,
+    // schema-matching `project_k()` so set ops can combine them.
+    fn project_k_where(val: &str) -> LogicalNode {
+        LogicalNode::Project {
+            input: Box::new(LogicalNode::Filter {
+                input: Box::new(scan_t()),
+                predicate: RExpr::BinaryOp {
+                    op: RBinOp::Eq,
+                    left: Box::new(RExpr::Column(colref("k", 0, ProximaType::String))),
+                    right: Box::new(RExpr::Literal {
+                        value: ProximaValue::String(val.to_string()),
+                        ty: ProximaType::String,
+                    }),
+                },
+            }),
+            outputs: vec![NamedExpr {
+                name: "k".to_string(),
+                expr: RExpr::Column(colref("k", 0, ProximaType::String)),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn lowers_intersect_and_except() {
+        // left  = SELECT k FROM t            → {a, a, b}
+        // right = SELECT k FROM t WHERE k='a' → {a, a}
+        let ctx = ctx_with_t().await;
+        let set_op = |op, all| LogicalNode::SetOp {
+            op,
+            left: Box::new(project_k()),
+            right: Box::new(project_k_where("a")),
+            all,
+        };
+
+        // INTERSECT (distinct): {a,b} ∩ {a} = {a} → 1 row.
+        assert_eq!(
+            row_count(&ctx, &set_op(SetOpKind::Intersect, false)).await,
+            1
+        );
+        // INTERSECT ALL: multiset min → a:min(2,2)=2, b:min(1,0)=0 → {a,a} → 2 rows.
+        assert_eq!(
+            row_count(&ctx, &set_op(SetOpKind::Intersect, true)).await,
+            2
+        );
+        // EXCEPT (distinct): {a,b} − {a} = {b} → 1 row.
+        assert_eq!(row_count(&ctx, &set_op(SetOpKind::Except, false)).await, 1);
+        // EXCEPT ALL: multiset diff → a:max(2−2,0)=0, b:max(1−0,0)=1 → {b} → 1 row.
+        assert_eq!(row_count(&ctx, &set_op(SetOpKind::Except, true)).await, 1);
     }
 
     #[tokio::test]

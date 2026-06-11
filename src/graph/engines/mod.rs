@@ -16,14 +16,12 @@
 
 //! # Graph Storage Engines
 //!
-//! ProximaDB implements multiple graph engines optimized for different workloads.
-//! Under canonical durable graph storage, these engines consume `ProximaRecord`
-//! node/edge records and maintain rebuildable topology projections rather than
-//! owning a separate durable graph record model.
-//!
-//! - **ORION**: In-memory CSR projection for real-time traversal (1M+ edges/sec)
-//! - **PULSAR**: Distributed engine for sharded graphs (1B+ nodes) [Phase 2]
-//! - **QUASAR**: Hybrid hot/cold tiering for cost optimization [Phase 3]
+//! ProximaDB uses ORION as the graph runtime. ORION consumes canonical
+//! `ProximaRecord` node/edge records and maintains rebuildable topology
+//! projections rather than owning a separate durable graph record model.
+//! Distributed placement, coordination, fanout/fanin, and storage tiering are
+//! delegated to the relational/storage substrate and surfaced to ORION as
+//! cataloged execution and projection policy.
 //!
 //! ## Embedding Storage Modes
 //!
@@ -41,308 +39,6 @@
 pub mod generic_traversal;
 /// ORION in-memory CSR projection engine for real-time traversal at 1M+ edges/sec.
 pub mod orion;
-
-// PULSAR: Distributed graph engine (experimental)
-// Enable with: cargo build --features distributed-graph
-#[cfg(feature = "distributed-graph")]
-pub mod pulsar;
-
-// QUASAR: Hybrid hot/cold tiering engine (experimental)
-// Enable with: cargo build --features tiered-graph
-#[cfg(feature = "tiered-graph")]
-pub mod quasar;
-
-// Provide stub modules when features are disabled to maintain API compatibility
-#[cfg(not(feature = "distributed-graph"))]
-pub mod pulsar {
-    //! # PULSAR Graph Engine - RETIREMENT CANDIDATE
-    //!
-    //! This module is disabled by default and is marked for retirement in v0.3.0.
-    //! To enable PULSAR, build with:
-    //! ```bash
-    //! cargo build --features distributed-graph
-    //! ```
-    //!
-    //! **Note**: PULSAR is a legacy experimental engine.
-    //! For production sharding, use ORION with application-level sharding
-    //! as per the Phase 6 consolidation mandate.
-
-    use crate::graph::{Edge, EdgeId, Node, NodeId};
-    use proximadb_kernel::error::ProximaDBError;
-    use std::sync::Arc;
-
-    /// PULSAR configuration (stub)
-    #[derive(Debug, Clone, Default)]
-    pub struct PulsarConfig {
-        /// Number of shards for data distribution
-        pub shard_count: usize,
-        /// Replication factor (stub field for API compatibility)
-        pub replication_factor: u8,
-        /// Consistency level (stub - uses default Quorum)
-        pub consistency_level: u8,
-        /// Enable cross-shard query optimization (stub field for API compatibility)
-        pub cross_shard_optimization: bool,
-        /// Maximum concurrent queries (stub field for API compatibility)
-        pub max_concurrent_queries: usize,
-    }
-
-    /// PULSAR engine (stub - requires distributed-graph feature)
-    #[derive(Debug)]
-    pub struct PulsarGraphEngine;
-
-    impl PulsarGraphEngine {
-        /// Create a new PULSAR engine (requires `distributed-graph` feature).
-        pub fn new(_config: PulsarConfig) -> Result<Self, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR is a retirement candidate and requires 'distributed-graph' feature."
-                    .to_string(),
-            ))
-        }
-
-        /// Cross-shard traversal (stub - returns error when feature disabled)
-        pub async fn cross_shard_traversal(
-            &self,
-            _start_node_id: &str,
-            _max_depth: u32,
-        ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR cross_shard_traversal requires 'distributed-graph' feature".to_string(),
-            ))
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl super::GraphEngine for PulsarGraphEngine {
-        async fn insert_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        fn get_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        async fn update_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        async fn delete_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        async fn insert_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        fn get_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        async fn update_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        async fn delete_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        fn get_outgoing_edges(
-            &self,
-            _node_id: &NodeId,
-            _edge_type: Option<&str>,
-        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        fn get_incoming_edges(
-            &self,
-            _node_id: &NodeId,
-            _edge_type: Option<&str>,
-        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        fn get_neighbors(
-            &self,
-            _node_id: &NodeId,
-            _edge_type: Option<&str>,
-        ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        fn get_nodes_by_label(&self, _label: &str) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        fn node_count(&self) -> Result<usize, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        fn edge_count(&self) -> Result<usize, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-        fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "PULSAR disabled".to_string(),
-            ))
-        }
-    }
-}
-
-#[cfg(not(feature = "tiered-graph"))]
-pub mod quasar {
-    //! # QUASAR Graph Engine - RETIREMENT CANDIDATE
-    //!
-    //! This module is disabled by default and is marked for retirement in v0.3.0.
-    //! To enable QUASAR, build with:
-    //! ```bash
-    //! cargo build --features tiered-graph
-    //! ```
-    //!
-    //! **Note**: QUASAR is a legacy experimental engine.
-    //! For production use, use ORION as per the Phase 6 consolidation mandate.
-
-    use crate::graph::{Edge, EdgeId, Node, NodeId};
-    use proximadb_kernel::error::ProximaDBError;
-    use std::sync::Arc;
-
-    /// QUASAR configuration (stub)
-    #[derive(Debug, Clone, Default)]
-    pub struct QuasarConfig {
-        /// Maximum size of hot tier (in number of nodes) - stub field for API compatibility
-        pub hot_tier_max_nodes: usize,
-        /// Maximum hot tier memory in MB (stub field for API compatibility)
-        pub hot_tier_max_memory_mb: usize,
-        /// Cold tier storage path (stub field for API compatibility)
-        pub cold_tier_path: std::path::PathBuf,
-        /// Cold migration threshold in seconds (stub field for API compatibility)
-        pub cold_migration_threshold_secs: u64,
-        /// Hot promotion threshold in seconds (stub field for API compatibility)
-        pub hot_promotion_threshold_secs: u64,
-        /// Migration interval in seconds (stub field for API compatibility)
-        pub migration_interval_secs: u64,
-        /// Cold storage backend (0=Sst, 1=Parquet, 2=Json) - stub field for API compatibility
-        pub cold_storage_backend: u8,
-    }
-
-    /// QUASAR engine (stub - requires tiered-graph feature)
-    #[derive(Debug)]
-    pub struct QuasarGraphEngine;
-
-    impl QuasarGraphEngine {
-        /// Create a new QUASAR engine (requires `tiered-graph` feature).
-        pub async fn new(_config: QuasarConfig) -> Result<Self, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR is a retirement candidate and requires 'tiered-graph' feature.".to_string(),
-            ))
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl super::GraphEngine for QuasarGraphEngine {
-        async fn insert_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        fn get_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        async fn update_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        async fn delete_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        async fn insert_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        fn get_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        async fn update_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        async fn delete_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        fn get_outgoing_edges(
-            &self,
-            _node_id: &NodeId,
-            _edge_type: Option<&str>,
-        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        fn get_incoming_edges(
-            &self,
-            _node_id: &NodeId,
-            _edge_type: Option<&str>,
-        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        fn get_neighbors(
-            &self,
-            _node_id: &NodeId,
-            _edge_type: Option<&str>,
-        ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        fn get_nodes_by_label(&self, _label: &str) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        fn node_count(&self) -> Result<usize, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        fn edge_count(&self) -> Result<usize, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-        fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented(
-                "QUASAR disabled".to_string(),
-            ))
-        }
-    }
-}
 
 use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
@@ -832,10 +528,6 @@ impl Default for PersistenceConfig {
 pub enum GraphEngineType {
     /// ORION: In-memory CSR format engine (Production-ready).
     Orion,
-    /// PULSAR: Distributed sharded engine (Experimental / Retirement Candidate).
-    Pulsar,
-    /// QUASAR: Hybrid hot/cold tiering engine (Experimental / Retirement Candidate).
-    Quasar,
 }
 
 /// Enum wrapper for different graph engine implementations
@@ -843,39 +535,17 @@ pub enum GraphEngineType {
 pub enum GraphEngineImpl {
     /// ORION in-memory CSR engine instance.
     Orion(orion::OrionGraphEngine),
-    /// PULSAR distributed sharded engine instance (Legacy / Retirement Candidate).
-    Pulsar(pulsar::PulsarGraphEngine),
-    /// QUASAR hybrid hot/cold tiering engine instance (Legacy / Retirement Candidate).
-    Quasar(quasar::QuasarGraphEngine),
 }
 
 impl GraphEngineImpl {
     /// Create a new graph engine based on type and configuration
-    pub fn new(engine_type: GraphEngineType, config: GraphEngineConfig) -> Result<Self> {
+    pub fn new(engine_type: GraphEngineType, _config: GraphEngineConfig) -> Result<Self> {
         match engine_type {
             GraphEngineType::Orion => {
                 let engine = orion::OrionGraphEngine::new();
                 Ok(GraphEngineImpl::Orion(engine))
             }
-            GraphEngineType::Pulsar => {
-                let pulsar_config = config.pulsar_config.unwrap_or_default();
-                let engine = pulsar::PulsarGraphEngine::new(pulsar_config)?;
-                Ok(GraphEngineImpl::Pulsar(engine))
-            }
-            GraphEngineType::Quasar => {
-                let _quasar_config = config.quasar_config.unwrap_or_default();
-                // Note: This needs async, so we'll provide a different factory method
-                Err(ProximaDBError::InvalidInput(
-                    "Use new_quasar_async for QUASAR engine".to_string(),
-                ))
-            }
         }
-    }
-
-    /// Create a Quasar engine asynchronously
-    pub async fn new_quasar_async(config: quasar::QuasarConfig) -> Result<Self> {
-        let engine = quasar::QuasarGraphEngine::new(config).await?;
-        Ok(GraphEngineImpl::Quasar(engine))
     }
 }
 
@@ -889,64 +559,48 @@ impl GraphEngine for GraphEngineImpl {
                 tracing::debug!("Delegating to Orion engine");
                 engine.insert_node(node).await
             }
-            GraphEngineImpl::Pulsar(engine) => engine.insert_node(node).await,
-            GraphEngineImpl::Quasar(engine) => engine.insert_node(node).await,
         }
     }
 
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_node(id),
-            GraphEngineImpl::Pulsar(engine) => engine.get_node(id),
-            GraphEngineImpl::Quasar(engine) => engine.get_node(id),
         }
     }
 
     async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.update_node(node).await,
-            GraphEngineImpl::Pulsar(engine) => engine.update_node(node).await,
-            GraphEngineImpl::Quasar(engine) => engine.update_node(node).await,
         }
     }
 
     async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         match self {
             GraphEngineImpl::Orion(engine) => GraphEngine::delete_node(engine, id).await,
-            GraphEngineImpl::Pulsar(engine) => GraphEngine::delete_node(engine, id).await,
-            GraphEngineImpl::Quasar(engine) => GraphEngine::delete_node(engine, id).await,
         }
     }
 
     async fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.insert_edge(edge).await,
-            GraphEngineImpl::Pulsar(engine) => engine.insert_edge(edge).await,
-            GraphEngineImpl::Quasar(engine) => engine.insert_edge(edge).await,
         }
     }
 
     fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_edge(id),
-            GraphEngineImpl::Pulsar(engine) => engine.get_edge(id),
-            GraphEngineImpl::Quasar(engine) => engine.get_edge(id),
         }
     }
 
     async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.update_edge(edge).await,
-            GraphEngineImpl::Pulsar(engine) => engine.update_edge(edge).await,
-            GraphEngineImpl::Quasar(engine) => engine.update_edge(edge).await,
         }
     }
 
     async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         match self {
             GraphEngineImpl::Orion(engine) => GraphEngine::delete_edge(engine, id).await,
-            GraphEngineImpl::Pulsar(engine) => GraphEngine::delete_edge(engine, id).await,
-            GraphEngineImpl::Quasar(engine) => GraphEngine::delete_edge(engine, id).await,
         }
     }
 
@@ -957,8 +611,6 @@ impl GraphEngine for GraphEngineImpl {
     ) -> Result<Vec<Arc<Edge>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_outgoing_edges(node_id, edge_type),
-            GraphEngineImpl::Pulsar(engine) => engine.get_outgoing_edges(node_id, edge_type),
-            GraphEngineImpl::Quasar(engine) => engine.get_outgoing_edges(node_id, edge_type),
         }
     }
 
@@ -969,48 +621,36 @@ impl GraphEngine for GraphEngineImpl {
     ) -> Result<Vec<Arc<Edge>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_incoming_edges(node_id, edge_type),
-            GraphEngineImpl::Pulsar(engine) => engine.get_incoming_edges(node_id, edge_type),
-            GraphEngineImpl::Quasar(engine) => engine.get_incoming_edges(node_id, edge_type),
         }
     }
 
     fn get_neighbors(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Node>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_neighbors(node_id, edge_type),
-            GraphEngineImpl::Pulsar(engine) => engine.get_neighbors(node_id, edge_type),
-            GraphEngineImpl::Quasar(engine) => engine.get_neighbors(node_id, edge_type),
         }
     }
 
     fn get_nodes_by_label(&self, label: &str) -> Result<Vec<Arc<Node>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_nodes_by_label(label),
-            GraphEngineImpl::Pulsar(engine) => engine.get_nodes_by_label(label),
-            GraphEngineImpl::Quasar(engine) => engine.get_nodes_by_label(label),
         }
     }
 
     fn node_count(&self) -> Result<usize> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.node_count(),
-            GraphEngineImpl::Pulsar(engine) => engine.node_count(),
-            GraphEngineImpl::Quasar(engine) => engine.node_count(),
         }
     }
 
     fn edge_count(&self) -> Result<usize> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.edge_count(),
-            GraphEngineImpl::Pulsar(engine) => engine.edge_count(),
-            GraphEngineImpl::Quasar(engine) => engine.edge_count(),
         }
     }
 
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_all_nodes(),
-            GraphEngineImpl::Pulsar(engine) => engine.get_all_nodes(),
-            GraphEngineImpl::Quasar(engine) => engine.get_all_nodes(),
         }
     }
 
@@ -1018,16 +658,12 @@ impl GraphEngine for GraphEngineImpl {
     fn get_engine_stats(&self) -> Result<GraphEngineStats> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_engine_stats(),
-            GraphEngineImpl::Pulsar(engine) => engine.get_engine_stats(),
-            GraphEngineImpl::Quasar(engine) => engine.get_engine_stats(),
         }
     }
 
     fn get_memory_usage(&self) -> Result<MemoryUsage> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_memory_usage(),
-            GraphEngineImpl::Pulsar(engine) => engine.get_memory_usage(),
-            GraphEngineImpl::Quasar(engine) => engine.get_memory_usage(),
         }
     }
 
@@ -1037,32 +673,24 @@ impl GraphEngine for GraphEngineImpl {
     async fn bulk_insert_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.bulk_insert_nodes(nodes).await,
-            GraphEngineImpl::Pulsar(engine) => engine.bulk_insert_nodes(nodes).await,
-            GraphEngineImpl::Quasar(engine) => engine.bulk_insert_nodes(nodes).await,
         }
     }
 
     async fn bulk_insert_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.bulk_insert_edges(edges).await,
-            GraphEngineImpl::Pulsar(engine) => engine.bulk_insert_edges(edges).await,
-            GraphEngineImpl::Quasar(engine) => engine.bulk_insert_edges(edges).await,
         }
     }
 
     async fn bulk_delete_nodes(&self, node_ids: Vec<NodeId>) -> Result<Vec<Option<Arc<Node>>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.bulk_delete_nodes(node_ids).await,
-            GraphEngineImpl::Pulsar(engine) => engine.bulk_delete_nodes(node_ids).await,
-            GraphEngineImpl::Quasar(engine) => engine.bulk_delete_nodes(node_ids).await,
         }
     }
 
     async fn bulk_delete_edges(&self, edge_ids: Vec<EdgeId>) -> Result<Vec<Option<Arc<Edge>>>> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.bulk_delete_edges(edge_ids).await,
-            GraphEngineImpl::Pulsar(engine) => engine.bulk_delete_edges(edge_ids).await,
-            GraphEngineImpl::Quasar(engine) => engine.bulk_delete_edges(edge_ids).await,
         }
     }
 }
@@ -1079,28 +707,15 @@ impl GraphEngineFactory {
         GraphEngineImpl::new(engine_type, config)
     }
 
-    /// Create QUASAR engine asynchronously (required for initialization)
-    pub async fn create_quasar_engine_async(
-        config: quasar::QuasarConfig,
-    ) -> Result<GraphEngineImpl> {
-        GraphEngineImpl::new_quasar_async(config).await
-    }
-
     /// Get available engine types
     pub fn available_engines() -> Vec<GraphEngineType> {
-        vec![
-            GraphEngineType::Orion,
-            GraphEngineType::Pulsar,
-            GraphEngineType::Quasar,
-        ]
+        vec![GraphEngineType::Orion]
     }
 
     /// Get engine type from string
     pub fn engine_type_from_string(name: &str) -> Option<GraphEngineType> {
         match name.to_lowercase().as_str() {
             "orion" => Some(GraphEngineType::Orion),
-            "pulsar" => Some(GraphEngineType::Pulsar),
-            "quasar" => Some(GraphEngineType::Quasar),
             _ => None,
         }
     }
@@ -1108,17 +723,12 @@ impl GraphEngineFactory {
 
 /// Configuration for graph engine creation
 #[derive(Debug, Clone, Default)]
-pub struct GraphEngineConfig {
-    /// Optional PULSAR distributed engine configuration.
-    pub pulsar_config: Option<pulsar::PulsarConfig>,
-    /// Optional QUASAR hybrid tiering engine configuration.
-    pub quasar_config: Option<quasar::QuasarConfig>,
-}
+pub struct GraphEngineConfig;
 
 /// Engine capabilities description
 #[derive(Debug, Clone)]
 pub struct EngineCapabilities {
-    /// Engine name (e.g. "ORION", "PULSAR", "QUASAR").
+    /// Engine name, currently "ORION".
     pub name: String,
     /// Human-readable description of the engine.
     pub description: String,
@@ -1136,62 +746,24 @@ impl GraphEngineFactory {
         match engine_type {
             GraphEngineType::Orion => EngineCapabilities {
                 name: "ORION".to_string(),
-                description: "In-memory CSR format for real-time traversal".to_string(),
+                description: "Canonical graph runtime with rebuildable CSR projections".to_string(),
                 features: vec![
                     "CSR (Compressed Sparse Row) storage".to_string(),
                     "Arc-based zero-copy sharing".to_string(),
                     "DashMap concurrent access".to_string(),
                     "Label and property indexes".to_string(),
+                    "Graph-aware hints for relational distributed planning".to_string(),
+                    "Projection tiering policy delegated to catalog/storage layers".to_string(),
                 ],
                 use_cases: vec![
                     "Real-time graph traversal".to_string(),
                     "Interactive graph queries".to_string(),
-                    "Small to medium graphs (<1M nodes)".to_string(),
+                    "Graph projections over canonical records".to_string(),
                 ],
                 performance_characteristics: vec![
                     "1M+ edges/second traversal".to_string(),
                     "<1μs node lookup".to_string(),
                     "<100 bytes/node memory overhead".to_string(),
-                ],
-            },
-            GraphEngineType::Pulsar => EngineCapabilities {
-                name: "PULSAR (Legacy)".to_string(),
-                description: "Experimental distributed sharded engine (Retirement Candidate)"
-                    .to_string(),
-                features: vec![
-                    "Consistent hash-based sharding".to_string(),
-                    "Configurable replication (1-3x)".to_string(),
-                    "Cross-shard query coordination".to_string(),
-                    "Distributed BFS/DFS traversal".to_string(),
-                ],
-                use_cases: vec![
-                    "Legacy distributed workloads".to_string(),
-                    "Research and experimentation".to_string(),
-                ],
-                performance_characteristics: vec![
-                    "Experimental horizontal scalability".to_string(),
-                    "Note: Performance may vary significantly from production standards"
-                        .to_string(),
-                ],
-            },
-            GraphEngineType::Quasar => EngineCapabilities {
-                name: "QUASAR (Legacy)".to_string(),
-                description: "Experimental hybrid hot/cold tiering (Retirement Candidate)"
-                    .to_string(),
-                features: vec![
-                    "Automatic hot/cold tiering".to_string(),
-                    "LRU-based cache management".to_string(),
-                    "Access pattern tracking".to_string(),
-                    "Background data migration".to_string(),
-                ],
-                use_cases: vec![
-                    "Cost-optimization research".to_string(),
-                    "Sparse graph workloads (experimental)".to_string(),
-                ],
-                performance_characteristics: vec![
-                    "Experimental storage cost savings".to_string(),
-                    "Note: Cold tier has no canonical record binding in current version"
-                        .to_string(),
                 ],
             },
         }

@@ -291,7 +291,7 @@ pub struct GraphRuntimeConfig {
     /// Per-node/iteration adjacency prefetch budget.
     pub prefetch_budget: usize,
 
-    /// Select graph engine ("ORION"|"PULSAR"|"QUASAR").
+    /// Select graph engine ("ORION").
     pub engine: String,
 
     /// Embedding storage mode: "none" (default), "cold", "memory".

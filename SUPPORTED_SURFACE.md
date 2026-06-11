@@ -15,10 +15,11 @@ Current v0.2 positioning in short:
 - Beta: hybrid retrieval, document, graph, observability, pgwire/federated SQL,
   object-economy vector routes, filtered ANN routing, security runtime, and
   time/event foundations.
-- Experimental or post-MVP: distributed execution, PULSAR/QUASAR production
-  claims, full SQL parity, external-table execution, Arrow Flight as a
+- Experimental or post-MVP: distributed execution, full SQL parity,
+  external-table execution, Arrow Flight as a
   customer-facing transport, Spark shard-aware partitioning, JVM DataSource V2
   filter pushdown, collection-default freshness, recall-gate enforcement,
   filtered-ANN recall SLA, and object-economy benchmark/SLA claims.
+- Retired/not supported: PULSAR and QUASAR graph engine names; use ORION.
 
 Do not add release claims here. Update `docs/SUPPORTED_SURFACE.adoc` instead.

@@ -26,8 +26,8 @@
          │           │          │          │          │       │
          ▼           ▼          ▼          ▼          ▼       │
     ┌──────────┐ ┌────────┐ ┌───────┐ ┌────────┐ ┌────────┐  │
-    │SST/HELIX │ │ CEDAR  │ │ORION/ │ │CHRONO  │ │SEQUOIA │  │
-    │VIPER/NOVA│ │        │ │PULSAR │ │        │ │        │  │
+    │SST/HELIX │ │ CEDAR  │ │ORION  │ │CHRONO  │ │SEQUOIA │  │
+    │VIPER/NOVA│ │        │ │Runtime│ │        │ │        │  │
     └──────────┘ └────────┘ └───────┘ └────────┘ └────────┘  │
          │           │          │          │          │       │
     Optimized    Document    Node/Edge  Metric/    TypedRow   │
@@ -48,7 +48,7 @@
 pub enum StoreType {
     Vector,        // SST/HELIX/VIPER/NOVA → OptimizedSearchRecord
     Document,      // CEDAR                → DocumentRecord
-    Graph,         // ORION/PULSAR         → Node/Edge/Path
+    Graph,         // ORION                → Node/Edge/Path
     Observability, // CHRONO               → MetricSample/LogEntry/TraceData
     Relational,    // SEQUOIA              → TypedRow
 }
