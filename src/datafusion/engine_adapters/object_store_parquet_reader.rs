@@ -238,6 +238,35 @@ impl ObjectStoreParquetTable {
         self.splits.len()
     }
 
+    /// Total rows across all row-group splits (from Parquet footer statistics),
+    /// or `None` when no split carries a row count. Footer-`fresh` — used by the
+    /// read-route EXPLAIN to disclose the table's estimated scan cardinality.
+    pub fn estimated_rows(&self) -> Option<u64> {
+        let mut total = 0u64;
+        let mut any = false;
+        for split in &self.splits {
+            if let Some(rows) = split.statistics.row_count {
+                total = total.saturating_add(rows);
+                any = true;
+            }
+        }
+        any.then_some(total)
+    }
+
+    /// Total on-disk bytes across all row-group splits (from Parquet footer
+    /// statistics), or `None` when no split carries a byte size.
+    pub fn estimated_bytes(&self) -> Option<u64> {
+        let mut total = 0u64;
+        let mut any = false;
+        for split in &self.splits {
+            if let Some(bytes) = split.statistics.byte_size {
+                total = total.saturating_add(bytes);
+                any = true;
+            }
+        }
+        any.then_some(total)
+    }
+
     /// Count row-group splits that survive the given filters.
     pub fn pruned_split_count(&self, filters: &[Expr]) -> usize {
         self.prune_splits(filters).len()
@@ -562,6 +591,24 @@ mod tests {
         let table = ObjectStoreParquetTable::open(&location).await.unwrap();
         assert_eq!(table.split_count(), 2);
         assert_eq!(table.schema().fields().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn estimated_rows_and_bytes_sum_row_group_footer_stats() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        // Two row groups of 2 rows each → 4 rows total.
+        write_two_row_group_parquet(&data_dir.join("part-0.parquet"));
+
+        let location = format!("file://{}", tmp.path().display());
+        let table = ObjectStoreParquetTable::open(&location).await.unwrap();
+        assert_eq!(table.split_count(), 2);
+        assert_eq!(table.estimated_rows(), Some(4));
+        assert!(
+            table.estimated_bytes().unwrap_or(0) > 0,
+            "row-group byte sizes are present in the footer"
+        );
     }
 
     #[tokio::test]

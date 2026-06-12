@@ -644,6 +644,48 @@ mod datafusion_route_tests {
     }
 
     #[tokio::test]
+    async fn parquet_split_summary_discloses_row_group_inventory() {
+        use parquet::arrow::ArrowWriter;
+        use parquet::file::properties::WriterProperties;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Int64, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![1_i64, 2, 3, 4]))],
+        )
+        .unwrap();
+        {
+            // Two row groups of 2 rows each → 4 rows / 2 partitions.
+            let props = WriterProperties::builder()
+                .set_max_row_group_size(2)
+                .build();
+            let file = std::fs::File::create(data_dir.join("part-0.parquet")).unwrap();
+            let mut writer = ArrowWriter::try_new(file, schema, Some(props)).unwrap();
+            writer.write(&batch).unwrap();
+            writer.close().unwrap();
+        }
+
+        let location = format!("file://{}", tmp.path().display());
+        let summary = parquet_split_summary(&[location])
+            .await
+            .expect("split summary for a Parquet-backed location");
+
+        assert_eq!(
+            summary.strategy,
+            crate::query::read_route::ReadSplitStrategy::RowGroup
+        );
+        assert_eq!(summary.partition_count, 2);
+        assert_eq!(summary.estimated_rows, Some(4));
+        assert_eq!(summary.stats_freshness, "fresh");
+
+        // No locations → no disclosure (caller keeps the conservative summary).
+        assert!(parquet_split_summary(&[]).await.is_none());
+    }
+
+    #[tokio::test]
     async fn run_datafusion_select_executes_olap_over_parquet() {
         use parquet::arrow::ArrowWriter;
 
@@ -1204,15 +1246,26 @@ async fn route_and_plan_select(
 
     #[allow(unused_mut)]
     let mut parquet_backed = false;
+    // Locations of the all-Parquet table set, captured during the route check so the
+    // EXPLAIN split disclosure can reopen exactly the objects the executor scans.
+    #[cfg(feature = "datafusion-integration")]
+    let mut parquet_locations: Vec<String> = Vec::new();
     #[cfg(feature = "datafusion-integration")]
     {
         let mut names = Vec::new();
         collect_table_names(query, &mut names);
         if !names.is_empty() {
             let mut all_parquet = true;
+            let mut locations = Vec::with_capacity(names.len());
             for raw in &names {
                 match dml.resolve_relational_schema(raw).await {
-                    Ok(schema) if catalog_table_is_parquet_backed(&schema).is_some() => {}
+                    Ok(schema) => match catalog_table_is_parquet_backed(&schema) {
+                        Some(location) => locations.push(location),
+                        None => {
+                            all_parquet = false;
+                            break;
+                        }
+                    },
                     _ => {
                         all_parquet = false;
                         break;
@@ -1220,6 +1273,9 @@ async fn route_and_plan_select(
                 }
             }
             parquet_backed = all_parquet;
+            if all_parquet {
+                parquet_locations = locations;
+            }
         }
     }
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
@@ -1229,6 +1285,22 @@ async fn route_and_plan_select(
         },
     );
     let mut explanation = decision_to_explanation(&decision);
+    // For the DataFusion route, disclose the concrete Parquet row-group split
+    // inventory (partition count + footer row/byte estimates) in place of the
+    // conservative whole-collection placeholder, by reading the same object-store
+    // tables the executor will scan. Best-effort: any open failure leaves the
+    // conservative summary intact rather than failing EXPLAIN.
+    #[cfg(feature = "datafusion-integration")]
+    if matches!(
+        decision.backend,
+        crate::query::table_write_plan::ComputeBackend::DataFusionLocal
+    ) {
+        if let Some(summary) = parquet_split_summary(&parquet_locations).await {
+            explanation.read_route = decision
+                .routed_read_plan_with_splits(summary)
+                .route_explanation();
+        }
+    }
     // Disclose the planned physical plan for native (Volcano) PATH B queries — the same
     // plan execution runs (via the shared `prepare_select_plan` / `execute_physical`).
     if engages
@@ -1254,6 +1326,41 @@ async fn route_and_plan_select(
         }
     }
     Ok(explanation)
+}
+
+/// Open the object-store Parquet tables backing a DataFusion-routed query and sum
+/// their row-group split inventory into a [`crate::query::read_route::ReadSplitSummary`]
+/// for EXPLAIN. Returns `None` (caller keeps the conservative whole-collection
+/// summary) when there are no locations or any table fails to open — split
+/// disclosure is diagnostic and must never make EXPLAIN itself fail.
+#[cfg(feature = "datafusion-integration")]
+async fn parquet_split_summary(
+    locations: &[String],
+) -> Option<crate::query::read_route::ReadSplitSummary> {
+    use crate::datafusion::engine_adapters::ObjectStoreParquetTable;
+    if locations.is_empty() {
+        return None;
+    }
+    let mut partitions = 0usize;
+    let (mut rows, mut bytes) = (0u64, 0u64);
+    let (mut any_rows, mut any_bytes) = (false, false);
+    for location in locations {
+        let table = ObjectStoreParquetTable::open(location).await.ok()?;
+        partitions += table.split_count();
+        if let Some(r) = table.estimated_rows() {
+            rows = rows.saturating_add(r);
+            any_rows = true;
+        }
+        if let Some(b) = table.estimated_bytes() {
+            bytes = bytes.saturating_add(b);
+            any_bytes = true;
+        }
+    }
+    Some(crate::query::read_route::ReadSplitSummary::row_groups(
+        partitions,
+        any_rows.then_some(rows),
+        any_bytes.then_some(bytes),
+    ))
 }
 
 /// Append per-operator actuals to each physical-plan line. Metrics are pre-order

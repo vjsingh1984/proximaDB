@@ -34,7 +34,7 @@
 //! later phases have a single, contract-bound place to evolve.
 
 use crate::query::read_route::{
-    CandidateReadRoute, ReadFreshnessSla, ReadPolicyBoundary, RoutedReadPlan,
+    CandidateReadRoute, ReadFreshnessSla, ReadPolicyBoundary, ReadSplitSummary, RoutedReadPlan,
 };
 use crate::query::table_write_plan::ComputeBackend;
 use proximadb_catalog::CatalogAuthorityMode;
@@ -105,6 +105,14 @@ impl SelectRouteDecision {
             reason: self.reason.clone(),
         }];
         plan
+    }
+
+    /// Like [`Self::routed_read_plan`] but carries a concrete split inventory
+    /// (e.g. the Parquet row groups discovered for a `DataFusionLocal` route)
+    /// instead of the conservative whole-collection placeholder, so EXPLAIN
+    /// discloses the real partition count the executor fans out over.
+    pub fn routed_read_plan_with_splits(&self, split_summary: ReadSplitSummary) -> RoutedReadPlan {
+        self.routed_read_plan().with_split_summary(split_summary)
     }
 }
 
@@ -267,6 +275,24 @@ mod tests {
             parquet_backed: true,
         });
         assert_eq!(d.backend, ComputeBackend::Native);
+    }
+
+    #[test]
+    fn datafusion_route_carries_concrete_row_group_split_inventory() {
+        let plan = ComputeScheduler::new()
+            .route_select(QueryShape {
+                engages_relational: true,
+                parquet_backed: true,
+            })
+            .routed_read_plan_with_splits(ReadSplitSummary::row_groups(8, Some(50_000), Some(1 << 20)));
+
+        assert_eq!(plan.backend, ComputeBackend::DataFusionLocal);
+        let explain = plan.route_explanation();
+        assert_eq!(explain.selected_backend, "DataFusionLocal");
+        // Real row-group inventory, not the whole-collection `1`-partition default.
+        assert_eq!(explain.split_strategy, "row_group");
+        assert_eq!(explain.partition_count, 8);
+        assert_eq!(explain.estimated_rows, Some(50_000));
     }
 
     #[test]

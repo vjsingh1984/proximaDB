@@ -112,6 +112,41 @@ impl ReadSplitSummary {
             stats_freshness: "absent".to_string(),
         }
     }
+
+    /// Row-group (file-internal columnar) splits — the local DataFusion/Parquet
+    /// access path, where each scanned Parquet row group is one partition.
+    /// Statistics are `fresh`: they come straight from the just-read Parquet
+    /// footer metadata, not a cached/stale catalog estimate.
+    pub fn row_groups(
+        partition_count: usize,
+        estimated_rows: Option<u64>,
+        estimated_bytes: Option<u64>,
+    ) -> Self {
+        Self {
+            strategy: ReadSplitStrategy::RowGroup,
+            partition_count,
+            estimated_rows,
+            estimated_bytes,
+            stats_freshness: "fresh".to_string(),
+        }
+    }
+
+    /// Object/file-inventory splits — the distributed/federated access path
+    /// where each Parquet object (or external file) is one partition. Like
+    /// [`Self::row_groups`], statistics are footer-`fresh`.
+    pub fn object_files(
+        partition_count: usize,
+        estimated_rows: Option<u64>,
+        estimated_bytes: Option<u64>,
+    ) -> Self {
+        Self {
+            strategy: ReadSplitStrategy::ObjectFile,
+            partition_count,
+            estimated_rows,
+            estimated_bytes,
+            stats_freshness: "fresh".to_string(),
+        }
+    }
 }
 
 /// Optional distributed placement metadata supplied by deployment/control-plane config.
@@ -179,6 +214,16 @@ impl RoutedReadPlan {
             rejected_routes: Vec::new(),
             distributed_placement: None,
         }
+    }
+
+    /// Replace the conservative whole-collection split summary with a concrete
+    /// split inventory (e.g. the Parquet row groups the local DataFusion reader
+    /// discovered), so EXPLAIN reports the real partition count the executor will
+    /// fan out over instead of the `1`-partition placeholder. Consumed
+    /// incrementally by the planner boundary as split planning is wired.
+    pub fn with_split_summary(mut self, split_summary: ReadSplitSummary) -> Self {
+        self.split_summary = split_summary;
+        self
     }
 
     pub fn route_explanation(&self) -> ReadRouteExplanation {
@@ -382,6 +427,31 @@ mod tests {
             explain.rejected_routes[0].reason_code,
             "unsupported_policy_boundary"
         );
+    }
+
+    #[test]
+    fn with_split_summary_overrides_whole_collection_placeholder() {
+        let routed = RoutedReadPlan::native_whole_collection(CatalogWorkloadProfile::Olap)
+            .with_split_summary(ReadSplitSummary::row_groups(4, Some(1_000), Some(2_048)));
+        let explain = routed.route_explanation();
+
+        // The conservative `whole_collection`/`1` placeholder is replaced by the
+        // concrete row-group inventory the executor will fan out over.
+        assert_eq!(explain.split_strategy, "row_group");
+        assert_eq!(explain.partition_count, 4);
+        assert_eq!(explain.estimated_rows, Some(1_000));
+        assert_eq!(explain.estimated_bytes, Some(2_048));
+        assert_eq!(explain.stats_freshness, "fresh");
+    }
+
+    #[test]
+    fn object_file_split_summary_reports_object_inventory() {
+        let summary = ReadSplitSummary::object_files(32, Some(10_000_000), None);
+        assert_eq!(summary.strategy, ReadSplitStrategy::ObjectFile);
+        assert_eq!(summary.partition_count, 32);
+        assert_eq!(summary.estimated_rows, Some(10_000_000));
+        assert_eq!(summary.estimated_bytes, None);
+        assert_eq!(summary.stats_freshness, "fresh");
     }
 
     #[test]
