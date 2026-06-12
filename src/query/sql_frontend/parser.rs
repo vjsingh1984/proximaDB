@@ -2311,6 +2311,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_ddl_alter_table_materialize_routes_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+
+        for sql in ["ALTER TABLE inv MATERIALIZE", "alter table \"inv\" materialize;"] {
+            let statement = parser
+                .parse_ddl(sql)
+                .expect("expected ddl parse to succeed")
+                .expect("expected materialize ddl");
+            match statement {
+                DdlStatement::MaterializeTable { name } => assert_eq!(name, "inv"),
+                other => panic!("expected MaterializeTable, got {:?}", other),
+            }
+        }
+
+        // Not a MATERIALIZE statement → the pre-parser declines (sqlparser handles it).
+        assert!(matches!(
+            parser.parse_ddl("DROP TABLE inv;"),
+            Ok(Some(DdlStatement::DropTable { .. }))
+        ));
+        // Malformed MATERIALIZE (extra tokens) → pre-parser declines, sqlparser then errors.
+        assert!(parser.parse_ddl("ALTER TABLE inv MATERIALIZE NOW").is_err());
+    }
+
+    #[test]
     fn parse_ddl_drop_index_supports_drop_index() {
         let parser = SqlFrontendParser::new();
 
@@ -2552,6 +2576,10 @@ impl SqlFrontendParser {
         if let Some(result) = try_parse_create_function(sql)? {
             return Ok(Some(result));
         }
+        // Pattern: ALTER TABLE <name> MATERIALIZE (warehouse publish → Parquet-backed)
+        if let Some(result) = self.try_parse_materialize_table(sql)? {
+            return Ok(Some(result));
+        }
 
         let statements = Parser::parse_sql(&self.dialect, sql)
             .map_err(|e| anyhow!("SQL parsing failed: {}", e))?;
@@ -2569,6 +2597,39 @@ impl SqlFrontendParser {
 
         let statement = &statements[0];
         self.try_convert_ddl(statement)
+    }
+
+    /// Intercept `ALTER TABLE <name> MATERIALIZE` before sqlparser (MATERIALIZE is a
+    /// ProximaDB extension sqlparser does not understand). Publishes the table's
+    /// current rows as a Parquet snapshot and marks it Parquet-backed for the OLAP
+    /// route. Returns `Ok(Some(..))` on match, `Ok(None)` otherwise.
+    fn try_parse_materialize_table(&self, sql: &str) -> Result<Option<DdlStatement>> {
+        let normalised = sql.trim().trim_end_matches(';').trim();
+        let upper = normalised.to_uppercase();
+
+        // Fast path: skip anything that is not a MATERIALIZE statement.
+        if !upper.contains("MATERIALIZE") {
+            return Ok(None);
+        }
+
+        // Expected exactly: ALTER TABLE <name> MATERIALIZE
+        let tokens: Vec<&str> = normalised.split_whitespace().collect();
+        if tokens.len() != 4 {
+            return Ok(None);
+        }
+        let t = |i: usize| tokens.get(i).map(|s| s.to_uppercase());
+        if t(0).as_deref() != Some("ALTER")
+            || t(1).as_deref() != Some("TABLE")
+            || t(3).as_deref() != Some("MATERIALIZE")
+        {
+            return Ok(None);
+        }
+
+        let name = tokens[2].trim_matches('"').to_string();
+        if name.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(DdlStatement::MaterializeTable { name }))
     }
 
     /// Intercept `ALTER TABLE <name> PROMOTE PROPS KEY <key> TYPE <type>` before sqlparser.
