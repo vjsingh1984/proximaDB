@@ -2876,32 +2876,13 @@ impl DmlService {
         records: &[ProximaRecord],
         primary_key: Option<&str>,
     ) -> Result<Vec<crate::services::record_store::UniqueCandidateSet>> {
-        let unique_sets = Self::unique_column_sets(table_schema);
-        let mut candidate_sets = Vec::with_capacity(unique_sets.len());
-        for columns in &unique_sets {
-            let mut candidates: std::collections::HashSet<Vec<String>> =
-                std::collections::HashSet::new();
-            for record in records {
-                let Some(tuple) = record_unique_tuple(record, columns, primary_key) else {
-                    continue; // NULL/absent in the tuple → exempt
-                };
-                if !candidates.insert(tuple.clone()) {
-                    return Err(anyhow!(
-                        "duplicate key value violates unique constraint on ({}) for table '{}': ({}) appears more than once in this statement",
-                        columns.join(", "),
-                        table_schema.name,
-                        tuple.join(", ")
-                    ));
-                }
-            }
-            if !candidates.is_empty() {
-                candidate_sets.push(crate::services::record_store::UniqueCandidateSet {
-                    columns: columns.clone(),
-                    candidates,
-                });
-            }
-        }
-        Ok(candidate_sets)
+        // Shared with the INSERT-SELECT native executor so every write path
+        // builds UNIQUE candidates identically (TD-110).
+        crate::services::record_store::build_unique_candidate_sets(
+            table_schema,
+            records,
+            primary_key,
+        )
     }
 
     /// TD-110: enforce FOREIGN KEY references for `records` against parent tables

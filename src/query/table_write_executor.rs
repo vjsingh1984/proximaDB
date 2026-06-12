@@ -294,6 +294,39 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
             if batch.is_empty() {
                 continue;
             }
+            // TD-110: enforce non-PK UNIQUE on the INSERT-SELECT / native path.
+            // Within-batch dedup + cross-existing probe per unique set; cross-BATCH
+            // duplicates are caught because each prior batch is committed before the
+            // next batch's probe. (PK duplicates are rejected by write_mutations'
+            // Insert-conflict check; FK enforcement on this path is a follow-up —
+            // the native executor has no catalog handle to resolve parents.)
+            let primary_key =
+                crate::services::record_store::schema_primary_key_column(request.target_schema);
+            let candidate_sets = crate::services::record_store::build_unique_candidate_sets(
+                request.target_schema,
+                &batch,
+                primary_key.as_deref(),
+            )?;
+            if !candidate_sets.is_empty()
+                && let Some(conflict) = self
+                    .record_store
+                    .check_unique_conflict(
+                        request.target_schema,
+                        &request.target_schema.name,
+                        primary_key.as_deref(),
+                        &candidate_sets,
+                        &std::collections::HashSet::new(),
+                        None,
+                    )
+                    .await?
+            {
+                return Err(anyhow!(
+                    "duplicate key value violates unique constraint on ({}) for table '{}': ({}) already exists",
+                    conflict.columns.join(", "),
+                    request.target_schema.name,
+                    conflict.tuple.join(", ")
+                ));
+            }
             let mutations = batch
                 .into_iter()
                 .map(|record| TableRecordMutation::new(mutation_kind, record))
@@ -858,6 +891,77 @@ mod tests {
             writes
                 .iter()
                 .all(|mutation| mutation.kind == TableRecordMutationKind::Insert)
+        );
+    }
+
+    #[tokio::test]
+    async fn native_executor_rejects_within_batch_unique_duplicate() {
+        // TD-110: the INSERT-SELECT / native write path now enforces UNIQUE — two
+        // source rows sharing a UNIQUE value in one batch are rejected, and nothing
+        // is committed. (Previously this path bypassed UNIQUE entirely.)
+        use proximadb_catalog::{
+            CatalogColumn, CatalogIndex, CatalogIndexType, RelationalCapabilities,
+        };
+        use proximadb_data_model::{ProximaType, ProximaValue};
+        use proximadb_records::ProximaTreeNode;
+
+        let schema = CatalogTableSchema::new("members")
+            .with_storage_specialization(CatalogStorageSpecialization::PaxOltp)
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "email", ProximaType::String))
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["id".to_string()],
+                unique_indexes: vec![
+                    CatalogIndex::new("uq_email", vec!["email".to_string()], CatalogIndexType::BTree)
+                        .unique(),
+                ],
+                ..Default::default()
+            });
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("members"), "SELECT * FROM staging");
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: &schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: None,
+                plan: &plan,
+            });
+        assert_eq!(routed.backend, ComputeBackend::Native);
+
+        let with_email = |id: &str, email: &str| {
+            let mut record = test_record(id);
+            record.props.insert(
+                "email".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(email.to_string())),
+            );
+            record
+        };
+        let source = Arc::new(VecSourceReader::new(vec![vec![
+            with_email("r1", "dup@x.com"),
+            with_email("r2", "dup@x.com"),
+        ]]));
+        let store = Arc::new(CapturingRecordStore {
+            writes: Mutex::new(Vec::new()),
+        });
+
+        let err = NativeTableWriteExecutor::new(source, store.clone())
+            .execute(TableWriteExecutionRequest {
+                target_schema: &schema,
+                source_schema: None,
+                routed_plan: routed,
+                tenant_context: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("appears more than once"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            store.writes.lock().unwrap().is_empty(),
+            "no rows should be committed when a batch violates UNIQUE"
         );
     }
 

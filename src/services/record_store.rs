@@ -649,6 +649,42 @@ pub(crate) fn schema_primary_key_column(table_schema: &CatalogTableSchema) -> Op
     })
 }
 
+/// Build the per-set candidate tuples for `records`, rejecting a tuple that
+/// repeats within this statement (NULL tuples exempt). Shared by the INSERT /
+/// UPDATE enforcement in `DmlService` and the INSERT-SELECT native executor so
+/// every write path applies UNIQUE the same way. (TD-110.)
+pub(crate) fn build_unique_candidate_sets(
+    table_schema: &CatalogTableSchema,
+    records: &[ProximaRecord],
+    primary_key: Option<&str>,
+) -> Result<Vec<UniqueCandidateSet>> {
+    let mut candidate_sets = Vec::new();
+    for columns in schema_unique_column_sets(table_schema) {
+        let mut candidates: std::collections::HashSet<Vec<String>> =
+            std::collections::HashSet::new();
+        for record in records {
+            let Some(tuple) = record_unique_tuple(record, &columns, primary_key) else {
+                continue; // NULL/absent in the tuple → exempt
+            };
+            if !candidates.insert(tuple.clone()) {
+                return Err(anyhow!(
+                    "duplicate key value violates unique constraint on ({}) for table '{}': ({}) appears more than once in this statement",
+                    columns.join(", "),
+                    table_schema.name,
+                    tuple.join(", ")
+                ));
+            }
+        }
+        if !candidates.is_empty() {
+            candidate_sets.push(UniqueCandidateSet {
+                columns,
+                candidates,
+            });
+        }
+    }
+    Ok(candidate_sets)
+}
+
 /// xCatalog-routed table-record store.
 ///
 /// The router makes the migration rule explicit: DML chooses a writer from
