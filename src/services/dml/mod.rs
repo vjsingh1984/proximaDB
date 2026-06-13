@@ -3742,6 +3742,48 @@ impl DmlService {
     }
 }
 
+/// Adapts [`DmlService`] + an object-store bridge into the DDL-layer
+/// [`TableMaterializer`](crate::services::ddl::TableMaterializer) capability, so
+/// `ALTER TABLE … MATERIALIZE` can run without `DdlService` depending on the DML
+/// service or object storage directly. Boot wires one of these (with the configured
+/// warehouse store) into the `DdlService`.
+pub struct DmlTableMaterializer {
+    dml: Arc<DmlService>,
+    bridge: Arc<dyn ObjectStoreBridge>,
+    warehouse_root_url: String,
+}
+
+impl DmlTableMaterializer {
+    /// Build a materializer over `dml`, writing snapshots into `bridge` and publishing
+    /// catalog locations rooted at `warehouse_root_url` (the URL the OLAP reader reopens
+    /// the same store from).
+    pub fn new(
+        dml: Arc<DmlService>,
+        bridge: Arc<dyn ObjectStoreBridge>,
+        warehouse_root_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            dml,
+            bridge,
+            warehouse_root_url: warehouse_root_url.into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::services::ddl::TableMaterializer for DmlTableMaterializer {
+    async fn materialize(&self, table_name: &str) -> Result<String> {
+        self.dml
+            .materialize_table_to_parquet(
+                &*self.bridge,
+                &self.warehouse_root_url,
+                table_name,
+                None,
+            )
+            .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5840,6 +5882,90 @@ mod tests {
             proximadb_catalog::CatalogAuthorityMode::ProjectionPublication
         ));
         assert_eq!(layout.location.as_deref(), Some(location.as_str()));
+    }
+
+    /// P3.3: `ALTER TABLE … MATERIALIZE` routed through DdlService + a wired
+    /// DmlTableMaterializer flips the catalog layout; an unwired DdlService errors cleanly.
+    #[tokio::test]
+    async fn alter_table_materialize_via_ddl_flips_catalog_layout() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-mat-ddl.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+        ));
+        let dml = Arc::new(DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        ));
+        for (id, status, qty) in [("i1", "active", 5), ("i2", "idle", 25)] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO inv (id, status, qty) VALUES ('{id}', '{status}', {qty});"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // Wire a materializer (DmlService + bridge) into a DdlService and run the trigger.
+        let bridge = Arc::new(IcebergObjectStoreBridge::from_url("memory:///wh").unwrap());
+        let materializer = Arc::new(DmlTableMaterializer::new(
+            dml.clone(),
+            bridge.clone(),
+            "memory:///wh",
+        ));
+        let ddl_mat = DdlService::new(manager.clone()).with_materializer(materializer);
+        ddl_mat
+            .execute(DdlStatement::MaterializeTable { name: "inv".to_string() })
+            .await
+            .expect("materialize via DDL");
+
+        // The catalog layout is now a published Parquet projection.
+        let (catalog, id) = manager.resolve_table("inv").await.expect("resolve");
+        let schema = catalog.get_table(&id).await.expect("get table");
+        assert!(matches!(
+            schema.storage_layouts[0].physical_format,
+            proximadb_catalog::CatalogPhysicalFormat::Parquet
+        ));
+        assert!(matches!(
+            schema.storage_layouts[0].authority,
+            proximadb_catalog::CatalogAuthorityMode::ProjectionPublication
+        ));
+
+        // A DdlService WITHOUT a materializer rejects the statement cleanly.
+        let ddl_bare = DdlService::new(manager.clone());
+        assert!(
+            ddl_bare
+                .execute(DdlStatement::MaterializeTable { name: "inv".to_string() })
+                .await
+                .is_err(),
+            "MATERIALIZE without a configured materializer must error"
+        );
     }
 
     /// P3 end-to-end: materialize a table to a Parquet snapshot on a REOPENABLE
