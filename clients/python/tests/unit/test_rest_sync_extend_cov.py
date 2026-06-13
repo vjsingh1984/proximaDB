@@ -934,6 +934,174 @@ def test_search_batch_with_filter(monkeypatch):
     assert kw["json"]["params"]["exact_search"] is True
 
 
+# ----------------------------------------- real _make_request internals
+
+
+class _FakeReqHttp:
+    """Stands in for httpx.Client; records .request() calls."""
+
+    def __init__(self, resp=None, exc=None):
+        self.calls = []
+        self._resp = resp
+        self._exc = exc
+
+    def request(self, method, endpoint, **kw):
+        self.calls.append((method, endpoint, kw))
+        if self._exc is not None:
+            raise self._exc
+        return self._resp
+
+    def close(self):
+        pass
+
+
+def test_make_request_plain(monkeypatch):
+    c = ProximaDBClient(url="http://testserver")
+    resp = FakeResp({"ok": True}, status=200)
+    http = _FakeReqHttp(resp=resp)
+    monkeypatch.setattr(c, "_http_client", http)
+    out = c._make_request("GET", "/health")
+    assert out is resp
+    assert http.calls[0][0] == "GET"
+    c.close()
+
+
+def test_make_request_compresses_big_payload(monkeypatch):
+    import gzip
+
+    c = ProximaDBClient(url="http://testserver")
+    c.config.compression.enabled = True
+    c.config.compression.algorithm = "gzip"
+    c.config.compression.threshold_bytes = 1
+    http = _FakeReqHttp(resp=FakeResp({"ok": True}))
+    monkeypatch.setattr(c, "_http_client", http)
+    big = {"data": "x" * 5000}
+    c._make_request("POST", "/api/v2/collections", json=big)
+    _, _, kw = http.calls[0]
+    # json replaced by compressed content + gzip Content-Encoding header
+    assert "content" in kw
+    assert kw["headers"]["Content-Encoding"] == "gzip"
+    assert gzip.decompress(kw["content"]) == __import__("json").dumps(big).encode()
+    c.close()
+
+
+def test_make_request_small_payload_not_compressed(monkeypatch):
+    c = ProximaDBClient(url="http://testserver")
+    c.config.compression.enabled = True
+    c.config.compression.threshold_bytes = 100000
+    http = _FakeReqHttp(resp=FakeResp({"ok": True}))
+    monkeypatch.setattr(c, "_http_client", http)
+    c._make_request("POST", "/x", json={"a": 1})
+    _, _, kw = http.calls[0]
+    # too small -> left as json, no content
+    assert "json" in kw
+    assert "content" not in kw
+    c.close()
+
+
+def test_make_request_compress_brotli_header(monkeypatch):
+    c = ProximaDBClient(url="http://testserver")
+    c.config.compression.enabled = True
+    c.config.compression.algorithm = "br"
+    c.config.compression.threshold_bytes = 1
+    http = _FakeReqHttp(resp=FakeResp({"ok": True}))
+    monkeypatch.setattr(c, "_http_client", http)
+    c._make_request("POST", "/x", json={"k": "v" * 2000})
+    _, _, kw = http.calls[0]
+    assert kw["headers"]["Content-Encoding"] == "br"
+    c.close()
+
+
+def test_make_request_error_response_maps(monkeypatch):
+    from proximadb_sdk.exceptions import ProximaDBError
+
+    c = ProximaDBClient(url="http://testserver")
+    err = FakeResp({"message": "bad", "error_code": "X"}, status=400)
+    http = _FakeReqHttp(resp=err)
+    monkeypatch.setattr(c, "_http_client", http)
+    with pytest.raises(ProximaDBError):
+        c._make_request("GET", "/boom")
+    c.close()
+
+
+def test_make_request_timeout_exception(monkeypatch):
+    import httpx
+    from proximadb_sdk.exceptions import TimeoutError as PDBTimeout
+
+    c = ProximaDBClient(url="http://testserver")
+    # zero retries so the loop doesn't sleep/iterate
+    c.config.retry.max_retries = 0
+    http = _FakeReqHttp(exc=httpx.TimeoutException("slow"))
+    monkeypatch.setattr(c, "_http_client", http)
+    with pytest.raises(PDBTimeout):
+        c._make_request("GET", "/slow")
+    c.close()
+
+
+def test_make_request_network_exception(monkeypatch):
+    import httpx
+    from proximadb_sdk.exceptions import NetworkError
+
+    c = ProximaDBClient(url="http://testserver")
+    c.config.retry.max_retries = 0
+    http = _FakeReqHttp(exc=httpx.ConnectError("down"))
+    monkeypatch.setattr(c, "_http_client", http)
+    with pytest.raises(NetworkError):
+        c._make_request("GET", "/down")
+    c.close()
+
+
+def test_health_services_none_defaults(monkeypatch):
+    c = _make_client(
+        monkeypatch,
+        resp_body={"status": "ok", "services": None},
+    )
+    hs = c.health()
+    assert hs.services == {}
+
+
+def test_create_collection_filterable_columns(monkeypatch):
+    from proximadb_sdk.models import CollectionConfig, FilterableColumn
+
+    c = _make_client(
+        monkeypatch,
+        resp_body={
+            "collection": {
+                "id": "fc1",
+                "config": {
+                    "name": "withcols_x",
+                    "dimension": 8,
+                    "filterable_columns": [
+                        {"name": "price", "data_type": 3, "indexed": True}
+                    ],
+                },
+            }
+        },
+    )
+    cfg = CollectionConfig(
+        name="withcols_x",
+        dimension=8,
+        filterable_columns=[FilterableColumn(name="price", data_type="float")],
+    )
+    coll = c.create_collection("withcols_x", cfg)
+    assert coll.id == "fc1"
+    assert coll.config.filterable_columns is not None
+
+
+def test_create_collection_error_in_collection_field(monkeypatch):
+    from proximadb_sdk.exceptions import ProximaDBError
+
+    c = _make_client(
+        monkeypatch,
+        resp_body={"collection": None, "error": "boom creating"},
+    )
+    from proximadb_sdk.models import CollectionConfig
+
+    cfg = CollectionConfig(name="errcoll_xx", dimension=8)
+    with pytest.raises(ProximaDBError):
+        c.create_collection("errcoll_xx", cfg)
+
+
 def test_create_collection_fallback_response(monkeypatch):
     # Response with neither collection_id nor collection -> Collection(**data)
     c = _make_client(

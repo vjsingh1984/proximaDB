@@ -650,7 +650,7 @@ def test_rest_pool_return_client_zero_time_skips_avg(rest_pool):
 
 
 def test_rest_pool_get_connection_context(rest_pool):
-    with rest_pool.get_connection("search") as ctx:
+    with rest_pool.get_connection("search_vectors") as ctx:
         assert isinstance(ctx, RestClientContext)
         assert ctx.client is rest_pool._pools["search"]
     assert rest_pool.metrics.requests_served >= 1

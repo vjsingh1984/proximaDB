@@ -163,6 +163,34 @@ def test_rest_no_streaming_no_custom_hints_key():
     assert "custom_hints" not in out
 
 
+def test_rest_streaming_without_buffer_size_branch():
+    # `any([...])` is True via batch_size, but streaming_buffer_size is None
+    # so the buffer_size assignment branch is skipped (108->112).
+    out = build_search_optimization_rest(streaming_batch_size=4)
+    ch = out["custom_hints"]
+    assert "streaming_buffer_size" not in ch
+    assert ch["streaming_batch_size"] == 4
+
+
+def test_rest_streaming_concurrent_only():
+    out = build_search_optimization_rest(streaming_concurrent_search=True)
+    ch = out["custom_hints"]
+    assert ch["streaming_concurrent_search"] is True
+    assert "streaming_buffer_size" not in ch
+    assert "streaming_batch_size" not in ch
+
+
+def test_rest_quantization_string_then_clustering_branch():
+    # quantization_hint is a non-matching str (enters str block, no sub-branch,
+    # skips the dict elif at 79 -> falls through to 82) while clustering set.
+    out = build_search_optimization_rest(
+        quantization_hint="totally-unknown",
+        enable_clustering_hint=True,
+    )
+    assert "quantization_hint" not in out
+    assert out["enable_clustering_hint"] is True
+
+
 # ---------------------------------------------------------------------------
 # build_search_params_grpc
 # ---------------------------------------------------------------------------
