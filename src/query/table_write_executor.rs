@@ -15,7 +15,9 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use proximadb_catalog::{CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema};
+use proximadb_catalog::{
+    CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema, ColumnConstraint,
+};
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::object_store_bridge::{BridgeObjectPath as Path, ObjectStoreBridge};
 
@@ -24,7 +26,8 @@ use crate::query::table_write_plan::{
 };
 use crate::services::WriteLane;
 use crate::services::record_store::{
-    TableRecordMutation, TableRecordMutationKind, TableRecordScanRequest, TableRecordStore,
+    TableRecordGetRequest, TableRecordMutation, TableRecordMutationKind, TableRecordScanRequest,
+    TableRecordStore,
 };
 
 /// Execution status for a routed table-write plan.
@@ -246,10 +249,40 @@ impl TableRecordSourceReader for TableRecordStoreSourceReader {
     }
 }
 
+/// Resolved parent-table information for FOREIGN KEY enforcement on the
+/// INSERT-SELECT / native write path.
+#[derive(Debug, Clone)]
+pub struct ResolvedParentTable {
+    /// The parent table's catalog schema (carries its primary key + columns).
+    pub schema: CatalogTableSchema,
+    /// Physical table id used to address the parent in the record store.
+    pub table_id_name: String,
+}
+
+/// Catalog lookup port used by [`NativeTableWriteExecutor`] to resolve the
+/// parent tables referenced by FOREIGN KEY constraints.
+///
+/// The native executor has no catalog handle of its own, so DmlService backs
+/// this with its `CatalogManager`; tests can supply an in-memory stub. This
+/// mirrors `DmlService::enforce_foreign_keys` so every write path enforces FK
+/// references identically (TD-110).
+#[async_trait]
+pub trait ParentTableResolver: Send + Sync {
+    /// Resolve the parent table named by a FOREIGN KEY's `REFERENCES <table>`.
+    ///
+    /// `Ok(None)` means the parent table does not exist (a reference violation);
+    /// `Err` means resolution itself failed (misconfigured catalog).
+    async fn resolve_parent_table(
+        &self,
+        references_table: &str,
+    ) -> Result<Option<ResolvedParentTable>>;
+}
+
 /// Native executor that commits canonical source batches through `TableRecordStore`.
 pub struct NativeTableWriteExecutor {
     source_reader: Arc<dyn TableRecordSourceReader>,
     record_store: Arc<dyn TableRecordStore>,
+    parent_table_resolver: Option<Arc<dyn ParentTableResolver>>,
 }
 
 impl NativeTableWriteExecutor {
@@ -260,7 +293,19 @@ impl NativeTableWriteExecutor {
         Self {
             source_reader,
             record_store,
+            parent_table_resolver: None,
         }
+    }
+
+    /// Enable FOREIGN KEY enforcement on the native write path by supplying a
+    /// catalog lookup port. Without it, FK constraints are not checked here
+    /// (the row-local catalog validator no longer fails them closed).
+    pub fn with_parent_table_resolver(
+        mut self,
+        resolver: Arc<dyn ParentTableResolver>,
+    ) -> Self {
+        self.parent_table_resolver = Some(resolver);
+        self
     }
 }
 
@@ -298,8 +343,7 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
             // Within-batch dedup + cross-existing probe per unique set; cross-BATCH
             // duplicates are caught because each prior batch is committed before the
             // next batch's probe. (PK duplicates are rejected by write_mutations'
-            // Insert-conflict check; FK enforcement on this path is a follow-up —
-            // the native executor has no catalog handle to resolve parents.)
+            // Insert-conflict check.)
             let primary_key =
                 crate::services::record_store::schema_primary_key_column(request.target_schema);
             let candidate_sets = crate::services::record_store::build_unique_candidate_sets(
@@ -326,6 +370,18 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
                     request.target_schema.name,
                     conflict.tuple.join(", ")
                 ));
+            }
+            // TD-110: enforce FOREIGN KEY references on the INSERT-SELECT / native
+            // path. Requires a catalog lookup port to resolve parent tables; when
+            // unset (e.g. planned-only test wiring), FK is not checked here.
+            if let Some(resolver) = self.parent_table_resolver.as_ref() {
+                enforce_foreign_keys_for_batch(
+                    resolver,
+                    &self.record_store,
+                    request.target_schema,
+                    &batch,
+                )
+                .await?;
             }
             let mutations = batch
                 .into_iter()
@@ -377,6 +433,97 @@ impl TableWriteExecutor for PlannedOnlyTableWriteExecutor {
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         Ok(TableWriteExecutionResult::planned(&request.routed_plan))
     }
+}
+
+/// Enforce FOREIGN KEY references for one source batch against parent tables
+/// in the same partition. Mirrors `DmlService::enforce_foreign_keys`: the
+/// supported shape is a single-column FK referencing the parent PRIMARY KEY,
+/// verified by a point `get_by_key` on the parent. NULL FK values are exempt;
+/// unsupported shapes (composite FK, or a referenced column that is not the
+/// parent PK) are cleanly rejected rather than silently accepted.
+async fn enforce_foreign_keys_for_batch(
+    resolver: &Arc<dyn ParentTableResolver>,
+    record_store: &Arc<dyn TableRecordStore>,
+    target_schema: &CatalogTableSchema,
+    batch: &[ProximaRecord],
+) -> Result<()> {
+    let child_primary_key =
+        crate::services::record_store::schema_primary_key_column(target_schema);
+    for constraint in &target_schema.relational_capabilities.constraints {
+        let ColumnConstraint::ForeignKey {
+            columns,
+            references_table,
+            references_columns,
+            ..
+        } = constraint
+        else {
+            continue;
+        };
+        if columns.len() != 1 || references_columns.len() != 1 {
+            return Err(anyhow!(
+                "composite FOREIGN KEY ({}) on table '{}' is not supported yet",
+                columns.join(", "),
+                target_schema.name
+            ));
+        }
+        let fk_column = &columns[0];
+        let referenced_column = &references_columns[0];
+
+        let Some(parent) = resolver.resolve_parent_table(references_table).await? else {
+            return Err(anyhow!(
+                "FOREIGN KEY ({}) on table '{}' references missing table '{}'",
+                fk_column,
+                target_schema.name,
+                references_table
+            ));
+        };
+        if crate::services::record_store::schema_primary_key_column(&parent.schema).as_deref()
+            != Some(referenced_column.as_str())
+        {
+            return Err(anyhow!(
+                "FOREIGN KEY ({}) REFERENCES {}({}) on table '{}' is only supported when it references the parent primary key",
+                fk_column,
+                references_table,
+                referenced_column,
+                target_schema.name
+            ));
+        }
+
+        for record in batch {
+            let Some(values) = crate::services::record_store::record_unique_tuple(
+                record,
+                std::slice::from_ref(fk_column),
+                child_primary_key.as_deref(),
+            ) else {
+                continue; // NULL/absent FK → no reference required
+            };
+            let key = values.into_iter().next().unwrap_or_default();
+            let referenced_exists = record_store
+                .get_by_key(
+                    &parent.schema,
+                    TableRecordGetRequest {
+                        table_id: parent.table_id_name.clone(),
+                        key: key.clone(),
+                        include_vector: false,
+                        include_props: false,
+                    },
+                    None,
+                )
+                .await?
+                .is_some();
+            if !referenced_exists {
+                return Err(anyhow!(
+                    "FOREIGN KEY ({}) on table '{}' violates reference: '{}' is not present in {}({})",
+                    fk_column,
+                    target_schema.name,
+                    key,
+                    references_table,
+                    referenced_column
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn mutation_kind_for_write_mode(write_mode: &WriteMode) -> Result<TableRecordMutationKind> {
@@ -542,7 +689,7 @@ mod tests {
     use futures::stream::BoxStream;
     use proximadb_catalog::{
         CatalogPhysicalFormat, CatalogStorageLayout, CatalogStorageSpecialization,
-        CatalogTableSchema, CatalogWorkloadProfile,
+        CatalogTableSchema, CatalogWorkloadProfile, ColumnConstraint,
     };
     use proximadb_kernel::error::StorageError;
     use proximadb_storage_common::object_store_bridge::{
@@ -892,6 +1039,203 @@ mod tests {
                 .iter()
                 .all(|mutation| mutation.kind == TableRecordMutationKind::Insert)
         );
+    }
+
+    /// Stub catalog port returning a fixed parent table for FK tests.
+    struct StubParentResolver {
+        parent_schema: CatalogTableSchema,
+        parent_table_id: String,
+    }
+
+    #[async_trait]
+    impl ParentTableResolver for StubParentResolver {
+        async fn resolve_parent_table(
+            &self,
+            _references_table: &str,
+        ) -> Result<Option<ResolvedParentTable>> {
+            Ok(Some(ResolvedParentTable {
+                schema: self.parent_schema.clone(),
+                table_id_name: self.parent_table_id.clone(),
+            }))
+        }
+    }
+
+    /// Record store that reports which parent keys exist (for FK probes) and
+    /// captures committed mutations.
+    struct FkAwareRecordStore {
+        existing_parent_keys: std::collections::HashSet<String>,
+        writes: Mutex<Vec<TableRecordMutation>>,
+    }
+
+    #[async_trait]
+    impl TableRecordStore for FkAwareRecordStore {
+        async fn write_mutations(
+            &self,
+            _table_schema: &CatalogTableSchema,
+            mutations: Vec<TableRecordMutation>,
+            _tenant_context: Option<&TenantContext>,
+        ) -> Result<TableRecordWriteResult> {
+            let ids = mutations
+                .iter()
+                .map(|mutation| mutation.record.oid.clone())
+                .collect::<Vec<_>>();
+            self.writes.lock().unwrap().extend(mutations);
+            Ok(TableRecordWriteResult {
+                success: true,
+                record_ids: ids,
+                metrics: OperationMetrics::default(),
+                errors: Vec::new(),
+                error_code: None,
+            })
+        }
+
+        async fn get_by_key(
+            &self,
+            _table_schema: &CatalogTableSchema,
+            request: TableRecordGetRequest,
+            _tenant_context: Option<&TenantContext>,
+        ) -> Result<TableRecordGetResponse> {
+            Ok(self.existing_parent_keys.contains(&request.key).then(|| {
+                crate::services::operations::vectors::RichSearchResult {
+                    id: request.key,
+                    score: 0.0,
+                    similarity: None,
+                    vector: Vec::new(),
+                    props: std::collections::HashMap::new(),
+                    version: None,
+                    timestamp: None,
+                    source: None,
+                }
+            }))
+        }
+    }
+
+    /// A child `orders` record carrying a `customer_id` FK value in its props.
+    fn fk_child_record(id: &str, customer_id: &str) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            local_id: Some(id.to_string()),
+            props: proximadb_records::ProximaTree::from([(
+                "customer_id".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String(customer_id.to_string()),
+                ),
+            )]),
+            ..Default::default()
+        }
+    }
+
+    /// Build a routed Native plan + a child `orders` schema whose single-column
+    /// `customer_id` FK references `customers(id)`.
+    fn fk_child_schema() -> CatalogTableSchema {
+        let mut schema = CatalogTableSchema::new("orders")
+            .with_primary_key(vec!["id".to_string()])
+            .with_storage_specialization(CatalogStorageSpecialization::PaxOltp);
+        schema
+            .relational_capabilities
+            .constraints
+            .push(ColumnConstraint::ForeignKey {
+                columns: vec!["customer_id".to_string()],
+                references_table: "customers".to_string(),
+                references_columns: vec!["id".to_string()],
+                on_delete: None,
+                on_update: None,
+            });
+        schema
+    }
+
+    fn fk_routed_plan(schema: &CatalogTableSchema) -> RoutedExecutionPlan {
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: None,
+                plan: &plan,
+            });
+        assert_eq!(routed.backend, ComputeBackend::Native);
+        routed
+    }
+
+    #[tokio::test]
+    async fn native_executor_enforces_foreign_key_references() {
+        // TD-110: the native INSERT-SELECT path now enforces single-column FK
+        // references when a catalog lookup port is supplied. Existing parent →
+        // commit; missing parent → reject; NULL FK → exempt.
+        let schema = fk_child_schema();
+        let parent_schema =
+            CatalogTableSchema::new("customers").with_primary_key(vec!["id".to_string()]);
+        let resolver: Arc<dyn ParentTableResolver> = Arc::new(StubParentResolver {
+            parent_schema,
+            parent_table_id: "customers".to_string(),
+        });
+
+        // Existing parent ('c1') + a NULL-FK child ('o3', no customer_id) commit.
+        let store = Arc::new(FkAwareRecordStore {
+            existing_parent_keys: std::collections::HashSet::from(["c1".to_string()]),
+            writes: Mutex::new(Vec::new()),
+        });
+        let source = Arc::new(VecSourceReader::new(vec![vec![
+            fk_child_record("o1", "c1"),
+            test_record("o3"),
+        ]]));
+        let result = NativeTableWriteExecutor::new(source, store.clone())
+            .with_parent_table_resolver(resolver.clone())
+            .execute(TableWriteExecutionRequest {
+                target_schema: &schema,
+                source_schema: None,
+                routed_plan: fk_routed_plan(&schema),
+                tenant_context: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.rows_written, 2);
+        assert_eq!(store.writes.lock().unwrap().len(), 2);
+
+        // A child referencing a missing parent ('c99') is rejected; nothing commits.
+        let store = Arc::new(FkAwareRecordStore {
+            existing_parent_keys: std::collections::HashSet::from(["c1".to_string()]),
+            writes: Mutex::new(Vec::new()),
+        });
+        let source = Arc::new(VecSourceReader::new(vec![vec![fk_child_record("o2", "c99")]]));
+        let err = NativeTableWriteExecutor::new(source, store.clone())
+            .with_parent_table_resolver(resolver)
+            .execute(TableWriteExecutionRequest {
+                target_schema: &schema,
+                source_schema: None,
+                routed_plan: fk_routed_plan(&schema),
+                tenant_context: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("violates reference"), "{err}");
+        assert_eq!(store.writes.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn native_executor_skips_foreign_keys_without_resolver() {
+        // Without a catalog lookup port, FK is not enforced here (the row-local
+        // validator no longer fails it closed) — the write proceeds.
+        let schema = fk_child_schema();
+        let store = Arc::new(FkAwareRecordStore {
+            existing_parent_keys: std::collections::HashSet::new(),
+            writes: Mutex::new(Vec::new()),
+        });
+        let source = Arc::new(VecSourceReader::new(vec![vec![fk_child_record("o1", "c99")]]));
+        let result = NativeTableWriteExecutor::new(source, store.clone())
+            .execute(TableWriteExecutionRequest {
+                target_schema: &schema,
+                source_schema: None,
+                routed_plan: fk_routed_plan(&schema),
+                tenant_context: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.rows_written, 1);
+        assert_eq!(store.writes.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

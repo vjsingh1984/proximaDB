@@ -23,9 +23,9 @@ use tracing::{debug, info, warn};
 
 use crate::catalog::CatalogManager;
 use crate::query::table_write_executor::{
-    DataFusionTableWriteExecutor, NativeTableWriteExecutor, PlannedOnlyTableWriteExecutor,
-    TableRecordStoreSourceReader, TableWriteExecutionRequest, TableWriteExecutionStatus,
-    TableWriteExecutor,
+    DataFusionTableWriteExecutor, NativeTableWriteExecutor, ParentTableResolver,
+    PlannedOnlyTableWriteExecutor, ResolvedParentTable, TableRecordStoreSourceReader,
+    TableWriteExecutionRequest, TableWriteExecutionStatus, TableWriteExecutor,
 };
 use crate::query::table_write_plan::{
     ConflictPolicy, CopyIntoPlan, DistributionMode, DmlWritePlanRequest, DmlWritePlanner,
@@ -394,6 +394,45 @@ impl DmlResult {
     }
 }
 
+/// `CatalogManager`-backed [`ParentTableResolver`] so the native INSERT-SELECT
+/// executor can resolve FOREIGN KEY parent tables (TD-110). Resolution failures
+/// surface as `Err`; a resolvable-but-missing parent surfaces as `Ok(None)`,
+/// which the executor reports as a reference violation — matching the
+/// row-by-row `DmlService::enforce_foreign_keys` behavior.
+struct CatalogManagerParentResolver {
+    catalog_manager: Arc<CatalogManager>,
+}
+
+impl CatalogManagerParentResolver {
+    fn new(catalog_manager: Arc<CatalogManager>) -> Self {
+        Self { catalog_manager }
+    }
+}
+
+#[async_trait::async_trait]
+impl ParentTableResolver for CatalogManagerParentResolver {
+    async fn resolve_parent_table(
+        &self,
+        references_table: &str,
+    ) -> Result<Option<ResolvedParentTable>> {
+        let (parent_catalog, parent_table_id) = self
+            .catalog_manager
+            .resolve_table(references_table)
+            .await
+            .map_err(|err| {
+                anyhow!("FOREIGN KEY references table '{references_table}' which cannot be resolved: {err}")
+            })?;
+        if !parent_catalog.table_exists(&parent_table_id).await? {
+            return Ok(None);
+        }
+        let schema = parent_catalog.get_table(&parent_table_id).await?;
+        Ok(Some(ResolvedParentTable {
+            schema,
+            table_id_name: parent_table_id.name.clone(),
+        }))
+    }
+}
+
 /// DML Service for executing DML statements
 pub struct DmlService {
     /// Catalog manager for metadata operations
@@ -454,10 +493,14 @@ impl DmlService {
             ),
         );
         let source_reader = Arc::new(TableRecordStoreSourceReader::new(routed_store.clone()));
-        let table_write_executor = Arc::new(NativeTableWriteExecutor::new(
-            source_reader,
-            routed_store.clone(),
-        ));
+        // TD-110: thread a catalog lookup port so the native INSERT-SELECT path
+        // enforces FOREIGN KEY references like the row-by-row INSERT/UPDATE path.
+        let parent_resolver: Arc<dyn ParentTableResolver> =
+            Arc::new(CatalogManagerParentResolver::new(catalog_manager.clone()));
+        let table_write_executor = Arc::new(
+            NativeTableWriteExecutor::new(source_reader, routed_store.clone())
+                .with_parent_table_resolver(parent_resolver),
+        );
 
         Self::with_record_store_and_table_write_executor(
             catalog_manager,
