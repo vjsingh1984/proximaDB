@@ -287,16 +287,17 @@ def test_create_chunker_from_enum():
 
 
 def test_create_enhanced_semantic_chunker_defaults():
-    # The function unconditionally injects enable_caching into kwargs, which
-    # ChunkingConfig does not accept -> real source raises TypeError. We assert
-    # the documented-but-buggy behavior to exercise the code path safely.
-    with pytest.raises(TypeError, match="enable_caching"):
-        create_enhanced_semantic_chunker()
+    # enable_caching is accepted but no longer forwarded as an invalid kwarg
+    # (previously a TypeError on every call); returns a semantic chunker.
+    chunker = create_enhanced_semantic_chunker()
+    assert isinstance(chunker, TextChunker)
+    assert chunker.config.strategy == ChunkingStrategy.SEMANTIC
 
 
 def test_create_enhanced_semantic_chunker_caching_kw():
-    with pytest.raises(TypeError, match="enable_caching"):
-        create_enhanced_semantic_chunker(enable_caching=False)
+    chunker = create_enhanced_semantic_chunker(enable_caching=False)
+    assert isinstance(chunker, TextChunker)
+    assert chunker.config.strategy == ChunkingStrategy.SEMANTIC
 
 
 # ===========================================================================
