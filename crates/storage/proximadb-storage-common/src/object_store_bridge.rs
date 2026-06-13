@@ -9,6 +9,8 @@ use proximadb_kernel::error::StorageError;
 use proximadb_records::ProximaRecord;
 use std::sync::Arc;
 
+use crate::proxima_schema::ProximaSchema;
+
 pub use object_store::ObjectStore as BridgeObjectStore;
 pub use object_store::memory::InMemory as BridgeInMemoryObjectStore;
 pub use object_store::path::Path as BridgeObjectPath;
@@ -43,6 +45,29 @@ pub trait ObjectStoreBridge: Send + Sync {
         records: &[ProximaRecord],
         tenant_id: Option<&str>,
     ) -> Result<(), StorageError>;
+
+    /// Schema-explicit Parquet write: writes `records` using the CALLER-PROVIDED
+    /// (catalog-authoritative) [`ProximaSchema`] instead of inferring one from the
+    /// records, so the file's column set, order, types, and nullability match the
+    /// catalog exactly — including columns declared in the schema but absent from
+    /// every record (written as all-null), which inference would silently drop.
+    /// This is the correct write path for warehouse materialization, where the
+    /// published Parquet must round-trip through `SELECT *` against the catalog shape.
+    ///
+    /// Default: falls back to the schema-less (inferred) [`write_records_to_parquet`]
+    /// for bridges without a schema-aware path.
+    ///
+    /// [`write_records_to_parquet`]: ObjectStoreBridge::write_records_to_parquet
+    async fn write_records_to_parquet_with_schema(
+        &self,
+        path: &Path,
+        records: &[ProximaRecord],
+        schema: &ProximaSchema,
+        tenant_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        let _ = schema;
+        self.write_records_to_parquet(path, records, tenant_id).await
+    }
 
     /// Fetches a specialized PAX block or Segment (SST, HELIX, etc.) from object storage
     /// into memory for high-performance Vector SIMD scans.

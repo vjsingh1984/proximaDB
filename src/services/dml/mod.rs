@@ -812,22 +812,35 @@ impl DmlService {
             .collect();
 
         // 3. Tenant-isolated object prefix (DrPathBuilder mandate: data/{tenant}/{ns}/{table}).
+        //    The namespace comes from the table's catalog identifier — not a hardcoded
+        //    default — so multi-tenant/multi-namespace tables don't collide.
         let tenant_id = tenant_context
             .map(|tc| tc.tenant_id.as_str())
             .unwrap_or("default_tenant");
-        let prefix = format!("data/{tenant_id}/default/{}", schema.name);
+        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let namespace = if table_id.namespace.is_empty() {
+            "default".to_string()
+        } else {
+            table_id.namespace.join("/")
+        };
+        let prefix = format!("data/{tenant_id}/{namespace}/{}", schema.name);
 
         // 4. Write the snapshot under `{prefix}/data/` — exactly where the OLAP reader
-        //    lists `{location}/data/*.parquet`.
+        //    lists `{location}/data/*.parquet`. Use the CATALOG-AUTHORITATIVE schema
+        //    (not record inference) so the file's columns/types/nullability match the
+        //    catalog exactly — including all-null columns inference would drop — and
+        //    `SELECT *` over the materialized table round-trips. The object `put` is
+        //    atomic, so a re-materialize swaps the snapshot without torn reads;
+        //    multi-file/versioned snapshots (via the atomic manifest committer) are a
+        //    follow-up that also needs manifest-aware reads.
         let data_object =
             object_store::path::Path::from(format!("{prefix}/data/part-0.parquet"));
         bridge
-            .write_records_to_parquet(&data_object, &records, Some(tenant_id))
+            .write_records_to_parquet_with_schema(&data_object, &records, &schema, Some(tenant_id))
             .await?;
 
         // 5. Flip the catalog layout to a published Parquet projection at the location.
         let location = format!("{}/{prefix}", warehouse_root_url.trim_end_matches('/'));
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
         let layout = CatalogStorageLayout {
             name: "parquet-snapshot".to_string(),
             authority: proximadb_catalog::CatalogAuthorityMode::ProjectionPublication,

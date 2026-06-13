@@ -96,40 +96,6 @@ impl IcebergObjectStoreBridge {
         self.store.full_path(path)
     }
 
-    /// Write `records` to a Parquet object at `path` using a CALLER-PROVIDED
-    /// (catalog-authoritative) [`ProximaSchema`] instead of inferring one from
-    /// the records.
-    ///
-    /// This is the F3 wiring hook flagged in this module's docs: when the
-    /// catalog knows a table's canonical schema, pass it here so the written
-    /// file's column set, order, types, and nullability match the catalog
-    /// exactly — including columns that are declared in the schema but absent
-    /// from every record in this batch. Such columns are written as all-null
-    /// columns (the canonical `ProximaSchema`-driven Arrow mapping appends a
-    /// null for any record missing the prop), which schema *inference* would
-    /// omit entirely. That makes the on-disk file shape stable across batches
-    /// regardless of which optional fields happen to be populated.
-    ///
-    /// The trait [`ObjectStoreBridge::write_records_to_parquet`] delegates here
-    /// after inferring a schema from the records.
-    ///
-    /// `tenant_id` carries the [`TenantContext`](proximadb_records) owner of this
-    /// write to the I/O boundary so the billing follow-up can attribute
-    /// `proximadb_object_store_ops_total` / `proximadb_storage_bytes_seconds` to a
-    /// tenant. It is threaded through both write entry points (this schema-explicit
-    /// one and the trait's schema-less one) so no write path is tenant-blind; the
-    /// metric emission itself is a follow-up (no telemetry sink is wired here yet).
-    pub async fn write_records_to_parquet_with_schema(
-        &self,
-        path: &Path,
-        records: &[ProximaRecord],
-        schema: &ProximaSchema,
-        _tenant_id: Option<&str>,
-    ) -> Result<(), StorageError> {
-        let bytes = proxima_records_to_parquet_bytes(records, schema, None)?;
-        self.store.put(path, Bytes::from(bytes)).await
-    }
-
     /// Atomically publish the data objects currently under `data_prefix` as the next
     /// snapshot in the manifest log at `manifest_prefix`.
     ///
@@ -251,6 +217,26 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         let schema = infer_proxima_schema(records);
         self.write_records_to_parquet_with_schema(path, records, &schema, tenant_id)
             .await
+    }
+
+    /// Schema-explicit write (overrides the trait default): serialize `records`
+    /// through the CALLER-PROVIDED catalog-authoritative [`ProximaSchema`] so the
+    /// file's column set/order/types/nullability match the catalog exactly —
+    /// including columns absent from every record (written all-null), which
+    /// inference would drop. The single I/O boundary is one atomic object `put`.
+    ///
+    /// `tenant_id` carries the write's owner to the I/O boundary for the billing
+    /// follow-up (`proximadb_object_store_ops_total` / `_storage_bytes_seconds`);
+    /// no telemetry sink is wired here yet.
+    async fn write_records_to_parquet_with_schema(
+        &self,
+        path: &Path,
+        records: &[ProximaRecord],
+        schema: &ProximaSchema,
+        _tenant_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        let bytes = proxima_records_to_parquet_bytes(records, schema, None)?;
+        self.store.put(path, Bytes::from(bytes)).await
     }
 
     async fn fetch_vector_segment(&self, path: &Path, _tenant_id: Option<&str>) -> Result<Vec<u8>, StorageError> {
