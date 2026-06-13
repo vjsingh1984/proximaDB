@@ -24,10 +24,10 @@ ProximaDB is a multi-model database where each data model has its own purpose-bu
              │              │              │                 │
              ▼              ▼              ▼                 ▼
      ┌──────────────┐ ┌──────────┐ ┌───────────┐  ┌────────────────┐
-     │Unified       │ │  CEDAR   │ │  ORION/   │  │    CHRONO      │
-     │StorageEngine │ │  Engine  │ │  PULSAR   │  │    Engine      │
+     │Unified       │ │  CEDAR   │ │  ORION    │  │    CHRONO      │
+     │StorageEngine │ │  Engine  │ │ Runtime   │  │    Engine      │
      │(SST/VIPER/   │ │(Document │ │  (Graph   │  │(Observability  │
-     │ HELIX/NOVA)  │ │ Storage) │ │  Engine)  │  │  Storage)      │
+     │ HELIX/NOVA)  │ │ Storage) │ │          │  │  Storage)      │
      └──────────────┘ └──────────┘ └───────────┘  └────────────────┘
 
      Return Type:       Return Type:    Return Type:    Return Type:

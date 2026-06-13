@@ -81,12 +81,7 @@ Current relational/pgwire DML and compute-routing implementation tracker:
 | Relational adjacency table | ✅ Retained (rebuildable) | `ProjectionDirective::AdjacencyTableRow` fires per-node rebuild. Default access path for write-heavy workloads or CSR-stale graphs.
 | CSR in-memory projection | ✅ Retained (conditional) | `ProjectionDirective::CsrRebuild`. Auto-materialization governed by `csr_auto_materialize_decision()` thresholds: ≥100 k nodes, write rate ≤10/min, ≥5 queries/min, or epoch age > 300 s. Read path controlled by `graph_traversal_access_path()`.
 | **ORION** (default graph engine) | ✅ Retained as topology projection cache | ORION in-memory store + CSR is a _projection_ over canonical records. ORION WAL logs (`GraphOperation::CreateNode`, etc.) are kept for compatibility recovery only. New writes must produce `CanonicalOperation::RecordUpsert` entries first; ORION applies them as derived state.
-| **QUASAR** (tiered storage) | ⚠️ Experimental — demotion candidate | QUASAR hot/cold tiering is not fully integrated and not production-ready (see engine doc warnings). Cold tier uses a separate file-based path with no canonical record binding. If cold tier materialisation cannot be rewritten as a `ColumnarVariation` or adjacency projection over canonical records, QUASAR should be retired. +
- +
-_Retirement condition_: remove or demote to adapter wrapper when: (a) hot tier is confirmed to be ORION-as-projection, and (b) cold tier storage is replaced by xCatalog-tracked external table or columnar projection. Target: Phase 6 completion.
-| **PULSAR** (distributed, experimental) | ⚠️ ~75% complete — demotion candidate | PULSAR distributed graph engine lacks distributed transactions and automatic failover. Sharding logic is application-level. If the distributed path cannot be completed and validated by end of Phase 6, PULSAR must be demoted to a compatibility wrapper with a documented retirement plan (maintenance cost exceeds utility). +
- +
-_Retirement condition_: remove or demote when Phase 6 benchmarks show that ORION with application-level sharding meets latency/throughput targets for all tested workloads, or when distributed Raft-based consensus replaces PULSAR's role. Target: Phase 6 completion.
+| **PULSAR / QUASAR engine variants** | ❌ Retired | Separate graph engine modules, feature flags, REST routes, and dedicated tests have been removed. Former PULSAR placement/coordinator ideas are relational distributed-planner requirements. Former QUASAR hot/cold ideas are xCatalog/storage projection-policy requirements.
 |===
 
 ---

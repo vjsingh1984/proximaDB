@@ -170,13 +170,12 @@ Current state:
 * Graph node/edge canonical mapping exists.
 * `GraphOperationsService` can mirror writes into `RecordStore`.
 * Adjacency projections and ORION CSR freshness epochs exist.
-* ORION/PULSAR/QUASAR still carry compatibility WAL/recovery paths.
+* ORION carries a compatibility WAL/recovery path for rebuildable graph projections.
 
 Required trajectory:
 
 * Make canonical record store mandatory in production graph service wiring.
-* Treat ORION/PULSAR/QUASAR as topology/query projections unless an ADR promotes specific
-  retained aggregates.
+* Treat ORION as a topology/query projection unless an ADR promotes specific retained aggregates.
 * Route Cypher/PGQ pattern matching through shared logical operators and projection-aware
   planning.
 * Expose bounded graph traversal as an agent tool contract (`GraphWalkTool`) so agents navigate

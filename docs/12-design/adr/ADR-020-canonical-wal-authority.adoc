@@ -57,7 +57,7 @@ The Tier-2 implementation step (T2.2) flips the feature default; the per-call-si
 * Recovery: canonical WAL replay produces the authoritative graph state. ORION engine WAL replay runs second as a fast-path performance optimization and is validated against canonical replay; if they diverge, canonical wins and ORION WAL state is discarded.
 * This preserves the existing ORION engine WAL as a recovery accelerator without making it a parallel durable truth.
 
-The same contract applies to PULSAR (when its engine WAL exists) and QUASAR's hot tier (via ORION).
+PULSAR and QUASAR no longer add graph-engine WAL paths; their useful concerns are handled by the relational/storage substrate below ORION.
 
 **Resolves**: TD-066. Implementation is deferred from this ADR's writing session — Tier 5 of the pre-release plan.
 
@@ -78,7 +78,7 @@ The same contract applies to PULSAR (when its engine WAL exists) and QUASAR's ho
 Rejected alternative (Option A from TD-068): rewrite QUASAR cold tier to write through the canonical WAL + projection directives. Rejected because (a) the canonical-record-backed tiering subsumes QUASAR's value proposition with less surface area, and (b) QUASAR cold-tier has no production users to justify maintaining a parallel format.
 
 * Migration path: existing QUASAR cold-tier data is exported to canonical records via a one-time tool; the cold-tier format itself is removed.
-* `SUPPORTED_SURFACES.adoc` already lists QUASAR as a demotion candidate; this ADR closes that.
+* `SUPPORTED_SURFACES.adoc` lists QUASAR as retired; this ADR closes the authority-model decision.
 
 **Resolves**: TD-068 (by retirement, not by rewrite).
 
@@ -98,6 +98,7 @@ A new engine that violates this contract (e.g. "this engine has its own durable 
 * TD-065 + TD-068 are resolved in this ADR window (default-enable + retire). TD-066 is resolved-by-decision; implementation deferred. TD-067 is resolved-by-decision; depends on query-executor OID candidate-set support.
 * The convergence mandate (`RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`) gets a concrete authority-model boundary that future engines can be validated against.
 * QUASAR is retired as a graph engine variant; SUPPORTED_SURFACES.adoc downgrade is finalized.
+* PULSAR is retired as a graph engine variant; distributed graph behavior is a relational substrate requirement.
 * Operators on the legacy non-canonical-document-store path get one minor-release migration window before the feature flag is removed entirely (target: v0.4).
 * Recovery semantics become uniform across modalities — single recovery contract instead of four engine-specific replays.
 
@@ -120,7 +121,7 @@ Wait for each TD to land before formalizing the contract. Rejected because the f
 * `src/storage/document/service.rs` — all `self.documents.write()` call sites (TD-065)
 * `src/graph/engines/orion/persistence.rs` + `src/graph/service.rs:flush_wal()` (TD-066)
 * `src/index/index_manager.rs` projection key writes (TD-067)
-* `src/graph/engines/quasar/` (TD-068)
+* retired `src/graph/engines/quasar/` path (TD-068)
 * `Cargo.toml` `[features]` block — `canonical-document-store` default-enable (T2.2)
 * Future engine / projection / adapter ADRs — boundary contract section above
 
@@ -130,4 +131,4 @@ Wait for each TD to land before formalizing the contract. Rejected because the f
 * `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` — `ProximaRecord` + canonical WAL design
 * `docs/10-quality/TECHNICAL_DEBT.adoc` — TD-065 / TD-066 / TD-067 / TD-068
 * `docs/_internal/status/PRE_RELEASE_FOUNDATIONS_2026_05_26.adoc` — Tier 2 implementation tracking
-* `docs/12-design/SUPPORTED_SURFACES.adoc` — QUASAR demotion candidate listing
+* `docs/12-design/SUPPORTED_SURFACES.adoc` — QUASAR retirement listing

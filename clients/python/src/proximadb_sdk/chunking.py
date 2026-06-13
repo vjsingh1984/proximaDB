@@ -544,11 +544,10 @@ def create_enhanced_semantic_chunker(
     Returns:
         TextChunker instance configured for semantic chunking
     """
-    # Add enable_caching to kwargs if not already present
-    if "enable_caching" not in kwargs:
-        kwargs["enable_caching"] = enable_caching
-
-    # Create chunker with semantic strategy
+    # `enable_caching` is accepted for API/back-compat but is NOT a
+    # ChunkingConfig field — forwarding it into kwargs raised TypeError on
+    # every call. It is intentionally not propagated; semantic chunking is
+    # selected purely via the strategy.
     return create_chunker(ChunkingStrategy.SEMANTIC, **kwargs)
 
 

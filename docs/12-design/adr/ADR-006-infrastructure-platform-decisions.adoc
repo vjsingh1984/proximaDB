@@ -150,6 +150,10 @@ Implementation:
 
 === 4. Pulsar Distributed Graph Posture (Issue #61)
 
+**Superseded June 2026**: Pulsar was retired as a separate graph engine. Runtime
+selection now accepts ORION only; distributed graph behavior is a relational
+distributed-substrate requirement.
+
 **Decision**: **Formal experimental designation with API warnings**.
 
 Rationale:

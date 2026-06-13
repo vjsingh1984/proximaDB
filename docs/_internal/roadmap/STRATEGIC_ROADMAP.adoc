@@ -215,6 +215,29 @@ _Scale: External catalog integration, compute adapters, and deployment flexibili
 | Multi-Region | 🔄 In Progress | P3 | LocalQuorum + geo-aware routing done; full multi-region pending
 |===
 
+=== SaaS MVP Operational Readiness [📅 Phase 3 -- CRITICAL]
+
+_Added June 04, 2026 to support the commercial revenue wedge._
+
+|===
+| Feature | Status | Priority | Notes
+
+| SaaS Path Isolation (DrPathBuilder)
+| 📅 Phase 3
+| P0
+| Enforce strict `data/{tenant_id}/{namespace_id}/...` prefixing across all Object Storage interactions to prevent cross-tenant data leakage.
+
+| Consumption Billing Telemetry
+| 📅 Phase 3
+| P0
+| Plumb accurate request/byte-level telemetry (`proximadb_object_store_ops_total`, `task_execution_time_ms`) tied to `TenantContext` for accurate billing.
+
+| Tenant Bootstrapping Resilience
+| 📅 Phase 3
+| P1
+| Implement aggressive caching/memory-pinning for `TenantTierStore` to prevent cyclic read dependencies during system initialization.
+|===
+
 === Compute Engine Adapters [📅 Phase 3]
 
 |===

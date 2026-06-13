@@ -5,7 +5,7 @@
 //! - **Core types** - Nodes, edges, properties, graph schemas
 //! - **Traversal** - Graph traversal algorithms (BFS, DFS, shortest path)
 //! - **Query** - Graph query execution and Cypher/GQL support
-//! - **Storage** - Graph storage engines (ORION in-memory, PULSAR distributed)
+//! - **Storage** - ORION graph runtime and canonical graph projections
 //! - **RAG** - Graph RAG (Retrieval-Augmented Generation) capabilities
 //!
 //! ## Architecture

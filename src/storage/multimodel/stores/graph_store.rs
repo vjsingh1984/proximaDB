@@ -74,7 +74,7 @@ impl Default for LegacyMultimodelGraphStoreConfig {
 /// └─────────────────────────────────────────┘
 /// ```
 pub struct LegacyMultimodelGraphStore {
-    /// The underlying graph engine (ORION, PULSAR, or QUASAR)
+    /// The underlying ORION graph runtime
     engine: Option<Arc<dyn GraphEngine>>,
     /// Shared graph service used by the server/runtime path
     service: Option<Arc<GraphService>>,

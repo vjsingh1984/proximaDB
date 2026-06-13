@@ -55,6 +55,13 @@ pub enum DdlStatement {
         /// Schema changes to apply.
         changes: Vec<AlterTableChange>,
     },
+    /// `ALTER TABLE <name> MATERIALIZE` — ProximaDB extension: publish the table's
+    /// current rows as a Parquet snapshot on object storage and mark it
+    /// Parquet-backed, so OLAP SELECTs over it route to DataFusion.
+    MaterializeTable {
+        /// Name of the table to materialize.
+        name: String,
+    },
     /// CREATE INDEX [IF NOT EXISTS] index_name ON table_name (columns)
     CreateIndex {
         /// Name of the index to create.
@@ -425,9 +432,27 @@ impl DdlResult {
 }
 
 /// DDL Service for executing DDL statements
+/// Capability to materialize a table to a Parquet snapshot on object storage (the
+/// warehouse publish op behind `ALTER TABLE … MATERIALIZE`).
+///
+/// Injected into [`DdlService`] so the DDL path can trigger materialization without
+/// `DdlService` depending on `DmlService` or an object-store bridge directly. The
+/// implementor (boot-wired with a configured warehouse store) scans the table's
+/// current rows, writes the snapshot, and flips the catalog layout. Returns the
+/// published object-store location.
+#[async_trait::async_trait]
+pub trait TableMaterializer: Send + Sync {
+    /// Materialize `table_name`'s current rows; returns the published location.
+    async fn materialize(&self, table_name: &str) -> Result<String>;
+}
+
 pub struct DdlService {
     /// Catalog manager for metadata operations
     catalog_manager: Arc<CatalogManager>,
+    /// Optional table materializer. Required for `ALTER TABLE … MATERIALIZE`;
+    /// absent for paths without a configured warehouse object store (those get a
+    /// clean error when the statement is issued).
+    materializer: Option<Arc<dyn TableMaterializer>>,
     /// Optional rank-profile catalog. Required for `CREATE RANK PROFILE` /
     /// `DROP RANK PROFILE`; absent for embedded paths that never see those
     /// statements.
@@ -447,10 +472,18 @@ impl DdlService {
     pub fn new(catalog_manager: Arc<CatalogManager>) -> Self {
         Self {
             catalog_manager,
+            materializer: None,
             rank_profile_store: None,
             rank_services: None,
             function_store: None,
         }
+    }
+
+    /// Attach the table materializer. Required by `ALTER TABLE … MATERIALIZE`;
+    /// callers that don't wire it get a clean error when that statement is issued.
+    pub fn with_materializer(mut self, materializer: Arc<dyn TableMaterializer>) -> Self {
+        self.materializer = Some(materializer);
+        self
     }
 
     /// Attach the durable function catalog (F5). When present, every successful
@@ -511,6 +544,18 @@ impl DdlService {
                 table_name,
                 changes,
             } => self.alter_table(&table_name, changes).await,
+            DdlStatement::MaterializeTable { name } => {
+                let materializer = self.materializer.as_ref().ok_or_else(|| {
+                    anyhow!(
+                        "ALTER TABLE … MATERIALIZE requires a configured warehouse object \
+                         store (no table materializer is wired)"
+                    )
+                })?;
+                let location = materializer.materialize(&name).await?;
+                Ok(DdlResult::success(format!(
+                    "Materialized table '{name}' to '{location}'"
+                )))
+            }
             DdlStatement::CreateIndex {
                 index_name,
                 table_name,

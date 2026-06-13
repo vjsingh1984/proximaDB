@@ -277,6 +277,59 @@ def test_v2_typed_value_fallback_object(client):
     assert isinstance(client._v2_typed_value_to_python(tv), str)
 
 
+def test_v2_typed_value_more_kinds(client):
+    # timestamp / date / time / duration / uuid / binary / json / float32
+    tv = r.TypedValue()
+    tv.timestamp_value = 1700
+    assert client._v2_typed_value_to_python(tv) == 1700
+
+    tv = r.TypedValue()
+    tv.date_value = 5
+    assert client._v2_typed_value_to_python(tv) == 5
+
+    tv = r.TypedValue()
+    tv.time_value = 9
+    assert client._v2_typed_value_to_python(tv) == 9
+
+    tv = r.TypedValue()
+    tv.duration_value = 12
+    assert client._v2_typed_value_to_python(tv) == 12
+
+    tv = r.TypedValue()
+    tv.uuid_value = bytes.fromhex("00112233445566778899aabbccddeeff")
+    assert client._v2_typed_value_to_python(tv) == "00112233445566778899aabbccddeeff"
+
+    tv = r.TypedValue()
+    tv.binary_value = b"\x01\x02"
+    assert client._v2_typed_value_to_python(tv) == b"\x01\x02"
+
+    tv = r.TypedValue()
+    tv.json_value = '{"a": 1}'
+    assert client._v2_typed_value_to_python(tv) == {"a": 1}
+
+    tv = r.TypedValue()
+    tv.float32_value = 0.5
+    assert abs(client._v2_typed_value_to_python(tv) - 0.5) < 1e-3
+
+
+def test_v2_typed_value_json_invalid(client):
+    tv = r.TypedValue()
+    tv.json_value = "not-json"
+    assert client._v2_typed_value_to_python(tv) == "not-json"
+
+
+def test_v2_typed_value_jsonb_invalid_bytes(client):
+    tv = r.TypedValue()
+    tv.jsonb_value = b"\xff\xfe"
+    assert client._v2_typed_value_to_python(tv) == b"\xff\xfe"
+
+
+def test_v2_typed_value_array_field(client):
+    tv = r.TypedValue()
+    tv.integer_array.values.extend([1, 2, 3])
+    assert client._v2_typed_value_to_python(tv) == [1, 2, 3]
+
+
 # --------------------------------------------------------------------------- #
 # normalize vector alias records / record proto builder
 # --------------------------------------------------------------------------- #
@@ -650,6 +703,75 @@ def test_get_vector(client, monkeypatch):
     res = client.get_vector("col", "v1", include_vector=True, include_metadata=False)
     assert res.id == "v1"
     assert res["vector"] == [0.1, 0.2]
+
+
+def test_get_vector_with_metadata_and_fields(client, monkeypatch):
+    from proximadb_sdk.v1 import types_pb2 as t
+
+    class FakeMetaMap(dict):
+        pass
+
+    meta = FakeMetaMap()
+    sv = t.SqlValue()
+    sv.string_value = "news"
+    meta["cat"] = sv
+    sv2 = t.SqlValue()
+    sv2.int64_value = 3
+    meta["rank"] = sv2
+
+    class FakeItem:
+        id = "v1"
+        vector = [0.1, 0.2]
+
+        def __init__(self):
+            self.metadata = meta
+
+        def HasField(self, name):
+            return name in {"timestamp", "version", "source"}
+
+        timestamp = 1700
+        version = 4
+        source = "ingest"
+
+    class FakeResults:
+        def __init__(self, item):
+            self.results = [item]
+
+    class FakeResponse:
+        success = True
+
+        def __init__(self):
+            self.results = FakeResults(FakeItem())
+
+    monkeypatch.setattr(
+        gs.v1_vector_pb2_grpc,
+        "VectorServiceStub",
+        make_stub_factory("VectorGet", lambda req: FakeResponse()),
+    )
+    res = client.get_vector("col", "v1", include_vector=True, include_metadata=True)
+    assert res.id == "v1"
+    assert res["metadata"]["cat"] == "news"
+    assert res["metadata"]["rank"] == 3
+    assert res["timestamp_ms"] == 1700
+    assert res["version"] == 4
+    assert res["source"] == "ingest"
+
+
+def test_get_vector_empty_results(client, monkeypatch):
+    class FakeResults:
+        results = []
+
+    class FakeResponse:
+        success = True
+        results = FakeResults()
+
+    monkeypatch.setattr(
+        gs.v1_vector_pb2_grpc,
+        "VectorServiceStub",
+        make_stub_factory("VectorGet", lambda req: FakeResponse()),
+    )
+    with pytest.raises(ProximaDBError):
+        client.get_vector("col", "v1")
 
 
 def test_get_vector_not_found(client, monkeypatch):

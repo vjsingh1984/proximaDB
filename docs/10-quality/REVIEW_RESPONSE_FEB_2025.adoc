@@ -2,6 +2,11 @@
 
 This document responds to the comprehensive multi-model architecture review, correcting misconceptions and outlining the path forward.
 
+NOTE: Current graph-engine status supersedes the February 2025 remediation plan.
+PULSAR and QUASAR have been retired as separate graph engines; ORION is the graph
+runtime, with distributed placement handled by the relational substrate and
+tiering handled by xCatalog/storage policy.
+
 == Executive Summary
 
 The review correctly identified several critical gaps but contained one important **incorrect assertion**: BM25 + Vector hybrid search **IS implemented** and was completed in February 2025 (Task #13-#17).

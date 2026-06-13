@@ -42,7 +42,7 @@
 //!         ↓
 //! UnifiedHandlers.graph_operations_service
 //!         ↓
-//! GraphEngine (ORION/PULSAR/QUASAR)
+//! ORION graph runtime
 //!         ↓
 //! Response (Proto)
 //! ```

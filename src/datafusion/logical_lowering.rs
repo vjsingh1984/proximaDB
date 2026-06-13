@@ -10,12 +10,17 @@
 //! ## Scope
 //! Covers the OLAP shapes the P1 route targets:
 //! `Scan / Filter / Project / Aggregate / Sort / Limit / Distinct / Union` and
-//! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`), with `Expr`
-//! translation for `Column / Literal / BinaryOp / UnaryOp / IsNull / Cast / Between /
-//! In / Like / Case / Coalesce / NullIf` and the common scalar functions
-//! `UPPER/LOWER/LENGTH/ABS/CEIL/FLOOR/SQRT/CONCAT`. Anything else (Semi/Anti join,
-//! Values, CTEs; uncommon/variadic `FuncCall`s; `StringAgg/Custom` aggregates)
-//! returns [`DataFusionError::NotImplemented`] so the caller keeps the existing
+//! `Join` (Inner/Left/Right/Full/Cross via `join_on`/`cross_join`, plus
+//! Semi/Anti via `LeftSemi`/`LeftAnti` — the decorrelated IN/EXISTS targets),
+//! `SetOp` (`INTERSECT`/`EXCEPT`, `ALL` preserving multiset dups),
+//! `Values` (inline literal rows, aliased to the algebra's output names) and
+//! `WITH` CTEs (`CteBind`/`CteRef`, resolved by inlining the body at each ref),
+//! with `Expr` translation for `Column / Literal / BinaryOp / UnaryOp / IsNull /
+//! Cast / Between / In / Like / Case / Coalesce / NullIf` and the common scalar
+//! functions `UPPER/LOWER/LENGTH/ABS/CEIL/FLOOR/SQRT/CONCAT`. Anything else
+//! (null-aware anti join / `NOT IN`, scalar-subquery `AssertMaxOneRow` guard;
+//! uncommon/variadic `FuncCall`s; `StringAgg/Custom` aggregates) returns
+//! [`DataFusionError::NotImplemented`] so the caller keeps the existing
 //! `ctx.sql(...)` path for those — additive, never wrong.
 
 use datafusion::error::{DataFusionError, Result as DFResult};
@@ -27,7 +32,9 @@ use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 
 use proximadb_data_model::{ProximaType, ProximaValue};
-use proximadb_relational_algebra::{AggregateExpr, JoinKind, LogicalNode, NamedAggregate};
+use proximadb_relational_algebra::{
+    AggregateExpr, JoinKind, LogicalNode, NamedAggregate, SetOpKind,
+};
 use proximadb_relational_types::{BinaryOp as RBinOp, Expr as RExpr, UnaryOp as RUnOp};
 
 fn unsupported(what: impl Into<String>) -> DataFusionError {
@@ -37,7 +44,111 @@ fn unsupported(what: impl Into<String>) -> DataFusionError {
 /// Lower a relational `LogicalNode` to a DataFusion `LogicalPlan`, resolving `Scan` leaves
 /// against the tables registered in `ctx`.
 pub async fn lower_logical_node(ctx: &SessionContext, node: &LogicalNode) -> DFResult<LogicalPlan> {
-    lower(ctx, node).await
+    // Resolve CTEs first (inline each `CteRef` with its bound body) so `lower`
+    // only ever sees a `CteBind`/`CteRef`-free tree.
+    let inlined = inline_ctes(node, &[])?;
+    lower(ctx, &inlined).await
+}
+
+/// Resolve `WITH` CTEs by inlining: substitute every `CteRef` with a clone of its
+/// bound body, producing a `CteBind`/`CteRef`-free tree. This is the "single-use
+/// always inline" cut — DataFusion's optimizer can re-share identical subtrees, and
+/// any unbound reference returns `NotImplemented` so the caller keeps the `ctx.sql`
+/// fallback. `env` is the lexical binding stack (innermost last); a CTE body is
+/// resolved in the scope where it is bound, so later/inner CTEs may reference earlier
+/// ones and inner names shadow outer ones.
+fn inline_ctes(node: &LogicalNode, env: &[(String, LogicalNode)]) -> DFResult<LogicalNode> {
+    let recur = |n: &LogicalNode| inline_ctes(n, env);
+    Ok(match node {
+        LogicalNode::CteBind {
+            name,
+            body,
+            usages,
+        } => {
+            // Resolve the body in the CURRENT scope, then bind it for `usages`.
+            let resolved_body = inline_ctes(body, env)?;
+            let mut inner_env = env.to_vec();
+            inner_env.push((name.clone(), resolved_body));
+            inline_ctes(usages, &inner_env)?
+        }
+        LogicalNode::CteRef { name, .. } => env
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .map(|(_, body)| body.clone())
+            .ok_or_else(|| unsupported(format!("unbound CTE reference {name}")))?,
+        // Leaves: no `LogicalNode` children to descend into.
+        LogicalNode::Scan { .. } | LogicalNode::Values { .. } => node.clone(),
+        LogicalNode::Filter { input, predicate } => LogicalNode::Filter {
+            input: Box::new(recur(input)?),
+            predicate: predicate.clone(),
+        },
+        LogicalNode::Project { input, outputs } => LogicalNode::Project {
+            input: Box::new(recur(input)?),
+            outputs: outputs.clone(),
+        },
+        LogicalNode::Join {
+            left,
+            right,
+            kind,
+            on,
+            strategy,
+        } => LogicalNode::Join {
+            left: Box::new(recur(left)?),
+            right: Box::new(recur(right)?),
+            kind: *kind,
+            on: on.clone(),
+            strategy: *strategy,
+        },
+        LogicalNode::Aggregate {
+            input,
+            group_by,
+            aggregates,
+            having,
+        } => LogicalNode::Aggregate {
+            input: Box::new(recur(input)?),
+            group_by: group_by.clone(),
+            aggregates: aggregates.clone(),
+            having: having.clone(),
+        },
+        LogicalNode::Sort { input, keys } => LogicalNode::Sort {
+            input: Box::new(recur(input)?),
+            keys: keys.clone(),
+        },
+        LogicalNode::Limit {
+            input,
+            limit,
+            offset,
+        } => LogicalNode::Limit {
+            input: Box::new(recur(input)?),
+            limit: *limit,
+            offset: *offset,
+        },
+        LogicalNode::Distinct { input } => LogicalNode::Distinct {
+            input: Box::new(recur(input)?),
+        },
+        LogicalNode::AssertMaxOneRow { input } => LogicalNode::AssertMaxOneRow {
+            input: Box::new(recur(input)?),
+        },
+        LogicalNode::Union { inputs, all } => LogicalNode::Union {
+            inputs: inputs
+                .iter()
+                .map(|n| inline_ctes(n, env))
+                .collect::<DFResult<Vec<_>>>()?,
+            all: *all,
+        },
+        LogicalNode::SetOp {
+            op,
+            left,
+            right,
+            all,
+        } => LogicalNode::SetOp {
+            op: *op,
+            left: Box::new(recur(left)?),
+            right: Box::new(recur(right)?),
+            all: *all,
+        },
+    })
 }
 
 // Boxed recursion: an `async fn` calling itself needs an explicit boxed future.
@@ -127,11 +238,30 @@ fn lower<'a>(
                             .cross_join(right_plan)?
                             .build();
                     }
-                    // Semi/Anti (incl. the null-aware NOT IN variant) come from
-                    // IN / NOT IN / EXISTS subqueries — leave to the `ctx.sql`
-                    // fallback until subquery lowering exists on this path.
-                    JoinKind::Semi | JoinKind::Anti | JoinKind::AntiNullAware => {
-                        return Err(unsupported("Semi/Anti join (use ctx.sql path)"));
+                    // Semi/Anti come from decorrelated IN / EXISTS / NOT EXISTS
+                    // subqueries (correlated EXISTS/IN decorrelation is live in the
+                    // relational engine). They carry the correlation/IN-key ON
+                    // predicate and project only the left schema → lower directly to
+                    // DataFusion's LeftSemi / LeftAnti instead of the ctx.sql fallback.
+                    JoinKind::Semi | JoinKind::Anti => {
+                        let semi_join_type = if matches!(kind, JoinKind::Semi) {
+                            JoinType::LeftSemi
+                        } else {
+                            JoinType::LeftAnti
+                        };
+                        let predicate = on.as_ref().ok_or_else(|| {
+                            unsupported("semi/anti join without ON predicate (use ctx.sql path)")
+                        })?;
+                        return LogicalPlanBuilder::from(left_plan)
+                            .join_on(right_plan, semi_join_type, [lower_expr(predicate)?])?
+                            .build();
+                    }
+                    // Null-aware anti join is the `NOT IN (subquery)` target, whose
+                    // SQL three-valued logic (a NULL in the right relation makes
+                    // `NOT IN` yield no rows) DataFusion's LeftAnti does NOT
+                    // implement. Keep it on the `ctx.sql` fallback (correct, never wrong).
+                    JoinKind::AntiNullAware => {
+                        return Err(unsupported("null-aware anti join (use ctx.sql path)"));
                     }
                 };
                 match on {
@@ -169,15 +299,59 @@ fn lower<'a>(
                 }
                 builder.build()
             }
-            LogicalNode::Values { .. } => Err(unsupported("Values")),
-            LogicalNode::CteBind { .. } => Err(unsupported("CteBind")),
-            LogicalNode::CteRef { .. } => Err(unsupported("CteRef")),
-            // Decorrelation outputs (scalar-subquery cardinality guard + generalized
-            // set ops) — DataFusion serves these via the `ctx.sql` fallback until they
-            // are lowered on the shared path. Explicit arms (not a wildcard) so the next
-            // new LogicalNode variant forces a deliberate decision here, not silent rot.
+            LogicalNode::SetOp {
+                op,
+                left,
+                right,
+                all,
+            } => {
+                let left_plan = lower(ctx, left).await?;
+                let right_plan = lower(ctx, right).await?;
+                // Both inputs share a schema (algebra invariant); `all` selects
+                // multiset (preserve dups) vs set semantics. `intersect`/`except`
+                // are static assoc fns returning the finished `LogicalPlan`.
+                match op {
+                    SetOpKind::Intersect => {
+                        LogicalPlanBuilder::intersect(left_plan, right_plan, *all)
+                    }
+                    SetOpKind::Except => LogicalPlanBuilder::except(left_plan, right_plan, *all),
+                }
+            }
+            LogicalNode::Values {
+                rows,
+                output_schema,
+            } => {
+                if rows.is_empty() {
+                    return Err(unsupported("empty Values"));
+                }
+                // Lower each literal row to DataFusion exprs.
+                let lowered_rows = rows
+                    .iter()
+                    .map(|row| row.iter().map(lower_expr).collect::<DFResult<Vec<_>>>())
+                    .collect::<DFResult<Vec<_>>>()?;
+                // DataFusion names VALUES columns `column1`, `column2`, … (Postgres
+                // convention). Re-alias to the algebra's `output_schema` names so
+                // downstream column references resolve.
+                let aliases = output_schema
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| col(format!("column{}", i + 1)).alias(&c.name))
+                    .collect::<Vec<Expr>>();
+                LogicalPlanBuilder::values(lowered_rows)?
+                    .project(aliases)?
+                    .build()
+            }
+            // `inline_ctes` (run by `lower_logical_node` before `lower`) strips these,
+            // so they are unreachable here — kept as a defensive guard in case `lower`
+            // is ever reached on an un-inlined tree.
+            LogicalNode::CteBind { .. } => Err(unsupported("CteBind (should be inlined)")),
+            LogicalNode::CteRef { .. } => Err(unsupported("CteRef (should be inlined)")),
+            // Scalar-subquery cardinality guard — DataFusion serves this via the
+            // `ctx.sql` fallback until it is lowered on the shared path. Explicit arm
+            // (not a wildcard) so the next new LogicalNode variant forces a deliberate
+            // decision here, not silent rot.
             LogicalNode::AssertMaxOneRow { .. } => Err(unsupported("AssertMaxOneRow")),
-            LogicalNode::SetOp { .. } => Err(unsupported("SetOp")),
         }
     })
 }
@@ -220,8 +394,7 @@ fn lower_aggregate(named: &NamedAggregate) -> DFResult<Expr> {
             }
             match proximadb_functions::builtins().lookup_aggregate(name) {
                 Some(def) => {
-                    let udf =
-                        std::sync::Arc::new(super::registry_udf::proxima_aggregate_udf(def));
+                    let udf = std::sync::Arc::new(super::registry_udf::proxima_aggregate_udf(def));
                     let lowered = args.iter().map(lower_expr).collect::<DFResult<Vec<_>>>()?;
                     udf.call(lowered)
                 }
@@ -581,6 +754,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lowers_semi_and_anti_join() {
+        // t(k,x) = {a,a,b}; u(j) = {a}. SEMI t ON k=j keeps t rows with a match
+        // (the two a-rows → 2); ANTI keeps t rows with NO match (the b-row → 1).
+        // These are the decorrelated IN / NOT EXISTS lowering targets — they now
+        // lower to DataFusion LeftSemi/LeftAnti instead of the ctx.sql fallback.
+        let ctx = ctx_with_t().await; // registers t(k,x) = a/a/b
+        let u_schema = Arc::new(Schema::new(vec![Field::new("j", DataType::Utf8, false)]));
+        let u_batch = RecordBatch::try_new(
+            u_schema.clone(),
+            vec![Arc::new(StringArray::from(vec!["a"]))],
+        )
+        .unwrap();
+        ctx.register_table(
+            "u",
+            Arc::new(MemTable::try_new(u_schema, vec![vec![u_batch]]).unwrap()),
+        )
+        .unwrap();
+
+        let scan_u = LogicalNode::Scan {
+            table: TableId::new("u"),
+            table_schema: RelationalSchema::new(vec![ColumnInfo::new(
+                "j",
+                ProximaType::String,
+                false,
+            )]),
+            projected_columns: None,
+            predicate: None,
+        };
+        let on = RExpr::BinaryOp {
+            op: RBinOp::Eq,
+            left: Box::new(RExpr::Column(colref("k", 0, ProximaType::String))),
+            right: Box::new(RExpr::Column(colref("j", 0, ProximaType::String))),
+        };
+        let mk = |kind| LogicalNode::Join {
+            left: Box::new(scan_t()),
+            right: Box::new(scan_u.clone()),
+            kind,
+            on: Some(on.clone()),
+            strategy: JoinStrategy::Auto,
+        };
+
+        let semi_plan = lower_logical_node(&ctx, &mk(JoinKind::Semi)).await.unwrap();
+        let semi_rows: usize = ctx
+            .execute_logical_plan(semi_plan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(semi_rows, 2, "SEMI keeps the two matching a-rows");
+
+        let anti_plan = lower_logical_node(&ctx, &mk(JoinKind::Anti)).await.unwrap();
+        let anti_rows: usize = ctx
+            .execute_logical_plan(anti_plan)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.num_rows())
+            .sum();
+        assert_eq!(anti_rows, 1, "ANTI keeps the non-matching b-row");
+
+        // Null-aware anti (NOT IN) must remain on the ctx.sql fallback (errors here).
+        assert!(
+            lower_logical_node(&ctx, &mk(JoinKind::AntiNullAware))
+                .await
+                .is_err(),
+            "null-aware anti must NOT be lowered (correctness: NOT IN three-valued logic)"
+        );
+    }
+
+    #[tokio::test]
     async fn lowers_cast_between_in_like() {
         // SELECT k FROM t
         //  WHERE x BETWEEN 1.0 AND 3.0  AND k IN ('a')  AND k LIKE 'a%'
@@ -747,6 +997,123 @@ mod tests {
             all: false,
         };
         assert_eq!(row_count(&ctx, &union_distinct).await, 2);
+    }
+
+    // SELECT k FROM t WHERE k = <val>  — a filtered projection of just `k`,
+    // schema-matching `project_k()` so set ops can combine them.
+    fn project_k_where(val: &str) -> LogicalNode {
+        LogicalNode::Project {
+            input: Box::new(LogicalNode::Filter {
+                input: Box::new(scan_t()),
+                predicate: RExpr::BinaryOp {
+                    op: RBinOp::Eq,
+                    left: Box::new(RExpr::Column(colref("k", 0, ProximaType::String))),
+                    right: Box::new(RExpr::Literal {
+                        value: ProximaValue::String(val.to_string()),
+                        ty: ProximaType::String,
+                    }),
+                },
+            }),
+            outputs: vec![NamedExpr {
+                name: "k".to_string(),
+                expr: RExpr::Column(colref("k", 0, ProximaType::String)),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn lowers_intersect_and_except() {
+        // left  = SELECT k FROM t            → {a, a, b}
+        // right = SELECT k FROM t WHERE k='a' → {a, a}
+        let ctx = ctx_with_t().await;
+        let set_op = |op, all| LogicalNode::SetOp {
+            op,
+            left: Box::new(project_k()),
+            right: Box::new(project_k_where("a")),
+            all,
+        };
+
+        // INTERSECT (distinct): {a,b} ∩ {a} = {a} → 1 row.
+        assert_eq!(
+            row_count(&ctx, &set_op(SetOpKind::Intersect, false)).await,
+            1
+        );
+        // INTERSECT ALL: multiset min → a:min(2,2)=2, b:min(1,0)=0 → {a,a} → 2 rows.
+        assert_eq!(
+            row_count(&ctx, &set_op(SetOpKind::Intersect, true)).await,
+            2
+        );
+        // EXCEPT (distinct): {a,b} − {a} = {b} → 1 row.
+        assert_eq!(row_count(&ctx, &set_op(SetOpKind::Except, false)).await, 1);
+        // EXCEPT ALL: multiset diff → a:max(2−2,0)=0, b:max(1−0,0)=1 → {b} → 1 row.
+        assert_eq!(row_count(&ctx, &set_op(SetOpKind::Except, true)).await, 1);
+    }
+
+    #[tokio::test]
+    async fn lowers_values() {
+        // VALUES (1,'a'), (2,'b'), (3,'a')  with output names (n, s).
+        let ctx = ctx_with_t().await; // ctx needs no table — VALUES is self-contained.
+        let int_lit = |n: i64| RExpr::Literal {
+            value: ProximaValue::Int64(n),
+            ty: ProximaType::Int64,
+        };
+        let str_lit = |s: &str| RExpr::Literal {
+            value: ProximaValue::String(s.to_string()),
+            ty: ProximaType::String,
+        };
+        let values = || LogicalNode::Values {
+            rows: vec![
+                vec![int_lit(1), str_lit("a")],
+                vec![int_lit(2), str_lit("b")],
+                vec![int_lit(3), str_lit("a")],
+            ],
+            output_schema: RelationalSchema::new(vec![
+                ColumnInfo::new("n", ProximaType::Int64, false),
+                ColumnInfo::new("s", ProximaType::String, false),
+            ]),
+        };
+        // Bare VALUES → 3 rows.
+        assert_eq!(row_count(&ctx, &values()).await, 3);
+        // Filtering on the aliased column `s` proves the output_schema names carry
+        // through (DataFusion's default column1/column2 are re-aliased to n/s).
+        let filtered = LogicalNode::Filter {
+            input: Box::new(values()),
+            predicate: RExpr::BinaryOp {
+                op: RBinOp::Eq,
+                left: Box::new(RExpr::Column(colref("s", 1, ProximaType::String))),
+                right: Box::new(str_lit("a")),
+            },
+        };
+        assert_eq!(row_count(&ctx, &filtered).await, 2); // rows 1 and 3
+    }
+
+    #[tokio::test]
+    async fn lowers_cte_inlined_at_each_ref() {
+        // WITH cte AS (SELECT k FROM t WHERE k='a')        -- body = {a, a}
+        //   (SELECT k FROM cte) UNION ALL (SELECT k FROM cte)
+        // Inlining the body at BOTH refs → 2 + 2 = 4 rows.
+        let ctx = ctx_with_t().await;
+        let cte_schema =
+            || RelationalSchema::new(vec![ColumnInfo::new("k", ProximaType::String, false)]);
+        let cte_ref = || LogicalNode::CteRef {
+            name: "cte".to_string(),
+            output_schema: cte_schema(),
+        };
+        let node = LogicalNode::CteBind {
+            name: "cte".to_string(),
+            body: Box::new(project_k_where("a")),
+            usages: Box::new(LogicalNode::Union {
+                inputs: vec![cte_ref(), cte_ref()],
+                all: true,
+            }),
+        };
+        assert_eq!(row_count(&ctx, &node).await, 4);
+
+        // An unbound CTE reference must error so the caller keeps the ctx.sql fallback.
+        assert!(
+            lower_logical_node(&ctx, &cte_ref()).await.is_err(),
+            "unbound CteRef must NOT lower"
+        );
     }
 
     #[tokio::test]

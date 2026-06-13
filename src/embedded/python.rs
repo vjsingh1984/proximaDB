@@ -2541,7 +2541,7 @@ impl PyProximaDB {
     ///
     /// Args:
     ///     graph_id: Unique identifier for the graph
-    ///     engine: Graph engine type ("orion", "pulsar", "quasar") (optional)
+    ///     engine: Graph engine type ("orion") (optional)
     ///
     /// Example:
     ///     ```python

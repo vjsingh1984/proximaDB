@@ -455,8 +455,8 @@ flowchart LR
 | Use `Result<T, Error>` and the `?` operator. Reserve `unwrap()` for truly impossible cases with extensive justification comments.
 
 | Advertising experimental features as production-ready
-| Erodes user trust when features break or underperform. PULSAR and QUASAR graph engines are current examples.
-| Gate behind `experimental-*` feature flags. Document maturity levels clearly in both code and user-facing docs.
+| Erodes user trust when features break or underperform. PULSAR and QUASAR were retired as graph engine surfaces to remove this risk.
+| Prefer removing unsupported surfaces over advertising partial implementations. Document maturity levels clearly in both code and user-facing docs.
 
 | One-size-fits-all storage engine
 | No single engine design is optimal for all workloads. Forcing all data through one path creates performance bottlenecks.

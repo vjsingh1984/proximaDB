@@ -913,19 +913,16 @@ mod tests {
             .expect("engine present")
             .value()
             .clone();
-        if let GraphEngineImpl::Orion(orion) = engine_arc.as_ref() {
-            let mut outgoing = orion
-                .get_outgoing_targets(&"a".to_string())
-                .await
-                .expect("outgoing targets");
-            outgoing.sort();
-            assert_eq!(
-                outgoing,
-                vec!["b".to_string(), "c".to_string()],
-                "CSR should have both outgoing neighbours for node a"
-            );
-        } else {
-            panic!("expected ORION engine");
-        }
+        let GraphEngineImpl::Orion(orion) = engine_arc.as_ref();
+        let mut outgoing = orion
+            .get_outgoing_targets(&"a".to_string())
+            .await
+            .expect("outgoing targets");
+        outgoing.sort();
+        assert_eq!(
+            outgoing,
+            vec!["b".to_string(), "c".to_string()],
+            "CSR should have both outgoing neighbours for node a"
+        );
     }
 }

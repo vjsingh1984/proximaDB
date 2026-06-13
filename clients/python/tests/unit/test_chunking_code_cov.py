@@ -75,19 +75,41 @@ _GRAMMARS = {
 
 
 def _build_fake_language_pack():
-    """Build a fake tree_sitter_language_pack module backed by real grammars."""
+    """Build a fake tree_sitter_language_pack module backed by real grammars.
+
+    Grammars resolve from standalone ``tree_sitter_<lang>`` packages when
+    installed; for any language whose standalone package is absent we fall
+    back to the real ``tree_sitter_language_pack`` (which bundles all of
+    them). Captured here, before the fixture monkeypatches the module name,
+    so the fallback reaches the genuine package rather than this fake.
+    """
     import tree_sitter as ts
+
+    try:
+        import tree_sitter_language_pack as _real_pack
+    except Exception:  # pragma: no cover - real pack absent in some envs
+        _real_pack = None
 
     _lang_cache = {}
 
     def _get_language(name):
         if name in _lang_cache:
             return _lang_cache[name]
+        lang = None
         mod_name = _GRAMMARS.get(name)
-        if mod_name is None:
+        if mod_name is not None:
+            try:
+                grammar = __import__(mod_name)
+                lang = ts.Language(grammar.language())
+            except Exception:
+                lang = None  # standalone grammar not installed — fall back
+        if lang is None and _real_pack is not None:
+            try:
+                lang = _real_pack.get_language(name)
+            except Exception:
+                lang = None
+        if lang is None:
             raise LookupError(f"no grammar for {name}")
-        grammar = __import__(mod_name)
-        lang = ts.Language(grammar.language())
         _lang_cache[name] = lang
         return lang
 

@@ -870,14 +870,6 @@ pub fn create_graph_router() -> Router<AppState> {
             get(get_connected_components),
         )
         .route("/graphs/:graph_id/cycles", get(check_cycles))
-        // PULSAR/QUASAR advanced graph operations
-        .route("/graphs/:graph_id/engine", post(create_graph_with_engine))
-        .route("/graphs/:graph_id/pulsar/stats", get(get_pulsar_stats))
-        .route("/graphs/:graph_id/pulsar/query", post(cross_shard_query))
-        .route("/graphs/:graph_id/pulsar/rebalance", post(rebalance_shards))
-        .route("/graphs/:graph_id/quasar/stats", get(get_quasar_stats))
-        .route("/graphs/:graph_id/quasar/tiers", get(get_tier_stats))
-        .route("/graphs/:graph_id/quasar/migrate", post(trigger_migration))
         // Legacy compatibility endpoints (deprecated; redirect to canonical multi-graph routes)
         .route("/nodes", post(create_node_legacy))
         .route("/nodes/:id", get(get_node_legacy))
@@ -1329,6 +1321,106 @@ pub async fn check_cycles(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(GraphResponse::<bool>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn rag_query(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<RagRequest>,
+) -> impl IntoResponse {
+    let seed_collection = request
+        .seed_collection
+        .clone()
+        .unwrap_or_else(|| graph_id.clone());
+
+    let engine = match app_state
+        .request_handlers
+        .graph_operations_service
+        .get_or_create_graph_engine(&graph_id)
+        .await
+    {
+        Ok(e) => e,
+        Err(err) => {
+            let graph_error = GraphError::new(
+                ErrorCode::InvalidArgument,
+                format!("Graph '{}' not found: {}", graph_id, err),
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<RestSubgraph>::error(graph_error)),
+            )
+                .into_response();
+        }
+    };
+
+    let retriever = VectorNodeRetriever::new(
+        app_state.vector_operations_service.clone(),
+        seed_collection,
+        request.budget.max_seeds,
+    );
+
+    let builder =
+        KHopSubgraphBuilder::new(engine.clone() as Arc<dyn GraphEngine>, request.hops, None);
+
+    let budget = RagBudget {
+        max_seeds: request.budget.max_seeds,
+        max_subgraph_nodes: request.budget.max_subgraph_nodes,
+    };
+
+    let rag_query = RagQuery {
+        query: request.query,
+        query_vector: request.query_vector,
+        allowed_labels: request.allowed_labels,
+    };
+
+    if request.use_llm_filter {
+        if app_state.llm_engine.is_some() {
+            warn!(
+                "LLM filter requested for graph {} but no LLM-aware node filter is currently wired; using the standard RAG pipeline",
+                graph_id
+            );
+        } else {
+            warn!(
+                "LLM filter requested but LLM engine not available; using the standard RAG pipeline"
+            );
+        }
+    }
+
+    let pipeline = RagPipeline::without_filter(retriever, builder, budget);
+    execute_rag_pipeline(pipeline, &rag_query, &graph_id).await
+}
+
+/// Helper to execute the pipeline and format the response.
+async fn execute_rag_pipeline<R, B, F>(
+    pipeline: RagPipeline<R, B, F>,
+    query: &RagQuery,
+    graph_id: &str,
+) -> Response
+where
+    R: crate::graph::rag::NodeRetriever,
+    B: crate::graph::rag::SubgraphBuilder,
+    F: crate::graph::rag::NodeFilter,
+{
+    match pipeline.run(query).await {
+        Ok(subgraph) => {
+            info!(
+                "Successfully executed RGL query for graph {}: {} nodes, {} edges",
+                graph_id,
+                subgraph.nodes.len(),
+                subgraph.edges.len()
+            );
+            Json(GraphResponse::success(RestSubgraph::from(subgraph))).into_response()
+        }
+        Err(err) => {
+            error!("RGL query failed for graph {}: {}", graph_id, err);
+            let graph_error = GraphError::internal(err.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<RestSubgraph>::error(graph_error)),
             )
                 .into_response()
         }
@@ -2229,483 +2321,6 @@ fn convert_query_result_to_rows(result: &crate::query::QueryResult) -> Vec<serde
             graph_result.nodes.clone()
         }
         QueryResultData::Empty => vec![],
-    }
-}
-
-// ===== PULSAR/QUASAR Advanced Graph Operations =====
-
-/// Request for creating a graph with a specific engine
-#[derive(Debug, Deserialize)]
-pub struct CreateGraphWithEngineRequest {
-    /// Unique graph identifier
-    pub graph_id: String,
-    /// Graph engine type: "orion", "pulsar", or "quasar"
-    #[serde(default)]
-    pub engine_type: String,
-    /// PULSAR-specific distributed engine configuration
-    pub pulsar_config: Option<serde_json::Value>,
-    /// QUASAR-specific hybrid vector+graph engine configuration
-    pub quasar_config: Option<serde_json::Value>,
-}
-
-/// Create a graph with a specific engine type (ORION, PULSAR, or QUASAR)
-pub async fn create_graph_with_engine(
-    State(app_state): State<AppState>,
-    Json(request): Json<CreateGraphWithEngineRequest>,
-) -> impl IntoResponse {
-    info!(
-        "Creating graph {} with engine type {}",
-        request.graph_id, request.engine_type
-    );
-
-    // Map engine type string to proto enum
-    let engine_type = match request.engine_type.to_lowercase().as_str() {
-        "orion" => crate::graph::service::service_advanced::GraphEngineTypeProto::Orion,
-        "pulsar" => crate::graph::service::service_advanced::GraphEngineTypeProto::Pulsar,
-        "quasar" => crate::graph::service::service_advanced::GraphEngineTypeProto::Quasar,
-        _ => {
-            let error = GraphError::new(
-                ErrorCode::InvalidArgument,
-                format!(
-                    "Unknown engine type: {}. Valid options: orion, pulsar, quasar",
-                    request.engine_type
-                ),
-            );
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(GraphResponse::<serde_json::Value>::error(error)),
-            )
-                .into_response();
-        }
-    };
-
-    let service_request = crate::graph::service::service_advanced::CreateGraphWithEngineRequest {
-        graph_id: request.graph_id.clone(),
-        engine_type,
-        pulsar_config: request
-            .pulsar_config
-            .map(|v| serde_json::from_value(v).unwrap_or_default()),
-        quasar_config: request
-            .quasar_config
-            .map(|v| serde_json::from_value(v).unwrap_or_default()),
-    };
-
-    match app_state
-        .request_handlers
-        .graph_operations_service
-        .create_graph_with_engine(service_request)
-        .await
-    {
-        Ok(response) => {
-            info!(
-                "Graph {} created successfully with engine {:?}",
-                request.graph_id, engine_type
-            );
-            let body = serde_json::json!({
-                "success": response.success,
-                "message": response.message,
-                "engine_type": format!("{:?}", response.created_engine_type),
-            });
-            (StatusCode::CREATED, Json(GraphResponse::success(body))).into_response()
-        }
-        Err(e) => {
-            error!("Failed to create graph {}: {}", request.graph_id, e);
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Get PULSAR distributed graph statistics
-pub async fn get_pulsar_stats(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
-) -> impl IntoResponse {
-    debug!("Getting PULSAR stats for graph: {}", graph_id);
-
-    let request = crate::proto::v1::GetStatsRequest {
-        graph_id: graph_id.clone(),
-    };
-
-    match app_state
-        .request_handlers
-        .graph_operations_service
-        .get_pulsar_stats(request)
-        .await
-    {
-        Ok(stats) => (
-            StatusCode::OK,
-            Json(GraphResponse::success(
-                serde_json::to_value(stats).unwrap_or_default(),
-            )),
-        )
-            .into_response(),
-        Err(e) => {
-            error!("Failed to get PULSAR stats for graph {}: {}", graph_id, e);
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Request for cross-shard query
-#[derive(Debug, Deserialize)]
-pub struct CrossShardQueryRequest {
-    /// Target graph identifier
-    pub graph_id: String,
-    /// Graph query to execute across shards
-    pub query: String,
-    /// Specific shard IDs to query (empty means all shards)
-    #[serde(default)]
-    pub shard_ids: Vec<String>,
-}
-
-/// Execute cross-shard query (PULSAR only)
-pub async fn cross_shard_query(
-    State(app_state): State<AppState>,
-    Json(request): Json<CrossShardQueryRequest>,
-) -> impl IntoResponse {
-    info!(
-        "Executing cross-shard query for graph: {}",
-        request.graph_id
-    );
-
-    let service_request = crate::graph::service::service_advanced::CrossShardQueryRequest {
-        graph_id: request.graph_id.clone(),
-        query: request.query.clone(),
-        shard_ids: request.shard_ids.clone(),
-    };
-
-    match app_state
-        .request_handlers
-        .graph_operations_service
-        .cross_shard_query(service_request)
-        .await
-    {
-        Ok(response) => (
-            StatusCode::OK,
-            Json(GraphResponse::success(
-                serde_json::to_value(response).unwrap_or_default(),
-            )),
-        )
-            .into_response(),
-        Err(e) => {
-            error!(
-                "Cross-shard query failed for graph {}: {}",
-                request.graph_id, e
-            );
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Request for rebalancing shards
-#[derive(Debug, Deserialize)]
-pub struct RebalanceShardsRequest {
-    /// Target graph identifier
-    pub graph_id: String,
-    /// Specific shard IDs to rebalance (empty means all)
-    #[serde(default)]
-    pub shard_ids: Vec<String>,
-    /// Force rebalance even if the cluster is not in a stable state
-    #[serde(default)]
-    pub force: bool,
-}
-
-/// Rebalance shards (PULSAR only)
-pub async fn rebalance_shards(
-    State(app_state): State<AppState>,
-    Json(request): Json<RebalanceShardsRequest>,
-) -> impl IntoResponse {
-    info!("Rebalancing shards for graph: {}", request.graph_id);
-
-    let service_request = crate::graph::service::service_advanced::RebalanceShardsRequest {
-        graph_id: request.graph_id.clone(),
-        shard_ids: request.shard_ids.clone(),
-        force: request.force,
-    };
-
-    match app_state
-        .request_handlers
-        .graph_operations_service
-        .rebalance_shards(service_request)
-        .await
-    {
-        Ok(response) => {
-            let body = serde_json::json!({
-                "success": response.success,
-                "message": response.message,
-                "rebalanced_shards": response.rebalanced_shards,
-            });
-            (StatusCode::OK, Json(GraphResponse::success(body))).into_response()
-        }
-        Err(e) => {
-            error!(
-                "Failed to rebalance shards for graph {}: {}",
-                request.graph_id, e
-            );
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Get QUASAR tiering statistics
-pub async fn get_quasar_stats(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
-) -> impl IntoResponse {
-    debug!("Getting QUASAR stats for graph: {}", graph_id);
-
-    let request = crate::proto::v1::GetStatsRequest {
-        graph_id: graph_id.clone(),
-    };
-
-    match app_state
-        .request_handlers
-        .graph_operations_service
-        .get_quasar_stats(request)
-        .await
-    {
-        Ok(stats) => (
-            StatusCode::OK,
-            Json(GraphResponse::success(
-                serde_json::to_value(stats).unwrap_or_default(),
-            )),
-        )
-            .into_response(),
-        Err(e) => {
-            error!("Failed to get QUASAR stats for graph {}: {}", graph_id, e);
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Get detailed tier statistics (QUASAR only)
-pub async fn get_tier_stats(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
-) -> impl IntoResponse {
-    debug!("Getting tier stats for graph: {}", graph_id);
-
-    let request = crate::graph::service::service_advanced::GetTierStatsRequest {
-        graph_id: graph_id.clone(),
-        tier_name: None,
-    };
-
-    match app_state
-        .request_handlers
-        .graph_operations_service
-        .get_tier_stats(request)
-        .await
-    {
-        Ok(response) => (
-            StatusCode::OK,
-            Json(GraphResponse::success(
-                serde_json::to_value(response).unwrap_or_default(),
-            )),
-        )
-            .into_response(),
-        Err(e) => {
-            error!("Failed to get tier stats for graph {}: {}", graph_id, e);
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Request for triggering migration
-#[derive(Debug, Deserialize)]
-pub struct TriggerMigrationRequest {
-    /// Target graph identifier
-    pub graph_id: String,
-    /// Node IDs to migrate (empty means automatic selection)
-    #[serde(default)]
-    pub node_ids: Vec<String>,
-    /// Target storage tier (e.g., "hot", "warm", "cold")
-    pub target_tier: String,
-}
-
-/// Trigger manual tier migration (QUASAR only)
-pub async fn trigger_migration(
-    State(app_state): State<AppState>,
-    Json(request): Json<TriggerMigrationRequest>,
-) -> impl IntoResponse {
-    info!("Triggering migration for graph: {}", request.graph_id);
-
-    let service_request = crate::graph::service::service_advanced::TriggerMigrationRequest {
-        graph_id: request.graph_id.clone(),
-        node_ids: request.node_ids.clone(),
-        target_tier: request.target_tier.clone(),
-    };
-
-    match app_state
-        .request_handlers
-        .graph_operations_service
-        .trigger_migration(service_request)
-        .await
-    {
-        Ok(response) => {
-            let body = serde_json::json!({
-                "success": response.success,
-                "message": response.message,
-                "migrated_node_ids": response.migrated_node_ids,
-            });
-            (StatusCode::OK, Json(GraphResponse::success(body))).into_response()
-        }
-        Err(e) => {
-            error!(
-                "Failed to trigger migration for graph {}: {}",
-                request.graph_id, e
-            );
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Modular Graph RAG (RGL) retrieval: find seed nodes and expand to a subgraph.
-///
-/// This endpoint implements the RGL pattern (arXiv:2503.19314) by decomposing
-/// retrieval into (1) seed node retrieval via vector similarity and (2)
-/// subgraph expansion via k-hop traversal.
-pub async fn rag_query(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
-    Json(request): Json<RagRequest>,
-) -> impl IntoResponse {
-    let seed_collection = request
-        .seed_collection
-        .clone()
-        .unwrap_or_else(|| graph_id.clone());
-
-    // 1. Get graph engine
-    let engine = match app_state
-        .request_handlers
-        .graph_operations_service
-        .get_or_create_graph_engine(&graph_id)
-        .await
-    {
-        Ok(e) => e,
-        Err(err) => {
-            let graph_error = GraphError::new(
-                ErrorCode::InvalidArgument,
-                format!("Graph '{}' not found: {}", graph_id, err),
-            );
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(GraphResponse::<RestSubgraph>::error(graph_error)),
-            )
-                .into_response();
-        }
-    };
-
-    // 2. Setup RGL pipeline components
-    let retriever = VectorNodeRetriever::new(
-        app_state.vector_operations_service.clone(),
-        seed_collection,
-        request.budget.max_seeds,
-    );
-
-    let builder = KHopSubgraphBuilder::new(
-        engine.clone() as Arc<dyn GraphEngine>,
-        request.hops,
-        None, // All edge types
-    );
-
-    let budget = RagBudget {
-        max_seeds: request.budget.max_seeds,
-        max_subgraph_nodes: request.budget.max_subgraph_nodes,
-    };
-
-    // 3. Execute RGL query with optional LLM filtering
-    let rag_query = RagQuery {
-        query: request.query,
-        query_vector: request.query_vector,
-        allowed_labels: request.allowed_labels,
-    };
-
-    if request.use_llm_filter {
-        if app_state.llm_engine.is_some() {
-            warn!(
-                "LLM filter requested for graph {} but no LLM-aware node filter is currently wired; using the standard RAG pipeline",
-                graph_id
-            );
-            let pipeline = RagPipeline::without_filter(retriever, builder, budget);
-            execute_rag_pipeline(pipeline, &rag_query, &graph_id).await
-        } else {
-            warn!(
-                "LLM filter requested but LLM engine not available; using the standard RAG pipeline"
-            );
-            let pipeline = RagPipeline::without_filter(retriever, builder, budget);
-            execute_rag_pipeline(pipeline, &rag_query, &graph_id).await
-        }
-    } else {
-        let pipeline = RagPipeline::without_filter(retriever, builder, budget);
-        execute_rag_pipeline(pipeline, &rag_query, &graph_id).await
-    }
-}
-
-/// Helper to execute the pipeline and format the response
-async fn execute_rag_pipeline<R, B, F>(
-    pipeline: RagPipeline<R, B, F>,
-    query: &RagQuery,
-    graph_id: &str,
-) -> Response
-where
-    R: crate::graph::rag::NodeRetriever,
-    B: crate::graph::rag::SubgraphBuilder,
-    F: crate::graph::rag::NodeFilter,
-{
-    match pipeline.run(query).await {
-        Ok(subgraph) => {
-            info!(
-                "Successfully executed RGL query for graph {}: {} nodes, {} edges",
-                graph_id,
-                subgraph.nodes.len(),
-                subgraph.edges.len()
-            );
-            Json(GraphResponse::success(RestSubgraph::from(subgraph))).into_response()
-        }
-        Err(err) => {
-            error!("RGL query failed for graph {}: {}", graph_id, err);
-            let graph_error = GraphError::internal(err.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<RestSubgraph>::error(graph_error)),
-            )
-                .into_response()
-        }
     }
 }
 

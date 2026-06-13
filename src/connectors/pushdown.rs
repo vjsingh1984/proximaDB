@@ -11,7 +11,7 @@
 //! 3. **Aggregate Pushdown**: Aggregations (COUNT, SUM, etc.) computed at storage
 //! 4. **Limit Pushdown**: Early termination after N rows
 //! 5. **Vector Search Pushdown**: KNN queries executed by AXIS engine
-//! 6. **Graph Traversal Pushdown**: Graph queries executed by ORION/PULSAR
+//! 6. **Graph Traversal Pushdown**: Graph queries executed by ORION
 //!
 //! ## Negotiation Flow
 //!
@@ -975,7 +975,7 @@ impl VectorSearchPushdown {
 /// Graph traversal pushdown specification.
 ///
 /// Represents a graph query that can be executed natively by ProximaDB's
-/// ORION or PULSAR engines, leveraging CSR format for efficient traversal.
+/// ORION runtime, leveraging CSR format for efficient traversal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GraphTraversalPushdown {
     /// Target graph name

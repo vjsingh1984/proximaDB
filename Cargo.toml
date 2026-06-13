@@ -491,7 +491,7 @@ serde_yaml = "0.9"
 # (in-memory-map-as-durable-source) path during one minor-release migration
 # window can opt OUT via `default-features = false` + explicit feature selection.
 # Plan: remove the feature flag entirely in v0.4 once the migration window closes.
-default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store"]
+default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration"]
 # Optional surfaces; keep off by default to minimize binary size and public API surface
 ai_endpoints = []
 sales_endpoints = []
@@ -625,21 +625,6 @@ graph-first-sks = []
 # DataFusion integration for compute engine compatibility
 # DataFusion 51.x uses Arrow 57.x — versions are aligned as of 2026-04
 datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
-
-# ============================================================================
-# EXPERIMENTAL GRAPH ENGINE FEATURES
-# ============================================================================
-# These engines are experimental and not production-ready. Use ORION for production.
-
-# PULSAR: Distributed sharded graph engine (experimental)
-# WARNING: Cross-shard queries may miss edges, no distributed WAL
-# For production, use ORION with application-level sharding
-distributed-graph = []
-
-# QUASAR: Hybrid hot/cold tiering graph engine (experimental)
-# WARNING: No WAL for cold tier, simple LRU tiering, not integrated with storage engines
-# For production, use ORION with appropriate memory sizing
-tiered-graph = []
 
 # Hardware acceleration features
 gpu = ["metal"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)

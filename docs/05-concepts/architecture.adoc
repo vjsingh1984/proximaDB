@@ -119,9 +119,9 @@ ProximaDB's vision extends the current 4-model architecture (vector, graph, docu
 | Production
 
 | *Graph*
-| ORION (production), PULSAR (experimental), QUASAR (experimental)
+| ORION graph runtime over relational/storage substrate
 | Relationships, traversals, knowledge graphs
-| Production (ORION)
+| Beta
 
 | *Document*
 | WAL-backed JSON store

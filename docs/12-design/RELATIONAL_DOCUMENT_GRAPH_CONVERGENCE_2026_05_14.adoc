@@ -1136,7 +1136,7 @@ Tasks:
 ** [x] Make canonical graph record storage the default durable path and demote ORION WAL to compatibility projection recovery.
 *** `GraphOperationsService::flush_wal()` now writes a `CanonicalOperation::Checkpoint(SnapshotManifest)` to the canonical WAL *before* flushing the engine-specific WAL (`src/graph/service.rs`).
 *** The checkpoint LSN is derived from the edge-mutation epoch counter, giving canonical recovery a stable replay boundary.
-*** The engine WAL (ORION/PULSAR/QUASAR) is retained as a compatibility projection recovery buffer only; it is not the durable authority.
+*** The ORION projection WAL is retained as a compatibility projection recovery buffer only; it is not the durable authority.
 *** Full canonical WAL persistence to disk is tracked as **TD-066** (the in-process checkpoint log is wired; the disk-write path follows when the canonical WAL storage layer is fully integrated).
 * [x] Make ORION CSR load/build from edge records or adjacency projections.
 ** `OrionGraphEngine::rebuild_csr_from_edges(&[Arc<Edge>])` clears and rebuilds all CSR state in one batch pass.
@@ -1276,11 +1276,11 @@ Tasks:
 *** Skip rebuild when epoch age < 300 s (CSR still fresh).
 ** 8 new tests; all 159 `proximadb-query` tests pass.
 * [x] Remove or demote duplicate durable document/graph engines that fail to justify their maintenance cost.
-** `SUPPORTED_SURFACES.adoc` marks retirement candidates:
+** `SUPPORTED_SURFACES.adoc` marks retirement outcomes:
 *** Legacy `DocumentRecord` durable path → compatibility-only; new writes must use `UpsertCanonicalDocumentRecord`.
-*** QUASAR tiered graph engine → demotion candidate; cold tier has no canonical record binding.
-*** PULSAR distributed graph engine → demotion candidate (~75% complete); retire or wrap if Phase 6 benchmarks show ORION + application sharding is sufficient.
-** Retirement checklist provided in `SUPPORTED_SURFACES.adoc`: ADR → WAL drain → directive registration → benchmark evidence → surface doc update.
+*** QUASAR tiered graph engine → retired; cold-tier value moves to xCatalog/storage projection policy.
+*** PULSAR distributed graph engine → retired; sharding/coordinator value moves to the relational distributed substrate.
+** Retirement checklist completed for PULSAR/QUASAR: surface doc update, feature removal, route removal, code removal, and test removal.
 * [x] Update `SUPPORTED_SURFACES.adoc` and docs to distinguish API support from physical projection status.
 ** `docs/12-design/SUPPORTED_SURFACES.adoc` created.
 ** Covers Document, Graph, Vector, Observability surfaces across REST/gRPC/Arrow Flight/pgwire.

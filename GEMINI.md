@@ -5,6 +5,20 @@ This document serves as the foundational mandate for AI agents working on Proxim
 ## 🚀 Project Overview
 ProximaDB is a high-performance, cloud-native vector and graph database built in Rust. It combines semantic vector search with native graph traversal for RAG and knowledge graph applications.
 
+[WARNING]
+====
+**🚨 CRITICAL ARCHITECTURAL PIVOT (2026-06-04) 🚨**
+ProximaDB has shifted from a monolithic custom WAL/PAX architecture to an **Intelligent Multi-Engine Routing** system running over decoupled **Object Storage**.
+
+When modifying architecture or execution paths, you MUST adhere to the dual-path mandate:
+1. **Data Warehouse/Relational Workloads:** Driven by DataFusion/Polars executing over standard Parquet files managed by Iceberg manifests.
+2. **Vector Search/ANN Workloads:** Driven by specialized high-performance engines (SST, HELIX, NOVA) utilizing the custom PAX block format.
+
+You must also strictly enforce SaaS Operational constraints:
+- **Path Isolation:** All Object Storage writes must be prefixed by `DrPathBuilder` (`data/{tenant_id}/{namespace_id}/...`). Do not use raw schema locations.
+- **Financial Telemetry:** Plumb `TenantContext` to all I/O boundaries to emit accurate billing metrics.
+====
+
 ### Key Technologies
 - **Rust (2024 Edition):** Core implementation.
 - **Tokio & Axum/Tonic:** Asynchronous runtime and networking (REST/gRPC).

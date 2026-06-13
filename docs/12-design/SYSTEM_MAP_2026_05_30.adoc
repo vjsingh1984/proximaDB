@@ -4,20 +4,22 @@
 :icons: font
 :source-highlighter: rouge
 :sectnums:
-:last-updated: 2026-05-30
+:last-updated: 2026-06-05
 
 Status: Apex reference index (active baseline) +
-Date: 2026-05-30 +
-Scope: One recursive whole-system view — workspace layers, `src/` modules, the 6 storage / 3 graph
-engines, write/read data paths, and the protocol-facade-to-canonical-authority convergence. +
+Date: 2026-06-05 +
+Scope: One recursive whole-system view — workspace layers, `src/` modules, storage/access-method
+families, the ORION graph runtime, write/read data paths, and the
+protocol-facade-to-canonical-authority convergence. +
 Supersedes-as-front-door: this doc is the apex over the three pre-existing system maps; they are now
 feeders (see <<feeders>>).
 
 [.lead]
 This is the **single pane of glass** for ProximaDB. It exists to answer one question fast — "where does
-a thing live, and what does it converge on?" — across 57 workspace crates and 48 `src/` modules. It is
-navigation-first: it does not duplicate the per-module detail in the feeder docs, it indexes and ties
-them together so they stop diverging.
+a thing live, and what does it converge on?" Current manifest reality: 66 workspace members, 61 crates
+under `crates/`, and 46 real top-level `src/` module directories. It is navigation-first: it does not
+duplicate the per-module detail in the feeder docs, it indexes and ties them together so they stop
+diverging.
 
 [IMPORTANT]
 ====
@@ -38,7 +40,7 @@ link:CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30]).
 * Need *where the known divergent seams are*? <<seams>>.
 
 [#workspace]
-== Layer 1 — Workspace (57 crates, layered)
+== Layer 1 — Workspace (66 members, layered)
 
 The workspace follows the stable map from `CLAUDE.md`:
 `Foundation -> Contracts -> Control -> Horizontal -> Modality -> Storage -> Query/Cross-Model -> Platform -> Apps/Bindings`.
@@ -51,15 +53,15 @@ flowchart TB
   classDef layer fill:#4a90e2,stroke:#2e5c8a,color:#000;
   classDef apps fill:#cfe2f7,stroke:#2e5c8a,color:#000;
 
-  FND["<b>Foundation</b> (13)<br/>kernel · data-model · proto · records · filter-expr<br/>distance/compression/encoding/quantization-types<br/>config · hardware · pipeline-operator · relational-types"]:::layer
+  FND["<b>Foundation</b> (14)<br/>kernel · data-model · proto · records · filter-expr<br/>distance/compression/encoding/quantization-types<br/>config · hardware · pipeline-operator · relational-types · functions"]:::layer
   CTR["<b>Contracts</b> (1)<br/>quantization (behavior + compat gates)"]:::layer
   CTL["<b>Control</b> (1)<br/>proximadb-catalog — xCatalog, 8 backends, route knobs"]:::layer
   HRZ["<b>Horizontal</b> (7)<br/>codec · compression · security · telemetry<br/>runtime-common · embedded-common · recall-bench"]:::layer
   MOD["<b>Modality Runtime</b> (11)<br/>vector · document · graph · observability · embedding · queue<br/>rank-core/features/expr/profile/onnx"]:::layer
-  STG["<b>Storage</b> (2)<br/>storage-common (engine trait, caching FS) · block-format (PAX)"]:::layer
-  QRY["<b>Query / Cross-Model</b> (19)<br/>query · uql · multimodel-{query,plan} · relational-{algebra…engine}<br/>{vector,document,graph}-query · graph-{arrow,subset}<br/>query-{capability,clauses,filter} · query-fusion (RRF+BM25)"]:::layer
+  STG["<b>Storage</b> (4)<br/>storage-common · block-format (PAX)<br/>object-store · iceberg-engine"]:::layer
+  QRY["<b>Query / Cross-Model</b> (20)<br/>query · uql · multimodel-{query,plan} · relational-{algebra…engine}<br/>{vector,document,graph,observability}-query · graph-{arrow,subset}<br/>query-{capability,clauses,filter,fusion}"]:::layer
   PLT["<b>Platform</b> (2)<br/>proximadb-api (REST/gRPC/Flight/pgwire surfaces)<br/>proximadb-runtime (composition, PortUserContext)"]:::layer
-  APP["<b>Apps / Bindings</b><br/>proximadb-server · -migrate · -bench<br/>clients: rust · python · go · java · nodejs · C FFI"]:::apps
+  APP["<b>Apps / Bindings</b><br/>workspace: server · migrate · bench · root · rust client · spark JNI<br/>repo clients: python · go · embedded java/node/go/c"]:::apps
 
   FND --> CTR --> CTL --> HRZ --> MOD --> STG --> QRY --> PLT --> APP
 ----
@@ -69,7 +71,7 @@ link:MODULE_COMPONENT_LLD_2026_05_22.adoc[MODULE_COMPONENT_LLD_2026_05_22]; the 
 link:ARCHITECTURE_ATLAS_2026_05_22.adoc[ARCHITECTURE_ATLAS_2026_05_22]. This map does not restate them.
 
 [#srcmap]
-== Layer 2 — `src/` module map (48 top-level modules)
+== Layer 2 — `src/` module map (46 top-level modules)
 
 The root crate composes the workspace crates and still hosts the load-bearing runtime implementations
 (handler extraction to `proximadb-api` is in progress — see <<seams>>).
@@ -83,11 +85,12 @@ flowchart TB
 
   subgraph DATAEXEC[Data & Execution]
     direction TB
-    STO["storage/<br/>6 engines: SST·HELIX·VIPER·SWIFT·NOVA·RAPTOR<br/>WAL · persistence · filesystem · document/sdp"]:::sub
+    STO["storage/<br/>vector engines: SST·HELIX·VIPER·SWIFT·NOVA·RAPTOR<br/>time/event foundations · WAL · persistence · filesystem · document/sdp"]:::sub
     CMP["compute/<br/>distance (L2/cos/dot) · SIMD detect · quantization/unified"]:::sub
     IDX["index/<br/>AXIS (HNSW·IVF·PQ·Annoy·LSH) · DiskANN · geo"]:::sub
-    GRA["graph/<br/>ORION·PULSAR·QUASAR · CSR · rag/ (RGL)"]:::sub
-    QUE["query/<br/>sql · aql · nl · unified · planner (RL) · explain_schema"]:::sub
+    GRA["graph/<br/>ORION · CSR projections · rag/ (RGL)<br/>distributed/tiered policy via relational/storage substrate"]:::sub
+    DF["datafusion/<br/>ProximaScanExec · table providers · object-store parquet readers<br/>DataFusionLocal today; Ballista route contract planned"]:::sub
+    QUE["query/<br/>sql · aql · nl · unified · planner (RL) · compute_scheduler<br/>RoutedReadPlan · explain_schema"]:::sub
     COR["core/<br/>record_store · search/hybrid · metadata · provenance"]:::sub
   end
 
@@ -147,10 +150,15 @@ flowchart LR
 flowchart LR
   classDef n fill:#4a90e2,stroke:#2e5c8a,color:#000;
   C[Client]:::n --> N["network/"]:::n
-  N --> P["query/<br/>planner (RL) + EXPLAIN"]:::n
+  N --> P["query/<br/>planner + ComputeScheduler + EXPLAIN"]:::n
   P -. route knobs .-> X["xCatalog"]:::n
-  P --> SR["core/search<br/>+ index (AXIS/DiskANN)"]:::n
+  P --> RRP["RoutedReadPlan<br/>Native · DataFusionLocal · DataFusionDistributed"]:::n
+  RRP --> SR["core/search<br/>+ index (AXIS/DiskANN)"]:::n
+  RRP --> DF["datafusion/<br/>local scan now; Ballista adapter planned"]:::n
+  RRP --> GQ["graph/<br/>ORION projection runtime"]:::n
   SR --> E["UnifiedStorageEngine"]:::n
+  DF --> E
+  GQ --> E
   E --> D["compute/distance<br/>(+ quantization)"]:::n
   D --> FU["core/search/hybrid/fusion<br/>(RRF + 11 strategies)"]:::n
   FU --> RK["rank-* (RERANK SRF)<br/>ProductionHybridBackend"]:::n
@@ -203,11 +211,79 @@ link:CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30]. Summary:
 | `VectorRecord`/`SqlValue`/`SqlObject` still used internally; canonical is `ProximaRecord`/`ProximaValue`.
 
 | Scattered configs
-| CDC + cluster config structs not yet under `crates/foundation/proximadb-config`.
+| RESOLVED 2026-06-05 at the app-config seam; connector/runtime-local specialization remains local.
 
 | PlanCache B/C/D
 | Four impls; A consolidated, B/C/D intentionally separate (documented as by-design).
+
+| Read-side distributed execution
+| `ComputeScheduler` and `RoutedReadPlan` exist; DataFusionLocal is the first OLAP route, while
+Ballista-backed `DataFusionDistributed` remains a planned/experimental adapter behind the same route
+contract.
 |===
+
+[#state]
+== Current state and MVP readiness
+
+This section intentionally separates *code presence* from *product maturity*. The support contract is
+link:../SUPPORTED_SURFACE.adoc[docs/SUPPORTED_SURFACE.adoc]; this map summarizes it in system terms.
+
+[cols="2,2,3", options="header"]
+|===
+| Area | Current system state | MVP readiness
+
+| Durable authority
+| xCatalog + canonical WAL/log/manifest + `ProximaRecord`/`ProximaType`/`ProximaValue` are the
+target spine. Proto v1 DTOs and legacy `VectorRecord`/`SqlValue`/`SqlObject` remain edge adapters or
+internal migration debt.
+| Ready for narrow v0.2 only when flows stay on the canonical record path. Full internal migration is
+still TD-106/ADR-024 work.
+
+| Vector path
+| REST/gRPC v2 record CRUD and vector search are the supported product path. Multiple vector storage
+engines and AXIS index families exist; v1 vector APIs are compatibility facades.
+| MVP-ready for single-node vector CRUD/search. Hybrid, filtered ANN policy, recall-gate enforcement,
+and object-economy claims stay Beta/Experimental unless explicitly scoped.
+
+| Document / graph / observability
+| Document, ORION graph, and observability runtimes exist and are useful. ORION is the only graph
+runtime; former PULSAR/QUASAR names are retired. These modalities should be treated as projections or
+facades over canonical authority, not separate durable truths.
+| Beta. Good for controlled workflows, not yet the same maturity as the supported vector surface.
+
+| SQL / pgwire / relational
+| pgwire, relational frontend/algebra/executor, DML routing, `ComputeScheduler`, DataFusionLocal
+route decisions, and read-side `RoutedReadPlan` now exist. Full PostgreSQL parity, complete
+constraints, MVCC/index state, HTAP delta union, and distributed consistency gates remain in TD-110.
+| Not MVP as a PostgreSQL replacement. Useful Beta/Experimental surface for scoped relational and
+EXPLAIN work.
+
+| DataFusion / distributed execution
+| DataFusion integration and route vocabulary exist. `DataFusionDistributed` is now represented in
+the typed read route contract, but Ballista execution, split-aware readers, scheduler/executor
+deployment, and no-overlap tests are not complete.
+| Post-MVP / Experimental. Do not claim distributed execution support in v0.2.
+
+| Open formats and object economy
+| Object-store and Iceberg engine crates are in the workspace; Parquet/Arrow bridge work is the
+analytics/open-format trajectory. Open formats are publications/imports/federated assets unless
+explicitly external-authoritative in xCatalog.
+| Beta/Experimental depending on path. Safe claim is interoperability direction, not default durable
+authority.
+
+| Security / ops / deployment
+| Security runtime, mTLS/JWT/API key hooks, observability, backup/restore, and deployment assets
+exist. Some admin/status APIs and production runbooks still need hardening.
+| Sufficient for developer/private deployments; enterprise production positioning should remain
+scoped.
+|===
+
+MVP posture: ProximaDB is ready to position as a **single-node context database foundation** with a
+supported canonical vector record path and Beta multimodal surfaces. It is not yet ready to position
+as a mature distributed database, full PostgreSQL-compatible OLTP/HTAP system, or warehouse-scale
+MPP engine. The architecture is aligned for that aspiration through xCatalog, route-once planning,
+DataFusion/Ballista contracts, and canonical record convergence, but the implementation is still
+slice-based and must keep support claims narrow.
 
 [#feeders]
 == Feeder docs (subordinate to this map)

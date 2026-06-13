@@ -205,16 +205,6 @@ mod gap_tests {
         use proximadb::graph::query;
 
         #[test]
-        fn test_pulsar_distributed_traversal() {
-            // Tests PULSAR distributed graph traversal
-        }
-
-        #[test]
-        fn test_quasar_hybrid_tiering() {
-            // Tests QUASAR hybrid vector+graph tiering
-        }
-
-        #[test]
         fn test_cypher_query_parser() {
             // Tests Cypher query language parser
         }

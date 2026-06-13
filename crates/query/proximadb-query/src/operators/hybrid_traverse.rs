@@ -53,7 +53,7 @@ pub struct TraversalNode {
 /// `HybridTraverseStats` because the field set is operator-scoped
 /// (tracks `iterations` + `results_returned`, not depth/time). The proto
 /// type remains the canonical wire form. Distinct also from the per-engine
-/// stats (OrionTraversalStats, PulsarTraversalStats, CanonicalTraversalStats).
+/// stats (OrionTraversalStats, CanonicalTraversalStats).
 #[derive(Debug, Clone, Default)]
 pub struct HybridTraverseStats {
     /// Total frontier expansions performed.

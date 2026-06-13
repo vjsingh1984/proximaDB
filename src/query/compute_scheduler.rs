@@ -33,7 +33,11 @@
 //! about execution changes — the scheduler only makes the decision observable so
 //! later phases have a single, contract-bound place to evolve.
 
+use crate::query::read_route::{
+    CandidateReadRoute, ReadFreshnessSla, ReadPolicyBoundary, ReadSplitSummary, RoutedReadPlan,
+};
 use crate::query::table_write_plan::ComputeBackend;
+use proximadb_catalog::CatalogAuthorityMode;
 use proximadb_catalog::CatalogWorkloadProfile;
 
 /// Shape signals the scheduler routes on.
@@ -84,6 +88,32 @@ impl SelectRouteDecision {
     pub fn compute_route_label(&self) -> String {
         backend_label(&self.backend)
     }
+
+    /// Materialize this scheduler decision into the typed read-route contract.
+    ///
+    /// This is intentionally conservative: until split planning is wired, routes
+    /// use a whole-collection split summary and leave execution behavior unchanged.
+    pub fn routed_read_plan(&self) -> RoutedReadPlan {
+        let mut plan = RoutedReadPlan::native_whole_collection(self.workload_profile);
+        plan.backend = self.backend.clone();
+        plan.authority_mode = authority_mode_for_backend(&self.backend);
+        plan.policy_boundary = policy_boundary_for_backend(&self.backend);
+        plan.freshness_sla = freshness_for_backend(&self.backend);
+        plan.candidate_routes = vec![CandidateReadRoute {
+            backend: self.backend.clone(),
+            access_method: access_method_for_backend(&self.backend).to_string(),
+            reason: self.reason.clone(),
+        }];
+        plan
+    }
+
+    /// Like [`Self::routed_read_plan`] but carries a concrete split inventory
+    /// (e.g. the Parquet row groups discovered for a `DataFusionLocal` route)
+    /// instead of the conservative whole-collection placeholder, so EXPLAIN
+    /// discloses the real partition count the executor fans out over.
+    pub fn routed_read_plan_with_splits(&self, split_summary: ReadSplitSummary) -> RoutedReadPlan {
+        self.routed_read_plan().with_split_summary(split_summary)
+    }
 }
 
 /// Short, stable label for a backend in EXPLAIN/telemetry output.
@@ -95,6 +125,56 @@ fn backend_label(backend: &ComputeBackend) -> String {
         ComputeBackend::PolarsLocal => "PolarsLocal".to_string(),
         ComputeBackend::DuckDbCompat => "DuckDbCompat".to_string(),
         ComputeBackend::ExternalDelegated(name) => format!("ExternalDelegated({name})"),
+    }
+}
+
+fn authority_mode_for_backend(backend: &ComputeBackend) -> CatalogAuthorityMode {
+    match backend {
+        ComputeBackend::Native => CatalogAuthorityMode::ProximaAuthoritative,
+        ComputeBackend::DataFusionLocal | ComputeBackend::DataFusionDistributed => {
+            CatalogAuthorityMode::ProjectionPublication
+        }
+        ComputeBackend::ExternalDelegated(_) => CatalogAuthorityMode::FederatedRead,
+        ComputeBackend::PolarsLocal | ComputeBackend::DuckDbCompat => {
+            CatalogAuthorityMode::ProximaAuthoritative
+        }
+    }
+}
+
+fn policy_boundary_for_backend(backend: &ComputeBackend) -> ReadPolicyBoundary {
+    match backend {
+        ComputeBackend::Native => ReadPolicyBoundary::EngineEnforced,
+        ComputeBackend::DataFusionLocal | ComputeBackend::DataFusionDistributed => {
+            ReadPolicyBoundary::ConnectorEnforced
+        }
+        ComputeBackend::ExternalDelegated(_) => ReadPolicyBoundary::ExternalPolicy,
+        ComputeBackend::PolarsLocal | ComputeBackend::DuckDbCompat => {
+            ReadPolicyBoundary::EngineEnforced
+        }
+    }
+}
+
+fn freshness_for_backend(backend: &ComputeBackend) -> ReadFreshnessSla {
+    match backend {
+        ComputeBackend::Native => ReadFreshnessSla::Synchronous,
+        ComputeBackend::DataFusionLocal | ComputeBackend::DataFusionDistributed => {
+            ReadFreshnessSla::CatalogValue("base-snapshot".to_string())
+        }
+        ComputeBackend::ExternalDelegated(_) => {
+            ReadFreshnessSla::CatalogValue("external-snapshot".to_string())
+        }
+        ComputeBackend::PolarsLocal | ComputeBackend::DuckDbCompat => ReadFreshnessSla::Synchronous,
+    }
+}
+
+fn access_method_for_backend(backend: &ComputeBackend) -> &'static str {
+    match backend {
+        ComputeBackend::Native => "canonical-record-scan",
+        ComputeBackend::DataFusionLocal => "datafusion-local-scan",
+        ComputeBackend::DataFusionDistributed => "ballista-distributed-scan",
+        ComputeBackend::PolarsLocal => "polars-local-scan",
+        ComputeBackend::DuckDbCompat => "duckdb-compat-scan",
+        ComputeBackend::ExternalDelegated(_) => "external-delegated-scan",
     }
 }
 
@@ -142,6 +222,11 @@ impl ComputeScheduler {
                 reason: "OLTP shape (point/simple select) — Volcano".to_string(),
             },
         }
+    }
+
+    /// Route a relational `SELECT` and materialize the typed read-route plan.
+    pub fn route_select_plan(&self, shape: QueryShape) -> RoutedReadPlan {
+        self.route_select(shape).routed_read_plan()
     }
 }
 
@@ -193,6 +278,24 @@ mod tests {
     }
 
     #[test]
+    fn datafusion_route_carries_concrete_row_group_split_inventory() {
+        let plan = ComputeScheduler::new()
+            .route_select(QueryShape {
+                engages_relational: true,
+                parquet_backed: true,
+            })
+            .routed_read_plan_with_splits(ReadSplitSummary::row_groups(8, Some(50_000), Some(1 << 20)));
+
+        assert_eq!(plan.backend, ComputeBackend::DataFusionLocal);
+        let explain = plan.route_explanation();
+        assert_eq!(explain.selected_backend, "DataFusionLocal");
+        // Real row-group inventory, not the whole-collection `1`-partition default.
+        assert_eq!(explain.split_strategy, "row_group");
+        assert_eq!(explain.partition_count, 8);
+        assert_eq!(explain.estimated_rows, Some(50_000));
+    }
+
+    #[test]
     fn explain_line_is_stable_and_readable() {
         let line = ComputeScheduler::new()
             .route_select(QueryShape {
@@ -201,5 +304,21 @@ mod tests {
             })
             .explain_line();
         assert!(line.starts_with("Compute Route: Native(Volcano) (workload=Olap"));
+    }
+
+    #[test]
+    fn scheduler_materializes_routed_read_plan() {
+        let plan = ComputeScheduler::new().route_select_plan(QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+        });
+
+        assert_eq!(plan.backend, ComputeBackend::DataFusionLocal);
+        assert_eq!(plan.workload_profile, CatalogWorkloadProfile::Olap);
+        assert_eq!(plan.route_explanation().selected_backend, "DataFusionLocal");
+        assert_eq!(
+            plan.route_explanation().policy_boundary,
+            "connector-enforced"
+        );
     }
 }

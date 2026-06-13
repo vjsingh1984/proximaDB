@@ -584,7 +584,7 @@ pub struct GraphRow {
     pub graph_schema: String,
     /// Name of the graph
     pub graph_name: String,
-    /// Graph storage/processing type (e.g., `ORION`, `PULSAR`, `QUASAR`)
+    /// Graph storage/processing type (currently `ORION`)
     pub graph_type: String,
     /// Whether the graph permits self-loop edges
     pub allow_self_loops: bool,

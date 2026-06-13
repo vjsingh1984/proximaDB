@@ -129,6 +129,7 @@ pub struct PipelineResult {
 pub async fn try_run_select(
     sql: &str,
     dml: Option<&Arc<DmlService>>,
+    #[cfg_attr(not(feature = "datafusion-integration"), allow(unused_variables))]
     vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
 ) -> Option<Result<PipelineResult, String>> {
     // ADR-018 Phase 2: Allow opting out with explicit "0" value
@@ -643,6 +644,137 @@ mod datafusion_route_tests {
     }
 
     #[tokio::test]
+    async fn parquet_split_summary_discloses_row_group_inventory() {
+        use parquet::arrow::ArrowWriter;
+        use parquet::file::properties::WriterProperties;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Int64, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![1_i64, 2, 3, 4]))],
+        )
+        .unwrap();
+        {
+            // Two row groups of 2 rows each → 4 rows / 2 partitions.
+            let props = WriterProperties::builder()
+                .set_max_row_group_size(2)
+                .build();
+            let file = std::fs::File::create(data_dir.join("part-0.parquet")).unwrap();
+            let mut writer = ArrowWriter::try_new(file, schema, Some(props)).unwrap();
+            writer.write(&batch).unwrap();
+            writer.close().unwrap();
+        }
+
+        let location = format!("file://{}", tmp.path().display());
+        let summary = parquet_split_summary(&[location])
+            .await
+            .expect("split summary for a Parquet-backed location");
+
+        assert_eq!(
+            summary.strategy,
+            crate::query::read_route::ReadSplitStrategy::RowGroup
+        );
+        assert_eq!(summary.partition_count, 2);
+        assert_eq!(summary.estimated_rows, Some(4));
+        assert_eq!(summary.stats_freshness, "fresh");
+
+        // No locations → no disclosure (caller keeps the conservative summary).
+        assert!(parquet_split_summary(&[]).await.is_none());
+    }
+
+    /// Full P3 chain through the ROUTING path: a native table is created + populated,
+    /// materialized to Parquet (catalog layout flipped to ProjectionPublication), and
+    /// an OLAP-shape SELECT through `try_run_select` then routes to DataFusion over the
+    /// published Parquet — not the native Volcano path — returning the aggregated rows.
+    /// This is the end-to-end proof gating the `datafusion-integration` default flip.
+    #[tokio::test]
+    async fn materialized_native_table_routes_select_to_datafusion_end_to_end() {
+        use crate::catalog::CatalogManager;
+        use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{
+            DdlService, DdlStatement, FramedTableWalAppender, MemtableRecordStorage,
+        };
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("route-e2e.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE inv_route_e2e (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+        ));
+        let dml = Arc::new(DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        ));
+        for (id, status, qty) in [("i1", "active", 5), ("i2", "active", 15), ("i3", "idle", 25)] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO inv_route_e2e (id, status, qty) VALUES ('{id}', '{status}', {qty});"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // P3 materialize: publish a Parquet snapshot to a file:// store the OLAP reader
+        // can reopen, and flip the catalog layout to Parquet/ProjectionPublication.
+        let store_dir = tempfile::tempdir().expect("store tempdir");
+        let root_url = format!("file://{}", store_dir.path().display());
+        let bridge = Arc::new(IcebergObjectStoreBridge::from_url(&root_url).expect("bridge"));
+        dml.materialize_table_to_parquet(&*bridge, &root_url, "inv_route_e2e", None)
+            .await
+            .expect("materialize");
+
+        let sql = "SELECT status, count(*) AS c FROM inv_route_e2e GROUP BY status ORDER BY status";
+
+        // Route disclosure proves the engine choice end-to-end: DataFusion over the
+        // published Parquet, with the concrete row-group split inventory (P1).
+        let explain = explain_select_route_with_catalog(sql, &dml)
+            .await
+            .expect("explain route");
+        assert_eq!(explain.compute_route, "DataFusionLocal");
+        assert_eq!(explain.read_route.split_strategy, "row_group");
+        assert_eq!(explain.read_route.partition_count, 1);
+
+        // Execution returns the correct aggregates read from the materialized Parquet.
+        let result = try_run_select(sql, Some(&dml), None)
+            .await
+            .expect("pipeline engaged")
+            .expect("select ok");
+        assert_eq!(result.rows.len(), 2, "two status groups");
+        assert_eq!(result.rows[0][0], ProximaValue::String("active".to_string()));
+        assert_eq!(result.rows[0][1], ProximaValue::Int64(2));
+        assert_eq!(result.rows[1][0], ProximaValue::String("idle".to_string()));
+        assert_eq!(result.rows[1][1], ProximaValue::Int64(1));
+    }
+
+    #[tokio::test]
     async fn run_datafusion_select_executes_olap_over_parquet() {
         use parquet::arrow::ArrowWriter;
 
@@ -1076,6 +1208,10 @@ pub struct SelectRouteExplanation {
     pub freshness_sla: String,
     /// Human-readable reason for the choice.
     pub reason: String,
+    /// Typed read-route contract that future split-aware DataFusion/Ballista
+    /// execution will consume. Kept nested so existing top-level fields remain
+    /// stable while ADR-004 diagnostics converge on `RoutedReadPlan`.
+    pub read_route: crate::query::read_route::ReadRouteExplanation,
     /// Structural disclosure of the planned physical plan (one string per
     /// operator, indented), when the query engages the native (Volcano) PATH B
     /// engine. `None` for simple/legacy SELECTs and non-native routes. No cost
@@ -1100,19 +1236,15 @@ pub struct SelectRouteExplanation {
 fn decision_to_explanation(
     decision: &crate::query::compute_scheduler::SelectRouteDecision,
 ) -> SelectRouteExplanation {
-    let freshness_sla = match decision.backend {
-        crate::query::table_write_plan::ComputeBackend::Native => {
-            "strong (Volcano over WAL+RecordStorage)".to_string()
-        }
-        _ => "base-snapshot (engine read path)".to_string(),
-    };
+    let read_route = decision.routed_read_plan().route_explanation();
     SelectRouteExplanation {
         compute_route: decision.compute_route_label(),
         workload_profile: format!("{:?}", decision.workload_profile),
-        authority_mode: "control-plane-route (no durable authority moved)".to_string(),
-        policy_boundary: "query-plan (one engine per plan)".to_string(),
-        freshness_sla,
+        authority_mode: read_route.authority_mode.clone(),
+        policy_boundary: read_route.policy_boundary.clone(),
+        freshness_sla: read_route.freshness_sla.clone(),
         reason: decision.reason.clone(),
+        read_route,
         // Populated by the catalog-aware EXPLAIN once the plan is built; the
         // catalog-free route disclosure has no plan to render. ANALYZE metrics are
         // filled only when the catalog-aware ANALYZE path actually executes.
@@ -1203,15 +1335,26 @@ async fn route_and_plan_select(
 
     #[allow(unused_mut)]
     let mut parquet_backed = false;
+    // Locations of the all-Parquet table set, captured during the route check so the
+    // EXPLAIN split disclosure can reopen exactly the objects the executor scans.
+    #[cfg(feature = "datafusion-integration")]
+    let mut parquet_locations: Vec<String> = Vec::new();
     #[cfg(feature = "datafusion-integration")]
     {
         let mut names = Vec::new();
         collect_table_names(query, &mut names);
         if !names.is_empty() {
             let mut all_parquet = true;
+            let mut locations = Vec::with_capacity(names.len());
             for raw in &names {
                 match dml.resolve_relational_schema(raw).await {
-                    Ok(schema) if catalog_table_is_parquet_backed(&schema).is_some() => {}
+                    Ok(schema) => match catalog_table_is_parquet_backed(&schema) {
+                        Some(location) => locations.push(location),
+                        None => {
+                            all_parquet = false;
+                            break;
+                        }
+                    },
                     _ => {
                         all_parquet = false;
                         break;
@@ -1219,6 +1362,9 @@ async fn route_and_plan_select(
                 }
             }
             parquet_backed = all_parquet;
+            if all_parquet {
+                parquet_locations = locations;
+            }
         }
     }
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
@@ -1228,6 +1374,22 @@ async fn route_and_plan_select(
         },
     );
     let mut explanation = decision_to_explanation(&decision);
+    // For the DataFusion route, disclose the concrete Parquet row-group split
+    // inventory (partition count + footer row/byte estimates) in place of the
+    // conservative whole-collection placeholder, by reading the same object-store
+    // tables the executor will scan. Best-effort: any open failure leaves the
+    // conservative summary intact rather than failing EXPLAIN.
+    #[cfg(feature = "datafusion-integration")]
+    if matches!(
+        decision.backend,
+        crate::query::table_write_plan::ComputeBackend::DataFusionLocal
+    ) {
+        if let Some(summary) = parquet_split_summary(&parquet_locations).await {
+            explanation.read_route = decision
+                .routed_read_plan_with_splits(summary)
+                .route_explanation();
+        }
+    }
     // Disclose the planned physical plan for native (Volcano) PATH B queries — the same
     // plan execution runs (via the shared `prepare_select_plan` / `execute_physical`).
     if engages
@@ -1253,6 +1415,41 @@ async fn route_and_plan_select(
         }
     }
     Ok(explanation)
+}
+
+/// Open the object-store Parquet tables backing a DataFusion-routed query and sum
+/// their row-group split inventory into a [`crate::query::read_route::ReadSplitSummary`]
+/// for EXPLAIN. Returns `None` (caller keeps the conservative whole-collection
+/// summary) when there are no locations or any table fails to open — split
+/// disclosure is diagnostic and must never make EXPLAIN itself fail.
+#[cfg(feature = "datafusion-integration")]
+async fn parquet_split_summary(
+    locations: &[String],
+) -> Option<crate::query::read_route::ReadSplitSummary> {
+    use crate::datafusion::engine_adapters::ObjectStoreParquetTable;
+    if locations.is_empty() {
+        return None;
+    }
+    let mut partitions = 0usize;
+    let (mut rows, mut bytes) = (0u64, 0u64);
+    let (mut any_rows, mut any_bytes) = (false, false);
+    for location in locations {
+        let table = ObjectStoreParquetTable::open(location).await.ok()?;
+        partitions += table.split_count();
+        if let Some(r) = table.estimated_rows() {
+            rows = rows.saturating_add(r);
+            any_rows = true;
+        }
+        if let Some(b) = table.estimated_bytes() {
+            bytes = bytes.saturating_add(b);
+            any_bytes = true;
+        }
+    }
+    Some(crate::query::read_route::ReadSplitSummary::row_groups(
+        partitions,
+        any_rows.then_some(rows),
+        any_bytes.then_some(bytes),
+    ))
 }
 
 /// Append per-operator actuals to each physical-plan line. Metrics are pre-order
@@ -1292,7 +1489,9 @@ mod route_explain_tests {
         assert_eq!(expl.workload_profile, "Olap");
         // P0 invariant: OLAP shape still executes on Volcano.
         assert_eq!(expl.compute_route, "Native(Volcano)");
-        assert!(expl.freshness_sla.to_lowercase().contains("strong"));
+        assert_eq!(expl.freshness_sla, "synchronous");
+        assert_eq!(expl.read_route.selected_backend, "Native");
+        assert_eq!(expl.read_route.split_strategy, "whole_collection");
     }
 
     #[test]
