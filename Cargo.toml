@@ -491,7 +491,7 @@ serde_yaml = "0.9"
 # (in-memory-map-as-durable-source) path during one minor-release migration
 # window can opt OUT via `default-features = false` + explicit feature selection.
 # Plan: remove the feature flag entirely in v0.4 once the migration window closes.
-default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store"]
+default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration"]
 # Optional surfaces; keep off by default to minimize binary size and public API surface
 ai_endpoints = []
 sales_endpoints = []

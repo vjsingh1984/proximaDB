@@ -195,10 +195,12 @@ pub mod proto;
 #[allow(missing_docs)]
 pub mod query;
 
-/// DataFusion integration for compute engine compatibility.
-/// Provides TableProvider implementations for SQL queries over ProximaDB collections.
-/// NOTE: Feature-gated due to Arrow version mismatch (DataFusion 45.x uses Arrow 54.x,
-/// ProximaDB uses Arrow 57.x). Enable with `--features datafusion-integration`.
+/// DataFusion integration — the warehouse OLAP read path (TableProvider over
+/// object-store Parquet, shared logical-plane lowering, split-aware routing).
+/// Now a DEFAULT feature: DataFusion 51.x and ProximaDB both resolve a single
+/// Arrow 57.x, so the historical version mismatch that forced opt-in is gone.
+/// Still gated so `--no-default-features` minimal builds can drop the dependency;
+/// disable explicitly with `--no-default-features` (or omit `datafusion-integration`).
 #[cfg(feature = "datafusion-integration")]
 pub mod datafusion;
 
