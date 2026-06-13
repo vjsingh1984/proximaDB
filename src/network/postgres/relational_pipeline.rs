@@ -685,6 +685,95 @@ mod datafusion_route_tests {
         assert!(parquet_split_summary(&[]).await.is_none());
     }
 
+    /// Full P3 chain through the ROUTING path: a native table is created + populated,
+    /// materialized to Parquet (catalog layout flipped to ProjectionPublication), and
+    /// an OLAP-shape SELECT through `try_run_select` then routes to DataFusion over the
+    /// published Parquet — not the native Volcano path — returning the aggregated rows.
+    /// This is the end-to-end proof gating the `datafusion-integration` default flip.
+    #[tokio::test]
+    async fn materialized_native_table_routes_select_to_datafusion_end_to_end() {
+        use crate::catalog::CatalogManager;
+        use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{
+            DdlService, DdlStatement, FramedTableWalAppender, MemtableRecordStorage,
+        };
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("route-e2e.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE inv_route_e2e (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+        ));
+        let dml = Arc::new(DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        ));
+        for (id, status, qty) in [("i1", "active", 5), ("i2", "active", 15), ("i3", "idle", 25)] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO inv_route_e2e (id, status, qty) VALUES ('{id}', '{status}', {qty});"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // P3 materialize: publish a Parquet snapshot to a file:// store the OLAP reader
+        // can reopen, and flip the catalog layout to Parquet/ProjectionPublication.
+        let store_dir = tempfile::tempdir().expect("store tempdir");
+        let root_url = format!("file://{}", store_dir.path().display());
+        let bridge = Arc::new(IcebergObjectStoreBridge::from_url(&root_url).expect("bridge"));
+        dml.materialize_table_to_parquet(&*bridge, &root_url, "inv_route_e2e", None)
+            .await
+            .expect("materialize");
+
+        let sql = "SELECT status, count(*) AS c FROM inv_route_e2e GROUP BY status ORDER BY status";
+
+        // Route disclosure proves the engine choice end-to-end: DataFusion over the
+        // published Parquet, with the concrete row-group split inventory (P1).
+        let explain = explain_select_route_with_catalog(sql, &dml)
+            .await
+            .expect("explain route");
+        assert_eq!(explain.compute_route, "DataFusionLocal");
+        assert_eq!(explain.read_route.split_strategy, "row_group");
+        assert_eq!(explain.read_route.partition_count, 1);
+
+        // Execution returns the correct aggregates read from the materialized Parquet.
+        let result = try_run_select(sql, Some(&dml), None)
+            .await
+            .expect("pipeline engaged")
+            .expect("select ok");
+        assert_eq!(result.rows.len(), 2, "two status groups");
+        assert_eq!(result.rows[0][0], ProximaValue::String("active".to_string()));
+        assert_eq!(result.rows[0][1], ProximaValue::Int64(2));
+        assert_eq!(result.rows[1][0], ProximaValue::String("idle".to_string()));
+        assert_eq!(result.rows[1][1], ProximaValue::Int64(1));
+    }
+
     #[tokio::test]
     async fn run_datafusion_select_executes_olap_over_parquet() {
         use parquet::arrow::ArrowWriter;
