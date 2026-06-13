@@ -534,6 +534,57 @@ impl PostgresProtocol {
         self
     }
 
+    /// Wire the warehouse table materializer so `ALTER TABLE … MATERIALIZE`
+    /// publishes the table's rows as a Parquet snapshot under `warehouse_root_url`
+    /// and flips its catalog layout to the OLAP-readable projection.
+    ///
+    /// Call this AFTER the catalog/rank builders — it augments the already-assembled
+    /// `DdlService`: it unwraps the (not-yet-shared) service, adds a
+    /// `DmlTableMaterializer` over the current `DmlService` + an object store opened
+    /// from `warehouse_root_url`, and rebuilds it. No-op — the trigger keeps
+    /// returning its clean "requires a configured warehouse object store" error —
+    /// when there is no `DdlService`/`DmlService`, the `Arc` is already shared, or the
+    /// root URL can't be opened, so a misconfigured warehouse never breaks the
+    /// connection.
+    pub fn with_materializer(mut self, warehouse_root_url: String) -> Self {
+        let Some(dml) = self.dml_service.clone() else {
+            return self;
+        };
+        let Some(ddl) = self.ddl_service.take() else {
+            return self;
+        };
+        let ddl = match Arc::try_unwrap(ddl) {
+            Ok(ddl) => ddl,
+            Err(shared) => {
+                // Already shared (unexpected during setup) — leave it untouched.
+                self.ddl_service = Some(shared);
+                return self;
+            }
+        };
+        let bridge = match proximadb_iceberg_engine::IcebergObjectStoreBridge::from_url(
+            &warehouse_root_url,
+        ) {
+            Ok(bridge) => Arc::new(bridge)
+                as Arc<dyn proximadb_storage_common::object_store_bridge::ObjectStoreBridge>,
+            Err(e) => {
+                tracing::warn!(
+                    target: "proximadb::pgwire::materialize",
+                    "warehouse object store unavailable at {warehouse_root_url}: {e}; \
+                     ALTER TABLE … MATERIALIZE stays unwired"
+                );
+                self.ddl_service = Some(Arc::new(ddl));
+                return self;
+            }
+        };
+        let materializer = Arc::new(crate::services::dml::DmlTableMaterializer::new(
+            dml,
+            bridge,
+            warehouse_root_url,
+        ));
+        self.ddl_service = Some(Arc::new(ddl.with_materializer(materializer)));
+        self
+    }
+
     /// Run the protocol loop
     pub async fn run(&mut self) -> Result<()> {
         // Handle startup

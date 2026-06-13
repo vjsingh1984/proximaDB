@@ -96,6 +96,12 @@ pub struct PostgresServer {
     /// can decide once whether to wire the gate.
     primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
     self_pod_id: Option<String>,
+    /// Object-store root URL the warehouse materializer publishes Parquet snapshots
+    /// under (the same URL the OLAP reader reopens the store from). When `Some`,
+    /// every per-connection `DdlService` is wired with a `DmlTableMaterializer` so
+    /// `ALTER TABLE … MATERIALIZE` works; when `None` the trigger returns a clean
+    /// "requires a configured warehouse object store" error.
+    warehouse_root_url: Option<String>,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -135,6 +141,7 @@ impl PostgresServer {
             rank_pipeline: None,
             primary_pod_registry: None,
             self_pod_id: None,
+            warehouse_root_url: None,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -168,6 +175,16 @@ impl PostgresServer {
             store,
             function_store,
         });
+        self
+    }
+
+    /// Attach the warehouse object-store root URL so each per-connection
+    /// `DdlService` is built with a `DmlTableMaterializer`, enabling
+    /// `ALTER TABLE … MATERIALIZE` to publish Parquet snapshots there. Production
+    /// callers pass the configured object-store/storage root; without it the
+    /// trigger returns a clean "requires a configured warehouse object store" error.
+    pub fn with_warehouse_materialization(mut self, warehouse_root_url: String) -> Self {
+        self.warehouse_root_url = Some(warehouse_root_url);
         self
     }
 
@@ -216,6 +233,7 @@ impl PostgresServer {
                     // routing decisions.
                     let primary_pod_registry = self.primary_pod_registry.clone();
                     let self_pod_id = self.self_pod_id.clone();
+                    let warehouse_root_url = self.warehouse_root_url.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -232,6 +250,7 @@ impl PostgresServer {
                             rank_pipeline,
                             primary_pod_registry,
                             self_pod_id,
+                            warehouse_root_url,
                         )
                         .await
                         {
@@ -270,6 +289,7 @@ impl PostgresServer {
         rank_pipeline: Option<PgwireRankPipeline>,
         primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
         self_pod_id: Option<String>,
+        warehouse_root_url: Option<String>,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
@@ -300,6 +320,11 @@ impl PostgresServer {
                 pipeline.store,
                 pipeline.function_store,
             );
+        }
+        // Wire the warehouse materializer LAST so it augments the fully-assembled
+        // (catalog + rank) DdlService rather than being clobbered by a later rebuild.
+        if let Some(warehouse_root_url) = warehouse_root_url {
+            protocol = protocol.with_materializer(warehouse_root_url);
         }
         // Slice 6.3: pair-wise wiring — only apply the gate when both
         // sides are present so a partial wiring fails closed (no
