@@ -2298,6 +2298,75 @@ mod tests {
     }
 
     #[test]
+    fn parse_metadata_filter_object_form_is_equality_and() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        // Single key → a single Equals comparison (the account-scoping case).
+        let expr = parse_metadata_filter(&serde_json::json!({ "account_id": "acctA" }))
+            .expect("valid")
+            .expect("some");
+        match expr {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                assert_eq!(field, "account_id");
+                assert_eq!(operator, ComparisonOperator::Equals);
+                assert_eq!(value, serde_json::json!("acctA"));
+            }
+            other => panic!("expected single comparison, got {other:?}"),
+        }
+
+        // Multiple keys → an AND of equality comparisons.
+        let expr =
+            parse_metadata_filter(&serde_json::json!({ "account_id": "acctA", "tier": 2 }))
+                .expect("valid")
+                .expect("some");
+        match expr {
+            FilterExpression::And(conditions) => assert_eq!(conditions.len(), 2),
+            other => panic!("expected AND, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_metadata_filter_array_form_lowers_typed_ops() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        let expr = parse_metadata_filter(&serde_json::json!([
+            { "field": "name", "op": "starts_with", "value": "ac" }
+        ]))
+        .expect("valid")
+        .expect("some");
+        match expr {
+            FilterExpression::Comparison {
+                operator, field, ..
+            } => {
+                assert_eq!(field, "name");
+                // Must NOT collapse to Contains.
+                assert_eq!(operator, ComparisonOperator::StartsWith);
+            }
+            other => panic!("expected comparison, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_metadata_filter_empty_and_invalid() {
+        assert!(parse_metadata_filter(&serde_json::Value::Null).unwrap().is_none());
+        assert!(parse_metadata_filter(&serde_json::json!({})).unwrap().is_none());
+        assert!(parse_metadata_filter(&serde_json::json!([])).unwrap().is_none());
+        // Bad operator in the typed-list form is rejected.
+        assert!(
+            parse_metadata_filter(&serde_json::json!([
+                { "field": "x", "op": "bogus", "value": 1 }
+            ]))
+            .is_err()
+        );
+        // A bare scalar is neither an object nor a list.
+        assert!(parse_metadata_filter(&serde_json::json!("nope")).is_err());
+    }
+
+    #[test]
     fn test_clamp_scan_limit_defaults_when_missing_or_zero() {
         assert_eq!(clamp_scan_limit(None), SCAN_RECORDS_DEFAULT_LIMIT);
         assert_eq!(clamp_scan_limit(Some(0)), SCAN_RECORDS_DEFAULT_LIMIT);
