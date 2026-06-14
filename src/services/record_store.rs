@@ -472,6 +472,26 @@ pub trait TableRecordStore: Send + Sync {
         Ok(all)
     }
 
+    /// TD-110 Slice D: resolve the oids whose UNIQUE column `set` equals
+    /// `values`, via an index point-probe.
+    ///
+    /// `columns`/`values` are the unique set's columns and their equality-probe
+    /// texts (rendered like [`proxima_value_to_unique_text`] so they match the
+    /// index). Returns `Ok(None)` when this store has no point index for that set
+    /// (the caller should fall back to a scan); `Ok(Some(oids))` is the indexed
+    /// match set (possibly empty = no such row). Default = `Ok(None)`; index-backed
+    /// stores (e.g. `DirectWalTableRecordStore`) override it.
+    async fn lookup_unique_oids(
+        &self,
+        table_schema: &CatalogTableSchema,
+        columns: &[String],
+        values: &[String],
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Option<Vec<String>>> {
+        let _ = (table_schema, columns, values, tenant_context);
+        Ok(None)
+    }
+
     /// TD-110 Slice C: detect a UNIQUE/PK conflict for a batch of candidate
     /// tuples against committed rows. `sets` carries one entry per unique column
     /// set with the (NULL-exempt, within-batch-deduped) candidate tuples the
@@ -1374,6 +1394,37 @@ impl TableRecordStore for DirectWalTableRecordStore {
             }
         }
         Ok(None)
+    }
+
+    /// TD-110 Slice D: O(1) index-backed point lookup. Builds the per-table index
+    /// on first use, then probes the set matching `columns` for the `values`
+    /// tuple. Returns `Ok(None)` when no index set matches `columns` (caller
+    /// scans); otherwise the (possibly empty) set of owning oids.
+    async fn lookup_unique_oids(
+        &self,
+        table_schema: &CatalogTableSchema,
+        columns: &[String],
+        values: &[String],
+        _tenant_context: Option<&TenantContext>,
+    ) -> Result<Option<Vec<String>>> {
+        self.ensure_unique_index_built(table_schema).await?;
+        let index = self.unique_index.read();
+        let Some(table_index) = index.get(&table_schema.name) else {
+            return Ok(None); // table has no UNIQUE/PK sets
+        };
+        let Some(set) = table_index
+            .sets
+            .iter()
+            .find(|set| set.columns.as_slice() == columns)
+        else {
+            return Ok(None); // this column set is not indexed
+        };
+        let oids = set
+            .tuple_to_oids
+            .get(values)
+            .map(|owners| owners.iter().cloned().collect())
+            .unwrap_or_default();
+        Ok(Some(oids))
     }
 }
 
