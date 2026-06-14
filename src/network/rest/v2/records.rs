@@ -900,7 +900,9 @@ fn typed_filter_to_rich(filter: &TypedFilter) -> Result<RichFilterCondition, Api
         "gte" => RichFilterOperator::Gte,
         "lt" => RichFilterOperator::Lt,
         "lte" => RichFilterOperator::Lte,
-        "contains" | "starts_with" | "ends_with" => RichFilterOperator::Contains,
+        "contains" => RichFilterOperator::Contains,
+        "starts_with" => RichFilterOperator::StartsWith,
+        "ends_with" => RichFilterOperator::EndsWith,
         "between" => RichFilterOperator::Between,
         "in" => RichFilterOperator::In,
         _ => {
