@@ -367,16 +367,47 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
                         ComparisonOperator::GreaterThanOrEqual => {
                             compare_json_gte(&json_val, value)
                         }
-                        ComparisonOperator::In => value
-                            .as_array()
-                            .is_some_and(|values| values.iter().any(|v| json_eq(&json_val, v))),
-                        ComparisonOperator::NotIn => value
-                            .as_array()
-                            .is_none_or(|values| values.iter().all(|v| !json_eq(&json_val, v))),
-                        ComparisonOperator::Contains => json_val
-                            .as_str()
-                            .zip(value.as_str())
-                            .is_some_and(|(haystack, needle)| haystack.contains(needle)),
+                        ComparisonOperator::In => match &json_val {
+                            // Array-valued prop (e.g. `member_oids`): match when
+                            // the prop set intersects the query list.
+                            serde_json::Value::Array(items) => value.as_array().is_some_and(
+                                |values| {
+                                    items
+                                        .iter()
+                                        .any(|item| values.iter().any(|v| json_eq(item, v)))
+                                },
+                            ),
+                            // Scalar prop: membership in the query list.
+                            _ => value
+                                .as_array()
+                                .is_some_and(|values| values.iter().any(|v| json_eq(&json_val, v))),
+                        },
+                        ComparisonOperator::NotIn => match &json_val {
+                            // Array-valued prop: pass when the prop set is
+                            // disjoint from the query list.
+                            serde_json::Value::Array(items) => value.as_array().is_none_or(
+                                |values| {
+                                    !items
+                                        .iter()
+                                        .any(|item| values.iter().any(|v| json_eq(item, v)))
+                                },
+                            ),
+                            _ => value
+                                .as_array()
+                                .is_none_or(|values| values.iter().all(|v| !json_eq(&json_val, v))),
+                        },
+                        ComparisonOperator::Contains => match &json_val {
+                            // Array-valued prop: element membership
+                            // (e.g. `member_oids` contains `"u1"`).
+                            serde_json::Value::Array(items) => {
+                                items.iter().any(|item| json_eq(item, value))
+                            }
+                            // Scalar string prop: substring match.
+                            _ => json_val
+                                .as_str()
+                                .zip(value.as_str())
+                                .is_some_and(|(haystack, needle)| haystack.contains(needle)),
+                        },
                         ComparisonOperator::StartsWith => json_val
                             .as_str()
                             .zip(value.as_str())
@@ -463,6 +494,64 @@ mod tests {
 
     fn make_sql_value(value: SqlVal) -> SqlValue {
         SqlValue { value: Some(value) }
+    }
+
+    fn proxima_array_props(field: &str, values: &[&str]) -> ProximaTree {
+        let mut props = ProximaTree::new();
+        props.insert(
+            field.to_string(),
+            ProximaTreeNode::Value(ProximaValue::Array(
+                values
+                    .iter()
+                    .map(|v| ProximaValue::String(v.to_string()))
+                    .collect(),
+            )),
+        );
+        props
+    }
+
+    #[test]
+    fn proxima_array_prop_contains_membership() {
+        let props = proxima_array_props("member_oids", &["u1", "u2"]);
+
+        let hit = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::Contains,
+            value: json!("u1"),
+        };
+        let miss = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::Contains,
+            value: json!("u9"),
+        };
+        assert!(evaluate_filter_proxima(&hit, &props));
+        assert!(!evaluate_filter_proxima(&miss, &props));
+    }
+
+    #[test]
+    fn proxima_array_prop_in_intersection() {
+        let props = proxima_array_props("member_oids", &["u1", "u2"]);
+
+        let intersects = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::In,
+            value: json!(["u2", "u3"]),
+        };
+        let disjoint = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::In,
+            value: json!(["u7", "u8"]),
+        };
+        assert!(evaluate_filter_proxima(&intersects, &props));
+        assert!(!evaluate_filter_proxima(&disjoint, &props));
+
+        // NotIn is the negation: disjoint passes, intersecting fails.
+        let not_in_disjoint = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::NotIn,
+            value: json!(["u7", "u8"]),
+        };
+        assert!(evaluate_filter_proxima(&not_in_disjoint, &props));
     }
 
     #[test]
