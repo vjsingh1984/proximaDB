@@ -169,7 +169,7 @@ pub enum RichFilterOperator {
 /// collapsed to `Contains` (a strictly broader match — a metadata-scoping
 /// foot-gun). Building the `FilterExpression` directly preserves the full op
 /// set and keeps a single conversion hop.
-fn rich_filters_to_filter_expression(
+pub(crate) fn rich_filters_to_filter_expression(
     filters: &[RichFilterCondition],
 ) -> Option<FilterExpression> {
     use crate::core::search::ComparisonOperator;

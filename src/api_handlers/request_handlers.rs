@@ -912,6 +912,7 @@ impl UnifiedHandlers {
     /// from the deduped, time-ordered scan index and returns `(page,
     /// next_cursor)`.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle_record_scan_paginated_for_tenant(
         &self,
         collection_id: &str,
@@ -920,6 +921,7 @@ impl UnifiedHandlers {
         include_vector: bool,
         include_props: bool,
         tenant_id: Option<&str>,
+        filter: Option<&crate::core::search::FilterExpression>,
         now_ns: i64,
     ) -> Result<(
         Vec<proximadb_records::ProximaRecord>,
@@ -944,7 +946,7 @@ impl UnifiedHandlers {
                 include_vector,
                 include_props,
                 tenant_context.as_ref(),
-                None,
+                filter,
                 now_ns,
             )
             .await

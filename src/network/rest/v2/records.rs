@@ -892,6 +892,97 @@ fn proxima_to_predicate_value(
     })
 }
 
+/// Operators accepted on the typed `{field,op,value}` filter surface, shared by
+/// `/search` and `/records/scan` validation.
+const VALID_TYPED_FILTER_OPS: [&str; 11] = [
+    "eq",
+    "neq",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "contains",
+    "between",
+    "in",
+    "starts_with",
+    "ends_with",
+];
+
+/// Validate a list of typed `{field,op,value}` filters before lowering them.
+fn validate_typed_filters(filters: &[TypedFilter]) -> Result<(), ApiError> {
+    for filter in filters {
+        if filter.field.is_empty() {
+            return Err(ApiError::InvalidArgument(
+                "Filter field name cannot be empty".to_string(),
+            ));
+        }
+        if !VALID_TYPED_FILTER_OPS.contains(&filter.op.as_str()) {
+            return Err(ApiError::InvalidArgument(format!(
+                "Invalid filter operator '{}'. Valid operators: {:?}",
+                filter.op, VALID_TYPED_FILTER_OPS
+            )));
+        }
+        if filter.op == "between" && filter.value_upper.is_none() {
+            return Err(ApiError::InvalidArgument(
+                "Filter operator 'between' requires 'value_upper' to be specified".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Parse a metadata filter supplied as loose JSON into the canonical
+/// [`FilterExpression`] consumed by the scan/search engines.
+///
+/// Two shapes are accepted so the same field can mirror `/search` and the
+/// simple equality maps that multi-tenant callers send:
+///   - **array** — `[{ "field": .., "op": .., "value": .. }, ..]`, the typed
+///     filter list (full operator set), reusing the search lowering;
+///   - **object** — `{ "field": value, .. }`, treated as an AND of equality
+///     comparisons (the common `account_id`-scoping case).
+///
+/// Returns `Ok(None)` when there is nothing to filter on.
+fn parse_metadata_filter(
+    value: &serde_json::Value,
+) -> Result<Option<crate::core::search::FilterExpression>, ApiError> {
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Array(items) if items.is_empty() => Ok(None),
+        serde_json::Value::Object(map) if map.is_empty() => Ok(None),
+        serde_json::Value::Array(_) => {
+            let typed: Vec<TypedFilter> = serde_json::from_value(value.clone()).map_err(|e| {
+                ApiError::InvalidArgument(format!("invalid filter list: {e}"))
+            })?;
+            validate_typed_filters(&typed)?;
+            let rich = typed
+                .iter()
+                .map(typed_filter_to_rich)
+                .collect::<Result<Vec<_>, ApiError>>()?;
+            Ok(crate::services::operations::vectors::rich_filters_to_filter_expression(&rich))
+        }
+        serde_json::Value::Object(map) => {
+            let conditions: Vec<FilterExpression> = map
+                .iter()
+                .map(|(field, v)| FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: ComparisonOperator::Equals,
+                    value: v.clone(),
+                })
+                .collect();
+            Ok(match conditions.len() {
+                0 => None,
+                1 => conditions.into_iter().next(),
+                _ => Some(FilterExpression::And(conditions)),
+            })
+        }
+        _ => Err(ApiError::InvalidArgument(
+            "filter must be an object or an array of {field,op,value}".to_string(),
+        )),
+    }
+}
+
 fn typed_filter_to_rich(filter: &TypedFilter) -> Result<RichFilterCondition, ApiError> {
     let operator = match filter.op.as_str() {
         "eq" => RichFilterOperator::Eq,
@@ -1439,40 +1530,7 @@ pub async fn search_with_typed_filters(
 
     // Validate filters if provided
     if let Some(ref filters) = request.filters {
-        for filter in filters {
-            if filter.field.is_empty() {
-                return Err(ApiError::InvalidArgument(
-                    "Filter field name cannot be empty".to_string(),
-                ));
-            }
-
-            let valid_ops = [
-                "eq",
-                "neq",
-                "gt",
-                "gte",
-                "lt",
-                "lte",
-                "contains",
-                "between",
-                "in",
-                "starts_with",
-                "ends_with",
-            ];
-            if !valid_ops.contains(&filter.op.as_str()) {
-                return Err(ApiError::InvalidArgument(format!(
-                    "Invalid filter operator '{}'. Valid operators: {:?}",
-                    filter.op, valid_ops
-                )));
-            }
-
-            // Validate "between" has upper bound
-            if filter.op == "between" && filter.value_upper.is_none() {
-                return Err(ApiError::InvalidArgument(
-                    "Filter operator 'between' requires 'value_upper' to be specified".to_string(),
-                ));
-            }
-        }
+        validate_typed_filters(filters)?;
     }
 
     let include_text = request.include_text.unwrap_or_else(|| {
@@ -2043,8 +2101,9 @@ pub struct ScanRecordsRequest {
     /// Max records to return in this page. Server enforces upper bound.
     #[serde(default)]
     pub limit: Option<u32>,
-    /// Metadata filter. Format mirrors `searchRecords.filters`; the
-    /// stub accepts the field but does not yet filter.
+    /// Metadata filter applied (before the limit) to the scanned page.
+    /// Accepts either the typed list form `[{field,op,value}]` (mirrors
+    /// `searchRecords.filters`) or a simple equality map `{field: value}`.
     #[serde(default)]
     pub filter: Option<serde_json::Value>,
     #[serde(default)]
@@ -2110,6 +2169,15 @@ pub async fn scan_records(
         _ => None,
     };
 
+    // Metadata filter is parsed into the canonical FilterExpression and pushed
+    // into the scan predicate (applied before the limit). Previously this field
+    // was accepted but silently ignored — a cross-tenant leak for callers that
+    // scope a shared collection with an `account_id`/`tenant_id` filter.
+    let metadata_filter = match request.filter.as_ref() {
+        Some(value) => parse_metadata_filter(value)?,
+        None => None,
+    };
+
     // TD-099(3d): cursor + limit + tenant predicate are pushed into the WAL
     // streaming layer; the handler returns a single ordered page plus the next
     // cursor (O(log d + limit) per page once the scan index is warm).
@@ -2122,6 +2190,7 @@ pub async fn scan_records(
             include_vector,
             include_props,
             Some(&tenant.tenant_id),
+            metadata_filter.as_ref(),
             now_ns,
         )
         .await
