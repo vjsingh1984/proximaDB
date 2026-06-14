@@ -123,6 +123,9 @@ pub struct RelationalSelectPredicateInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationalSelectAccessPath {
     PrimaryKeyLookup,
+    /// TD-110 Slice D: an equality on a UNIQUE column set resolved via the
+    /// store's O(1) index point-probe instead of a full table scan.
+    UniqueIndexLookup,
     TableScan,
 }
 
@@ -988,6 +991,46 @@ impl DmlService {
             return Ok((RelationalSelectAccessPath::PrimaryKeyLookup, records));
         }
 
+        // TD-110 Slice D: UNIQUE-index point lookup (tree path). Probe the index
+        // for the owning oids, then fetch + re-check the FULL tree (the index only
+        // covers the unique equality).
+        if let Some((columns, values)) =
+            self.extract_unique_lookup_from_where(where_clause, table_schema)?
+            && let Some(oids) = self
+                .record_store
+                .lookup_unique_oids(table_schema, &columns, &values, None)
+                .await?
+        {
+            let cap = limit.unwrap_or(usize::MAX);
+            let mut records = Vec::new();
+            for oid in oids {
+                if records.len() >= cap {
+                    break;
+                }
+                let Some(rich) = self
+                    .record_store
+                    .get_by_key(
+                        table_schema,
+                        TableRecordGetRequest {
+                            table_id: table_id_name.to_string(),
+                            key: oid,
+                            include_vector: true,
+                            include_props: true,
+                        },
+                        None,
+                    )
+                    .await?
+                else {
+                    continue;
+                };
+                let record = Self::rich_result_to_record(rich);
+                if Self::eval_predicate_tree(&record, tree, primary_key) {
+                    records.push(record);
+                }
+            }
+            return Ok((RelationalSelectAccessPath::UniqueIndexLookup, records));
+        }
+
         // No usable PK predicate: push the full tree into the store scan + limit.
         let pred = |record: &ProximaRecord| Self::eval_predicate_tree(record, tree, primary_key);
         let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
@@ -1076,6 +1119,48 @@ impl DmlService {
                     .take(limit.unwrap_or(usize::MAX))
                     .collect(),
             ));
+        }
+
+        // TD-110 Slice D: UNIQUE-index point lookup. If the predicates pin a
+        // non-PK UNIQUE set to equality and the store has an index for it, probe
+        // the index for the owning oids, fetch + re-check the FULL predicate set
+        // (the index only covers the unique equality), then return.
+        if let Some((columns, values)) =
+            Self::unique_index_lookup_from_predicates(table_schema, predicates)
+            && let Some(oids) = self
+                .record_store
+                .lookup_unique_oids(table_schema, &columns, &values, None)
+                .await?
+        {
+            let primary_key = table_schema.primary_key.first().map(String::as_str);
+            let cap = limit.unwrap_or(usize::MAX);
+            let mut records = Vec::new();
+            for oid in oids {
+                if records.len() >= cap {
+                    break;
+                }
+                let Some(rich) = self
+                    .record_store
+                    .get_by_key(
+                        table_schema,
+                        TableRecordGetRequest {
+                            table_id: table_id_name.to_string(),
+                            key: oid,
+                            include_vector: true,
+                            include_props: true,
+                        },
+                        None,
+                    )
+                    .await?
+                else {
+                    continue;
+                };
+                let record = Self::rich_result_to_record(rich);
+                if Self::record_matches_select_predicates(&record, predicates, primary_key) {
+                    records.push(record);
+                }
+            }
+            return Ok((RelationalSelectAccessPath::UniqueIndexLookup, records));
         }
 
         // Push the resolved `WHERE` predicate + limit INTO the scan so the store
@@ -1508,6 +1593,50 @@ impl DmlService {
             };
             Some(literal.clone())
         })
+    }
+
+    /// TD-110 Slice D: if `predicates` pin every column of some non-PK UNIQUE set
+    /// to an equality, return that `(columns, probe-values)` so the store can
+    /// resolve it via an O(1) index probe instead of a scan.
+    ///
+    /// Gated to String/Symbol columns: their `proxima_value_to_unique_text`
+    /// rendering equals the (already-unquoted) predicate literal exactly, so the
+    /// probe can never miss a real row. Numeric/boolean unique columns need
+    /// literal→typed canonicalization first (a bounded follow-up) and fall
+    /// through to the scan here.
+    fn unique_index_lookup_from_predicates(
+        table_schema: &CatalogTableSchema,
+        predicates: &[RelationalSelectPredicate],
+    ) -> Option<(Vec<String>, Vec<String>)> {
+        for columns in crate::services::record_store::schema_unique_column_sets(table_schema) {
+            let mut values = Vec::with_capacity(columns.len());
+            let pinned = columns.iter().all(|column_name| {
+                predicates.iter().any(|predicate| {
+                    if !predicate.column.name.eq_ignore_ascii_case(column_name) {
+                        return false;
+                    }
+                    if !matches!(
+                        predicate.column.data_type,
+                        ProximaType::String | ProximaType::Symbol
+                    ) {
+                        return false;
+                    }
+                    let RelationalSelectPredicateCondition::Comparison {
+                        operator: RelationalSelectPredicateOperator::Equal,
+                        literal,
+                    } = &predicate.condition
+                    else {
+                        return false;
+                    };
+                    values.push(literal.clone());
+                    true
+                })
+            });
+            if pinned && !columns.is_empty() {
+                return Some((columns, values));
+            }
+        }
+        None
     }
 
     fn rich_result_to_record(result: RichSearchResult) -> ProximaRecord {
@@ -3433,6 +3562,64 @@ impl DmlService {
             }
         }
         Ok(ids)
+    }
+
+    /// TD-110 Slice D: tree-path counterpart of
+    /// [`Self::unique_index_lookup_from_predicates`]. Under a top-level
+    /// conjunction (the same soundness guard as the PK fast-path — under OR a
+    /// unique leaf does not bound the match set), return a non-PK UNIQUE set
+    /// whose every String/Symbol column is pinned to an `=` condition, with the
+    /// probe values, so the store can resolve it via an O(1) index probe.
+    fn extract_unique_lookup_from_where(
+        &self,
+        where_clause: &WhereClause,
+        table_schema: &CatalogTableSchema,
+    ) -> Result<Option<(Vec<String>, Vec<String>)>> {
+        if matches!(where_clause.operator, LogicalOperator::Or) && where_clause.conditions.len() > 1
+        {
+            return Ok(None);
+        }
+        for columns in crate::services::record_store::schema_unique_column_sets(table_schema) {
+            let mut values = Vec::with_capacity(columns.len());
+            let mut all_pinned = true;
+            for column_name in &columns {
+                let is_text = table_schema.columns.iter().any(|column| {
+                    column.name.eq_ignore_ascii_case(column_name)
+                        && matches!(
+                            column.data_type,
+                            ProximaType::String | ProximaType::Symbol
+                        )
+                });
+                if !is_text {
+                    all_pinned = false;
+                    break;
+                }
+                let found = where_clause.conditions.iter().find_map(|condition| match condition {
+                    Condition::Comparison {
+                        column,
+                        operator,
+                        value,
+                    } if column.eq_ignore_ascii_case(column_name)
+                        && matches!(operator, ComparisonOperator::Equal) =>
+                    {
+                        Some(self.literal_to_string(value))
+                    }
+                    _ => None,
+                });
+                match found {
+                    Some(Ok(value)) => values.push(value),
+                    Some(Err(err)) => return Err(err),
+                    None => {
+                        all_pinned = false;
+                        break;
+                    }
+                }
+            }
+            if all_pinned && !columns.is_empty() {
+                return Ok(Some((columns, values)));
+            }
+        }
+        Ok(None)
     }
 
     /// Convert an UPDATE/DELETE `WhereClause` into a resolved boolean predicate
@@ -5873,6 +6060,158 @@ mod tests {
     /// scan via `select_table_records_with_projection_where`. The PK fast-path
     /// stays OR-safe (a PK leaf under OR forces a full scan), and nested groups
     /// are NOT flattened.
+    #[tokio::test]
+    async fn select_uses_unique_index_point_lookup() {
+        // TD-110 Slice D: equality on a UNIQUE (non-PK) string column resolves via
+        // the store's O(1) index probe (UniqueIndexLookup), not a full scan — on
+        // both the WHERE-tree path and the flat-predicate path. The full predicate
+        // set is still re-checked, and a unique leaf under OR falls back to a scan.
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-uniq-lookup.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE users (id TEXT NOT NULL, email TEXT, status TEXT, PRIMARY KEY (id), UNIQUE (email));",
+            )
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        for (id, email, status) in [
+            ("u1", "a@x.com", "active"),
+            ("u2", "b@x.com", "active"),
+            ("u3", "c@x.com", "idle"),
+        ] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO users (id, email, status) VALUES ('{id}', '{email}', '{status}');"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        async fn run_where(
+            dml: &DmlService,
+            parser: &crate::query::sql_frontend::SqlFrontendParser,
+            sql: &str,
+        ) -> (RelationalSelectAccessPath, Vec<String>) {
+            let where_clause = parser.parse_select_where_clause(sql).expect("parse where");
+            let res = dml
+                .select_table_records_with_projection_where(
+                    "users",
+                    &["id".to_string()],
+                    None,
+                    where_clause.as_ref(),
+                )
+                .await
+                .expect("select");
+            let mut ids: Vec<String> = res
+                .rows
+                .iter()
+                .map(|row| match &row[0] {
+                    ProximaValue::String(s) => s.clone(),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            ids.sort();
+            (res.route_metadata.access_path, ids)
+        }
+
+        // Tree path: equality on the UNIQUE column → index point lookup, right row.
+        let (path, ids) = run_where(&dml, &parser, "SELECT id FROM users WHERE email = 'b@x.com'").await;
+        assert_eq!(path, RelationalSelectAccessPath::UniqueIndexLookup);
+        assert_eq!(ids, vec!["u2"]);
+
+        // Full-predicate re-check: unique email matches but status does not → no row.
+        let (path, ids) = run_where(
+            &dml,
+            &parser,
+            "SELECT id FROM users WHERE email = 'b@x.com' AND status = 'idle'",
+        )
+        .await;
+        assert_eq!(path, RelationalSelectAccessPath::UniqueIndexLookup);
+        assert!(ids.is_empty(), "full predicate re-check drops the row");
+
+        // Missing unique value → index path, empty result.
+        let (path, ids) = run_where(&dml, &parser, "SELECT id FROM users WHERE email = 'zzz@x.com'").await;
+        assert_eq!(path, RelationalSelectAccessPath::UniqueIndexLookup);
+        assert!(ids.is_empty());
+
+        // Unique leaf under OR must NOT point-lookup (would miss the idle row).
+        let (path, ids) = run_where(
+            &dml,
+            &parser,
+            "SELECT id FROM users WHERE email = 'b@x.com' OR status = 'idle'",
+        )
+        .await;
+        assert_eq!(
+            path,
+            RelationalSelectAccessPath::TableScan,
+            "unique leaf under OR forces a scan"
+        );
+        assert_eq!(ids, vec!["u2", "u3"]);
+
+        // Flat-predicate path (pgwire relational adapter): same index lookup.
+        let flat = dml
+            .select_table_records_with_projection(
+                "users",
+                &["id".to_string()],
+                None,
+                &[RelationalSelectPredicateInput {
+                    column_name: "email".to_string(),
+                    condition: RelationalSelectPredicateCondition::Comparison {
+                        operator: RelationalSelectPredicateOperator::Equal,
+                        literal: "c@x.com".to_string(),
+                    },
+                }],
+            )
+            .await
+            .expect("flat select");
+        assert_eq!(
+            flat.route_metadata.access_path,
+            RelationalSelectAccessPath::UniqueIndexLookup
+        );
+        let flat_ids: Vec<String> = flat
+            .rows
+            .iter()
+            .map(|row| match &row[0] {
+                ProximaValue::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(flat_ids, vec!["u3"]);
+    }
+
     #[tokio::test]
     async fn select_where_supports_or_nested_and_pk_or_safety() {
         use crate::services::record_store::DirectWalTableRecordStore;
