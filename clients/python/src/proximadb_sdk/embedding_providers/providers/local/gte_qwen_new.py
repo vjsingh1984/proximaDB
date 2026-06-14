@@ -144,7 +144,11 @@ class GTEQwenProvider(
     aliases=["alibaba", "qwen", "gte"],
     description="Alibaba's state-of-the-art multilingual embeddings (#1 MTEB)",
 )
-class GTEQwenProvider(GTEQwenProvider):
-    """Alias for GTEQwenProvider (for backward compatibility)"""
+class GTEQwenProviderV2(GTEQwenProvider):
+    """V2 alias of GTEQwenProvider (kept for backward compatibility).
+
+    Was previously named GTEQwenProvider, which self-shadowed the class above
+    and left the GTEQwenProviderV2 name (imported by __init__new) undefined.
+    """
 
     pass
