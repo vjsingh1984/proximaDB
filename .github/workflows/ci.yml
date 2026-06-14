@@ -71,6 +71,10 @@ jobs:
       spark_jni: ${{ steps.filter.outputs.spark_jni }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so dorny/paths-filter can reach the merge-base across a
+          # large develop→main gap (shallow --deepen fails: "shallow file has changed").
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -725,9 +729,9 @@ jobs:
         # lint gate.
         run: |
           cargo build ${{ matrix.args }} \
-            --bin proximadb-server \
-            --bin proximadb-bench \
-            --bin proximadb-migrate
+            -p proximadb-server \
+            -p proximadb-bench \
+            -p proximadb-migrate
 
       - name: Upload Server Binary
         if: matrix.profile == 'release'
