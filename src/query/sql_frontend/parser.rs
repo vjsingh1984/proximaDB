@@ -1891,6 +1891,7 @@ mod tests {
                 columns,
                 references_table,
                 references_columns,
+                ..
             } if columns == &vec!["c_w_id".to_string(), "c_d_id".to_string()]
                 && references_table == "district"
                 && references_columns == &vec!["d_w_id".to_string(), "d_id".to_string()]
@@ -2799,6 +2800,8 @@ impl SqlFrontendParser {
                                     columns,
                                     foreign_table,
                                     referred_columns,
+                                    on_delete,
+                                    on_update,
                                     ..
                                 } => {
                                     let cols: Vec<String> =
@@ -2811,6 +2814,8 @@ impl SqlFrontendParser {
                                             columns: cols,
                                             references_table: foreign_table.to_string(),
                                             references_columns: ref_cols,
+                                            on_delete: on_delete.map(map_referential_action),
+                                            on_update: on_update.map(map_referential_action),
                                         },
                                     });
                                 }
@@ -3159,6 +3164,22 @@ impl SqlFrontendParser {
     }
 }
 
+/// Map sqlparser's referential action onto the catalog's, so parsed
+/// `ON DELETE`/`ON UPDATE` actions survive into the table constraint (TD-110).
+fn map_referential_action(
+    action: sqlparser::ast::ReferentialAction,
+) -> proximadb_catalog::ReferentialAction {
+    use proximadb_catalog::ReferentialAction as Cat;
+    use sqlparser::ast::ReferentialAction as Sql;
+    match action {
+        Sql::Restrict => Cat::Restrict,
+        Sql::Cascade => Cat::Cascade,
+        Sql::SetNull => Cat::SetNull,
+        Sql::NoAction => Cat::NoAction,
+        Sql::SetDefault => Cat::SetDefault,
+    }
+}
+
 fn apply_table_constraints(
     columns: &mut [ColumnDefinition],
     constraints: &[sqlparser::ast::TableConstraint],
@@ -3207,6 +3228,8 @@ fn apply_table_constraints(
                 columns: fk,
                 foreign_table,
                 referred_columns,
+                on_delete,
+                on_update,
                 ..
             } => {
                 let fk_columns = fk
@@ -3229,6 +3252,8 @@ fn apply_table_constraints(
                     columns: fk_columns,
                     references_table: unquote_object_name(&foreign_table.to_string()),
                     references_columns,
+                    on_delete: on_delete.map(map_referential_action),
+                    on_update: on_update.map(map_referential_action),
                 });
             }
             _ => {}
