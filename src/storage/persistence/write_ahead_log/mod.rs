@@ -2582,9 +2582,15 @@ impl WriteAheadLogManager {
                     continue;
                 }
 
-                // Apply fine-grained metadata filter if specified
+                // Apply fine-grained metadata filter if specified. Use the
+                // canonical, numeric-aware evaluator over the record's props so
+                // this path matches every other filter site (scan, relational,
+                // columnar) and supports the full operator set.
                 if let Some(filter_expr) = metadata_filters
-                    && !self.evaluate_filter_on_record(vector_record, filter_expr)
+                    && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                        filter_expr,
+                        &vector_record.props,
+                    )
                 {
                     continue;
                 }
@@ -2676,10 +2682,14 @@ impl WriteAheadLogManager {
 
             // Check bloom filter if available
             if let Some(ref bloom_filter) = batch.metadata_bloom_filter {
-                // Check each filter condition against bloom filter
+                // Check each filter condition against bloom filter. The key
+                // format MUST match the build site — both go through the shared
+                // `metadata_bloom_key` helper so the separator can never drift.
                 for (field, value) in &filter_conditions {
-                    // Use bloom filter's might_contain method
-                    if !bloom_filter.might_contain(format!("{}:{}", field, value).as_bytes()) {
+                    let key = crate::storage::memtable::specialized::wal_behavior::metadata_bloom_key(
+                        field, value,
+                    );
+                    if !bloom_filter.might_contain(key.as_bytes()) {
                         should_include = false;
                         bloom_misses += 1;
                         break;
@@ -2710,175 +2720,50 @@ impl WriteAheadLogManager {
         Ok(filtered_batches)
     }
 
-    /// Extract field/value pairs from FilterExpression for bloom filter checking
+    /// Extract the conjunction of exact `field=value` pairs that a batch's
+    /// bloom filter can *soundly* prove-absent, for batch pre-pruning.
+    ///
+    /// A bloom filter stores one `field=value` entry per record prop, so it can
+    /// only ever answer "this exact value is definitely absent". It is therefore
+    /// only sound to *exclude* a batch when the query REQUIRES an exact value to
+    /// be present — i.e. an `Equals` comparison that appears conjunctively (a
+    /// top-level `Equals`, or one nested under `And`). Every other shape must
+    /// fail **open** (return no condition for it, so the batch is kept and the
+    /// authoritative per-record evaluator decides):
+    ///   - substring ops (`Contains`/`StartsWith`/`EndsWith`) and range ops
+    ///     match values the bloom never stored verbatim → a miss does not imply
+    ///     absence;
+    ///   - `Or` is disjunctive → requiring any single branch's value would
+    ///     wrongly drop batches that satisfy another branch;
+    ///   - `Not` inverts the membership question entirely.
+    ///
+    /// Returning the prunable sub-conditions of an `And` (and dropping the
+    /// non-prunable siblings) stays sound: every record in a surviving batch
+    /// must still satisfy those `Equals` legs.
     fn extract_filter_conditions(
         &self,
         filter: &crate::core::search::FilterExpression,
     ) -> Vec<(String, String)> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
-        let mut conditions = Vec::new();
 
         match filter {
             FilterExpression::Comparison {
                 field,
-                operator,
+                operator: ComparisonOperator::Equals,
                 value,
-            } => {
-                // Only include certain operators that work well with bloom filters
-                match operator {
-                    ComparisonOperator::Equals
-                    | ComparisonOperator::Contains
-                    | ComparisonOperator::StartsWith
-                    | ComparisonOperator::EndsWith => {
-                        if let Some(str_value) = value.as_str() {
-                            conditions.push((field.clone(), str_value.to_string()));
-                        }
-                    }
-                    _ => {
-                        // For other operators (>, <, etc.), we still include the field
-                        // The bloom filter will help eliminate batches that don't have the field at all
-                        if let Some(str_value) = value.as_str() {
-                            conditions.push((field.clone(), str_value.to_string()));
-                        }
-                    }
-                }
-            }
-            FilterExpression::And(exprs) => {
-                for expr in exprs {
-                    conditions.extend(self.extract_filter_conditions(expr));
-                }
-            }
-            FilterExpression::Or(exprs) => {
-                // For OR, we include all conditions (bloom filter will be more permissive)
-                for expr in exprs {
-                    conditions.extend(self.extract_filter_conditions(expr));
-                }
-            }
-            FilterExpression::Not(_) => {
-                // Bloom filters don't help with NOT operations, skip optimization
-            }
-        }
-
-        conditions
-    }
-
-    /// Evaluate filter expression on a vector record with proper enum handling
-    fn evaluate_filter_on_record(
-        &self,
-        record: &proximadb_records::ProximaRecord,
-        filter: &crate::core::search::FilterExpression,
-    ) -> bool {
-        use crate::core::search::FilterExpression;
-        use proximadb_data_model::ProximaValue;
-        use proximadb_records::ProximaTreeNode;
-
-        match filter {
-            FilterExpression::Comparison {
-                field,
-                operator,
-                value,
-            } => {
-                // Find the metadata field in the record's ProximaTree props
-                for (key, node) in &record.props {
-                    if key == field {
-                        let metadata_str = match node {
-                            ProximaTreeNode::Value(ProximaValue::String(s)) => s.clone(),
-                            ProximaTreeNode::Value(ProximaValue::Float64(n)) => n.to_string(),
-                            ProximaTreeNode::Value(ProximaValue::Int64(i)) => i.to_string(),
-                            ProximaTreeNode::Value(ProximaValue::Boolean(b)) => b.to_string(),
-                            _ => String::new(),
-                        };
-                        if !metadata_str.is_empty() {
-                            return self.compare_values(&metadata_str, operator, value);
-                        }
-                    }
-                }
-                false
-            }
+            } => value
+                .as_str()
+                .map(|v| vec![(field.clone(), v.to_string())])
+                .unwrap_or_default(),
             FilterExpression::And(exprs) => exprs
                 .iter()
-                .all(|e| self.evaluate_filter_on_record(record, e)),
-            FilterExpression::Or(exprs) => exprs
-                .iter()
-                .any(|e| self.evaluate_filter_on_record(record, e)),
-            FilterExpression::Not(expr) => !self.evaluate_filter_on_record(record, expr),
-        }
-    }
-
-    /// Compare values based on operator
-    fn compare_values(
-        &self,
-        left: &str,
-        operator: &crate::core::search::ComparisonOperator,
-        right: &serde_json::Value,
-    ) -> bool {
-        use crate::core::search::ComparisonOperator;
-
-        match operator {
-            ComparisonOperator::Equals => {
-                if let serde_json::Value::String(right_str) = right {
-                    left == right_str
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::NotEquals => {
-                if let serde_json::Value::String(right_str) = right {
-                    left != right_str
-                } else {
-                    true
-                }
-            }
-            ComparisonOperator::GreaterThan => {
-                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
-                    left_num > right_num
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::GreaterThanOrEqual => {
-                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
-                    left_num >= right_num
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::LessThan => {
-                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
-                    left_num < right_num
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::LessThanOrEqual => {
-                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
-                    left_num <= right_num
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::Contains => {
-                if let serde_json::Value::String(right_str) = right {
-                    left.contains(right_str.as_str())
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::StartsWith => {
-                if let serde_json::Value::String(right_str) = right {
-                    left.starts_with(right_str.as_str())
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::EndsWith => {
-                if let serde_json::Value::String(right_str) = right {
-                    left.ends_with(right_str.as_str())
-                } else {
-                    false
-                }
-            }
-            _ => false, // Other operators not implemented yet
+                .flat_map(|expr| self.extract_filter_conditions(expr))
+                .collect(),
+            // Non-Equals comparisons, Or, and Not are not soundly prunable by an
+            // exact-match bloom — fail open (no conditions ⇒ batch is kept).
+            FilterExpression::Comparison { .. }
+            | FilterExpression::Or(_)
+            | FilterExpression::Not(_) => Vec::new(),
         }
     }
 
