@@ -184,26 +184,37 @@ impl HybridPort for RestHybridPortImpl {
         } else {
             Vec::new()
         };
-        // Enforce metadata filters on BM25 candidates. The vector leg already
-        // applies `request.filters` server-side (they flow into its
-        // `SearchQuery.filters`), so the set of ids it returns is the
-        // authoritative "passes the filter" set for this query. BM25 retrieval
-        // is text-only and carries no metadata, so keep only BM25 candidates
-        // that also appear in that filtered set and drop the rest fail-closed —
-        // the text leg can never surface a record the filter excludes.
+        // Enforce metadata filters on BM25 candidates. BM25 retrieval is
+        // text-only and carries no metadata, so we resolve the authoritative
+        // set of record ids whose properties satisfy the filter — read from the
+        // live WAL+storage record set and evaluated by the single canonical
+        // `evaluate_filter_proxima` — and keep only the BM25 candidates in that
+        // set. This admits the *complete* filtered text result (including a
+        // text-only hybrid query with no query vector, and BM25 matches outside
+        // the vector leg's `top_k`), unlike gating to the vector leg's returned
+        // ids, while still never surfacing a record the filter excludes.
         //
-        // Bounded behaviour: a BM25-only candidate that passes the filter but
-        // falls outside the vector leg's `top_k` (or a hybrid request that sends
-        // no query vector at all) is dropped rather than risk a leak — the safe
-        // direction, never a cross-account disclosure. Keeping such tail matches
-        // would require a resolving, metadata-returning record fetch on the
-        // hybrid port (`get_vector` does not resolve collection names); tracked
-        // as a follow-up.
-        let bm25_results: Vec<BM25Result> = if request.filters.is_empty() {
+        // Fail-closed: any error resolving the filtered id set drops every BM25
+        // candidate rather than risk surfacing a record the filter excludes —
+        // the safe direction, never a cross-account disclosure.
+        let bm25_results: Vec<BM25Result> = if request.filters.is_empty()
+            || bm25_results.is_empty()
+        {
             bm25_results
         } else {
-            let allowed: std::collections::HashSet<&str> =
-                vector_results.iter().map(|r| r.doc_id.as_str()).collect();
+            let proto_filters: HashMap<String, crate::proto::proximadb_v1::SqlValue> = request
+                .filters
+                .iter()
+                .map(|(key, value)| (key.clone(), prost_value_to_sql_value(value)))
+                .collect();
+            let allowed = self
+                .vector_ops
+                .record_ids_matching_filter(&request.collection, &proto_filters, None)
+                .await
+                .unwrap_or_else(|error| {
+                    debug!(%error, "hybrid filter id resolution failed; dropping BM25 candidates (fail-closed)");
+                    std::collections::HashSet::new()
+                });
             bm25_results
                 .into_iter()
                 .filter(|result| allowed.contains(result.doc_id.as_str()))

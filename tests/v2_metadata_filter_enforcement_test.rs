@@ -302,30 +302,20 @@ async fn v2_metadata_filter_is_enforced_on_all_paths() {
         "BM25 baseline did not surface b1, so the hybrid leak test is vacuous: {baseline_body}"
     );
 
-    // Filtered: the security invariant is that the acctB record b1 — surfaced by
-    // the unfiltered BM25 baseline — must NOT appear once the account filter is
-    // applied. The filtered set must also never introduce a record the baseline
-    // did not surface, and must never contain an acctB record.
-    //
-    // Note on completeness: we deliberately do NOT assert the filtered set still
-    // contains a1/a2. The hybrid leg runs after the records have flushed out of
-    // the WAL, and v2 batch INSERT does not yet register flushed records with the
-    // search index (a pre-existing gap, also why `fp16_v2_insert_search_e2e` is
-    // `#[ignore]`'d). That gap can empty the vector leg here and is independent
-    // of the filter fix under test; the leak-closure invariant below is what this
-    // path guarantees.
+    // Filtered: the account filter is enforced on the text leg by resolving the
+    // authoritative set of record ids whose metadata satisfies the filter (read
+    // from the live WAL+storage record set, canonical `evaluate_filter_proxima`)
+    // and keeping only BM25 candidates in that set. So the filtered text-only
+    // hybrid query must return *exactly* the acctA records a1/a2 — complete, and
+    // never the acctB record b1 the unfiltered baseline surfaced.
     let (filtered_ids, filtered_body) = hybrid_search(Some(json!({ "account_id": "acctA" }))).await;
     eprintln!("hybrid filtered ids: {filtered_ids:?}");
     assert!(
         !filtered_ids.contains("b1"),
         "hybrid search leaked acctB record b1 through the BM25 leg: {filtered_body}"
     );
-    assert!(
-        filtered_ids.is_subset(&baseline_ids),
-        "hybrid filter surfaced a record the baseline did not: {filtered_body}"
-    );
-    assert!(
-        filtered_ids.is_subset(&expected),
-        "hybrid filter admitted a non-acctA record: {filtered_body}"
+    assert_eq!(
+        filtered_ids, expected,
+        "hybrid filter must return exactly acctA records a1/a2, got {filtered_body}"
     );
 }

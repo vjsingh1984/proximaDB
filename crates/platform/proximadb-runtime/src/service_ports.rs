@@ -14,10 +14,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_proto::v1::{
-    Collection, CollectionConfig, HybridSearchRequest, HybridSearchResponse, VectorBatchRequest,
-    VectorOperationResponse, VectorSearchRequest,
+    Collection, CollectionConfig, HybridSearchRequest, HybridSearchResponse, SqlValue,
+    VectorBatchRequest, VectorOperationResponse, VectorSearchRequest,
 };
 use serde_json::Value as JsonValue;
+use std::collections::{HashMap, HashSet};
 
 // ── Collection management ──────────────────────────────────────────────────────
 
@@ -96,6 +97,26 @@ pub trait VectorOpsPort: Send + Sync {
 
     /// Return engine-level metrics as a JSON blob.
     async fn metrics(&self) -> Result<JsonValue>;
+
+    /// Resolve `collection_id` and return the set of record ids whose property
+    /// tree satisfies the v1 simple equality `filters` map, read from the
+    /// authoritative record set (WAL memtable + flushed storage) and evaluated
+    /// with the canonical filter. Used by hybrid search to enforce metadata
+    /// filters on text-only (BM25) candidates, which carry no metadata of their
+    /// own and so cannot be filtered by the retrieval engine.
+    ///
+    /// Fail-closed by contract: callers MUST drop any candidate absent from the
+    /// returned set, and the default implementation returns an empty set so a
+    /// port that does not back this path can never widen a filter to fail-open
+    /// (which would re-open a cross-tenant disclosure).
+    async fn record_ids_matching_filter(
+        &self,
+        _collection_id: &str,
+        _filters: &HashMap<String, SqlValue>,
+        _tenant_id: Option<&str>,
+    ) -> Result<HashSet<String>> {
+        Ok(HashSet::new())
+    }
 }
 
 // ── Query facade ──────────────────────────────────────────────────────────────

@@ -5922,6 +5922,62 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn metrics(&self) -> anyhow::Result<serde_json::Value> {
         VectorOperationsService::metrics(self).await
     }
+
+    async fn record_ids_matching_filter(
+        &self,
+        collection_id: &str,
+        filters: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+        _tenant_id: Option<&str>,
+    ) -> anyhow::Result<std::collections::HashSet<String>> {
+        use std::collections::HashSet;
+
+        if filters.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        // Reuse the canonical v1-simple-filter → FilterExpression lowering that
+        // the vector search leg uses server-side, so this gating path applies
+        // the exact same predicate semantics.
+        let expr = crate::core::search::protocol_conversions::from_v1_simple_filters(filters)
+            .map_err(|e| anyhow::anyhow!("invalid hybrid metadata filter: {}", e))?;
+
+        // Resolve name → canonical internal id (identity for v2 where id == name,
+        // and for already-canonical ids) before touching the record store.
+        let resolved = self.resolve_collection_id(collection_id).await;
+
+        // Read the authoritative record set — WAL memtable plus flushed storage —
+        // and keep the ids whose property tree satisfies the filter under the
+        // single canonical evaluator. Tenant scope is not threaded here (the
+        // hybrid boundary carries no `TenantContext`, mirroring the vector leg's
+        // `search(req, None)`); correctness holds because this set only ever
+        // *narrows* the BM25 candidates and never widens them.
+        let records = self
+            .list_all_records_with_tenant_context(&resolved, None)
+            .await?;
+
+        let matching = records
+            .into_iter()
+            .filter(|record| {
+                crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                    &expr,
+                    &record.props,
+                )
+            })
+            .map(|record| {
+                // Mirror the v2 scan serializer's id selection (oid, then the
+                // caller-supplied local id) so the ids line up with the BM25
+                // document ids and the vector leg's result ids.
+                if record.oid.is_empty() {
+                    record.local_id.unwrap_or_default()
+                } else {
+                    record.oid
+                }
+            })
+            .filter(|id| !id.is_empty())
+            .collect();
+
+        Ok(matching)
+    }
 }
 
 // ─── P4: ANN advisor observation hook ───────────────────────────
