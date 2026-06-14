@@ -345,6 +345,10 @@ pub enum TableConstraint {
         references_table: String,
         /// Columns in the referenced table.
         references_columns: Vec<String>,
+        /// `ON DELETE` referential action, if specified.
+        on_delete: Option<proximadb_catalog::ReferentialAction>,
+        /// `ON UPDATE` referential action, if specified.
+        on_update: Option<proximadb_catalog::ReferentialAction>,
     },
 }
 
@@ -1326,13 +1330,15 @@ impl DdlService {
                     columns,
                     references_table,
                     references_columns,
+                    on_delete,
+                    on_update,
                 } => {
                     capabilities.constraints.push(ColumnConstraint::ForeignKey {
                         columns,
                         references_table,
                         references_columns,
-                        on_delete: None,
-                        on_update: None,
+                        on_delete,
+                        on_update,
                     });
                 }
             }
@@ -1500,12 +1506,14 @@ impl DdlService {
                             columns,
                             references_table,
                             references_columns,
+                            on_delete,
+                            on_update,
                         } => ColumnConstraint::ForeignKey {
                             columns,
                             references_table,
                             references_columns,
-                            on_delete: None,
-                            on_update: None,
+                            on_delete,
+                            on_update,
                         },
                     };
                     SchemaChange::AddConstraint {

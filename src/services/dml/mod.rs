@@ -2323,6 +2323,19 @@ impl DmlService {
         if ids_to_delete.is_empty() {
             return Ok(DmlResult::success(0, "No rows matched WHERE clause"));
         }
+
+        // TD-110: apply FOREIGN KEY referential actions (ON DELETE
+        // RESTRICT/NO ACTION/CASCADE/SET NULL) before removing the parent rows.
+        // RESTRICT/NO ACTION rejects the DELETE; CASCADE/SET NULL mutate children
+        // first so the parent removal leaves no dangling references.
+        self.enforce_delete_referential_actions(
+            &catalog,
+            &table_id,
+            &table_schema,
+            &ids_to_delete,
+        )
+        .await?;
+
         let (write_intent, write_lane_decision) = Self::route_row_dml_write_intent(
             &table_schema,
             WriteOperationKind::Delete,
@@ -3241,6 +3254,197 @@ impl DmlService {
                         "FOREIGN KEY ({}) on table '{}' violates reference: '{}' is not present in {}({})",
                         fk_column, table_schema.name, key, references_table, referenced_column
                     ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// TD-110: apply FOREIGN KEY referential actions when deleting parent rows.
+    ///
+    /// For every child table in the same namespace whose single-column FK
+    /// references this table's PRIMARY KEY, find rows pointing at one of the
+    /// `deleted_keys` and act on `ON DELETE`:
+    ///   - RESTRICT / NO ACTION (and an unspecified action — the SQL default):
+    ///     reject the DELETE so no dangling reference is left behind;
+    ///   - CASCADE: delete the referencing child rows;
+    ///   - SET NULL: clear the child FK column.
+    ///
+    /// SET DEFAULT is rejected as unsupported (no column-default model yet).
+    /// Children are resolved in the same record store (same-partition), matching
+    /// [`Self::enforce_foreign_keys`]. CASCADE is one level: a cascaded child
+    /// delete does not itself re-trigger this pass, so a grandchild RESTRICT/
+    /// CASCADE is not chained (follow-up). Composite / non-PK-referenced FKs are
+    /// skipped — they are rejected at write time, so no such rows can exist.
+    async fn enforce_delete_referential_actions(
+        &self,
+        parent_catalog: &Arc<dyn crate::catalog::Catalog>,
+        parent_table_id: &crate::catalog::TableIdentifier,
+        parent_schema: &CatalogTableSchema,
+        deleted_keys: &[String],
+    ) -> Result<()> {
+        let Some(parent_pk) = Self::primary_key_column(parent_schema) else {
+            return Ok(()); // No PK → nothing can reference these rows.
+        };
+        let deleted: std::collections::HashSet<&str> =
+            deleted_keys.iter().map(String::as_str).collect();
+
+        let sibling_ids = parent_catalog
+            .list_tables(&parent_table_id.namespace)
+            .await?;
+        for child_id in sibling_ids {
+            if child_id.name == parent_table_id.name
+                && child_id.namespace == parent_table_id.namespace
+            {
+                continue; // Self-referencing FK on the same table: out of scope.
+            }
+            let child_schema = parent_catalog.get_table(&child_id).await?;
+            let child_pk = Self::primary_key_column(&child_schema);
+            for constraint in &child_schema.relational_capabilities.constraints {
+                let proximadb_catalog::ColumnConstraint::ForeignKey {
+                    columns,
+                    references_table,
+                    references_columns,
+                    on_delete,
+                    ..
+                } = constraint
+                else {
+                    continue;
+                };
+                if columns.len() != 1 || references_columns.len() != 1 {
+                    continue; // Unsupported shape → no rows could have been written.
+                }
+                // Does this FK reference the table being deleted from?
+                let Ok((_, referenced_id)) =
+                    self.catalog_manager.resolve_table(references_table).await
+                else {
+                    continue;
+                };
+                if referenced_id.name != parent_table_id.name
+                    || referenced_id.namespace != parent_table_id.namespace
+                {
+                    continue;
+                }
+                if references_columns[0] != parent_pk {
+                    continue; // Only parent-PK references are enforced.
+                }
+                let fk_column = columns[0].clone();
+
+                // Find child rows referencing any deleted parent key.
+                let child_pk_for_pred = child_pk.clone();
+                let fk_for_pred = fk_column.clone();
+                let deleted_ref = &deleted;
+                let pred = move |record: &ProximaRecord| {
+                    match record_unique_tuple(
+                        record,
+                        std::slice::from_ref(&fk_for_pred),
+                        child_pk_for_pred.as_deref(),
+                    ) {
+                        Some(values) => values
+                            .first()
+                            .map(|value| deleted_ref.contains(value.as_str()))
+                            .unwrap_or(false),
+                        None => false, // NULL/absent FK never references a parent.
+                    }
+                };
+                let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
+                let referencing = self
+                    .record_store
+                    .scan_records_filtered(
+                        &child_schema,
+                        TableRecordScanRequest {
+                            table_id: child_id.name.clone(),
+                            limit: None,
+                            include_vector: true,
+                            include_props: true,
+                        },
+                        predicate,
+                        None,
+                    )
+                    .await?;
+                if referencing.is_empty() {
+                    continue;
+                }
+
+                match on_delete {
+                    None
+                    | Some(proximadb_catalog::ReferentialAction::Restrict)
+                    | Some(proximadb_catalog::ReferentialAction::NoAction) => {
+                        return Err(anyhow!(
+                            "DELETE on table '{}' violates FOREIGN KEY ({}) on table '{}': {} referencing row(s) remain (ON DELETE NO ACTION)",
+                            parent_table_id.name,
+                            fk_column,
+                            child_id.name,
+                            referencing.len()
+                        ));
+                    }
+                    Some(proximadb_catalog::ReferentialAction::Cascade) => {
+                        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                        let tombstones = referencing
+                            .iter()
+                            .map(|record| {
+                                Self::build_delete_tombstone_record(
+                                    &record.oid,
+                                    &child_schema,
+                                    now_ns,
+                                )
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        let cascaded = tombstones.len();
+                        let mutations = tombstones
+                            .into_iter()
+                            .map(|record| {
+                                TableRecordMutation::new(TableRecordMutationKind::Delete, record)
+                            })
+                            .collect::<Vec<_>>();
+                        let result = self
+                            .record_store
+                            .write_mutations(&child_schema, mutations, None)
+                            .await?;
+                        if !result.success {
+                            return Err(anyhow!(
+                                "ON DELETE CASCADE failed for child table '{}': {:?}",
+                                child_id.name,
+                                result.errors
+                            ));
+                        }
+                        self.bump_row_count_stats(&child_id.name, -(cascaded as i64))
+                            .await;
+                    }
+                    Some(proximadb_catalog::ReferentialAction::SetNull) => {
+                        let mut updated = Vec::with_capacity(referencing.len());
+                        for mut record in referencing {
+                            record.props.insert(
+                                fk_column.clone(),
+                                ProximaTreeNode::Value(ProximaValue::Null),
+                            );
+                            updated.push(record);
+                        }
+                        let mutations = updated
+                            .into_iter()
+                            .map(|record| {
+                                TableRecordMutation::new(TableRecordMutationKind::Update, record)
+                            })
+                            .collect::<Vec<_>>();
+                        let result = self
+                            .record_store
+                            .write_mutations(&child_schema, mutations, None)
+                            .await?;
+                        if !result.success {
+                            return Err(anyhow!(
+                                "ON DELETE SET NULL failed for child table '{}': {:?}",
+                                child_id.name,
+                                result.errors
+                            ));
+                        }
+                    }
+                    Some(proximadb_catalog::ReferentialAction::SetDefault) => {
+                        return Err(anyhow!(
+                            "ON DELETE SET DEFAULT on table '{}' (FOREIGN KEY {}) is not supported",
+                            child_id.name,
+                            fk_column
+                        ));
+                    }
                 }
             }
         }
@@ -5416,6 +5620,151 @@ mod tests {
         assert!(
             err.to_string().contains("violates reference"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_enforces_referential_actions() {
+        // TD-110: ON DELETE referential actions. Deleting a parent row triggers
+        // NO ACTION (default → reject), CASCADE (delete children), or SET NULL
+        // (clear the child FK) on child tables in the same namespace.
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        for create in [
+            "CREATE TABLE customers (id TEXT NOT NULL, name TEXT, PRIMARY KEY (id));",
+            "CREATE TABLE orders_restrict (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id));",
+            "CREATE TABLE orders_cascade (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE);",
+            "CREATE TABLE orders_setnull (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE SET NULL);",
+        ] {
+            let stmt = parser.parse_ddl(create).expect("parse create").expect("ddl");
+            ddl.execute(stmt).await.expect("create table");
+        }
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(temp_dir.path().join("refaction.wal"))
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store.clone(),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
+
+        // Sanity: the parser must carry ON DELETE actions into the catalog.
+        let cascade_schema = manager
+            .resolve_table("orders_cascade")
+            .await
+            .map(|(catalog, id)| (catalog, id))
+            .expect("resolve cascade table");
+        let cascade_table = cascade_schema
+            .0
+            .get_table(&cascade_schema.1)
+            .await
+            .expect("cascade schema");
+        assert!(
+            cascade_table
+                .relational_capabilities
+                .constraints
+                .iter()
+                .any(|c| matches!(
+                    c,
+                    proximadb_catalog::ColumnConstraint::ForeignKey {
+                        on_delete: Some(proximadb_catalog::ReferentialAction::Cascade),
+                        ..
+                    }
+                )),
+            "ON DELETE CASCADE must survive into the catalog schema"
+        );
+
+        for sql in [
+            "INSERT INTO customers (id, name) VALUES ('c1', 'Alice');",
+            "INSERT INTO customers (id, name) VALUES ('c2', 'Bob');",
+            "INSERT INTO customers (id, name) VALUES ('c3', 'Cara');",
+            "INSERT INTO orders_restrict (id, customer_id) VALUES ('o1', 'c1');",
+            "INSERT INTO orders_cascade (id, customer_id) VALUES ('oc1', 'c2');",
+            "INSERT INTO orders_setnull (id, customer_id) VALUES ('os1', 'c3');",
+        ] {
+            dml.execute(run(sql)).await.expect("seed insert");
+        }
+
+        // NO ACTION (default): deleting c1 is rejected — o1 still references it.
+        let err = dml
+            .execute(run("DELETE FROM customers WHERE id = 'c1';"))
+            .await
+            .expect_err("NO ACTION must reject deleting a referenced parent");
+        assert!(
+            err.to_string().contains("ON DELETE NO ACTION"),
+            "unexpected error: {err}"
+        );
+
+        let get = |table: &'static str, key: &'static str| {
+            let store = record_store.clone();
+            let manager = manager.clone();
+            async move {
+                let (catalog, id) = manager.resolve_table(table).await.expect("resolve");
+                let schema = catalog.get_table(&id).await.expect("schema");
+                store
+                    .get_by_key(
+                        &schema,
+                        TableRecordGetRequest {
+                            table_id: id.name.clone(),
+                            key: key.to_string(),
+                            include_vector: false,
+                            include_props: true,
+                        },
+                        None,
+                    )
+                    .await
+                    .expect("get_by_key")
+            }
+        };
+
+        // CASCADE: deleting c2 removes the referencing orders_cascade row.
+        assert!(get("orders_cascade", "oc1").await.is_some());
+        dml.execute(run("DELETE FROM customers WHERE id = 'c2';"))
+            .await
+            .expect("CASCADE delete of referenced parent must succeed");
+        assert!(
+            get("orders_cascade", "oc1").await.is_none(),
+            "ON DELETE CASCADE must remove the child row"
+        );
+
+        // SET NULL: deleting c3 keeps the orders_setnull row but nulls its FK.
+        dml.execute(run("DELETE FROM customers WHERE id = 'c3';"))
+            .await
+            .expect("SET NULL delete of referenced parent must succeed");
+        let child = get("orders_setnull", "os1")
+            .await
+            .expect("ON DELETE SET NULL must keep the child row");
+        assert!(
+            matches!(
+                child.props.get("customer_id"),
+                None | Some(ProximaValue::Null)
+            ),
+            "ON DELETE SET NULL must clear the child FK column, got {:?}",
+            child.props.get("customer_id")
         );
     }
 
