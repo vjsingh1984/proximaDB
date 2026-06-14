@@ -511,6 +511,53 @@ mod tests {
     }
 
     #[test]
+    fn proxima_scalar_typed_props_compare_by_value() {
+        // Covers the string/int/float/bool prop envelope through the canonical
+        // ProximaTree evaluator: each typed ProximaValue must round-trip to a
+        // JSON value the comparators handle by value (not by representation).
+        let mut props = ProximaTree::new();
+        props.insert(
+            "account_id".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("acctA".to_string())),
+        );
+        props.insert(
+            "tier".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Int64(2)),
+        );
+        props.insert(
+            "score".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Float64(0.5)),
+        );
+        props.insert(
+            "active".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Boolean(true)),
+        );
+
+        let cases: Vec<(&str, ComparisonOperator, serde_json::Value, bool)> = vec![
+            ("account_id", ComparisonOperator::Equals, json!("acctA"), true),
+            ("account_id", ComparisonOperator::Equals, json!("acctB"), false),
+            // int prop vs int literal AND float-typed literal (numeric-aware).
+            ("tier", ComparisonOperator::Equals, json!(2), true),
+            ("tier", ComparisonOperator::Equals, json!(2.0), true),
+            ("tier", ComparisonOperator::GreaterThan, json!(1), true),
+            ("tier", ComparisonOperator::LessThan, json!(2), false),
+            ("score", ComparisonOperator::LessThanOrEqual, json!(0.5), true),
+            ("score", ComparisonOperator::GreaterThan, json!(0.9), false),
+            ("active", ComparisonOperator::Equals, json!(true), true),
+            ("active", ComparisonOperator::NotEquals, json!(false), true),
+        ];
+        for (field, operator, value, expected) in cases {
+            let label = format!("{field} {operator:?} {value} should be {expected}");
+            let filter = FilterExpression::Comparison {
+                field: field.to_string(),
+                operator,
+                value,
+            };
+            assert_eq!(evaluate_filter_proxima(&filter, &props), expected, "{label}");
+        }
+    }
+
+    #[test]
     fn proxima_array_prop_contains_membership() {
         let props = proxima_array_props("member_oids", &["u1", "u2"]);
 
