@@ -97,47 +97,6 @@ impl RestHybridPortImpl {
         }
     }
 
-    /// Fetch a single record's metadata and test it against `filter`.
-    ///
-    /// Returns `false` on any lookup miss or error so a candidate can never slip
-    /// past a metadata filter (fail-closed — the safe direction for tenant
-    /// scoping). Used to filter BM25 candidates, which carry no metadata of
-    /// their own.
-    async fn record_passes_filter(
-        &self,
-        collection: &str,
-        doc_id: &str,
-        filter: &crate::core::search::FilterExpression,
-    ) -> bool {
-        match self
-            .vector_ops
-            .get_vector(collection, doc_id, false, true, None)
-            .await
-        {
-            Ok(resp) => resp
-                .results
-                .and_then(|r| r.results.into_iter().next())
-                .map(|record| {
-                    crate::core::search::sql_value_filter::evaluate_filter(filter, &record.metadata)
-                })
-                .unwrap_or(false),
-            Err(_) => false,
-        }
-    }
-}
-
-/// Lower the hybrid request's simple `{field: value}` filter map to the
-/// canonical [`FilterExpression`], reusing the same conversion the vector branch
-/// applies to its own filters.
-fn build_hybrid_filter_expression(
-    filters: &HashMap<String, prost_types::Value>,
-) -> Result<crate::core::search::FilterExpression> {
-    let sql_filters: HashMap<String, proximadb_v1::SqlValue> = filters
-        .iter()
-        .map(|(key, value)| (key.clone(), prost_value_to_sql_value(value)))
-        .collect();
-    crate::core::search::protocol_conversions::from_v1_simple_filters(&sql_filters)
-        .map_err(|e| anyhow!("invalid hybrid filter: {}", e))
 }
 
 #[async_trait]
@@ -225,30 +184,30 @@ impl HybridPort for RestHybridPortImpl {
         } else {
             Vec::new()
         };
-        // Enforce metadata filters on BM25 candidates. The vector branch is
-        // already filtered server-side, but BM25 retrieval is text-only and
-        // would otherwise leak records that match the query text yet violate
-        // the filter (e.g. another account's document). Vector candidates that
-        // survived their own filter are trusted; the rest are re-checked by
-        // looking up each record's metadata. Any lookup miss/failure drops the
-        // candidate (fail-closed — never leak).
+        // Enforce metadata filters on BM25 candidates. The vector leg already
+        // applies `request.filters` server-side (they flow into its
+        // `SearchQuery.filters`), so the set of ids it returns is the
+        // authoritative "passes the filter" set for this query. BM25 retrieval
+        // is text-only and carries no metadata, so keep only BM25 candidates
+        // that also appear in that filtered set and drop the rest fail-closed —
+        // the text leg can never surface a record the filter excludes.
+        //
+        // Bounded behaviour: a BM25-only candidate that passes the filter but
+        // falls outside the vector leg's `top_k` (or a hybrid request that sends
+        // no query vector at all) is dropped rather than risk a leak — the safe
+        // direction, never a cross-account disclosure. Keeping such tail matches
+        // would require a resolving, metadata-returning record fetch on the
+        // hybrid port (`get_vector` does not resolve collection names); tracked
+        // as a follow-up.
         let bm25_results: Vec<BM25Result> = if request.filters.is_empty() {
             bm25_results
         } else {
-            let filter_expr = build_hybrid_filter_expression(&request.filters)?;
-            let trusted: std::collections::HashSet<&str> =
+            let allowed: std::collections::HashSet<&str> =
                 vector_results.iter().map(|r| r.doc_id.as_str()).collect();
-            let mut kept = Vec::with_capacity(bm25_results.len());
-            for result in bm25_results {
-                if trusted.contains(result.doc_id.as_str())
-                    || self
-                        .record_passes_filter(&request.collection, &result.doc_id, &filter_expr)
-                        .await
-                {
-                    kept.push(result);
-                }
-            }
-            kept
+            bm25_results
+                .into_iter()
+                .filter(|result| allowed.contains(result.doc_id.as_str()))
+                .collect()
         };
         let bm25_search_time_ms = bm25_start.elapsed().as_secs_f64() * 1000.0;
 
