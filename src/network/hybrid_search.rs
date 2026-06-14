@@ -96,6 +96,7 @@ impl RestHybridPortImpl {
             indexes,
         }
     }
+
 }
 
 #[async_trait]
@@ -182,6 +183,42 @@ impl HybridPort for RestHybridPortImpl {
             }
         } else {
             Vec::new()
+        };
+        // Enforce metadata filters on BM25 candidates. BM25 retrieval is
+        // text-only and carries no metadata, so we resolve the authoritative
+        // set of record ids whose properties satisfy the filter — read from the
+        // live WAL+storage record set and evaluated by the single canonical
+        // `evaluate_filter_proxima` — and keep only the BM25 candidates in that
+        // set. This admits the *complete* filtered text result (including a
+        // text-only hybrid query with no query vector, and BM25 matches outside
+        // the vector leg's `top_k`), unlike gating to the vector leg's returned
+        // ids, while still never surfacing a record the filter excludes.
+        //
+        // Fail-closed: any error resolving the filtered id set drops every BM25
+        // candidate rather than risk surfacing a record the filter excludes —
+        // the safe direction, never a cross-account disclosure.
+        let bm25_results: Vec<BM25Result> = if request.filters.is_empty()
+            || bm25_results.is_empty()
+        {
+            bm25_results
+        } else {
+            let proto_filters: HashMap<String, crate::proto::proximadb_v1::SqlValue> = request
+                .filters
+                .iter()
+                .map(|(key, value)| (key.clone(), prost_value_to_sql_value(value)))
+                .collect();
+            let allowed = self
+                .vector_ops
+                .record_ids_matching_filter(&request.collection, &proto_filters, None)
+                .await
+                .unwrap_or_else(|error| {
+                    debug!(%error, "hybrid filter id resolution failed; dropping BM25 candidates (fail-closed)");
+                    std::collections::HashSet::new()
+                });
+            bm25_results
+                .into_iter()
+                .filter(|result| allowed.contains(result.doc_id.as_str()))
+                .collect()
         };
         let bm25_search_time_ms = bm25_start.elapsed().as_secs_f64() * 1000.0;
 

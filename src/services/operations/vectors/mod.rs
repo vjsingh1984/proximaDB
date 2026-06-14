@@ -56,6 +56,7 @@ pub use legacy::{
     RichRecordGetRequest, RichRecordGetResponse, RichSearchRequest, RichSearchResponse,
     RichSearchResult, VectorOperationsService,
 };
+pub(crate) use legacy::rich_filters_to_filter_expression;
 pub use search::{
     executor::{VectorSearchExecutorResult, proto_results_to_vector_records},
     pipeline::{ProgressiveSearchPipeline, StageResult, default_progressive_stages},

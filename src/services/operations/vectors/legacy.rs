@@ -43,7 +43,7 @@
 
 use anyhow::Result;
 use proximadb_records::ProximaRecord;
-use proximadb_records::conversions::{proxima_to_sql_value, sql_value_to_proxima};
+use proximadb_records::conversions::sql_value_to_proxima;
 // PR 3b follow-up: ingest-edge guard so non-Fp32 records can't sneak
 // into a collection while the schema-v2 feature flag is off.
 use proximadb_config::EmbeddingPrecisionConfig;
@@ -155,33 +155,40 @@ pub enum RichFilterOperator {
     In,
     NotIn,
     Contains,
+    StartsWith,
+    EndsWith,
 }
 
-fn rich_filters_to_v1_clauses(
+/// Lower rich `ProximaValue` predicates straight to the canonical
+/// [`FilterExpression`] consumed by the unified search path.
+///
+/// This is the **lossless** replacement for the old
+/// `rich_filters_to_v1_clauses` → `build_filter_expression_from_v1_query`
+/// round-trip, which funnelled every predicate through the v1 `ComparisonOp`
+/// proto enum. That enum lacks `StartsWith`/`EndsWith`, so those ops silently
+/// collapsed to `Contains` (a strictly broader match — a metadata-scoping
+/// foot-gun). Building the `FilterExpression` directly preserves the full op
+/// set and keeps a single conversion hop.
+pub(crate) fn rich_filters_to_filter_expression(
     filters: &[RichFilterCondition],
-) -> Vec<crate::proto::proximadb_v1::FilterClause> {
-    use crate::proto::proximadb_v1::{ComparisonOp, FilterClause};
+) -> Option<FilterExpression> {
+    use crate::core::search::ComparisonOperator;
 
-    let mut clauses = Vec::new();
+    let mut conditions: Vec<FilterExpression> = Vec::new();
     for filter in filters {
+        let field = filter.field.clone();
         match filter.operator {
             RichFilterOperator::Between => {
-                if let Some(lower) = proxima_value_to_filter_clause_value(&filter.value) {
-                    clauses.push(FilterClause {
-                        field: filter.field.clone(),
-                        op: ComparisonOp::Gte as i32,
-                        value: Some(lower),
-                    });
-                }
-                if let Some(upper) = filter
-                    .value_upper
-                    .as_ref()
-                    .and_then(proxima_value_to_filter_clause_value)
-                {
-                    clauses.push(FilterClause {
-                        field: filter.field.clone(),
-                        op: ComparisonOp::Lte as i32,
-                        value: Some(upper),
+                conditions.push(FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: ComparisonOperator::GreaterThanOrEqual,
+                    value: proxima_value_to_json(&filter.value),
+                });
+                if let Some(upper) = &filter.value_upper {
+                    conditions.push(FilterExpression::Comparison {
+                        field,
+                        operator: ComparisonOperator::LessThanOrEqual,
+                        value: proxima_value_to_json(upper),
                     });
                 }
             }
@@ -194,45 +201,48 @@ fn rich_filters_to_v1_clauses(
                 } else {
                     filter.value_list.clone()
                 };
-                let json_values: Vec<serde_json::Value> =
-                    values.iter().map(proxima_value_to_json).collect();
-                if let Ok(encoded) = serde_json::to_string(&json_values) {
-                    clauses.push(FilterClause {
-                        field: filter.field.clone(),
-                        op: match filter.operator {
-                            RichFilterOperator::In => ComparisonOp::In as i32,
-                            _ => ComparisonOp::NotIn as i32,
-                        },
-                        value: Some(
-                            crate::proto::proximadb_v1::filter_clause::Value::StringValue(encoded),
-                        ),
-                    });
-                }
+                let array = serde_json::Value::Array(
+                    values.iter().map(proxima_value_to_json).collect(),
+                );
+                conditions.push(FilterExpression::Comparison {
+                    field,
+                    operator: if matches!(filter.operator, RichFilterOperator::In) {
+                        ComparisonOperator::In
+                    } else {
+                        ComparisonOperator::NotIn
+                    },
+                    value: array,
+                });
             }
             operator => {
-                if let Some(value) = proxima_value_to_filter_clause_value(&filter.value) {
-                    clauses.push(FilterClause {
-                        field: filter.field.clone(),
-                        op: match operator {
-                            RichFilterOperator::Eq => ComparisonOp::Eq as i32,
-                            RichFilterOperator::Ne => ComparisonOp::Ne as i32,
-                            RichFilterOperator::Gt => ComparisonOp::Gt as i32,
-                            RichFilterOperator::Gte => ComparisonOp::Gte as i32,
-                            RichFilterOperator::Lt => ComparisonOp::Lt as i32,
-                            RichFilterOperator::Lte => ComparisonOp::Lte as i32,
-                            RichFilterOperator::Contains => ComparisonOp::Contains as i32,
-                            RichFilterOperator::Between
-                            | RichFilterOperator::In
-                            | RichFilterOperator::NotIn => unreachable!(),
-                        },
-                        value: Some(value),
-                    });
-                }
+                let operator = match operator {
+                    RichFilterOperator::Eq => ComparisonOperator::Equals,
+                    RichFilterOperator::Ne => ComparisonOperator::NotEquals,
+                    RichFilterOperator::Gt => ComparisonOperator::GreaterThan,
+                    RichFilterOperator::Gte => ComparisonOperator::GreaterThanOrEqual,
+                    RichFilterOperator::Lt => ComparisonOperator::LessThan,
+                    RichFilterOperator::Lte => ComparisonOperator::LessThanOrEqual,
+                    RichFilterOperator::Contains => ComparisonOperator::Contains,
+                    RichFilterOperator::StartsWith => ComparisonOperator::StartsWith,
+                    RichFilterOperator::EndsWith => ComparisonOperator::EndsWith,
+                    RichFilterOperator::Between
+                    | RichFilterOperator::In
+                    | RichFilterOperator::NotIn => unreachable!("handled above"),
+                };
+                conditions.push(FilterExpression::Comparison {
+                    field,
+                    operator,
+                    value: proxima_value_to_json(&filter.value),
+                });
             }
         }
     }
 
-    clauses
+    match conditions.len() {
+        0 => None,
+        1 => conditions.into_iter().next(),
+        _ => Some(FilterExpression::And(conditions)),
+    }
 }
 
 /// Thin alias to the centralized
@@ -243,52 +253,6 @@ fn rich_filters_to_v1_clauses(
 /// the same flag value.
 fn cached_precision_config() -> &'static EmbeddingPrecisionConfig {
     EmbeddingPrecisionConfig::cached()
-}
-
-fn proxima_value_to_filter_clause_value(
-    value: &proximadb_data_model::ProximaValue,
-) -> Option<crate::proto::proximadb_v1::filter_clause::Value> {
-    use crate::proto::proximadb_v1::filter_clause::Value;
-    use proximadb_data_model::ProximaValue;
-
-    match value {
-        ProximaValue::String(value)
-        | ProximaValue::Symbol(value)
-        | ProximaValue::Decimal(value) => Some(Value::StringValue(value.clone())),
-        ProximaValue::Boolean(value) => Some(Value::BoolValue(*value)),
-        ProximaValue::Int8(value) => Some(Value::IntValue(*value as i64)),
-        ProximaValue::Int16(value) => Some(Value::IntValue(*value as i64)),
-        ProximaValue::Int32(value) => Some(Value::IntValue(*value as i64)),
-        ProximaValue::Int64(value) => Some(Value::IntValue(*value)),
-        ProximaValue::UInt8(value) => Some(Value::IntValue(*value as i64)),
-        ProximaValue::UInt16(value) => Some(Value::IntValue(*value as i64)),
-        ProximaValue::UInt32(value) => Some(Value::IntValue(*value as i64)),
-        ProximaValue::UInt64(value) => i64::try_from(*value).ok().map(Value::IntValue),
-        ProximaValue::Float16(value) | ProximaValue::Float32(value) => {
-            Some(Value::DoubleValue(*value as f64))
-        }
-        ProximaValue::Float64(value) => Some(Value::DoubleValue(*value)),
-        ProximaValue::Date(value) => Some(Value::IntValue(*value as i64)),
-        ProximaValue::Time(value, _)
-        | ProximaValue::Timestamp(value, _)
-        | ProximaValue::TimestampTz(value, _) => Some(Value::IntValue(*value)),
-        ProximaValue::Uuid(value) | ProximaValue::ULID(value) => {
-            Some(Value::StringValue(hex::encode(value)))
-        }
-        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => {
-            Some(Value::StringValue(value.to_string()))
-        }
-        ProximaValue::Array(_)
-        | ProximaValue::Map(_)
-        | ProximaValue::Struct(_)
-        | ProximaValue::DenseVector(_)
-        | ProximaValue::SparseVector { .. }
-        | ProximaValue::Binary(_)
-        | ProximaValue::BinaryVector(_) => Some(Value::StringValue(
-            serde_json::to_string(&proxima_value_to_json(value)).ok()?,
-        )),
-        ProximaValue::Null => None,
-    }
 }
 
 fn proxima_value_to_json(value: &proximadb_data_model::ProximaValue) -> serde_json::Value {
@@ -674,39 +638,27 @@ impl VectorOperationsService {
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<RichSearchResponse> {
         let collection_id = request.collection_id.clone();
-        let filters = request
-            .filters
-            .iter()
-            .filter(|filter| filter.operator == RichFilterOperator::Eq)
-            .map(|filter| (filter.field.clone(), proxima_to_sql_value(&filter.value)))
-            .collect();
 
-        let clauses = rich_filters_to_v1_clauses(&request.filters);
-        let advanced_filter = if clauses.is_empty() {
-            None
-        } else {
-            Some(crate::proto::proximadb_v1::MetadataFilter {
-                clauses,
-                op: crate::proto::proximadb_v1::LogicalOp::And as i32,
-            })
-        };
+        // Authorize before touching data, matching `search_v1_with_tenant_context`.
+        self.validate_tenant_collection_access(&collection_id, tenant_context)
+            .await?;
 
-        let vector_request = crate::proto::proximadb_v1::VectorSearchRequest {
-            collection_id: request.collection_id,
-            queries: vec![crate::proto::proximadb_v1::SearchQuery {
-                vector: request.query_vector,
-                filters,
-                advanced_filter,
-            }],
-            top_k: request.top_k,
-            include_fields: None,
-            search_params: None,
-            distance_metric_override: None,
-            search_optimization: None,
-        };
+        // Build the canonical filter directly from the rich predicates — no v1
+        // proto round-trip, so `starts_with`/`ends_with` and the full op set
+        // survive to the search engine intact.
+        let filter = rich_filters_to_filter_expression(&request.filters);
 
+        // The rich path mirrors the previous `include_fields: None` defaults:
+        // metadata included, vectors excluded.
         let response = self
-            .search_v1_with_tenant_context(vector_request, tenant_context)
+            .run_unified_search_v1(
+                collection_id.clone(),
+                request.query_vector,
+                request.top_k as usize,
+                false,
+                true,
+                filter,
+            )
             .await?;
         let Some(search_result) = response.results else {
             return Ok(RichSearchResponse {
@@ -990,13 +942,6 @@ impl VectorOperationsService {
         &self,
         req: crate::proto::proximadb_v1::VectorSearchRequest,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        // P4 advisor observability: capture per-search latency so
-        // the post-search hook can populate the recall-residual /
-        // latency histograms. Timer wraps the full search path —
-        // candidate retrieval + filter + result assembly. Zero
-        // overhead when the hook short-circuits (no strategy /
-        // no recall_target tag).
-        let search_started_at = std::time::Instant::now();
         let collection_id = req.collection_id.clone();
         let top_k = req.top_k as usize;
         let search_query = req
@@ -1006,6 +951,43 @@ impl VectorOperationsService {
         let query_vector = search_query.vector.clone();
         let include_vectors = req.include_fields.as_ref().is_some_and(|f| f.vector);
         let include_metadata = req.include_fields.as_ref().is_none_or(|f| f.metadata);
+        let filter = Self::build_filter_expression_from_v1_query(search_query)?;
+
+        self.run_unified_search_v1(
+            collection_id,
+            query_vector,
+            top_k,
+            include_vectors,
+            include_metadata,
+            filter,
+        )
+        .await
+    }
+
+    /// Run the unified vector search for a pre-built [`FilterExpression`] and
+    /// assemble the v1 response envelope.
+    ///
+    /// This is the shared core of [`Self::search_v1`] (which lowers a v1 request
+    /// to the filter) and [`Self::search_records_with_tenant_context`] (which
+    /// builds the filter directly from rich `ProximaValue` predicates, bypassing
+    /// the lossy v1 `ComparisonOp` round-trip). Keeping one core means both
+    /// entry points share the advisor-observability wrap and response assembly.
+    async fn run_unified_search_v1(
+        &self,
+        collection_id: String,
+        query_vector: Vec<f32>,
+        top_k: usize,
+        include_vectors: bool,
+        include_metadata: bool,
+        filter: Option<FilterExpression>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        // P4 advisor observability: capture per-search latency so
+        // the post-search hook can populate the recall-residual /
+        // latency histograms. Timer wraps the full search path —
+        // candidate retrieval + filter + result assembly. Zero
+        // overhead when the hook short-circuits (no strategy /
+        // no recall_target tag).
+        let search_started_at = std::time::Instant::now();
 
         let cfg = Some(UnifiedSearchConfig {
             optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
@@ -1017,7 +999,6 @@ impl VectorOperationsService {
             search_mode: crate::core::search::SearchMode::default(),
             freshness_mode: None,
         });
-        let filter = Self::build_filter_expression_from_v1_query(search_query)?;
 
         let results = self
             .unified_search_v1(&collection_id, query_vector, top_k, filter, cfg)
@@ -4816,7 +4797,9 @@ mod tenant_tests {
     }
 
     #[test]
-    fn rich_filters_to_v1_clauses_preserves_rich_values() {
+    fn rich_filters_to_filter_expression_preserves_rich_values() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
         let filters = vec![
             RichFilterCondition {
                 field: "price".to_string(),
@@ -4834,21 +4817,53 @@ mod tenant_tests {
             },
         ];
 
-        let clauses = rich_filters_to_v1_clauses(&filters);
+        // Between lowers to a Gte/Lte pair, Eq to a single Equals — three
+        // conjunctive comparisons in all.
+        let expr = rich_filters_to_filter_expression(&filters).expect("expected a filter");
+        let FilterExpression::And(conditions) = expr else {
+            panic!("expected an AND of comparisons");
+        };
+        let ops: Vec<&ComparisonOperator> = conditions
+            .iter()
+            .map(|c| match c {
+                FilterExpression::Comparison { operator, .. } => operator,
+                other => panic!("expected comparison, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            ops,
+            vec![
+                &ComparisonOperator::GreaterThanOrEqual,
+                &ComparisonOperator::LessThanOrEqual,
+                &ComparisonOperator::Equals,
+            ]
+        );
+    }
 
-        assert_eq!(clauses.len(), 3);
-        assert_eq!(
-            clauses[0].op,
-            crate::proto::proximadb_v1::ComparisonOp::Gte as i32
-        );
-        assert_eq!(
-            clauses[1].op,
-            crate::proto::proximadb_v1::ComparisonOp::Lte as i32
-        );
-        assert_eq!(
-            clauses[2].op,
-            crate::proto::proximadb_v1::ComparisonOp::Eq as i32
-        );
+    #[test]
+    fn rich_filters_to_filter_expression_maps_affix_ops() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        // starts_with / ends_with must NOT collapse to Contains (which would
+        // broaden the match and risk leaking cross-scope records).
+        for (op, expected) in [
+            (RichFilterOperator::StartsWith, ComparisonOperator::StartsWith),
+            (RichFilterOperator::EndsWith, ComparisonOperator::EndsWith),
+            (RichFilterOperator::Contains, ComparisonOperator::Contains),
+        ] {
+            let filters = vec![RichFilterCondition {
+                field: "name".to_string(),
+                operator: op,
+                value: ProximaValue::String("ac".to_string()),
+                value_upper: None,
+                value_list: Vec::new(),
+            }];
+            let expr = rich_filters_to_filter_expression(&filters).expect("expected a filter");
+            match expr {
+                FilterExpression::Comparison { operator, .. } => assert_eq!(operator, expected),
+                other => panic!("expected single comparison, got {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -5906,6 +5921,62 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
 
     async fn metrics(&self) -> anyhow::Result<serde_json::Value> {
         VectorOperationsService::metrics(self).await
+    }
+
+    async fn record_ids_matching_filter(
+        &self,
+        collection_id: &str,
+        filters: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+        _tenant_id: Option<&str>,
+    ) -> anyhow::Result<std::collections::HashSet<String>> {
+        use std::collections::HashSet;
+
+        if filters.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        // Reuse the canonical v1-simple-filter → FilterExpression lowering that
+        // the vector search leg uses server-side, so this gating path applies
+        // the exact same predicate semantics.
+        let expr = crate::core::search::protocol_conversions::from_v1_simple_filters(filters)
+            .map_err(|e| anyhow::anyhow!("invalid hybrid metadata filter: {}", e))?;
+
+        // Resolve name → canonical internal id (identity for v2 where id == name,
+        // and for already-canonical ids) before touching the record store.
+        let resolved = self.resolve_collection_id(collection_id).await;
+
+        // Read the authoritative record set — WAL memtable plus flushed storage —
+        // and keep the ids whose property tree satisfies the filter under the
+        // single canonical evaluator. Tenant scope is not threaded here (the
+        // hybrid boundary carries no `TenantContext`, mirroring the vector leg's
+        // `search(req, None)`); correctness holds because this set only ever
+        // *narrows* the BM25 candidates and never widens them.
+        let records = self
+            .list_all_records_with_tenant_context(&resolved, None)
+            .await?;
+
+        let matching = records
+            .into_iter()
+            .filter(|record| {
+                crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                    &expr,
+                    &record.props,
+                )
+            })
+            .map(|record| {
+                // Mirror the v2 scan serializer's id selection (oid, then the
+                // caller-supplied local id) so the ids line up with the BM25
+                // document ids and the vector leg's result ids.
+                if record.oid.is_empty() {
+                    record.local_id.unwrap_or_default()
+                } else {
+                    record.oid
+                }
+            })
+            .filter(|id| !id.is_empty())
+            .collect();
+
+        Ok(matching)
     }
 }
 

@@ -22,6 +22,19 @@ use crate::storage::memtable::implementations::global_partitioned::GlobalPartiti
 use crate::storage::persistence::write_ahead_log::{BatchId, WALOperation, WALStats};
 use proximadb_records::ProximaRecord;
 
+/// Canonical key format for a metadata `field=value` entry in a batch's
+/// `metadata_bloom_filter`.
+///
+/// This is the **single source of truth** shared by the bloom *build* site
+/// (`WALVectorBatch::create_bloom_filter`) and every *query* site (the WAL
+/// search path's `filter_batches_with_bloom`). Keeping one helper prevents the
+/// build/query separators from ever drifting apart — a past `=` vs `:` mismatch
+/// silently turned the bloom pre-filter into a false-negative generator that
+/// excluded *every* batch, so a metadata-filtered search returned zero results.
+pub(crate) fn metadata_bloom_key(field: &str, value: &str) -> String {
+    format!("{}={}", field, value)
+}
+
 /// Write Buffer-specific vector batch for tracking deserialized data
 #[derive(Debug, Clone)]
 pub struct WALVectorBatch {
@@ -73,7 +86,7 @@ impl WALVectorBatch {
                     _ => continue,
                 };
 
-                let key_value = format!("{}={}", key, value_str);
+                let key_value = metadata_bloom_key(key, &value_str);
                 bloom_filter.insert(key_value.as_bytes());
             }
         }
@@ -94,7 +107,7 @@ impl WALVectorBatch {
     pub fn might_contain_metadata_value(&self, key: &str, value: &str) -> bool {
         match &self.metadata_bloom_filter {
             Some(bloom) => {
-                let key_value = format!("{}={}", key, value);
+                let key_value = metadata_bloom_key(key, value);
                 bloom.might_contain(key_value.as_bytes())
             }
             None => true,

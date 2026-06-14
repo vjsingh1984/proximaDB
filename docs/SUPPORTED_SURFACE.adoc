@@ -46,7 +46,7 @@ This matrix is the product support contract.
 
 | Vector CRUD and search
 | Supported
-| Canonical REST v2 record batch/search/get flows and gRPC `proximadb.v2.ProximaRecordService` record operations. REST/gRPC v1 vector-shaped flows remain compatibility adapters for existing clients and must lower into canonical records.
+| Canonical REST v2 record batch/search/get/scan flows and gRPC `proximadb.v2.ProximaRecordService` record operations. REST/gRPC v1 vector-shaped flows remain compatibility adapters for existing clients and must lower into canonical records. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership.
 | Keep hybrid retrieval and distributed search claims separate from the supported vector surface. New clients should not target v1 `VectorRecord`/`SqlValue` payloads.
 
 | Federated SQL over function-backed sources
@@ -76,8 +76,8 @@ This matrix is the product support contract.
 
 | Hybrid retrieval
 | Beta
-| tantivy BM25 integration, RRF/weighted fusion, and compatibility REST `/api/v1/hybrid/search` facade (TD-008 resolved).
-| Backend integration improved; REST v1 remains a deprecated compatibility surface and gRPC path parity is still in progress. Projection Fusion is a shared planner contract only until runtime implementation, explain output, and benchmarks are complete.
+| tantivy BM25 integration, RRF/weighted fusion, and compatibility REST `/api/v1/hybrid/search` facade (TD-008 resolved). Request `filters` are enforced on both fusion legs: the vector candidates are filtered server-side, and the text (BM25) candidates are gated to that filtered id set so a scoped filter cannot leak through the text leg.
+| Backend integration improved; REST v1 remains a deprecated compatibility surface and gRPC path parity is still in progress. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Projection Fusion is a shared planner contract only until runtime implementation, explain output, and benchmarks are complete.
 
 | PULSAR and QUASAR graph engine names
 | Retired / Not supported
