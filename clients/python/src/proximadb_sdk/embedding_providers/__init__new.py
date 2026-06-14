@@ -42,8 +42,8 @@ from .core import (
 )
 
 # Import providers to trigger registration
-from .providers.local.gte_qwen_v2 import GTEQwenProvider, GTEQwenProviderV2
-from .providers.testing.simulated_v2 import (
+from .providers.local.gte_qwen_new import GTEQwenProvider, GTEQwenProviderV2
+from .providers.testing.simulated_new import (
     SimulatedEmbeddingProvider,
     SimulatedEmbeddingProviderV2,
 )
