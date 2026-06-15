@@ -9,6 +9,7 @@
 //! callers in the delete + batch paths) as thin delegators over a cheap
 //! on-demand `VectorWriteCoordinator`.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -20,6 +21,88 @@ use crate::services::operations::{BatchOperationResult, BulkWriteRouter, Operati
 use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
 use super::validation::{PseudoQueryGenerator, apply_pseudo_query_metadata};
+
+/// Stamp each record with the request tenant, rejecting any record that already
+/// carries a *different* tenant_id (cross-tenant write attempt). Pure helper.
+pub(crate) fn ensure_tenant_on_records(
+    records: &mut [ProximaRecord],
+    tenant_id: &str,
+) -> Result<()> {
+    for record in records.iter_mut() {
+        if !record.tenant_id.is_empty() && record.tenant_id != tenant_id {
+            return Err(anyhow::anyhow!(
+                "Record '{}' has tenant_id '{}' but request is scoped to tenant '{}'",
+                record.oid,
+                record.tenant_id,
+                tenant_id
+            ));
+        }
+        record.tenant_id = tenant_id.to_string();
+    }
+    Ok(())
+}
+
+/// Build delete-tombstone records (valid_to_ns = 0, origin = "delete") for the
+/// given ids at the supplied timestamp. Pure helper.
+pub(crate) fn tombstone_records_for_ids(record_ids: &[String], now_ns: i64) -> Vec<ProximaRecord> {
+    record_ids
+        .iter()
+        .map(|id| ProximaRecord {
+            oid: id.clone(),
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            valid_to_ns: Some(0),
+            origin: Some("delete".to_string()),
+            ..Default::default()
+        })
+        .collect()
+}
+
+/// Detect a record id appearing more than once within a single insert request
+/// (an in-batch duplicate is an immediate insert conflict). Pure helper.
+pub(crate) fn duplicate_insert_conflict_result(
+    collection_id: &str,
+    records: &[ProximaRecord],
+) -> Option<BatchOperationResult> {
+    let mut seen_ids = HashSet::new();
+    for record in records {
+        if !seen_ids.insert(record.oid.as_str()) {
+            return Some(BatchOperationResult::failure(
+                format!(
+                    "Record '{}' appears more than once in insert request for collection '{}'",
+                    record.oid, collection_id
+                ),
+                "INSERT_CONFLICT".to_string(),
+            ));
+        }
+    }
+
+    None
+}
+
+/// Build the conflict result for an insert-only request whose id already exists
+/// in the collection. Pure helper.
+pub(crate) fn insert_existing_record_conflict_result(
+    collection_id: &str,
+    record_id: &str,
+) -> BatchOperationResult {
+    BatchOperationResult::failure(
+        format!(
+            "Record '{}' already exists in collection '{}'",
+            record_id, collection_id
+        ),
+        "INSERT_CONFLICT".to_string(),
+    )
+}
+
+/// Build the per-tenant+collection lock key guarding insert-only
+/// check-and-append operations. Pure helper.
+pub(crate) fn insert_only_lock_key(collection_id: &str, tenant_id: Option<&str>) -> String {
+    match tenant_id {
+        Some(tenant_id) => format!("{tenant_id}:{collection_id}"),
+        None => collection_id.to_string(),
+    }
+}
 
 /// Owns the handles needed to persist a record batch durably: the WAL manager,
 /// the bulk-vs-standard routing policy, and the ingestion-time pseudo-query

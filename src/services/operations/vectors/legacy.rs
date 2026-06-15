@@ -48,7 +48,7 @@ use proximadb_records::conversions::sql_value_to_proxima;
 // into a collection while the schema-v2 feature flag is off.
 use proximadb_config::EmbeddingPrecisionConfig;
 use proximadb_records::validate_records_for_schema_v1;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -71,6 +71,10 @@ use super::search::executor::proto_results_to_vector_records;
 use super::search::pipeline::default_progressive_stages;
 use super::validation::{
     DefaultPseudoQueryGenerator, PseudoQueryGenerator, apply_pseudo_query_metadata,
+};
+use super::write::{
+    duplicate_insert_conflict_result, ensure_tenant_on_records,
+    insert_existing_record_conflict_result, insert_only_lock_key, tombstone_records_for_ids,
 };
 
 // Import vector query service contract (Phase 2.1)
@@ -528,35 +532,6 @@ impl VectorOperationsService {
         Ok(())
     }
 
-    fn ensure_tenant_on_records(records: &mut [ProximaRecord], tenant_id: &str) -> Result<()> {
-        for record in records.iter_mut() {
-            if !record.tenant_id.is_empty() && record.tenant_id != tenant_id {
-                return Err(anyhow::anyhow!(
-                    "Record '{}' has tenant_id '{}' but request is scoped to tenant '{}'",
-                    record.oid,
-                    record.tenant_id,
-                    tenant_id
-                ));
-            }
-            record.tenant_id = tenant_id.to_string();
-        }
-        Ok(())
-    }
-
-    fn tombstone_records_for_ids(record_ids: &[String], now_ns: i64) -> Vec<ProximaRecord> {
-        record_ids
-            .iter()
-            .map(|id| ProximaRecord {
-                oid: id.clone(),
-                created_at_ns: now_ns,
-                updated_at_ns: now_ns,
-                valid_to_ns: Some(0),
-                origin: Some("delete".to_string()),
-                ..Default::default()
-            })
-            .collect()
-    }
-
     /// Execute a v1 vector search after validating that the caller has access to the collection
     /// under the provided tenant context.
     pub async fn search_v1_with_tenant_context(
@@ -851,9 +826,9 @@ impl VectorOperationsService {
 
         let start = std::time::Instant::now();
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let mut tombstones = Self::tombstone_records_for_ids(&record_ids, now_ns);
+        let mut tombstones = tombstone_records_for_ids(&record_ids, now_ns);
         if let Some(tenant_context) = tenant_context {
-            Self::ensure_tenant_on_records(&mut tombstones, &tenant_context.tenant_id)?;
+            ensure_tenant_on_records(&mut tombstones, &tenant_context.tenant_id)?;
         }
 
         let result = self
@@ -1773,7 +1748,7 @@ impl VectorOperationsService {
             .await?;
 
         if let Some(tenant_ctx) = tenant_context {
-            Self::ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
+            ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
         }
 
         // PR 3b follow-up: while the precision-schema-v2 feature flag is
@@ -1813,15 +1788,15 @@ impl VectorOperationsService {
             .await?;
 
         if let Some(tenant_ctx) = tenant_context {
-            Self::ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
+            ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
         }
 
-        if let Some(conflict) = Self::duplicate_insert_conflict_result(collection_id, &records) {
+        if let Some(conflict) = duplicate_insert_conflict_result(collection_id, &records) {
             return Ok(conflict);
         }
 
         let tenant_id = tenant_context.map(|t| t.tenant_id.as_str());
-        let lock_key = Self::insert_only_lock_key(collection_id, tenant_id);
+        let lock_key = insert_only_lock_key(collection_id, tenant_id);
         let lock = self
             .insert_only_locks
             .entry(lock_key)
@@ -1834,7 +1809,7 @@ impl VectorOperationsService {
                 .record_exists_unchecked(collection_id, &record.oid)
                 .await?
             {
-                return Ok(Self::insert_existing_record_conflict_result(
+                return Ok(insert_existing_record_conflict_result(
                     collection_id,
                     &record.oid,
                 ));
@@ -1880,46 +1855,6 @@ impl VectorOperationsService {
             .vector_by_id(collection_id, base_path, record_id)
             .await?
             .is_some())
-    }
-
-    fn duplicate_insert_conflict_result(
-        collection_id: &str,
-        records: &[ProximaRecord],
-    ) -> Option<BatchOperationResult> {
-        let mut seen_ids = HashSet::new();
-        for record in records {
-            if !seen_ids.insert(record.oid.as_str()) {
-                return Some(BatchOperationResult::failure(
-                    format!(
-                        "Record '{}' appears more than once in insert request for collection '{}'",
-                        record.oid, collection_id
-                    ),
-                    "INSERT_CONFLICT".to_string(),
-                ));
-            }
-        }
-
-        None
-    }
-
-    fn insert_existing_record_conflict_result(
-        collection_id: &str,
-        record_id: &str,
-    ) -> BatchOperationResult {
-        BatchOperationResult::failure(
-            format!(
-                "Record '{}' already exists in collection '{}'",
-                record_id, collection_id
-            ),
-            "INSERT_CONFLICT".to_string(),
-        )
-    }
-
-    fn insert_only_lock_key(collection_id: &str, tenant_id: Option<&str>) -> String {
-        match tenant_id {
-            Some(tenant_id) => format!("{tenant_id}:{collection_id}"),
-            None => collection_id.to_string(),
-        }
     }
 
     async fn insert_batch_internal(
@@ -4199,7 +4134,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a").unwrap();
+        ensure_tenant_on_records(&mut records, "tenant_a").unwrap();
 
         assert_eq!(records[0].tenant_id, "tenant_a");
     }
@@ -4212,7 +4147,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        let err = VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
+        let err = ensure_tenant_on_records(&mut records, "tenant_a")
             .unwrap_err();
 
         assert!(
@@ -4229,7 +4164,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
+        ensure_tenant_on_records(&mut records, "tenant_a")
             .expect("matching tenant_id should succeed");
 
         assert_eq!(records[0].tenant_id, "tenant_a");
@@ -4243,7 +4178,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        let err = VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
+        let err = ensure_tenant_on_records(&mut records, "tenant_a")
             .unwrap_err();
 
         assert!(
@@ -4403,7 +4338,7 @@ mod tenant_tests {
     fn tombstone_records_for_ids_use_delete_shape() {
         let now_ns = 1_234_000_000i64;
         let tombstones =
-            VectorOperationsService::tombstone_records_for_ids(&["doc_3".to_string()], now_ns);
+            tombstone_records_for_ids(&["doc_3".to_string()], now_ns);
 
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].oid, "doc_3");
@@ -4785,7 +4720,7 @@ mod index_first_search_tests {
         ];
 
         let result =
-            VectorOperationsService::duplicate_insert_conflict_result("collection-1", &vectors)
+            duplicate_insert_conflict_result("collection-1", &vectors)
                 .expect("duplicate insert should return a conflict");
 
         assert!(!result.success);
@@ -4802,11 +4737,11 @@ mod index_first_search_tests {
     #[test]
     fn test_insert_only_lock_key_scopes_by_tenant() {
         assert_eq!(
-            VectorOperationsService::insert_only_lock_key("collection-1", None),
+            insert_only_lock_key("collection-1", None),
             "collection-1"
         );
         assert_eq!(
-            VectorOperationsService::insert_only_lock_key("collection-1", Some("tenant-a")),
+            insert_only_lock_key("collection-1", Some("tenant-a")),
             "tenant-a:collection-1"
         );
     }
