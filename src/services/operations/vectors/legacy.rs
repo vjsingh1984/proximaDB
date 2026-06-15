@@ -2177,7 +2177,11 @@ impl VectorOperationsService {
 
         let config = config.clone();
         let collection = self.get_or_load_collection(collection_id).await?;
-        Self::validate_query_vector_for_search(collection_id, &collection, &query_vector)?;
+        super::input_validation::validate_query_vector_for_search(
+            collection_id,
+            &collection,
+            &query_vector,
+        )?;
 
         // Create cache key for unified result caching
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
@@ -3921,169 +3925,24 @@ impl VectorOperationsService {
 
     /// Validate canonical records for insertion based on collection requirements.
     #[inline(always)]
+    /// Validate a batch of records for insert. Thin `&self` wrapper: resolve the
+    /// collection, then run the pure checks in `super::input_validation`.
+    /// Collection-name pattern validation belongs at CREATE time, not on every
+    /// INSERT — by here `collection_id` is the catalog-resolved internal id.
     async fn validate_records_for_insert(
         &self,
         collection_id: &str,
         records: &[ProximaRecord],
     ) -> Result<()> {
-        // Collection-name pattern validation belongs at CREATE time, not on every
-        // INSERT. By the time we get here, `collection_id` is the catalog-resolved
-        // internal identifier (typically a UUIDv4) — re-running the user-facing
-        // pattern validator rejects UUIDs that happen to start with a digit and
-        // gives a non-actionable error to the caller. Reconciled 2026-05-28 for
-        // the v0.2 v2 INSERT→SEARCH gap.
-
         let collection = self.get_or_load_collection(collection_id).await?;
-
-        let config = match &collection.config {
-            Some(c) => c,
-            None => return Ok(()),
-        };
-
-        let has_indexes = !config.index_configs.is_empty();
-        let requires_id = has_indexes;
-        let expected_dimension = config.dimension;
-
-        if !requires_id && expected_dimension == 0 {
-            return Ok(());
-        }
-
-        let mut seen_ids = if requires_id {
-            Some(std::collections::HashSet::<&str>::with_capacity(
-                records.len(),
-            ))
-        } else {
-            None
-        };
-
-        let current_time_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0);
-
-        for (i, record) in records.iter().enumerate() {
-            let dim = record
-                .embeddings
-                .first()
-                .map(|e| e.values.len())
-                .unwrap_or(0);
-            let is_tombstone = dim == 0 && record.valid_to_ns.is_some_and(|v| v <= current_time_ns);
-
-            for (embedding_idx, embedding) in record.embeddings.iter().enumerate() {
-                if let Some((dimension_idx, value)) =
-                    Self::first_non_finite_embedding_value(&embedding.values)
-                {
-                    return Err(anyhow::anyhow!(
-                        "Record at index {} embedding {} contains non-finite value at dimension {}: {}",
-                        i,
-                        embedding_idx,
-                        dimension_idx,
-                        value
-                    ));
-                }
-            }
-
-            if !is_tombstone && expected_dimension > 0 && dim != expected_dimension as usize {
-                return Err(anyhow::anyhow!(
-                    "Record at index {} has dimension {} but collection '{}' expects dimension {}",
-                    i,
-                    dim,
-                    collection_id,
-                    expected_dimension
-                ));
-            }
-
-            if let Some(ref mut seen) = seen_ids {
-                if record.oid.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "Record at index {} has empty ID. Collection '{}' requires valid IDs",
-                        i,
-                        collection_id
-                    ));
-                }
-
-                if record.oid.len() > 256 {
-                    return Err(anyhow::anyhow!(
-                        "Record ID '{}' exceeds maximum length of 256 characters",
-                        record.oid
-                    ));
-                }
-
-                if !seen.insert(record.oid.as_str()) {
-                    return Err(anyhow::anyhow!(
-                        "Duplicate ID '{}' found in batch. All IDs must be unique",
-                        record.oid
-                    ));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn first_non_finite_embedding_value(
-        values: &proximadb_records::EmbeddingValues,
-    ) -> Option<(usize, f32)> {
-        match values {
-            proximadb_records::EmbeddingValues::Fp32(v) => v
-                .iter()
-                .copied()
-                .enumerate()
-                .find(|(_, value)| !value.is_finite()),
-            proximadb_records::EmbeddingValues::Fp16(v) => v
-                .iter()
-                .map(|value| value.to_f32())
-                .enumerate()
-                .find(|(_, value)| !value.is_finite()),
-            proximadb_records::EmbeddingValues::Bf16(v) => v
-                .iter()
-                .map(|value| value.to_f32())
-                .enumerate()
-                .find(|(_, value)| !value.is_finite()),
-            proximadb_records::EmbeddingValues::Int8Scalar { scale, .. }
-            | proximadb_records::EmbeddingValues::UInt8Scalar { scale, .. } => {
-                if scale.is_finite() {
-                    None
-                } else {
-                    Some((0, *scale))
-                }
-            }
-        }
-    }
-
-    fn validate_query_vector_for_search(
-        collection_id: &str,
-        collection: &Collection,
-        query_vector: &[f32],
-    ) -> Result<()> {
-        if let Some((i, value)) = query_vector
-            .iter()
-            .enumerate()
-            .find(|(_, value)| !value.is_finite())
-        {
-            return Err(anyhow::anyhow!(
-                "Query vector for collection '{}' contains non-finite value at dimension {}: {}",
+        match &collection.config {
+            Some(config) => super::input_validation::validate_records_for_insert(
                 collection_id,
-                i,
-                value
-            ));
+                config,
+                records,
+            ),
+            None => Ok(()),
         }
-
-        let expected_dimension = collection
-            .config
-            .as_ref()
-            .map(|config| config.dimension)
-            .unwrap_or_default();
-        if expected_dimension > 0 && query_vector.len() != expected_dimension as usize {
-            return Err(anyhow::anyhow!(
-                "Query vector has dimension {} but collection '{}' expects dimension {}",
-                query_vector.len(),
-                collection_id,
-                expected_dimension
-            ));
-        }
-
-        Ok(())
     }
 
     /// Retrieve a single vector record by ID.

@@ -54,6 +54,9 @@ mod flush;
 // Collection-resolution + engine-resolution collaborator (Phase 2.1 decomposition)
 mod resolver;
 
+// Pure input validators for inserts/queries (Phase 2.1 decomposition)
+mod input_validation;
+
 // Legacy main service implementation (being decomposed)
 mod legacy;
 
