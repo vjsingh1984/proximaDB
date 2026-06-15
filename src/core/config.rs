@@ -647,9 +647,96 @@ impl StorageConfig {
             .map(|loc| format!("{}/index", loc.url.trim_end_matches('/')))
             .collect()
     }
+
+    /// Fail closed when memory-mapped I/O is enabled against a CLOUD object
+    /// store (S3 / GCS / Azure ADLS/Blob). `mmap` requires local files; on a
+    /// remote object store it is meaningless and unsafe — the docs mark
+    /// `enable_mmap = false` as CRITICAL for cloud. Operators must opt out
+    /// explicitly via `[storage.optimization] enable_mmap = false`. Local
+    /// (`file://` / bare-path) backends are unaffected.
+    pub fn validate_cloud_mmap(&self) -> anyhow::Result<()> {
+        if !self.optimization.enable_mmap {
+            return Ok(());
+        }
+        // Object-store schemes across S3 (s3/s3a), GCS (gs/gcs), and Azure
+        // (az/azure/adls/abfs/abfss). Matches the schemes the FileSystem /
+        // warehouse object-store backends accept.
+        const CLOUD_SCHEMES: &[&str] = &[
+            "s3", "s3a", "gs", "gcs", "az", "azure", "adls", "abfs", "abfss",
+        ];
+        for url in self.storage_urls() {
+            let scheme = url
+                .split_once("://")
+                .map(|(s, _)| s)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if CLOUD_SCHEMES.contains(&scheme.as_str()) {
+                anyhow::bail!(
+                    "enable_mmap=true is invalid for cloud object storage '{url}' (scheme '{scheme}'): \
+                     memory-mapped I/O requires local files. Set `[storage.optimization] enable_mmap = false` \
+                     for cloud deployments."
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 // Default implementation moved to line 115
+
+#[cfg(test)]
+mod cloud_mmap_guard_tests {
+    use super::*;
+
+    fn storage_with(url: &str, enable_mmap: bool) -> StorageConfig {
+        let mut s = StorageConfig::default();
+        s.storage_locations = vec![StorageLocation {
+            url: url.to_string(),
+            ..Default::default()
+        }];
+        s.optimization.enable_mmap = enable_mmap;
+        s
+    }
+
+    #[test]
+    fn cloud_url_with_mmap_is_rejected() {
+        for url in [
+            "s3://bucket/proximadb",
+            "gs://bucket/proximadb",
+            "adls://account/container",
+            "abfs://container@account/p",
+            "az://container/p",
+        ] {
+            assert!(
+                storage_with(url, true).validate_cloud_mmap().is_err(),
+                "{url} with enable_mmap=true must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn cloud_url_without_mmap_is_allowed() {
+        assert!(
+            storage_with("s3://bucket/proximadb", false)
+                .validate_cloud_mmap()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn local_url_with_mmap_is_allowed() {
+        assert!(
+            storage_with("file:///nvme/proximadb", true)
+                .validate_cloud_mmap()
+                .is_ok()
+        );
+        assert!(
+            storage_with("/nvme/proximadb", true)
+                .validate_cloud_mmap()
+                .is_ok()
+        );
+    }
+}
 
 /// User-facing write buffer configuration (from TOML files)
 /// This is the simple configuration that users specify in their config files.

@@ -56,6 +56,11 @@ impl ProximaDB {
         tracing::info!("🚀 ProximaDB::new - STARTING database initialization");
         tracing::debug!("🔍 ProximaDB::new - Config: {:?}", config);
 
+        // Fail closed before any storage init: memory-mapped I/O is invalid
+        // against a cloud object store (S3/GCS/Azure) — the operator must set
+        // `[storage.optimization] enable_mmap = false` for cloud deployments.
+        config.storage.validate_cloud_mmap()?;
+
         // Step 1: Create metrics collector first
         tracing::debug!("🔧 ProximaDB::new - Creating metrics collector...");
         let metrics_collector = Arc::new(crate::metrics::UnifiedMetricsCollector::new());
