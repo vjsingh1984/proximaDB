@@ -315,7 +315,7 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
         &self,
         request: TableWriteExecutionRequest<'_>,
     ) -> Result<TableWriteExecutionResult> {
-        let start_time = std::time::Instant::now();
+        let _start_time = std::time::Instant::now();
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         if request.routed_plan.backend != ComputeBackend::Native {
             return Ok(TableWriteExecutionResult::planned(&request.routed_plan));
@@ -429,7 +429,7 @@ impl TableWriteExecutor for PlannedOnlyTableWriteExecutor {
         &self,
         request: TableWriteExecutionRequest<'_>,
     ) -> Result<TableWriteExecutionResult> {
-        let start_time = std::time::Instant::now();
+        let _start_time = std::time::Instant::now();
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         Ok(TableWriteExecutionResult::planned(&request.routed_plan))
     }
@@ -1727,7 +1727,7 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
         &self,
         request: TableWriteExecutionRequest<'_>,
     ) -> Result<TableWriteExecutionResult> {
-        let start_time = std::time::Instant::now();
+        let _start_time = std::time::Instant::now();
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         if !is_datafusion_backend(&request.routed_plan.backend) {
             return Ok(TableWriteExecutionResult::planned(&request.routed_plan));

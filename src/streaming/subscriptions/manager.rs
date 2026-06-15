@@ -461,7 +461,7 @@ impl SubscriptionManager {
             .iter()
             .filter(|entry| {
                 let sub = entry.value();
-                let idle_time = sub.last_evaluated.map_or(sub.created_at, |t| t);
+                let idle_time = sub.last_evaluated.unwrap_or(sub.created_at);
                 now.duration_since(idle_time) > self.config.idle_timeout
             })
             .map(|entry| entry.key().clone())

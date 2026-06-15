@@ -156,7 +156,7 @@ impl FullTextIndex {
         let new_id_field = schema_builder.add_text_field("_id", STORED);
 
         let existing = self.text_fields.read().unwrap_or_else(|p| p.into_inner());
-        for (existing_path, _) in existing.iter() {
+        for existing_path in existing.keys() {
             schema_builder.add_text_field(existing_path, TEXT);
         }
         let new_text_field = schema_builder.add_text_field(path, TEXT);
@@ -193,7 +193,7 @@ impl FullTextIndex {
         // Rebuild text_fields map with fields from the new schema
         let mut new_text_fields = HashMap::new();
         let old_fields = self.text_fields.read().unwrap_or_else(|p| p.into_inner());
-        for (p, _) in old_fields.iter() {
+        for p in old_fields.keys() {
             if let Ok(f) = new_schema.get_field(p) {
                 new_text_fields.insert(p.clone(), f);
             }

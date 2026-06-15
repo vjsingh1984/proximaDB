@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)] // dedicated metric-registration module: static registration is infallible / fail-fast at startup; lazy_static can't carry per-site allows
 // Copyright 2026 ProximaDB
 //
 // Licensed under the Apache License, Version 2.0 (the "License");

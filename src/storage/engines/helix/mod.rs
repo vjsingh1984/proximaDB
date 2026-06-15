@@ -1767,7 +1767,7 @@ impl UnifiedStorageFormat for HelixEngine {
             let mut cached_sstables: Vec<SStableMetadata> = Vec::new();
 
             // Collect all SSTables from all levels for this collection
-            for (_level, sstables) in levels_read.iter() {
+            for sstables in levels_read.values() {
                 for sstable in sstables {
                     tracing::trace!(
                         "[HELIX] Checking cached sstable: path={:?}, collection_data_dir={}",

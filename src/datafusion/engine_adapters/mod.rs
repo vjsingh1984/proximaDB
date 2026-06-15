@@ -63,7 +63,7 @@ pub use object_store_parquet_reader::{
 pub use sst_adapter::{SstSplitReader, SstTableProvider};
 pub use viper_adapter::{ViperSplitReader, ViperTableProvider};
 
-// Common utilities shared across adapters
+/// Common schema/utility helpers shared across the engine adapters.
 pub mod common {
     use arrow_schema::{DataType, Field, Schema, SchemaRef};
     use std::sync::Arc;

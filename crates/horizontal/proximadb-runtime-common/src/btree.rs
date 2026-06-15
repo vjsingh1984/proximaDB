@@ -569,10 +569,7 @@ impl BPlusTree {
             return old_value;
         }
 
-        let root_ref = match self.root.as_ref() {
-            Some(root) => root.clone(),
-            None => return None,
-        };
+        let root_ref = self.root.as_ref()?.clone();
         if let Some((old_value, split_result)) = self.insert_recursive(&root_ref, key, value) {
             // Handle root split
             if let Some((split_key, new_node)) = split_result {

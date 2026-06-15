@@ -466,7 +466,7 @@ impl UnifiedCacheCoordinator {
     pub async fn get_all_stats(&self) -> HashMap<CacheId, CacheCoordinatorStats> {
         let mut stats = HashMap::new();
 
-        for (cache_id, _cache) in self.caches.iter() {
+        for cache_id in self.caches.keys() {
             // TODO: Get stats from each cache
             // For now, add placeholder
             stats.insert(

@@ -240,7 +240,8 @@ impl DocumentBlock {
         let mut current_obj = doc;
 
         for (i, part) in parts.iter().enumerate() {
-            if let Some(val) = current_obj.fields.get(*part) {
+            {
+                let val = current_obj.fields.get(*part)?;
                 if i == parts.len() - 1 {
                     return Some(val.clone());
                 }
@@ -250,8 +251,6 @@ impl DocumentBlock {
                 } else {
                     return None; // Path continues but value is not an object
                 }
-            } else {
-                return None; // Path segment not found
             }
         }
         None

@@ -643,10 +643,9 @@ fn json_to_property_value(v: &serde_json::Value) -> Option<proximadb_v1::Propert
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Value::IntValue(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::DoubleValue(f)
             } else {
-                return None;
+                let f = n.as_f64()?;
+                Value::DoubleValue(f)
             }
         }
         serde_json::Value::String(s) => Value::StringValue(s.clone()),

@@ -503,7 +503,9 @@ fn lower_scalar_function(name: &str, args: Vec<Expr>) -> DFResult<Expr> {
     use datafusion::functions::expr_fn as f;
     fn one(name: &str, mut args: Vec<Expr>) -> DFResult<Expr> {
         match args.len() {
-            1 => Ok(args.pop().unwrap()),
+            1 => args
+                .pop()
+                .ok_or_else(|| unsupported(format!("{name} expects 1 arg"))),
             n => Err(unsupported(format!("{name} expects 1 arg, got {n}"))),
         }
     }

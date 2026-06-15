@@ -601,10 +601,8 @@ fn json_to_property_value(value: &Value) -> Option<PropertyValue> {
         Value::Number(value) => {
             if let Some(number) = value.as_i64() {
                 property_value::Value::IntValue(number)
-            } else if let Some(number) = value.as_f64() {
-                property_value::Value::DoubleValue(number)
             } else {
-                return None;
+                property_value::Value::DoubleValue(value.as_f64()?)
             }
         }
         Value::String(value) => property_value::Value::StringValue(value.clone()),

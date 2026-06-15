@@ -778,7 +778,7 @@ impl DmlService {
         // (should not happen for a valid record) excludes the row.
         let record_pred = |record: &ProximaRecord| -> bool {
             match Self::project_one_record(record, &table_schema, &full_selected) {
-                Ok(full_row) => full_row_predicate.map_or(true, |p| p(&full_row)),
+                Ok(full_row) => full_row_predicate.is_none_or(|p| p(&full_row)),
                 Err(_) => false,
             }
         };
@@ -847,7 +847,7 @@ impl DmlService {
                     oid: i.to_string(),
                     ..Default::default()
                 };
-                for (name, value) in col_names.iter().zip(row.into_iter()) {
+                for (name, value) in col_names.iter().zip(row) {
                     if !matches!(value, ProximaValue::Null) {
                         rec.props
                             .insert(name.clone(), ProximaTreeNode::Value(value));
@@ -3145,6 +3145,7 @@ impl DmlService {
     /// indexes plus inline `UNIQUE (...)` column constraints. Delegates to the
     /// shared store-layer helper so DmlService candidates and the store's index
     /// enforce exactly the same sets.
+    #[allow(dead_code)] // retained: exercised by tests / planned API surface (dead only in --lib)
     fn unique_column_sets(table_schema: &CatalogTableSchema) -> Vec<Vec<String>> {
         crate::services::record_store::schema_unique_column_sets(table_schema)
     }
@@ -3652,7 +3653,9 @@ impl DmlService {
             .map(|condition| self.condition_to_predicate_tree(condition, table_schema))
             .collect::<Result<Vec<_>>>()?;
         Ok(if children.len() == 1 {
-            children.pop().expect("len == 1")
+            children
+                .pop()
+                .ok_or_else(|| anyhow!("predicate group must have at least one child"))?
         } else {
             match operator {
                 LogicalOperator::And => RelationalPredicateTree::And(children),
@@ -3683,7 +3686,7 @@ impl DmlService {
                 resolved
                     .into_iter()
                     .next()
-                    .expect("one input → one predicate"),
+                    .ok_or_else(|| anyhow!("resolve_select_predicates produced no predicate"))?,
             ))
         };
         match condition {

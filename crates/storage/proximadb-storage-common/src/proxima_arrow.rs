@@ -334,14 +334,16 @@ pub fn infer_proxima_schema(records: &[ProximaRecord]) -> ProximaSchema {
             if types.contains_key(key) {
                 continue;
             }
-            if let ProximaTreeNode::Value(v) = node {
-                if let Some(dt) = proxima_value_to_data_type(v) {
-                    order.push(key.clone());
-                    types.insert(key.clone(), dt);
-                }
-                // Null / unsupported leaf: leave unlocked so a later record's concrete value
-                // for the same key can still define the column.
-            }
+            // Null / unsupported leaf: leave unlocked so a later record's concrete value
+            // for the same key can still define the column.
+            let ProximaTreeNode::Value(v) = node else {
+                continue;
+            };
+            let Some(dt) = proxima_value_to_data_type(v) else {
+                continue;
+            };
+            order.push(key.clone());
+            types.insert(key.clone(), dt);
         }
     }
 

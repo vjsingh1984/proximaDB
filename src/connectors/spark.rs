@@ -289,7 +289,7 @@ pub fn lower_spark_filters_to_expression(
         filters.iter().filter_map(try_lower_spark_filter).collect();
     Ok(match lowered.len() {
         0 => None,
-        1 => Some(lowered.pop().expect("len checked above")),
+        1 => lowered.pop(),
         // Spark's pushed filter array is an implicit conjunction.
         _ => Some(FilterExpression::And(lowered)),
     })
@@ -1036,10 +1036,10 @@ pub fn arrow_ipc_to_record_batch(bytes: &[u8]) -> Result<RecordBatch, arrow::err
     use arrow::error::ArrowError;
     use arrow::ipc::reader::StreamReader;
     let mut reader = StreamReader::try_new(bytes, None)?;
-    let batch = reader
+    
+    reader
         .next()
-        .ok_or_else(|| ArrowError::IpcError("arrow IPC stream contained no batches".to_string()))?;
-    batch
+        .ok_or_else(|| ArrowError::IpcError("arrow IPC stream contained no batches".to_string()))?
 }
 
 // ============================================================================

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)] // dedicated metric-registration module: static registration is infallible / fail-fast at startup; lazy_static can't carry per-site allows
 //! Per-route REST metrics middleware.
 //!
 //! Emits Prometheus series for every REST request so operators get latency and

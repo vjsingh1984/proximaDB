@@ -10,7 +10,6 @@ use datafusion::arrow::datatypes::{
 };
 use datafusion::common::{ColumnStatistics, Statistics};
 use datafusion::error::Result as DFResult;
-use tracing::warn;
 
 use crate::storage::formats::FormatStatistics;
 use proximadb_data_model::{ProximaType, TimeUnit as DmTimeUnit, VectorElement};

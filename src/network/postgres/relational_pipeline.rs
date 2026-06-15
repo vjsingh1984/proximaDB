@@ -1383,13 +1383,12 @@ async fn route_and_plan_select(
     if matches!(
         decision.backend,
         crate::query::table_write_plan::ComputeBackend::DataFusionLocal
-    ) {
-        if let Some(summary) = parquet_split_summary(&parquet_locations).await {
+    )
+        && let Some(summary) = parquet_split_summary(&parquet_locations).await {
             explanation.read_route = decision
                 .routed_read_plan_with_splits(summary)
                 .route_explanation();
         }
-    }
     // Disclose the planned physical plan for native (Volcano) PATH B queries — the same
     // plan execution runs (via the shared `prepare_select_plan` / `execute_physical`).
     if engages
@@ -1397,8 +1396,7 @@ async fn route_and_plan_select(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::Native
         )
-    {
-        if let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml).await {
+        && let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml).await {
             let base_lines = explain_physical(&physical);
             if analyze {
                 // EXPLAIN ANALYZE: run the query (read-only) and record actuals —
@@ -1413,7 +1411,6 @@ async fn route_and_plan_select(
                 explanation.physical_plan = Some(base_lines);
             }
         }
-    }
     Ok(explanation)
 }
 
@@ -1564,7 +1561,7 @@ fn set_expr_engages(body: &SetExpr) -> bool {
             let has_aggregate = select
                 .projection
                 .iter()
-                .any(|item| select_item_has_aggregate(item));
+                .any(select_item_has_aggregate);
             // A WHERE subquery (IN/EXISTS) lowers to a Semi/Anti join — a shape the
             // legacy single-table path can't serve — so engage PATH B. If it turns out
             // unliftable (correlated/NOT IN), lowering declines and the caller falls

@@ -88,7 +88,7 @@ impl PostgresConnector {
                 *self.current_tx.write().await = Some(tx);
                 None
             }
-            PgOutputEvent::Commit { xid: _, .. } => {
+            PgOutputEvent::Commit { .. } => {
                 let mut tx = self.current_tx.write().await.take()?;
                 tx = tx.commit();
                 // We could emit a transaction marker here if needed

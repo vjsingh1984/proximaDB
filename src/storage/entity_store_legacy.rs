@@ -320,7 +320,7 @@ impl EntityStore for ProximaEntityStore {
             embeddings_store.insert(key, embedding.vector.clone());
             if let Some(orch) = CrossCacheOrchestrator::global() {
                 orch.pattern_tracker().track_access_async(
-                    format!("{}::{}", collection_id, &entity.id),
+                    format!("{}::{}", collection_id, entity.id),
                     CacheType::EmbeddingCatalog,
                 );
             }

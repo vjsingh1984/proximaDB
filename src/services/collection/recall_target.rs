@@ -159,7 +159,7 @@ pub fn apply_advisor_to_hnsw_indexes(
             m: Some(out.m),
             ef_construction: Some(out.ef_construction),
             ef_search: Some(out.ef_search),
-            ..idx.hnsw_config.clone().unwrap_or_default()
+            ..idx.hnsw_config.unwrap_or_default()
         });
 
         applied.push((idx.index_name.clone(), out));
@@ -389,8 +389,8 @@ pub fn apply_advisor_to_indexes(
                     max_memory_mb,
                     binary_rerank_allowed,
                     modalities: modalities.clone(),
-                }) {
-                    if let IndexAlgorithm::HNSW {
+                })
+                    && let IndexAlgorithm::HNSW {
                         m,
                         ef_construction,
                         ef_search,
@@ -410,14 +410,13 @@ pub fn apply_advisor_to_indexes(
                                     .map(|cap| ef_search.min(cap))
                                     .unwrap_or(ef_search),
                             ),
-                            ..idx.hnsw_config.clone().unwrap_or_default()
+                            ..idx.hnsw_config.unwrap_or_default()
                         });
                         applied.push(AppliedAdvice {
                             index_name: idx.index_name.clone(),
                             output: out,
                         });
                     }
-                }
             }
             IndexingAlgorithm::Ivf => {
                 // Skip caller-pinned IVF.
@@ -444,7 +443,7 @@ pub fn apply_advisor_to_indexes(
                     idx.ivf_config = Some(crate::proto::proximadb_v1::IvfConfig {
                         n_lists: Some(nlist),
                         n_probe: Some(nprobe),
-                        ..idx.ivf_config.clone().unwrap_or_default()
+                        ..idx.ivf_config.unwrap_or_default()
                     });
                     applied.push(AppliedAdvice {
                         index_name: idx.index_name.clone(),

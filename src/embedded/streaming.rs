@@ -186,9 +186,9 @@ impl EmbeddedSearchIterator {
         let mut all_results = Vec::new();
 
         for batch_result in &mut self {
-            match batch_result {
-                Ok(batch) => all_results.extend(batch),
-                Err(e) => return Err(e),
+            {
+                let batch = batch_result?;
+                all_results.extend(batch)
             }
         }
 

@@ -363,7 +363,7 @@ impl MetricStorage {
 
         let mut results = Vec::new();
 
-        for (_key, s) in series.iter() {
+        for s in series.values() {
             if s.name != name {
                 continue;
             }
@@ -394,7 +394,7 @@ impl MetricStorage {
 
         let mut results = Vec::new();
 
-        for (_key, s) in series.iter() {
+        for s in series.values() {
             if s.name != name {
                 continue;
             }
@@ -434,7 +434,7 @@ impl MetricStorage {
 
         let mut results = Vec::new();
 
-        for (_key, s) in series.iter() {
+        for s in series.values() {
             if s.name != name {
                 continue;
             }
@@ -621,7 +621,7 @@ impl MetricStorage {
         let series = self.series.read().await;
         let mut results = Vec::new();
 
-        for (_key, s) in series.iter() {
+        for s in series.values() {
             if s.name != name {
                 continue;
             }

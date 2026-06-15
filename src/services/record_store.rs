@@ -8,7 +8,6 @@
 //! WAL/storage spine exposes a direct table-record writer.
 
 use std::{
-    fs,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -40,7 +39,7 @@ use crate::services::operations::VectorOps;
 use crate::services::operations::batch_result::OperationMetrics;
 use crate::services::operations::vectors::{RichRecordGetRequest, RichSearchResult};
 use crate::storage::tenant::context::TenantContext;
-use crate::metrics::saas_billing_metrics::{record_object_store_op, record_storage_bytes};
+use crate::metrics::saas_billing_metrics::record_object_store_op;
 
 /// Logical mutation kind at the canonical table-record boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +216,7 @@ fn record_id(record: &ProximaRecord) -> String {
     }
 }
 
+#[allow(dead_code)] // retained: exercised by tests / planned API surface (dead only in --lib)
 fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> {
     schema
         .storage_layouts
@@ -226,6 +226,7 @@ fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> 
         .or_else(|| schema.storage_layouts.first())
 }
 
+#[allow(dead_code)] // retained: exercised by tests / planned API surface (dead only in --lib)
 fn normalize_object_path_prefix(location: &str) -> String {
     let without_scheme = location
         .split_once("://")
@@ -254,6 +255,9 @@ fn sanitize_object_path_segment(value: &str) -> String {
     }
 }
 
+// DrPathBuilder::build is infallible for this internally-constructed namespace
+// (fixed tenant + namespace id), so expect() flags a programmer error, not input.
+#[allow(clippy::expect_used)]
 fn object_store_write_base_path(schema: &CatalogTableSchema, tenant_context: Option<&TenantContext>) -> String {
     let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str()).unwrap_or("default_tenant");
     let mock_namespace = proximadb_catalog::CatalogNamespace::new(vec!["default".into()])

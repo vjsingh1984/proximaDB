@@ -109,12 +109,9 @@ impl BitReader {
     fn read_value(&mut self, num_bits: u8) -> Option<u64> {
         let mut value = 0u64;
         for i in 0..num_bits {
-            if let Some(bit) = self.read_bit() {
-                if bit {
-                    value |= 1 << i;
-                }
-            } else {
-                return None;
+            let bit = self.read_bit()?;
+            if bit {
+                value |= 1 << i;
             }
         }
         Some(value)

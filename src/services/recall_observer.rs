@@ -24,7 +24,8 @@
 //! and drops again — no thrash even if a collection stays below the floor.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::watch;
@@ -119,7 +120,6 @@ impl RecallObserver {
                 let prev = self
                     .prev_gate_open
                     .lock()
-                    .expect("prev_gate_open poisoned")
                     .insert(collection_id.clone(), state.gate_open);
                 if Self::recall_regressed(prev, state.gate_open) {
                     self.signal_recall_degraded(&collection_id).await;

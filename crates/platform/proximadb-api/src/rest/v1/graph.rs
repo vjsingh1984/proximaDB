@@ -572,10 +572,8 @@ fn json_to_pv(v: serde_json::Value) -> Option<PropertyValue> {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Value::IntValue(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::DoubleValue(f)
             } else {
-                return None;
+                Value::DoubleValue(n.as_f64()?)
             }
         }
         serde_json::Value::String(s) => Value::StringValue(s),

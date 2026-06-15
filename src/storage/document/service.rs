@@ -1223,7 +1223,9 @@ impl DocumentService {
         node: ProximaTreeNode,
     ) -> Result<()> {
         let parts = Self::path_segments(path)?;
-        let (last, parents) = parts.split_last().expect("non-empty path");
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
         let mut current = doc;
         for part in parents {
@@ -1242,7 +1244,9 @@ impl DocumentService {
     /// Remove a field at a dotted path.
     fn unset_path(&self, doc: &mut ProximaTree, path: &str) -> Result<()> {
         let parts = Self::path_segments(path)?;
-        let (last, parents) = parts.split_last().expect("non-empty path");
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
         let mut current = doc;
         for part in parents {
@@ -1259,7 +1263,9 @@ impl DocumentService {
     /// Increment a numeric leaf at a dotted path (creating it if absent).
     fn increment_path(&self, doc: &mut ProximaTree, path: &str, inc: f64) -> Result<()> {
         let parts = Self::path_segments(path)?;
-        let (last, parents) = parts.split_last().expect("non-empty path");
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
         let mut current = doc;
         for part in parents {
@@ -1286,7 +1292,9 @@ impl DocumentService {
     /// Push a value onto an array leaf at a dotted path (creating it if absent).
     fn push_to_array(&self, doc: &mut ProximaTree, path: &str, value: ProximaValue) -> Result<()> {
         let parts = Self::path_segments(path)?;
-        let (last, parents) = parts.split_last().expect("non-empty path");
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
         let mut current = doc;
         for part in parents {
@@ -1317,7 +1325,9 @@ impl DocumentService {
         value: &ProximaValue,
     ) -> Result<()> {
         let parts = Self::path_segments(path)?;
-        let (last, parents) = parts.split_last().expect("non-empty path");
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
         let mut current = doc;
         for part in parents {
@@ -1338,7 +1348,9 @@ impl DocumentService {
     /// Add a value to a set (array with unique values) at a dotted path.
     fn add_to_set(&self, doc: &mut ProximaTree, path: &str, value: ProximaValue) -> Result<()> {
         let parts = Self::path_segments(path)?;
-        let (last, parents) = parts.split_last().expect("non-empty path");
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
         let mut current = doc;
         for part in parents {
@@ -1368,7 +1380,9 @@ impl DocumentService {
     /// Rename a field at a dotted path. `new_name` is the new (leaf) field name.
     fn rename_path(&self, doc: &mut ProximaTree, old_path: &str, new_name: &str) -> Result<()> {
         let parts = Self::path_segments(old_path)?;
-        let (last, parents) = parts.split_last().expect("non-empty path");
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
         let mut current = doc;
         for part in parents {

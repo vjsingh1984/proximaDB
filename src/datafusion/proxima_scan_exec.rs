@@ -121,6 +121,7 @@ pub struct ProximaScanExec {
     /// Output schema (after projection)
     schema: SchemaRef,
     /// Original schema (before projection)
+    #[allow(dead_code)] // reserved field for planned engine read-path wiring (unused in --lib)
     original_schema: SchemaRef,
     /// Splits to read, organized by partition
     partitions: Vec<Vec<FileSplit>>,
@@ -149,6 +150,9 @@ impl ProximaScanExec {
     }
 
     /// Create a simple scan exec with minimal configuration.
+    // build() cannot fail here: the builder has every required field set, so the
+    // Result is infallible by construction (keeping `new` panic-on-bug, infallible API).
+    #[allow(clippy::expect_used)]
     pub fn new(schema: SchemaRef, splits: Vec<FileSplit>, reader: Arc<dyn SplitReader>) -> Self {
         Self::builder()
             .schema(schema)
@@ -308,7 +312,7 @@ impl ExecutionPlan for ProximaScanExec {
         // Drive each split's async `read_split` lazily and flatten the per-split batch
         // streams into one. Each split's future owns its `FileSplit` + an `Arc` clone of
         // the reader, so the resulting stream is `'static` and `Send`.
-        let batches = futures::stream::iter(splits.into_iter())
+        let batches = futures::stream::iter(splits)
             .then(move |split| {
                 let reader = reader.clone();
                 let projection = projection.clone();
@@ -500,7 +504,7 @@ fn partition_splits(splits: Vec<FileSplit>, target_partitions: usize) -> Vec<Vec
 
     // Sort splits by cost (descending) for better load balancing
     let mut sorted_splits = splits;
-    sorted_splits.sort_by(|a, b| b.estimated_cost().cmp(&a.estimated_cost()));
+    sorted_splits.sort_by_key(|s| std::cmp::Reverse(s.estimated_cost()));
 
     // Greedy assignment to partition with lowest cost
     for split in sorted_splits {
@@ -575,6 +579,7 @@ pub struct EmptyRecordBatchStream {
 }
 
 impl EmptyRecordBatchStream {
+    /// Create an empty record-batch stream that yields no rows for `schema`.
     pub fn new(schema: SchemaRef) -> Self {
         Self { schema }
     }

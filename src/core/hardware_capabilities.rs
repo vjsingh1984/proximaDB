@@ -1,3 +1,4 @@
+#![allow(clippy::doc_lazy_continuation)] // cosmetic: newer clippy lint on pre-existing doc list-rendering; no functional impact
 /*
  * Copyright 2025 ProximaDB
  *

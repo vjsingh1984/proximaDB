@@ -1211,7 +1211,7 @@ impl SharedServices {
             collection_partitions: 16,
             storage_path: format!(
                 "file://{}/metrics",
-                &storage_config.metadata_url.replace("file://", "")
+                storage_config.metadata_url.replace("file://", "")
             ),
             flush_interval_seconds: 60,
             retention_days: 7,

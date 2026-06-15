@@ -156,10 +156,12 @@ type AssignmentKey = (String, String);
 /// boot could silently drop bindings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PersistenceMode {
     /// Boot loads from the JSON sidecar; `hydrate_from_catalog` then
     /// fills any catalog-only gaps. This is the slice 5a–5d.1 default
     /// and stays the default until operators opt in.
+    #[default]
     SidecarOnly,
     /// Boot SKIPS the JSON sidecar entirely; the catalog is the sole
     /// hydration source. The sidecar file may still exist on disk
@@ -170,11 +172,6 @@ pub enum PersistenceMode {
     CatalogPrimary,
 }
 
-impl Default for PersistenceMode {
-    fn default() -> Self {
-        Self::SidecarOnly
-    }
-}
 
 impl PersistenceMode {
     /// Stable string for logging / metric labels. Matches the

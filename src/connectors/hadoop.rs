@@ -325,6 +325,10 @@ impl ProximaRecordReader {
     /// records by default), so per-record latency stays bounded by
     /// the buffer pop. Returns false only when the buffer is empty
     /// AND the server signalled `next_cursor: null` (end of scan).
+    // expect() is intentional: the current-thread runtime build is infallible, and
+    // the join().expect re-raises a panic from the bridged async task (same crash the
+    // caller would see) — both are non-recoverable programmer/runtime errors.
+    #[allow(clippy::expect_used)]
     pub fn next_record(&mut self) -> bool {
         if self.record_buffer.is_empty() && !self.exhausted {
             let fetch_result = std::thread::scope(|s| {

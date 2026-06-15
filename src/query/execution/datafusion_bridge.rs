@@ -13,7 +13,7 @@ use super::window_executor::{
     FrameBound, FrameDefinition, SortDirection, WindowFunctionCall, WindowSpec,
 };
 #[cfg(feature = "datafusion-integration")]
-use super::window_executor::{WindowFunction, WindowOrderBy};
+use super::window_executor::WindowFunction;
 use anyhow::Result;
 #[cfg(feature = "datafusion-integration")]
 use anyhow::anyhow;
@@ -61,6 +61,9 @@ fn map_window_function(func: &WindowFunction) -> Result<DataFusionWindowFunction
 /// Discriminator for DataFusion window function routing.
 #[cfg(feature = "datafusion-integration")]
 #[derive(Debug)]
+// Variant payloads (the canonical fn names) are retained for Debug/routing context
+// but not read on the --lib path.
+#[allow(dead_code)]
 enum DataFusionWindowFunctionKind {
     /// A built-in window function by canonical SQL name (ROW_NUMBER, RANK, LAG, etc.)
     BuiltIn(String),

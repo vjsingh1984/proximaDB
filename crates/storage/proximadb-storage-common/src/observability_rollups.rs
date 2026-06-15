@@ -364,7 +364,7 @@ impl RollupManager {
             // Flush all completed buckets (not the current one)
             let mut pending = self.pending_rollups.write().await;
 
-            for (_, metric_rollups) in pending.iter_mut() {
+            for metric_rollups in pending.values_mut() {
                 if let Some(views) = metric_rollups.get_mut(interval) {
                     // Remove completed buckets
                     let initial_len = views.len();

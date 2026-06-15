@@ -223,7 +223,7 @@ pub trait RecordScan: Send + Sync {
             if kept >= limit {
                 return false;
             }
-            let keep = predicate.map_or(true, |p| p(record));
+            let keep = predicate.is_none_or(|p| p(record));
             if keep {
                 kept += 1;
             }
