@@ -770,144 +770,18 @@ pub mod json_comparison {
         expr: &crate::core::search::FilterExpression,
         metadata: &std::collections::HashMap<String, Value>,
     ) -> bool {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
-
-        match expr {
-            FilterExpression::And(exprs) => exprs.iter().all(|e| evaluate_filter(e, metadata)),
-            FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter(e, metadata)),
-            FilterExpression::Not(e) => !evaluate_filter(e, metadata),
-            FilterExpression::Comparison {
-                field,
-                operator,
-                value,
-            } => {
-                let field_value = metadata.get(field);
-                match (field_value, operator) {
-                    (Some(field_val), ComparisonOperator::Equals) => {
-                        // Add debug output for filter evaluation
-                        #[cfg(feature = "debug-filters")]
-                        debug!(
-                            "    🔍 Evaluating filter: field={}, metadata_val={:?}, filter_val={:?}",
-                            field, field_val, value
-                        );
-
-                        // For numbers, use type-aware numeric comparison
-                        if let (Value::Number(n1), Value::Number(n2)) = (field_val, value) {
-                            let result = compare_json_numbers(n1, n2);
-                            #[cfg(feature = "debug-filters")]
-                            debug!("      Number comparison: {} vs {} = {}", n1, n2, result);
-                            result
-                        } else {
-                            let result = field_val == value;
-                            #[cfg(feature = "debug-filters")]
-                            debug!(
-                                "      Direct comparison: {:?} == {:?} = {}",
-                                field_val, value, result
-                            );
-                            result
-                        }
-                    }
-                    (Some(field_val), ComparisonOperator::NotEquals) => {
-                        if let (Value::Number(n1), Value::Number(n2)) = (field_val, value) {
-                            !compare_json_numbers(n1, n2)
-                        } else {
-                            field_val != value
-                        }
-                    }
-                    (Some(field_val), ComparisonOperator::LessThan) => {
-                        compare_json_values(field_val, value) == Ordering::Less
-                    }
-                    (Some(field_val), ComparisonOperator::LessThanOrEqual) => {
-                        let ord = compare_json_values(field_val, value);
-                        ord == Ordering::Less || ord == Ordering::Equal
-                    }
-                    (Some(field_val), ComparisonOperator::GreaterThan) => {
-                        compare_json_values(field_val, value) == Ordering::Greater
-                    }
-                    (Some(field_val), ComparisonOperator::GreaterThanOrEqual) => {
-                        let ord = compare_json_values(field_val, value);
-                        ord == Ordering::Greater || ord == Ordering::Equal
-                    }
-                    (Some(Value::Array(arr)), ComparisonOperator::In) => arr.contains(value),
-                    (Some(field_val), ComparisonOperator::In) => {
-                        if let Value::Array(values) = value {
-                            values.iter().any(|v| {
-                                if let (Value::Number(n1), Value::Number(n2)) = (field_val, v) {
-                                    compare_json_numbers(n1, n2)
-                                } else {
-                                    field_val == v
-                                }
-                            })
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(field_val), ComparisonOperator::NotIn) => {
-                        if let Value::Array(values) = value {
-                            !values.iter().any(|v| {
-                                if let (Value::Number(n1), Value::Number(n2)) = (field_val, v) {
-                                    compare_json_numbers(n1, n2)
-                                } else {
-                                    field_val == v
-                                }
-                            })
-                        } else {
-                            true
-                        }
-                    }
-                    (Some(Value::String(s)), ComparisonOperator::Contains) => {
-                        if let Value::String(pattern) = value {
-                            s.contains(pattern)
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(Value::String(s)), ComparisonOperator::StartsWith) => {
-                        if let Value::String(pattern) = value {
-                            s.starts_with(pattern)
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(Value::String(s)), ComparisonOperator::EndsWith) => {
-                        if let Value::String(pattern) = value {
-                            s.ends_with(pattern)
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(Value::String(s)), ComparisonOperator::Like) => {
-                        if let Value::String(pattern) = value {
-                            // Simple LIKE implementation: % = any chars, _ = single char
-                            // Convert SQL LIKE pattern to simple pattern matching without regex for performance
-                            like_pattern_match(s, pattern)
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(field_val), ComparisonOperator::Between) => {
-                        if let Value::Array(bounds) = value {
-                            if bounds.len() == 2 {
-                                let ge_lower =
-                                    compare_json_values(field_val, &bounds[0]) != Ordering::Less;
-                                let le_upper =
-                                    compare_json_values(field_val, &bounds[1]) != Ordering::Greater;
-                                ge_lower && le_upper
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                    (None, ComparisonOperator::IsNull) => true,
-                    (Some(_), ComparisonOperator::IsNull) => false,
-                    (None, ComparisonOperator::IsNotNull) => false,
-                    (Some(_), ComparisonOperator::IsNotNull) => true,
-                    _ => false,
-                }
-            }
-        }
+        // Thin adapter over the canonical operator-semantics seam
+        // (`sql_value_filter::evaluate_filter_resolved` / `compare_json_op`): the
+        // field resolver is a plain json-map lookup, and ALL operator logic —
+        // including SQL null-on-absence, full ordering, rich array In/Contains,
+        // and full LIKE — lives in the seam. This guarantees json-map callers
+        // (search pipeline, ANN index, WAL) share identical semantics with the
+        // canonical ProximaTree path. The primitives below
+        // (`compare_json_numbers`/`compare_json_values`/`like_pattern_match`)
+        // remain the shared comparison source that the seam calls into.
+        crate::core::search::sql_value_filter::evaluate_filter_resolved(expr, &|field| {
+            metadata.get(field).cloned()
+        })
     }
 }
 
