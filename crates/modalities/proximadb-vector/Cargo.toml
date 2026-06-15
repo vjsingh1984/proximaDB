@@ -55,3 +55,6 @@ rand_distr = { version = "0.4", optional = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

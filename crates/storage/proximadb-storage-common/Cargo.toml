@@ -52,3 +52,6 @@ tempfile.workspace = true
 [[bench]]
 name = "wal_throughput"
 harness = false
+
+[lints]
+workspace = true

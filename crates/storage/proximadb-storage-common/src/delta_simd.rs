@@ -62,7 +62,7 @@ pub fn delta_decode_f32(deltas: &[i64], base: f32, output: &mut [f32]) -> Result
         if is_x86_feature_detected!("avx2") {
             unsafe { return delta_decode_f32_avx2(deltas, base_bits, output, count) }
         }
-        return delta_decode_f32_scalar(deltas, base_bits, output, count);
+        delta_decode_f32_scalar(deltas, base_bits, output, count)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -89,7 +89,7 @@ pub fn delta_decode_i64_prefix_sum(deltas: &[i64], base: i64, output: &mut [i64]
         if is_x86_feature_detected!("avx2") {
             unsafe { return prefix_sum_i64_avx2(deltas, base, output, count) }
         }
-        return prefix_sum_i64_scalar(deltas, base, output, count);
+        prefix_sum_i64_scalar(deltas, base, output, count)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -116,7 +116,7 @@ pub fn delta_decode_i32_prefix_sum(deltas: &[i32], base: i32, output: &mut [i32]
         if is_x86_feature_detected!("avx2") {
             unsafe { return prefix_sum_i32_avx2(deltas, base, output, count) }
         }
-        return prefix_sum_i32_scalar(deltas, base, output, count);
+        prefix_sum_i32_scalar(deltas, base, output, count)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -197,7 +197,7 @@ unsafe fn delta_decode_f32_avx2(
     base_bits: i64,
     output: &mut [f32],
     count: usize,
-) -> Result<usize> {
+) -> Result<usize> { unsafe {
     let chunks = count / 4;
 
     for i in 0..chunks {
@@ -220,7 +220,7 @@ unsafe fn delta_decode_f32_avx2(
     }
 
     Ok(count)
-}
+}}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
@@ -229,20 +229,20 @@ unsafe fn prefix_sum_i64_avx2(
     base: i64,
     output: &mut [i64],
     count: usize,
-) -> Result<usize> {
+) -> Result<usize> { unsafe {
     if count == 0 {
         return Ok(0);
     }
 
     std::ptr::copy_nonoverlapping(deltas.as_ptr(), output.as_mut_ptr(), count);
 
-    output[0] = base + output[0];
+    output[0] += base;
     for i in 1..count {
-        output[i] = output[i - 1] + output[i];
+        output[i] += output[i - 1];
     }
 
     Ok(count)
-}
+}}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]

@@ -99,7 +99,7 @@ pub fn fused_decode_binary_to_f32(
         if is_x86_feature_detected!("avx2") {
             unsafe { return fused_decode_binary_avx2(input, output, count, bipolar) }
         }
-        return fused_decode_binary_scalar(input, output, count, bipolar);
+        fused_decode_binary_scalar(input, output, count, bipolar)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -142,7 +142,7 @@ pub fn fused_decode_int4_to_f32(
         if is_x86_feature_detected!("avx2") {
             unsafe { return fused_decode_int4_avx2(input, output, count, params) }
         }
-        return fused_decode_int4_scalar(input, output, count, params);
+        fused_decode_int4_scalar(input, output, count, params)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -184,7 +184,7 @@ pub fn fused_decode_int8_to_f32(
         if is_x86_feature_detected!("avx2") {
             unsafe { return fused_decode_int8_avx2(input, output, count, params) }
         }
-        return fused_decode_int8_scalar(input, output, count, params);
+        fused_decode_int8_scalar(input, output, count, params)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -233,7 +233,7 @@ pub fn progressive_decode_binary_int8_f32(
         if is_x86_feature_detected!("avx2") {
             unsafe { return progressive_decode_avx2(input, output, count, params, bipolar) }
         }
-        return progressive_decode_scalar(input, output, count, params, bipolar);
+        progressive_decode_scalar(input, output, count, params, bipolar)
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -401,7 +401,7 @@ unsafe fn fused_decode_int4_avx2(
     output: &mut [f32],
     count: usize,
     params: &QuantizationParams,
-) -> Result<usize> {
+) -> Result<usize> { unsafe {
     let scale = params.scale;
     let zero_point = params.zero_point;
 
@@ -452,7 +452,7 @@ unsafe fn fused_decode_int4_avx2(
     }
 
     Ok(count)
-}
+}}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
@@ -461,7 +461,7 @@ unsafe fn fused_decode_int8_avx2(
     output: &mut [f32],
     count: usize,
     params: &QuantizationParams,
-) -> Result<usize> {
+) -> Result<usize> { unsafe {
     let scale = params.scale;
     let zero_point = params.zero_point;
 
@@ -500,7 +500,7 @@ unsafe fn fused_decode_int8_avx2(
     }
 
     Ok(count)
-}
+}}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
@@ -510,7 +510,7 @@ unsafe fn progressive_decode_avx2(
     count: usize,
     params: &QuantizationParams,
     bipolar: bool,
-) -> Result<usize> {
+) -> Result<usize> { unsafe {
     let scale = params.scale;
     let zero_point = params.zero_point;
 
@@ -552,7 +552,7 @@ unsafe fn progressive_decode_avx2(
     }
 
     Ok(count)
-}
+}}
 
 // ============================================================================
 // NEON Implementations

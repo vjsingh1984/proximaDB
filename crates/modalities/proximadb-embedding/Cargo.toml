@@ -127,3 +127,6 @@ ndarray = { version = "0.17", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "test-util"] }
+
+[lints]
+workspace = true

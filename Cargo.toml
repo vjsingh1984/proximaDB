@@ -12,6 +12,9 @@ keywords = ["vector", "database", "ai", "ml", "proximity", "similarity-search"]
 categories = ["database-implementations", "science"]
 rust-version = "1.88"
 
+[lints]
+workspace = true
+
 [workspace]
 resolver = "2"
 members = [
@@ -91,6 +94,23 @@ license = "Apache-2.0"
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
 repository = "https://github.com/vjsingh1984/proximadb"
 homepage = "https://github.com/vjsingh1984/proximadb"
+
+[workspace.lints.rust]
+# Edition-2024 migration for x86_64 SIMD: many `#[target_feature] unsafe fn`s call
+# intrinsics / memory ops directly. Keep the pre-2024 "unsafe fn body is an unsafe
+# context" behavior workspace-wide; `unused_unsafe` covers the resulting redundancy
+# of any explicit `unsafe {}` blocks remaining in those fns. (NEON/AVX SIMD modules.)
+unsafe_op_in_unsafe_fn = "allow"
+unused_unsafe = "allow"
+
+[workspace.lints.clippy]
+# x86_64 SIMD idiom (only ever compiled on x86_64 CI, so it accrued unlinted):
+# internal `#[target_feature]` unsafe primitives whose safety contract is uniformly
+# "caller ensures the CPU supports the feature", and explicit chunk-index loops that
+# read clearer than iterator adapters. Sloppy lints (needless_return / assign_op) are
+# fixed in-code, not allowed.
+missing_safety_doc = "allow"
+needless_range_loop = "allow"
 
 [workspace.dependencies]
 anyhow = "1.0"
