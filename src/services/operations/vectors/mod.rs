@@ -57,6 +57,9 @@ mod resolver;
 // Pure input validators for inserts/queries (Phase 2.1 decomposition)
 mod input_validation;
 
+// WAL write-primitive coordinator (Phase 2.1 decomposition)
+mod write;
+
 // Legacy main service implementation (being decomposed)
 mod legacy;
 

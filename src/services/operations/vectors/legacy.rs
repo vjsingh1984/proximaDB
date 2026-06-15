@@ -1726,82 +1726,9 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        let start_time = std::time::Instant::now();
-        let vector_count = vectors.len();
-        let vector_ids: Vec<String> = vectors.iter().map(|v| v.oid.clone()).collect();
-        let decision = self.bulk_write_router.route_records(&vectors);
-
-        info!(
-            "📦 Bulk write: collection={}, vectors={}, estimated_size={} bytes, decision={}",
-            collection_id,
-            vector_count,
-            decision.estimated_size_bytes,
-            if decision.use_bulk_lane {
-                "BULK_WAL"
-            } else {
-                "WAL"
-            }
-        );
-
-        // If below thresholds, fall back to standard WAL path
-        if !decision.use_bulk_lane {
-            debug!(
-                "📝 Batch below bulk threshold ({}), using standard WAL path",
-                decision.reason
-            );
-            return self.insert_vectors_via_wal(collection_id, vectors).await;
-        }
-
-        // Large-batch path. It remains WAL-backed until direct segment commit
-        // has an accepted durability proof.
-        info!(
-            "🚀 Using WAL-backed bulk path for batch: {} vectors (reason: {})",
-            vector_count, decision.reason
-        );
-
-        // Write vectors via WAL for durability. A WAL-skipping engine path
-        // remains deferred because it needs atomic segment+manifest commit,
-        // replay or repair semantics, and idempotency.
-        // `vectors` is not used after this point — move it into the Arc rather
-        // than cloning. The non-bulk helper below already follows this pattern.
-        let vectors_arc = Arc::new(vectors);
-
-        match self
-            .wal_manager
-            .write_vector_batch_native_arc(collection_id, vectors_arc)
+        self.write_coordinator()
+            .bulk_write(collection_id, vectors)
             .await
-        {
-            Ok(_) => {
-                let duration = start_time.elapsed();
-                let vectors_per_sec = if duration.as_secs_f64() > 0.0 {
-                    (vector_count as f64 / duration.as_secs_f64()) as u64
-                } else {
-                    vector_count as u64
-                };
-
-                info!(
-                    "✅ WAL-backed bulk write completed: {} vectors in {:?} ({} vectors/sec)",
-                    vector_count, duration, vectors_per_sec
-                );
-
-                Ok(BatchOperationResult::success(
-                    vector_ids,
-                    OperationMetrics {
-                        total_processed: vector_count as i64,
-                        successful_count: vector_count as i64,
-                        failed_count: 0,
-                        updated_count: 0,
-                        processing_time_us: duration.as_micros() as i64,
-                        wal_write_time_us: duration.as_micros() as i64,
-                        index_update_time_us: 0,
-                    },
-                ))
-            }
-            Err(e) => {
-                error!("❌ Bulk write failed: {}", e);
-                Err(e)
-            }
-        }
     }
 
     /// Internal helper: insert records via standard WAL path
@@ -1810,7 +1737,8 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.insert_vectors_via_wal_with_mode(collection_id, vectors, false)
+        self.write_coordinator()
+            .insert_vectors_via_wal(collection_id, vectors)
             .await
     }
 
@@ -1819,77 +1747,9 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.insert_vectors_via_wal_with_mode(collection_id, vectors, true)
+        self.write_coordinator()
+            .insert_vectors_via_wal_insert_only(collection_id, vectors)
             .await
-    }
-
-    async fn insert_vectors_via_wal_with_mode(
-        &self,
-        collection_id: &str,
-        vectors: Vec<ProximaRecord>,
-        insert_only: bool,
-    ) -> Result<BatchOperationResult> {
-        let mut vectors = vectors;
-        apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
-
-        let start_time = std::time::Instant::now();
-        let vector_count = vectors.len();
-        let vector_ids: Vec<String> = vectors.iter().map(|v| v.oid.clone()).collect();
-
-        // Write vectors via WAL manager
-        let vectors_arc = Arc::new(vectors);
-
-        let wal_result = if insert_only {
-            self.wal_manager
-                .write_vector_batch_native_arc_insert_only(collection_id, vectors_arc)
-                .await
-        } else {
-            self.wal_manager
-                .write_vector_batch_native_arc(collection_id, vectors_arc)
-                .await
-        };
-
-        match wal_result {
-            Ok(_) => {
-                let duration = start_time.elapsed();
-                let _vectors_per_sec = if duration.as_secs_f64() > 0.0 {
-                    (vector_count as f64 / duration.as_secs_f64()) as u64
-                } else {
-                    vector_count as u64
-                };
-
-                debug!(
-                    "📝 WAL write completed: {} vectors in {:?}",
-                    vector_count, duration
-                );
-
-                Ok(BatchOperationResult::success(
-                    vector_ids,
-                    OperationMetrics {
-                        total_processed: vector_count as i64,
-                        successful_count: vector_count as i64,
-                        failed_count: 0,
-                        updated_count: 0,
-                        processing_time_us: duration.as_micros() as i64,
-                        wal_write_time_us: duration.as_micros() as i64,
-                        index_update_time_us: 0,
-                    },
-                ))
-            }
-            Err(e) => {
-                if insert_only && e.to_string().contains("INSERT_CONFLICT") {
-                    return Ok(BatchOperationResult::failure(
-                        format!("Record insert failed: {}", e),
-                        "INSERT_CONFLICT".to_string(),
-                    ));
-                }
-                warn!("WAL batch insert failed: {}", e);
-                Ok(BatchOperationResult::failure(
-                    format!("Batch insert failed: {}", e),
-                    "WAL_WRITE_ERROR".to_string(),
-                ))
-            }
-        }
     }
 
     /// Insert a batch of canonical records with smart routing.
@@ -4061,6 +3921,20 @@ impl VectorOperationsService {
             self.wal_manager.clone(),
             self.unified_engine(),
             self.collection_cache.clone(),
+        )
+    }
+
+    /// Build the WAL write-primitive coordinator on demand (cheap `Arc` clones;
+    /// `BulkWriteRouter` is a `Clone` config wrapper). Phase 2.1: the
+    /// bulk-vs-WAL routing + WAL-persist primitives live in
+    /// `super::write::VectorWriteCoordinator`; the service keeps the public
+    /// surface (`bulk_write`) and the private `insert_vectors_via_wal*` helpers
+    /// (delete + batch callers) and delegates.
+    fn write_coordinator(&self) -> super::write::VectorWriteCoordinator {
+        super::write::VectorWriteCoordinator::new(
+            self.wal_manager.clone(),
+            self.bulk_write_router.clone(),
+            self.pseudo_query_generator.clone(),
         )
     }
 
