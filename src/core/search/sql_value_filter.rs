@@ -38,198 +38,65 @@ use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{ProximaTree, ProximaTreeNode};
 
-/// Evaluate a filter expression against SqlValue metadata (type-safe, no conversion)
+/// Evaluate a filter expression against proto `SqlValue` (wire-format) metadata.
 ///
-/// This is the canonical filtering implementation for all ProximaDB storage engines.
-///
-/// # Arguments
+/// Thin adapter over the canonical [`evaluate_filter_resolved`] seam: each field's
+/// `SqlValue` is lowered to `serde_json::Value` via [`sql_val_to_json`] (numbers
+/// stay numeric so integer precision is preserved by `compare_json_numbers`), so
+/// this path supports the full operator set with semantics identical to
+/// [`evaluate_filter_proxima`]. Previously this evaluator handled only
+/// equality + numeric ordering; it now matches the canonical behavior.
 ///
 /// * `expr` - The filter expression to evaluate
-/// * `metadata` - The record's metadata as SqlValue HashMap
-///
-/// # Returns
-///
-/// `true` if the record matches the filter, `false` otherwise
-///
-/// # Performance
-///
-/// - O(1) for simple comparisons
-/// - O(n) for AND/OR with n sub-expressions
-/// - Zero allocation for comparisons
+/// * `metadata` - The record's metadata as a proto `SqlValue` map
 pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlValue>) -> bool {
-    match expr {
-        FilterExpression::And(exprs) => exprs.iter().all(|e| evaluate_filter(e, metadata)),
-        FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter(e, metadata)),
-        FilterExpression::Not(e) => !evaluate_filter(e, metadata),
-        FilterExpression::Comparison {
-            field,
-            operator,
-            value,
-        } => {
-            let field_value = metadata.get(field).and_then(|v| v.value.as_ref());
+    evaluate_filter_resolved(expr, &|field| {
+        metadata
+            .get(field)
+            .and_then(|sql_value| sql_value.value.as_ref())
+            .map(sql_val_to_json)
+    })
+}
 
-            match (field_value, operator) {
-                (Some(field_val), ComparisonOperator::Equals) => {
-                    compare_sql_value_to_json(field_val, value)
-                }
-                (Some(field_val), ComparisonOperator::NotEquals) => {
-                    !compare_sql_value_to_json(field_val, value)
-                }
-                (Some(SqlVal::NumberValue(n)), ComparisonOperator::LessThan) => {
-                    compare_number_lt(*n, value)
-                }
-                (Some(SqlVal::NumberValue(n)), ComparisonOperator::LessThanOrEqual) => {
-                    compare_number_lte(*n, value)
-                }
-                (Some(SqlVal::NumberValue(n)), ComparisonOperator::GreaterThan) => {
-                    compare_number_gt(*n, value)
-                }
-                (Some(SqlVal::NumberValue(n)), ComparisonOperator::GreaterThanOrEqual) => {
-                    compare_number_gte(*n, value)
-                }
-                // Integer comparisons
-                (Some(SqlVal::Int64Value(n)), ComparisonOperator::LessThan) => {
-                    compare_int64_lt(*n, value)
-                }
-                (Some(SqlVal::Int64Value(n)), ComparisonOperator::LessThanOrEqual) => {
-                    compare_int64_lte(*n, value)
-                }
-                (Some(SqlVal::Int64Value(n)), ComparisonOperator::GreaterThan) => {
-                    compare_int64_gt(*n, value)
-                }
-                (Some(SqlVal::Int64Value(n)), ComparisonOperator::GreaterThanOrEqual) => {
-                    compare_int64_gte(*n, value)
-                }
-                (None, _) => false, // Field not found in metadata
-                _ => false,         // Unsupported comparison (e.g., string < string)
-            }
+/// Lower a proto `SqlValue` payload to `serde_json::Value` so the wire/`SqlValue`
+/// metadata path shares the canonical operator semantics (the seam compares on
+/// `serde_json::Value`). Numbers stay numeric (so `compare_json_numbers` keeps
+/// integer precision); bytes become a JSON array of byte values.
+fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
+    match value {
+        SqlVal::StringValue(s) => serde_json::Value::String(s.clone()),
+        SqlVal::NumberValue(n) => {
+            serde_json::Number::from_f64(*n).map_or(serde_json::Value::Null, serde_json::Value::Number)
         }
+        SqlVal::BoolValue(b) => serde_json::Value::Bool(*b),
+        SqlVal::Int64Value(i) => serde_json::Value::Number((*i).into()),
+        SqlVal::BytesValue(bytes) => serde_json::Value::Array(
+            bytes
+                .iter()
+                .map(|byte| serde_json::Value::Number((*byte).into()))
+                .collect(),
+        ),
+        SqlVal::NullValue(_) => serde_json::Value::Null,
+        SqlVal::ArrayValue(array) => serde_json::Value::Array(
+            array
+                .values
+                .iter()
+                .map(|v| v.value.as_ref().map_or(serde_json::Value::Null, sql_val_to_json))
+                .collect(),
+        ),
+        SqlVal::ObjectValue(object) => serde_json::Value::Object(
+            object
+                .fields
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        v.value.as_ref().map_or(serde_json::Value::Null, sql_val_to_json),
+                    )
+                })
+                .collect(),
+        ),
     }
-}
-
-/// Compare SqlValue to serde_json::Value for equality (type-safe)
-#[inline]
-fn compare_sql_value_to_json(sql_val: &SqlVal, json_val: &serde_json::Value) -> bool {
-    match (sql_val, json_val) {
-        (SqlVal::StringValue(s1), serde_json::Value::String(s2)) => s1 == s2,
-        (SqlVal::NumberValue(n1), serde_json::Value::Number(n2)) => {
-            if let Some(n2_f64) = n2.as_f64() {
-                // Use epsilon comparison for floating point equality
-                (n1 - n2_f64).abs() < f64::EPSILON
-            } else {
-                false
-            }
-        }
-        (SqlVal::Int64Value(n1), serde_json::Value::Number(n2)) => {
-            // Try exact integer match first, then fall back to float comparison
-            if let Some(n2_i64) = n2.as_i64() {
-                n1 == &n2_i64
-            } else if let Some(n2_f64) = n2.as_f64() {
-                (*n1 as f64 - n2_f64).abs() < f64::EPSILON
-            } else {
-                false
-            }
-        }
-        (SqlVal::BoolValue(b1), serde_json::Value::Bool(b2)) => b1 == b2,
-        (SqlVal::NullValue(_), serde_json::Value::Null) => true,
-        _ => false, // Type mismatch
-    }
-}
-
-/// Compare number for less-than
-#[inline]
-fn compare_number_lt(n: f64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val
-        && let Some(filter_f64) = filter_num.as_f64()
-    {
-        return n < filter_f64;
-    }
-    false
-}
-
-/// Compare number for less-than-or-equal
-#[inline]
-fn compare_number_lte(n: f64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val
-        && let Some(filter_f64) = filter_num.as_f64()
-    {
-        return n <= filter_f64;
-    }
-    false
-}
-
-/// Compare number for greater-than
-#[inline]
-fn compare_number_gt(n: f64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val
-        && let Some(filter_f64) = filter_num.as_f64()
-    {
-        return n > filter_f64;
-    }
-    false
-}
-
-/// Compare number for greater-than-or-equal
-#[inline]
-fn compare_number_gte(n: f64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val
-        && let Some(filter_f64) = filter_num.as_f64()
-    {
-        return n >= filter_f64;
-    }
-    false
-}
-
-/// Compare Int64 for less-than
-#[inline]
-fn compare_int64_lt(n: i64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val {
-        if let Some(filter_i64) = filter_num.as_i64() {
-            return n < filter_i64;
-        } else if let Some(filter_f64) = filter_num.as_f64() {
-            return (n as f64) < filter_f64;
-        }
-    }
-    false
-}
-
-/// Compare Int64 for less-than-or-equal
-#[inline]
-fn compare_int64_lte(n: i64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val {
-        if let Some(filter_i64) = filter_num.as_i64() {
-            return n <= filter_i64;
-        } else if let Some(filter_f64) = filter_num.as_f64() {
-            return (n as f64) <= filter_f64;
-        }
-    }
-    false
-}
-
-/// Compare Int64 for greater-than
-#[inline]
-fn compare_int64_gt(n: i64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val {
-        if let Some(filter_i64) = filter_num.as_i64() {
-            return n > filter_i64;
-        } else if let Some(filter_f64) = filter_num.as_f64() {
-            return (n as f64) > filter_f64;
-        }
-    }
-    false
-}
-
-/// Compare Int64 for greater-than-or-equal
-#[inline]
-fn compare_int64_gte(n: i64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val {
-        if let Some(filter_i64) = filter_num.as_i64() {
-            return n >= filter_i64;
-        } else if let Some(filter_f64) = filter_num.as_f64() {
-            return (n as f64) >= filter_f64;
-        }
-    }
-    false
 }
 
 /// Convert a `ProximaValue` leaf to a `serde_json::Value` for filter evaluation.
