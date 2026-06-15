@@ -45,39 +45,43 @@ fn scalar_min_max_f32(data: &[f32]) -> (f32, f32) {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn simd_min_max_f32_avx2(data: &[f32]) -> (f32, f32) {
-    use std::arch::x86_64::*;
+    unsafe {
+        use std::arch::x86_64::*;
 
-    if data.is_empty() {
-        return (f32::INFINITY, f32::NEG_INFINITY);
+        if data.is_empty() {
+            return (f32::INFINITY, f32::NEG_INFINITY);
+        }
+
+        let mut min_vec = _mm256_set1_ps(f32::INFINITY);
+        let mut max_vec = _mm256_set1_ps(f32::NEG_INFINITY);
+
+        let chunks = data.chunks_exact(8);
+        let remainder = chunks.remainder();
+
+        // Process 8 f32 values per iteration
+        for chunk in chunks {
+            let vals = _mm256_loadu_ps(chunk.as_ptr());
+            min_vec = _mm256_min_ps(min_vec, vals);
+            max_vec = _mm256_max_ps(max_vec, vals);
+        }
+
+        // Horizontal reduction: 8 lanes -> 1 value
+        let min = horizontal_min_f32_avx2(min_vec);
+        let max = horizontal_max_f32_avx2(max_vec);
+
+        // Handle remainder with scalar operations
+        remainder.iter().fold((min, max), |(a_min, a_max), &b| {
+            (a_min.min(b), a_max.max(b))
+        })
     }
-
-    let mut min_vec = _mm256_set1_ps(f32::INFINITY);
-    let mut max_vec = _mm256_set1_ps(f32::NEG_INFINITY);
-
-    let chunks = data.chunks_exact(8);
-    let remainder = chunks.remainder();
-
-    // Process 8 f32 values per iteration
-    for chunk in chunks {
-        let vals = _mm256_loadu_ps(chunk.as_ptr());
-        min_vec = _mm256_min_ps(min_vec, vals);
-        max_vec = _mm256_max_ps(max_vec, vals);
-    }
-
-    // Horizontal reduction: 8 lanes -> 1 value
-    let min = horizontal_min_f32_avx2(min_vec);
-    let max = horizontal_max_f32_avx2(max_vec);
-
-    // Handle remainder with scalar operations
-    remainder.iter().fold((min, max), |(a_min, a_max), &b| {
-        (a_min.min(b), a_max.max(b))
-    })
 }
 
 /// Horizontal min reduction for AVX2
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn horizontal_min_f32_avx2(vec: std::arch::x86_64::__m256) -> f32 {
+    // All intrinsics here are register-only (cast/extract/min/shuffle/cvtss) and
+    // therefore safe; only memory loads (handled by callers) need an unsafe block.
     use std::arch::x86_64::*;
 
     // Extract high and low 128-bit lanes
@@ -101,6 +105,7 @@ unsafe fn horizontal_min_f32_avx2(vec: std::arch::x86_64::__m256) -> f32 {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn horizontal_max_f32_avx2(vec: std::arch::x86_64::__m256) -> f32 {
+    // Register-only intrinsics (safe); see horizontal_min_f32_avx2.
     use std::arch::x86_64::*;
 
     let low = _mm256_castps256_ps128(vec);
@@ -191,30 +196,32 @@ fn scalar_zero_count_f32(data: &[f32], threshold: f32) -> usize {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn simd_zero_count_f32_avx2(data: &[f32], threshold: f32) -> usize {
-    use std::arch::x86_64::*;
+    unsafe {
+        use std::arch::x86_64::*;
 
-    let threshold_vec = _mm256_set1_ps(threshold);
-    let neg_threshold_vec = _mm256_set1_ps(-threshold);
-    let mut count = 0;
+        let threshold_vec = _mm256_set1_ps(threshold);
+        let neg_threshold_vec = _mm256_set1_ps(-threshold);
+        let mut count = 0;
 
-    let chunks = data.chunks_exact(8);
-    let remainder = chunks.remainder();
+        let chunks = data.chunks_exact(8);
+        let remainder = chunks.remainder();
 
-    for chunk in chunks {
-        let vals = _mm256_loadu_ps(chunk.as_ptr());
+        for chunk in chunks {
+            let vals = _mm256_loadu_ps(chunk.as_ptr());
 
-        // Check if -threshold < val < threshold
-        let gt_neg = _mm256_cmp_ps(vals, neg_threshold_vec, _CMP_GT_OQ);
-        let lt_pos = _mm256_cmp_ps(vals, threshold_vec, _CMP_LT_OQ);
-        let is_near_zero = _mm256_and_ps(gt_neg, lt_pos);
+            // Check if -threshold < val < threshold
+            let gt_neg = _mm256_cmp_ps(vals, neg_threshold_vec, _CMP_GT_OQ);
+            let lt_pos = _mm256_cmp_ps(vals, threshold_vec, _CMP_LT_OQ);
+            let is_near_zero = _mm256_and_ps(gt_neg, lt_pos);
 
-        // Count set bits in mask
-        let mask = _mm256_movemask_ps(is_near_zero);
-        count += mask.count_ones() as usize;
+            // Count set bits in mask
+            let mask = _mm256_movemask_ps(is_near_zero);
+            count += mask.count_ones() as usize;
+        }
+
+        // Handle remainder with scalar
+        count + remainder.iter().filter(|&&v| v.abs() < threshold).count()
     }
-
-    // Handle remainder with scalar
-    count + remainder.iter().filter(|&&v| v.abs() < threshold).count()
 }
 
 /// NEON implementation for zero counting
