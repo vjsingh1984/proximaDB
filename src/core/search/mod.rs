@@ -719,7 +719,7 @@ pub mod json_comparison {
 
     /// Simple LIKE pattern matching for SQL-style patterns
     /// Supports % (any chars) and _ (single char) wildcards
-    fn like_pattern_match(text: &str, pattern: &str) -> bool {
+    pub fn like_pattern_match(text: &str, pattern: &str) -> bool {
         let mut text_chars = text.chars().peekable();
         let mut pattern_chars = pattern.chars().peekable();
 
