@@ -51,6 +51,9 @@ mod diagnostics;
 // Flush + compaction coordinator (Phase 2.1 decomposition)
 mod flush;
 
+// Collection-resolution + engine-resolution collaborator (Phase 2.1 decomposition)
+mod resolver;
+
 // Legacy main service implementation (being decomposed)
 mod legacy;
 

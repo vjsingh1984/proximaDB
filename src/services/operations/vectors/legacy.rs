@@ -481,8 +481,8 @@ impl VectorOperationsService {
     /// Invalidate the collection cache entry for a specific collection
     /// Called after stats are updated to ensure fresh data is loaded
     pub fn invalidate_collection_cache(&self, collection_id: &str) {
-        self.collection_cache.remove(collection_id);
-        tracing::debug!("🗑️ Invalidated collection cache for '{}'", collection_id);
+        self.collection_resolver()
+            .invalidate_collection_cache(collection_id);
     }
 
     async fn validate_tenant_collection_access(
@@ -751,10 +751,9 @@ impl VectorOperationsService {
     /// internal id that the write path keys WAL + storage under. Idempotent for
     /// already-canonical ids; falls back to the input if resolution fails.
     pub async fn resolve_collection_id(&self, identifier: &str) -> String {
-        match self.get_or_load_collection(identifier).await {
-            Ok(collection) => collection.id.clone(),
-            Err(_) => identifier.to_string(),
-        }
+        self.collection_resolver()
+            .resolve_collection_id(identifier)
+            .await
     }
 
     /// Reverse of [`resolve_collection_id`](Self::resolve_collection_id): resolve
@@ -763,8 +762,9 @@ impl VectorOperationsService {
     /// signal discovery by name (the discovery pipeline keys jobs/pins by name).
     /// Returns `None` if the collection can't be loaded or carries no config.
     pub async fn resolve_collection_name(&self, identifier: &str) -> Option<String> {
-        let collection = self.get_or_load_collection(identifier).await.ok()?;
-        collection.config.as_ref().map(|cfg| cfg.name.clone())
+        self.collection_resolver()
+            .resolve_collection_name(identifier)
+            .await
     }
 
     /// Enumerate ALL records of a collection, including flushed/storage-resident
@@ -3531,70 +3531,25 @@ impl VectorOperationsService {
     // Helper methods (simplified for demonstration)
 
     /// Retrieve a collection from cache, or load it from the collection service and register with WAL.
+    /// Build the collection-resolution collaborator on demand (cheap `Arc`
+    /// clones; the metadata + engine caches are shared with the service). Phase
+    /// 2.1: resolution/engine-selection logic lives in
+    /// `super::resolver::CollectionResolver`; the service keeps the public
+    /// surface and its private `get_or_load_collection` (~17 callers) and
+    /// delegates.
+    fn collection_resolver(&self) -> super::resolver::CollectionResolver {
+        super::resolver::CollectionResolver::new(
+            self.collection_cache.clone(),
+            self.engine_cache.clone(),
+            self.collection_port.clone(),
+            self.wal_manager.clone(),
+        )
+    }
+
     async fn get_or_load_collection(&self, collection_id: &str) -> Result<Arc<Collection>> {
-        let collection_id_string = collection_id.to_string();
-        if let Some(cached) = self.collection_cache.get(&collection_id_string) {
-            Ok(cached.clone())
-        } else {
-            // Load from collection service
-            let collection = self
-                .collection_port
-                .get_collection(collection_id, None)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
-
-            // Register collection with WAL manager for persistence
-            if let Some(ref storage_assignment) = collection.storage_assignment
-                && let Some(ref config) = collection.config
-            {
-                // Build compression_config from storage_config if available
-                let compression_config = config.storage_config.as_ref().and_then(|sc| {
-                    sc.compression.map(|alg| {
-                        crate::proto::proximadb_v1::CompressionConfig {
-                            algorithm: alg,
-                            level: Some(3), // default level
-                            adaptive: false,
-                            min_ratio: None,
-                            enable_quantization: false,
-                            quantization_type: None,
-                            normalization_method: None,
-                            block_size_kb: 64,
-                            dynamic_block_sizing: false,
-                        }
-                    })
-                });
-
-                // Convert distance_metric from Option<i32> to DistanceMetric
-                let distance_metric = config
-                    .distance_metric
-                    .and_then(|m| crate::proto::proximadb_v1::DistanceMetric::try_from(m).ok())
-                    .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine);
-
-                let assignment =
-                    crate::storage::persistence::write_ahead_log::CollectionAssignment {
-                        base_location: storage_assignment.base_location.clone(),
-                        storage_engine: crate::proto::proximadb_v1::StorageEngine::try_from(
-                            storage_assignment.engine,
-                        )
-                        .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst),
-                        dimension: config.dimension as i32,
-                        compression_config,
-                        distance_metric,
-                    };
-                self.wal_manager
-                    .assign_collection(collection_id_string.clone(), assignment)
-                    .await;
-                tracing::debug!(
-                    "✅ Registered collection {} with WAL manager",
-                    collection_id
-                );
-            }
-
-            let arc_collection = Arc::new(collection);
-            self.collection_cache
-                .insert(collection_id_string, arc_collection.clone());
-            Ok(arc_collection)
-        }
+        self.collection_resolver()
+            .get_or_load_collection(collection_id)
+            .await
     }
 
     /// Get or create the correct storage engine for a collection.
@@ -3609,45 +3564,9 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
     ) -> Result<Arc<dyn UnifiedStorageFormat>> {
-        // Check cache first
-        if let Some(engine) = self.engine_cache.get(collection_id) {
-            return Ok(engine.clone());
-        }
-
-        // Get collection to determine engine type
-        let collection = self.get_or_load_collection(collection_id).await?;
-
-        // Determine engine type from storage_assignment
-        let engine_type = collection.storage_assignment.as_ref().map_or(
-            crate::proto::proximadb_v1::StorageEngine::Sst,
-            |sa| {
-                crate::proto::proximadb_v1::StorageEngine::try_from(sa.engine)
-                    .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst)
-            },
-        );
-
-        debug!(
-            "🔧 Creating storage engine {:?} for collection {}",
-            engine_type, collection_id
-        );
-
-        // Create the appropriate engine
-        let engine =
-            crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
-                engine_type,
-            )
-            .await?;
-
-        // Cache it for future use
-        self.engine_cache
-            .insert(collection_id.to_string(), engine.clone());
-
-        info!(
-            "✅ Cached storage engine {:?} for collection {}",
-            engine_type, collection_id
-        );
-
-        Ok(engine)
+        self.collection_resolver()
+            .get_engine_for_collection(collection_id)
+            .await
     }
 
     // REMOVED: get_available_files - storage engines handle their own file listing
