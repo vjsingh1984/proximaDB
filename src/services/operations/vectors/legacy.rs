@@ -4353,104 +4353,33 @@ impl VectorOperationsService {
 
     /// Collect and return a JSON snapshot of key operational metrics (WAL, storage, query cache,
     /// and collection counts).
+    /// Build the read-only diagnostics collaborator on demand (cheap `Arc`
+    /// clones). Phase 2.1: metrics/health/unflushed-inspection logic lives in
+    /// `super::diagnostics::VectorServiceDiagnostics`; the service keeps the
+    /// public surface and delegates.
+    fn diagnostics(&self) -> super::diagnostics::VectorServiceDiagnostics {
+        super::diagnostics::VectorServiceDiagnostics::new(
+            self.wal_manager.clone(),
+            self.storage_engine.clone(),
+            self.collection_cache.clone(),
+        )
+    }
+
+    /// Collect and return a JSON snapshot of key operational metrics (WAL, storage, query cache,
+    /// and collection counts).
     pub async fn metrics(&self) -> Result<serde_json::Value> {
-        // Collect metrics from various components
-        let wal_stats = self.wal_manager.stats().await?;
-
-        // Get storage engine metrics
-        let storage_metrics = match self.storage_engine.health_check().await {
-            Ok(health) => serde_json::json!({
-                "status": health.status,
-                "response_time_ms": health.response_time_ms,
-                "healthy": health.healthy,
-                "warnings": health.warnings
-            }),
-            Err(e) => serde_json::json!({
-                "status": "error",
-                "error": e.to_string()
-            }),
-        };
-
-        // Get query cache metrics - not implemented yet
-        let cache_stats = serde_json::json!({
-            "hit_rate": 0.0,
-            "total_queries": 0,
-            "cache_hits": 0,
-            "cache_misses": 0
-        });
-
-        // Combine all metrics
-        Ok(serde_json::json!({
-            "wal": {
-                "total_entries": wal_stats.total_entries,
-                "memory_entries": wal_stats.memory_entries,
-                "disk_segments": wal_stats.disk_segments,
-                "total_disk_size_bytes": wal_stats.total_disk_size_bytes,
-                "memory_size_bytes": wal_stats.memory_size_bytes,
-            },
-            "storage": storage_metrics,
-            "query_cache": cache_stats,
-            "collections": self.collection_cache.len(),
-        }))
+        self.diagnostics().metrics().await
     }
 
     /// Perform a health check across all subsystems (WAL, storage engine, query cache) and return
     /// a JSON report.
     pub async fn health_check(&self) -> Result<serde_json::Value> {
-        let _status = "healthy";
-        let issues: Vec<String> = Vec::new();
-
-        // Check WAL health
-        let wal_health = match self.wal_manager.stats().await {
-            Ok(stats) => {
-                let memory_usage_mb = stats.memory_size_bytes as f64 / (1024.0 * 1024.0);
-                if memory_usage_mb > 500.0 {
-                    // More than 500MB in memory
-                    vec![format!("High WAL memory usage: {:.1}MB", memory_usage_mb)]
-                } else {
-                    vec![]
-                }
-            }
-            Err(e) => vec![format!("WAL stats error: {}", e)],
-        };
-
-        // Check storage engine health
-        let storage_health = match self.storage_engine.health_check().await {
-            Ok(engine_health) => match engine_health.status.as_str() {
-                "healthy" => vec![],
-                _ => vec![format!("Storage engine: {}", engine_health.status)],
-            },
-            Err(e) => vec![format!("Storage engine health check failed: {}", e)],
-        };
-
-        // Combine health issues
-        let mut all_issues = issues;
-        all_issues.extend(wal_health);
-        all_issues.extend(storage_health);
-
-        // Update status based on issues
-        let status = if all_issues.is_empty() {
-            "healthy"
-        } else {
-            "degraded"
-        };
-
-        Ok(serde_json::json!({
-            "status": status,
-            "issues": all_issues,
-            "timestamp": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            "collections": self.collection_cache.len(),
-        }))
+        self.diagnostics().health_check().await
     }
 
     /// Get unflushed vectors for a collection from the WAL/memtable
     pub async fn get_unflushed_vectors(&self, collection_id: &str) -> Result<Vec<ProximaRecord>> {
-        self.wal_manager
-            .read_record_entries(collection_id, 0, None)
-            .await
+        self.diagnostics().get_unflushed_vectors(collection_id).await
     }
 
     /// Get unflushed vectors as canonical ProximaRecord envelopes.

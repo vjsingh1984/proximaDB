@@ -45,6 +45,9 @@ pub mod search;
 // Metadata validation and pseudo-query generation
 pub mod validation;
 
+// Diagnostics / metrics collaborator (Phase 2.1 decomposition)
+mod diagnostics;
+
 // Legacy main service implementation (being decomposed)
 mod legacy;
 
