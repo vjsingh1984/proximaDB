@@ -611,8 +611,10 @@ mod tests {
             .create_native_catalog(
                 "default",
                 &format!(
-                    "file:///private/tmp/proximadb-router-catalog-{}",
-                    uuid::Uuid::new_v4()
+                    "file://{}",
+                    std::env::temp_dir()
+                        .join(format!("proximadb-router-catalog-{}", uuid::Uuid::new_v4()))
+                        .display()
                 ),
             )
             .await
@@ -673,8 +675,13 @@ mod tests {
             .create_native_catalog(
                 "default",
                 &format!(
-                    "file:///private/tmp/proximadb-router-empty-catalog-{}",
-                    uuid::Uuid::new_v4()
+                    "file://{}",
+                    std::env::temp_dir()
+                        .join(format!(
+                            "proximadb-router-empty-catalog-{}",
+                            uuid::Uuid::new_v4()
+                        ))
+                        .display()
                 ),
             )
             .await

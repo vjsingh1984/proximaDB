@@ -771,8 +771,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
+      # Unit tests run under nextest for process-per-test isolation: the suite
+      # has tests that touch process-global statics (WAL registry, metadata
+      # provider, request-id counter) and race under libtest's shared-process
+      # parallelism. nextest gives each test its own process. Doc tests stay on
+      # `cargo test` (nextest does not run doc tests).
+      - name: Install nextest
+        if: matrix.test-type == 'unit'
+        uses: taiki-e/install-action@nextest
+
       - name: Run Tests
-        run: cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
+        run: |
+          if [ "${{ matrix.test-type }}" = "unit" ]; then
+            cargo nextest run --lib --profile unit
+          else
+            cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
+          fi
 
   # Targeted integration tests based on changed components
   rust-integration-test-storage:
