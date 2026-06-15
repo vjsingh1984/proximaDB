@@ -255,71 +255,13 @@ fn cached_precision_config() -> &'static EmbeddingPrecisionConfig {
     EmbeddingPrecisionConfig::cached()
 }
 
+/// Lower a filter operand `ProximaValue` to JSON for `FilterExpression` literals.
+///
+/// Delegates to the canonical converter so a filter literal and a record's
+/// property value are lowered identically — the comparison in
+/// `evaluate_filter_proxima` then sees both sides in the same representation.
 fn proxima_value_to_json(value: &proximadb_data_model::ProximaValue) -> serde_json::Value {
-    use proximadb_data_model::ProximaValue;
-
-    match value {
-        ProximaValue::Boolean(value) => serde_json::Value::Bool(*value),
-        ProximaValue::Int8(value) => serde_json::Value::Number((*value as i64).into()),
-        ProximaValue::Int16(value) => serde_json::Value::Number((*value as i64).into()),
-        ProximaValue::Int32(value) => serde_json::Value::Number((*value as i64).into()),
-        ProximaValue::Int64(value) => serde_json::Value::Number((*value).into()),
-        ProximaValue::UInt8(value) => serde_json::Value::Number((*value as u64).into()),
-        ProximaValue::UInt16(value) => serde_json::Value::Number((*value as u64).into()),
-        ProximaValue::UInt32(value) => serde_json::Value::Number((*value as u64).into()),
-        ProximaValue::UInt64(value) => serde_json::Value::Number((*value).into()),
-        ProximaValue::Float16(value) | ProximaValue::Float32(value) => {
-            serde_json::Number::from_f64(*value as f64)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
-        }
-        ProximaValue::Float64(value) => serde_json::Number::from_f64(*value)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        ProximaValue::Decimal(value)
-        | ProximaValue::String(value)
-        | ProximaValue::Symbol(value) => serde_json::Value::String(value.clone()),
-        ProximaValue::Binary(value) | ProximaValue::BinaryVector(value) => {
-            serde_json::Value::Array(
-                value
-                    .iter()
-                    .map(|value| serde_json::Value::Number((*value as u64).into()))
-                    .collect(),
-            )
-        }
-        ProximaValue::Date(value) => serde_json::Value::Number((*value).into()),
-        ProximaValue::Time(value, _)
-        | ProximaValue::Timestamp(value, _)
-        | ProximaValue::TimestampTz(value, _) => serde_json::Value::Number((*value).into()),
-        ProximaValue::Uuid(value) | ProximaValue::ULID(value) => {
-            serde_json::Value::String(hex::encode(value))
-        }
-        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
-        ProximaValue::Array(values) => {
-            serde_json::Value::Array(values.iter().map(proxima_value_to_json).collect())
-        }
-        ProximaValue::Map(values) | ProximaValue::Struct(values) => serde_json::Value::Object(
-            values
-                .iter()
-                .map(|(key, value)| (key.clone(), proxima_value_to_json(value)))
-                .collect(),
-        ),
-        ProximaValue::DenseVector(values) => serde_json::Value::Array(
-            values
-                .iter()
-                .map(|value| {
-                    serde_json::Number::from_f64(*value as f64)
-                        .map(serde_json::Value::Number)
-                        .unwrap_or(serde_json::Value::Null)
-                })
-                .collect(),
-        ),
-        ProximaValue::SparseVector { indices, values } => serde_json::json!({
-            "indices": indices,
-            "values": values,
-        }),
-        ProximaValue::Null => serde_json::Value::Null,
-    }
+    crate::core::search::sql_value_filter::proxima_value_to_json(value)
 }
 
 fn v1_search_result_to_rich(
