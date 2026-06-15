@@ -50,6 +50,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::services::dml::DmlService;
+use crate::storage::tenant::context::TenantContext;
 
 use super::types::PgType;
 
@@ -131,7 +132,13 @@ pub async fn try_run_select(
     dml: Option<&Arc<DmlService>>,
     #[cfg_attr(not(feature = "datafusion-integration"), allow(unused_variables))]
     vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
+    tenant: Option<&str>,
 ) -> Option<Result<PipelineResult, String>> {
+    // TD-064: the connection's tenant scopes every snapshot read to the tenant's
+    // record partition (carried into the SnapshotCatalog → DmlTableReader).
+    let tenant_ctx: Option<TenantContext> = tenant
+        .filter(|t| !t.is_empty())
+        .map(TenantContext::for_tenant_id);
     // ADR-018 Phase 2: Allow opting out with explicit "0" value
     if std::env::var("PROXIMADB_NEW_RELATIONAL_PIPELINE")
         .ok()
@@ -190,7 +197,7 @@ pub async fn try_run_select(
         if tables.contains_key(&key) {
             continue;
         }
-        match dml.resolve_relational_schema(raw).await {
+        match dml.resolve_relational_schema(raw, tenant).await {
             Ok(catalog_schema) => {
                 #[cfg(feature = "datafusion-integration")]
                 if let Some(location) = catalog_table_is_parquet_backed(&catalog_schema) {
@@ -252,6 +259,7 @@ pub async fn try_run_select(
     let snapshot = SnapshotCatalog {
         dml: dml.clone(),
         tables,
+        tenant: tenant_ctx,
     };
     // Lower + plan via the shared planning path (so EXPLAIN discloses exactly this
     // plan). `None` → lowering declined → fall through to legacy. From the planned
@@ -755,7 +763,7 @@ mod datafusion_route_tests {
 
         // Route disclosure proves the engine choice end-to-end: DataFusion over the
         // published Parquet, with the concrete row-group split inventory (P1).
-        let explain = explain_select_route_with_catalog(sql, &dml)
+        let explain = explain_select_route_with_catalog(sql, &dml, None)
             .await
             .expect("explain route");
         assert_eq!(explain.compute_route, "DataFusionLocal");
@@ -763,7 +771,7 @@ mod datafusion_route_tests {
         assert_eq!(explain.read_route.partition_count, 1);
 
         // Execution returns the correct aggregates read from the materialized Parquet.
-        let result = try_run_select(sql, Some(&dml), None)
+        let result = try_run_select(sql, Some(&dml), None, None)
             .await
             .expect("pipeline engaged")
             .expect("select ok");
@@ -943,6 +951,9 @@ impl PreparedTable {
 struct SnapshotCatalog {
     dml: Arc<DmlService>,
     tables: HashMap<String, PreparedTable>,
+    /// TD-064: connection tenant scope threaded into every snapshot reader so
+    /// relational scans/point-lookups read the tenant's record partition.
+    tenant: Option<TenantContext>,
 }
 
 impl CatalogLookup for SnapshotCatalog {
@@ -965,6 +976,7 @@ impl ReaderFactory for SnapshotCatalog {
             table_name: prepared.table_name.clone(),
             full_schema: prepared.schema.clone(),
             pk_columns: prepared.pk_columns.clone(),
+            tenant: self.tenant.clone(),
             open_state: None,
         }))
     }
@@ -1017,6 +1029,8 @@ struct DmlTableReader {
     /// Single-column PK ordinal(s) for the PK-lookup arity check (empty when the
     /// planner won't pick PkLookup for this table).
     pk_columns: Vec<usize>,
+    /// TD-064: connection tenant scope for this reader's record partition.
+    tenant: Option<TenantContext>,
     open_state: Option<ReaderOpenState>,
 }
 
@@ -1094,6 +1108,7 @@ impl RelationalReader for DmlTableReader {
                 ctx.projection.as_deref(),
                 row_pred_ref,
                 limit,
+                self.tenant.as_ref(),
             )
             .await
             .map_err(|e| ReaderError::Storage(e.to_string()))?;
@@ -1139,7 +1154,7 @@ impl RelationalReader for DmlTableReader {
             "relational PK point lookup"
         );
         self.dml
-            .point_lookup_relational(&self.table_name, &key_str)
+            .point_lookup_relational(&self.table_name, &key_str, self.tenant.as_ref())
             .await
             .map_err(|e| ReaderError::Storage(e.to_string()))
     }
@@ -1263,6 +1278,7 @@ async fn prepare_select_plan(
     sql: &str,
     query: &SqlQuery,
     dml: &Arc<DmlService>,
+    tenant: Option<&str>,
 ) -> Option<(SnapshotCatalog, PhysicalPlan)> {
     let mut names = Vec::new();
     collect_table_names(query, &mut names);
@@ -1272,12 +1288,15 @@ async fn prepare_select_plan(
         if tables.contains_key(&key) {
             continue;
         }
-        let schema = dml.resolve_relational_schema(raw).await.ok()?;
+        // Resolve under the connection tenant so EXPLAIN finds the tenant's
+        // schema row (and, for ANALYZE, reads the tenant's partition).
+        let schema = dml.resolve_relational_schema(raw, tenant).await.ok()?;
         tables.insert(key, PreparedTable::from_catalog(raw, &schema));
     }
     let snapshot = SnapshotCatalog {
         dml: dml.clone(),
         tables,
+        tenant: tenant.filter(|t| !t.is_empty()).map(TenantContext::for_tenant_id),
     };
     match plan_over_snapshot(sql, &snapshot)? {
         Ok(physical) => Some((snapshot, physical)),
@@ -1301,8 +1320,9 @@ pub fn explain_select_route(sql: &str) -> Result<SelectRouteExplanation, String>
 pub async fn explain_select_route_with_catalog(
     sql: &str,
     dml: &Arc<DmlService>,
+    tenant: Option<&str>,
 ) -> Result<SelectRouteExplanation, String> {
-    route_and_plan_select(sql, dml, false).await
+    route_and_plan_select(sql, dml, false, tenant).await
 }
 
 /// Catalog-aware `EXPLAIN ANALYZE SELECT`: like [`explain_select_route_with_catalog`]
@@ -1312,8 +1332,9 @@ pub async fn explain_select_route_with_catalog(
 pub async fn explain_analyze_select_with_catalog(
     sql: &str,
     dml: &Arc<DmlService>,
+    tenant: Option<&str>,
 ) -> Result<SelectRouteExplanation, String> {
-    route_and_plan_select(sql, dml, true).await
+    route_and_plan_select(sql, dml, true, tenant).await
 }
 
 /// Shared core for catalog-aware `EXPLAIN [ANALYZE] SELECT`. Routes the query, then for
@@ -1325,6 +1346,7 @@ async fn route_and_plan_select(
     sql: &str,
     dml: &Arc<DmlService>,
     analyze: bool,
+    tenant: Option<&str>,
 ) -> Result<SelectRouteExplanation, String> {
     let statements =
         Parser::parse_sql(&GenericDialect {}, sql).map_err(|e| format!("parse: {e}"))?;
@@ -1347,7 +1369,7 @@ async fn route_and_plan_select(
             let mut all_parquet = true;
             let mut locations = Vec::with_capacity(names.len());
             for raw in &names {
-                match dml.resolve_relational_schema(raw).await {
+                match dml.resolve_relational_schema(raw, tenant).await {
                     Ok(schema) => match catalog_table_is_parquet_backed(&schema) {
                         Some(location) => locations.push(location),
                         None => {
@@ -1398,7 +1420,7 @@ async fn route_and_plan_select(
             crate::query::table_write_plan::ComputeBackend::Native
         )
     {
-        if let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml).await {
+        if let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml, tenant).await {
             let base_lines = explain_physical(&physical);
             if analyze {
                 // EXPLAIN ANALYZE: run the query (read-only) and record actuals —

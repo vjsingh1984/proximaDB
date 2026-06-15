@@ -1107,12 +1107,15 @@ impl PostgresProtocol {
             // vector-collection path. Lowering failures fall
             // through (e.g. `SELECT current_schema()` and other
             // pg-specific queries the new frontend doesn't accept).
+            // TD-064: scope relational-pipeline reads to the connection tenant.
+            let read_tenant = self.pgwire_resolve_read_tenant().await;
             if let Some(result) = super::relational_pipeline::try_run_select(
                 query,
                 self.dml_service.as_ref(),
                 // F4: hand the OLAP route the live vector service so a cross-modal
                 // `... JOIN vector_search('coll','[..]',k)` resolves over pgwire.
                 Some(self.vector_ops.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>),
+                Some(read_tenant.as_str()),
             )
             .await
             {
@@ -1174,7 +1177,15 @@ impl PostgresProtocol {
                         }
                         _ => None,
                     };
-                    match ddl_service.execute(statement).await {
+                    // TD-064: scope table-targeting DDL (CREATE/DROP/ALTER TABLE,
+                    // CREATE/DROP INDEX) onto the connection's tenant so a tenant's
+                    // CREATE-then-INSERT address one tenant-prefixed schema row.
+                    let ddl_tenant = self.pgwire_resolve_write_tenant().await;
+                    let ddl_scope = (!ddl_tenant.is_empty()).then(|| ddl_tenant);
+                    match ddl_service
+                        .execute_scoped(statement, ddl_scope.as_deref())
+                        .await
+                    {
                         Ok(result) => {
                             if upper.starts_with("CREATE TABLE")
                                 && let Some(table_name) = self.extract_create_table_name(query)
@@ -1474,11 +1485,14 @@ impl PostgresProtocol {
             // PATH B queries, not just the route. EXPLAIN ANALYZE additionally executes
             // the (read-only) plan and reports measured rows + elapsed. Falls back to
             // route-only disclosure when no DmlService is available.
+            // TD-064: resolve EXPLAIN's schema/plan under the connection tenant.
+            let explain_tenant = self.pgwire_resolve_read_tenant().await;
             let routing = match self.dml_service.clone() {
                 Some(dml) if is_analyze => {
                     crate::network::postgres::relational_pipeline::explain_analyze_select_with_catalog(
                         inner_query,
                         &dml,
+                        Some(explain_tenant.as_str()),
                     )
                     .await
                 }
@@ -1486,6 +1500,7 @@ impl PostgresProtocol {
                     crate::network::postgres::relational_pipeline::explain_select_route_with_catalog(
                         inner_query,
                         &dml,
+                        Some(explain_tenant.as_str()),
                     )
                     .await
                 }
@@ -1618,6 +1633,16 @@ impl PostgresProtocol {
             return catalog;
         }
         self.pgwire_resolve_tenant_id().await
+    }
+
+    /// TD-064 (write-half): resolve the tenant/catalog scope used to authorize
+    /// and route WRITE/DDL statements. Identical to the read-half resolution —
+    /// the connection's catalog (startup `database`) is the tenant boundary,
+    /// falling back to the legacy `proximadb.write.tenant_id` var for clients
+    /// that sent no database. This converges writes onto the same tenant signal
+    /// reads use, replacing the pod-gate-only use of the var.
+    async fn pgwire_resolve_write_tenant(&self) -> String {
+        self.pgwire_resolve_read_tenant().await
     }
 
     fn write_intent_overrides_from_params(
@@ -2443,6 +2468,10 @@ impl PostgresProtocol {
         // machinery). If sqlparser can't parse the query (pg-specific syntax)
         // or its WHERE has an unsupported expression, fall back to the legacy
         // string-predicate path — over-inclusive full scan, never empty.
+        // TD-064: scope the legacy relational SELECT to the connection tenant.
+        let read_tenant = self.pgwire_resolve_read_tenant().await;
+        let read_tenant_ctx = (!read_tenant.is_empty())
+            .then(|| crate::storage::tenant::context::TenantContext::for_tenant_id(&read_tenant));
         let mut result = match SqlFrontendParser::new().parse_select_where_clause(query) {
             Ok(where_clause) => {
                 dml_service
@@ -2451,6 +2480,7 @@ impl PostgresProtocol {
                         &projection_column_names,
                         scan_limit,
                         where_clause.as_ref(),
+                        read_tenant_ctx.as_ref(),
                     )
                     .await?
             }
@@ -2466,6 +2496,7 @@ impl PostgresProtocol {
                         &projection_column_names,
                         scan_limit,
                         &predicates,
+                        read_tenant_ctx.as_ref(),
                     )
                     .await?
             }
@@ -3454,7 +3485,35 @@ impl PostgresProtocol {
                     }
                 }
 
-                match dml_service.execute(statement).await {
+                // TD-064 write-half: resolve the tenant scope (catalog/database
+                // binding) and authorize the target table within it. A
+                // cross-tenant target fails closed with 42P01 (never leaking
+                // existence); the scope is then threaded into execute_scoped so
+                // the write lands in the tenant's partition.
+                let write_tenant = self.pgwire_resolve_write_tenant().await;
+                let tenant_scope = (!write_tenant.is_empty()).then(|| write_tenant.clone());
+                if let Some(ref tenant) = tenant_scope
+                    && !dml_service
+                        .table_visible_for_tenant(&table, Some(tenant.as_str()))
+                        .await
+                        .unwrap_or(false)
+                {
+                    return self
+                        .send_error(
+                            "ERROR",
+                            "42P01",
+                            &format!("relation \"{}\" does not exist", table),
+                        )
+                        .await;
+                }
+                let tenant_ctx = tenant_scope.as_ref().map(|tenant| {
+                    crate::storage::tenant::context::TenantContext::for_tenant_id(tenant)
+                });
+
+                match dml_service
+                    .execute_scoped(statement, tenant_ctx.as_ref())
+                    .await
+                {
                     Ok(result) => {
                         info!(
                             rows_affected = result.rows_affected,
@@ -3533,7 +3592,31 @@ impl PostgresProtocol {
                     }
                 }
 
-                match dml_service.execute(statement).await {
+                // TD-064 write-half: tenant scope + cross-tenant 42P01 gate (see INSERT).
+                let write_tenant = self.pgwire_resolve_write_tenant().await;
+                let tenant_scope = (!write_tenant.is_empty()).then(|| write_tenant.clone());
+                if let Some(ref tenant) = tenant_scope
+                    && !dml_service
+                        .table_visible_for_tenant(&table, Some(tenant.as_str()))
+                        .await
+                        .unwrap_or(false)
+                {
+                    return self
+                        .send_error(
+                            "ERROR",
+                            "42P01",
+                            &format!("relation \"{}\" does not exist", table),
+                        )
+                        .await;
+                }
+                let tenant_ctx = tenant_scope.as_ref().map(|tenant| {
+                    crate::storage::tenant::context::TenantContext::for_tenant_id(tenant)
+                });
+
+                match dml_service
+                    .execute_scoped(statement, tenant_ctx.as_ref())
+                    .await
+                {
                     Ok(result) => {
                         info!(
                             rows_affected = result.rows_affected,
@@ -3606,7 +3689,31 @@ impl PostgresProtocol {
                     }
                 }
 
-                match dml_service.execute(statement).await {
+                // TD-064 write-half: tenant scope + cross-tenant 42P01 gate (see INSERT).
+                let write_tenant = self.pgwire_resolve_write_tenant().await;
+                let tenant_scope = (!write_tenant.is_empty()).then(|| write_tenant.clone());
+                if let Some(ref tenant) = tenant_scope
+                    && !dml_service
+                        .table_visible_for_tenant(&table, Some(tenant.as_str()))
+                        .await
+                        .unwrap_or(false)
+                {
+                    return self
+                        .send_error(
+                            "ERROR",
+                            "42P01",
+                            &format!("relation \"{}\" does not exist", table),
+                        )
+                        .await;
+                }
+                let tenant_ctx = tenant_scope.as_ref().map(|tenant| {
+                    crate::storage::tenant::context::TenantContext::for_tenant_id(tenant)
+                });
+
+                match dml_service
+                    .execute_scoped(statement, tenant_ctx.as_ref())
+                    .await
+                {
                     Ok(result) => {
                         info!(
                             rows_affected = result.rows_affected,

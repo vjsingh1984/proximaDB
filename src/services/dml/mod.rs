@@ -550,8 +550,20 @@ impl DmlService {
         }
     }
 
-    /// Execute a DML statement
+    /// Execute a DML statement (single-tenant / unscoped).
     pub async fn execute(&self, statement: DmlStatement) -> Result<DmlResult> {
+        self.execute_scoped(statement, None).await
+    }
+
+    /// Execute a DML statement within a tenant scope (TD-064). The tenant
+    /// context selects the catalog schema row (via `resolve_table_scoped`) and
+    /// the record partition (threaded into `write_mutations` / FK / unique
+    /// checks). `None` ⇒ single-tenant, identical to the legacy path.
+    pub async fn execute_scoped(
+        &self,
+        statement: DmlStatement,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<DmlResult> {
         let start = std::time::Instant::now();
 
         let result = match statement {
@@ -559,19 +571,25 @@ impl DmlService {
                 table_name,
                 columns,
                 values,
-            } => self.execute_insert(&table_name, &columns, values).await?,
+            } => {
+                self.execute_insert(&table_name, &columns, values, tenant_context)
+                    .await?
+            }
             DmlStatement::Update {
                 table_name,
                 assignments,
                 where_clause,
             } => {
-                self.execute_update(&table_name, assignments, where_clause)
+                self.execute_update(&table_name, assignments, where_clause, tenant_context)
                     .await?
             }
             DmlStatement::Delete {
                 table_name,
                 where_clause,
-            } => self.execute_delete(&table_name, where_clause).await?,
+            } => {
+                self.execute_delete(&table_name, where_clause, tenant_context)
+                    .await?
+            }
             DmlStatement::Upsert {
                 table_name,
                 columns,
@@ -585,6 +603,7 @@ impl DmlService {
                     values,
                     &conflict_columns,
                     update_assignments,
+                    tenant_context,
                 )
                 .await?
             }
@@ -595,6 +614,22 @@ impl DmlService {
         };
 
         Ok(result.with_execution_time(start.elapsed().as_micros() as u64))
+    }
+
+    /// TD-064 write-authz gate: does `table_name` resolve to an existing table
+    /// within the tenant scope? pgwire uses this pre-execute to deny cross-tenant
+    /// writes with `42P01` (relation does not exist) — never leaking existence of
+    /// another tenant's table.
+    pub async fn table_visible_for_tenant(
+        &self,
+        table_name: &str,
+        tenant: Option<&str>,
+    ) -> Result<bool> {
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
+        Ok(catalog.table_exists(&table_id).await?)
     }
 
     /// Scan current visible records for a cataloged table through the shared
@@ -628,8 +663,11 @@ impl DmlService {
         projection_column_names: &[String],
         limit: Option<usize>,
         predicates: &[RelationalSelectPredicateInput],
+        tenant_context: Option<&TenantContext>,
     ) -> Result<RelationalSelectResult> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
         let selected_columns =
             Self::resolve_select_projection(&table_schema, projection_column_names)?;
         let predicates = Self::resolve_select_predicates(&table_schema, predicates)?;
@@ -639,6 +677,7 @@ impl DmlService {
                 &table_id_name,
                 limit,
                 &predicates,
+                tenant_context,
             )
             .await?;
         let rows = Self::project_select_rows(&records, &table_schema, &selected_columns)?;
@@ -674,8 +713,11 @@ impl DmlService {
         projection_column_names: &[String],
         limit: Option<usize>,
         where_clause: Option<&WhereClause>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<RelationalSelectResult> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
         let selected_columns =
             Self::resolve_select_projection(&table_schema, projection_column_names)?;
 
@@ -690,6 +732,7 @@ impl DmlService {
                         limit,
                         where_clause,
                         &tree,
+                        tenant_context,
                     )
                     .await?;
                 (access_path, records, predicate_count)
@@ -707,7 +750,7 @@ impl DmlService {
                             include_props: true,
                         },
                         None,
-                        None,
+                        tenant_context,
                     )
                     .await?;
                 (RelationalSelectAccessPath::TableScan, records, 0)
@@ -733,8 +776,12 @@ impl DmlService {
     /// Resolve a catalog table's schema for the relational pipeline (PATH B).
     /// Used by the pipeline's schema-only prefetch (the sync `CatalogLookup`
     /// can't await xCatalog), so the actual rows can be fetched lazily per scan.
-    pub async fn resolve_relational_schema(&self, table_name: &str) -> Result<CatalogTableSchema> {
-        let (table_schema, _table_id_name) = self.resolve_select_table(table_name).await?;
+    pub async fn resolve_relational_schema(
+        &self,
+        table_name: &str,
+        tenant: Option<&str>,
+    ) -> Result<CatalogTableSchema> {
+        let (table_schema, _table_id_name) = self.resolve_select_table(table_name, tenant).await?;
         Ok(table_schema)
     }
 
@@ -754,8 +801,11 @@ impl DmlService {
         output_columns: Option<&[String]>,
         full_row_predicate: Option<&(dyn Fn(&[ProximaValue]) -> bool + Send + Sync)>,
         limit: Option<usize>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<(CatalogTableSchema, Vec<Vec<ProximaValue>>)> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
         // Full column set — predicates are evaluated against a complete row.
         let all_columns: Vec<String> = table_schema
             .columns
@@ -791,7 +841,7 @@ impl DmlService {
                     include_props: true,
                 },
                 predicate,
-                None,
+                tenant_context,
             )
             .await?;
 
@@ -828,7 +878,7 @@ impl DmlService {
     ) -> Result<String> {
         // 1. Snapshot the table's current rows (all columns, no predicate/limit).
         let (schema, rows) = self
-            .scan_table_relational(table_name, None, None, None)
+            .scan_table_relational(table_name, None, None, None, tenant_context)
             .await?;
 
         // 2. Column-order ProximaValue rows → ProximaRecord envelopes (props keyed by
@@ -908,8 +958,11 @@ impl DmlService {
         &self,
         table_name: &str,
         key: &str,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<Option<Vec<ProximaValue>>> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
         let all_columns: Vec<String> = table_schema
             .columns
             .iter()
@@ -926,7 +979,7 @@ impl DmlService {
                     include_vector: true,
                     include_props: true,
                 },
-                None,
+                tenant_context,
             )
             .await?;
         match record {
@@ -949,6 +1002,7 @@ impl DmlService {
         limit: Option<usize>,
         where_clause: &WhereClause,
         tree: &RelationalPredicateTree,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<(RelationalSelectAccessPath, Vec<ProximaRecord>)> {
         let primary_key = table_schema.primary_key.first().map(String::as_str);
 
@@ -973,7 +1027,7 @@ impl DmlService {
                             include_vector: true,
                             include_props: true,
                         },
-                        None,
+                        tenant_context,
                     )
                     .await?
                 else {
@@ -1001,7 +1055,7 @@ impl DmlService {
                     include_props: true,
                 },
                 predicate,
-                None,
+                tenant_context,
             )
             .await?;
         Ok((RelationalSelectAccessPath::TableScan, records))
@@ -1019,7 +1073,9 @@ impl DmlService {
         limit: Option<usize>,
         predicates: &[RelationalSelectPredicateInput],
     ) -> Result<(CatalogTableSchema, Vec<ProximaRecord>)> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        // Not on the pgwire tenant read path (pgwire SELECT uses the
+        // `_with_projection*` methods); resolve unscoped.
+        let (table_schema, table_id_name) = self.resolve_select_table(table_name, None).await?;
         let predicates = Self::resolve_select_predicates(&table_schema, predicates)?;
         let (_, records) = self
             .select_table_records_with_resolved_predicates(
@@ -1027,13 +1083,21 @@ impl DmlService {
                 &table_id_name,
                 limit,
                 &predicates,
+                None,
             )
             .await?;
         Ok((table_schema, records))
     }
 
-    async fn resolve_select_table(&self, table_name: &str) -> Result<(CatalogTableSchema, String)> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+    async fn resolve_select_table(
+        &self,
+        table_name: &str,
+        tenant: Option<&str>,
+    ) -> Result<(CatalogTableSchema, String)> {
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
 
         if !catalog.table_exists(&table_id).await? {
             return Err(anyhow!("Table '{table_name}' does not exist"));
@@ -1048,6 +1112,7 @@ impl DmlService {
         table_id_name: &str,
         limit: Option<usize>,
         predicates: &[RelationalSelectPredicate],
+        tenant_context: Option<&TenantContext>,
     ) -> Result<(RelationalSelectAccessPath, Vec<ProximaRecord>)> {
         if let Some(primary_key_value) = Self::primary_key_lookup_value(table_schema, predicates) {
             let record = self
@@ -1060,7 +1125,7 @@ impl DmlService {
                         include_vector: true,
                         include_props: true,
                     },
-                    None,
+                    tenant_context,
                 )
                 .await?;
             let primary_key = table_schema.primary_key.first().map(String::as_str);
@@ -1101,7 +1166,7 @@ impl DmlService {
                     include_props: true,
                 },
                 predicate,
-                None,
+                tenant_context,
             )
             .await?;
 
@@ -1866,8 +1931,12 @@ impl DmlService {
         table_name: &str,
         columns: &[String],
         values: Vec<Vec<SqlValueLiteral>>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
@@ -1962,7 +2031,7 @@ impl DmlService {
                     primary_key.as_deref(),
                     &candidate_sets,
                     &std::collections::HashSet::new(),
-                    None,
+                    tenant_context,
                 )
                 .await?
         {
@@ -1975,7 +2044,8 @@ impl DmlService {
         }
 
         // TD-110: enforce FOREIGN KEY references (same-partition cross-table).
-        self.enforce_foreign_keys(&table_schema, &records).await?;
+        self.enforce_foreign_keys(&table_schema, &records, tenant_context)
+            .await?;
 
         // Compute per-column min/max and NDV from the canonical record props before moving records
         // into mutations. Only orderable types (String, integers) tracked for min/max; floats and
@@ -1992,7 +2062,7 @@ impl DmlService {
             .collect::<Vec<_>>();
         let batch_result = self
             .record_store
-            .write_mutations(&table_schema, mutations, None)
+            .write_mutations(&table_schema, mutations, tenant_context)
             .await?;
         if !batch_result.success {
             return Err(anyhow!(
@@ -2033,8 +2103,12 @@ impl DmlService {
         table_name: &str,
         assignments: Vec<(String, SqlValueLiteral)>,
         where_clause: Option<WhereClause>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
@@ -2043,7 +2117,7 @@ impl DmlService {
 
         let table_schema = catalog.get_table(&table_id).await?;
         let ids_to_update = if let Some(ref wc) = where_clause {
-            self.resolve_matching_ids(&table_schema, &table_id.name, wc)
+            self.resolve_matching_ids(&table_schema, &table_id.name, wc, tenant_context)
                 .await?
         } else {
             return Err(anyhow!("UPDATE without WHERE clause is not allowed"));
@@ -2072,7 +2146,7 @@ impl DmlService {
                         include_vector: true,
                         include_props: true,
                     },
-                    None,
+                    tenant_context,
                 )
                 .await?
             else {
@@ -2113,7 +2187,7 @@ impl DmlService {
                     primary_key.as_deref(),
                     &candidate_sets,
                     &exclude_oids,
-                    None,
+                    tenant_context,
                 )
                 .await?
             {
@@ -2127,7 +2201,8 @@ impl DmlService {
         }
 
         // TD-110: an UPDATE may change a FOREIGN KEY column — re-verify references.
-        self.enforce_foreign_keys(&table_schema, &records).await?;
+        self.enforce_foreign_keys(&table_schema, &records, tenant_context)
+            .await?;
 
         let updated_count = records.len();
         let mutations = records
@@ -2136,7 +2211,7 @@ impl DmlService {
             .collect::<Vec<_>>();
         let batch_result = self
             .record_store
-            .write_mutations(&table_schema, mutations, None)
+            .write_mutations(&table_schema, mutations, tenant_context)
             .await?;
         if !batch_result.success {
             return Err(anyhow!(
@@ -2170,8 +2245,12 @@ impl DmlService {
         &self,
         table_name: &str,
         where_clause: Option<WhereClause>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
@@ -2182,7 +2261,7 @@ impl DmlService {
 
         // Get IDs to delete based on WHERE clause
         let ids_to_delete = if let Some(ref wc) = where_clause {
-            self.resolve_matching_ids(&table_schema, &table_id.name, wc)
+            self.resolve_matching_ids(&table_schema, &table_id.name, wc, tenant_context)
                 .await?
         } else {
             return Err(anyhow!(
@@ -2212,7 +2291,7 @@ impl DmlService {
             .collect::<Vec<_>>();
         let batch_result = self
             .record_store
-            .write_mutations(&table_schema, mutations, None)
+            .write_mutations(&table_schema, mutations, tenant_context)
             .await?;
         if !batch_result.success {
             return Err(anyhow!(
@@ -2248,8 +2327,12 @@ impl DmlService {
         values: Vec<Vec<SqlValueLiteral>>,
         _conflict_columns: &[String],
         _update_assignments: Vec<(String, SqlValueLiteral)>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
@@ -2286,7 +2369,7 @@ impl DmlService {
             .collect::<Vec<_>>();
         let batch_result = self
             .record_store
-            .write_mutations(&table_schema, mutations, None)
+            .write_mutations(&table_schema, mutations, tenant_context)
             .await?;
         if !batch_result.success {
             return Err(anyhow!(
@@ -3034,6 +3117,7 @@ impl DmlService {
         &self,
         table_schema: &CatalogTableSchema,
         records: &[ProximaRecord],
+        tenant_context: Option<&TenantContext>,
     ) -> Result<()> {
         let child_primary_key = Self::primary_key_column(table_schema);
         for constraint in &table_schema.relational_capabilities.constraints {
@@ -3058,7 +3142,7 @@ impl DmlService {
 
             let (parent_catalog, parent_table_id) = self
                 .catalog_manager
-                .resolve_table(references_table)
+                .resolve_table_scoped(references_table, tenant_context.map(|t| t.tenant_id.as_str()))
                 .await
                 .map_err(|err| {
                     anyhow!(
@@ -3102,7 +3186,7 @@ impl DmlService {
                             include_vector: false,
                             include_props: false,
                         },
-                        None,
+                        tenant_context,
                     )
                     .await?
                     .is_some();
@@ -3128,6 +3212,7 @@ impl DmlService {
         table_schema: &CatalogTableSchema,
         table_id_name: &str,
         where_clause: &WhereClause,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<Vec<String>> {
         let tree = self.where_clause_to_predicate_tree(where_clause, table_schema)?;
         let primary_key = table_schema.primary_key.first().map(String::as_str);
@@ -3149,7 +3234,7 @@ impl DmlService {
                             include_vector: true,
                             include_props: true,
                         },
-                        None,
+                        tenant_context,
                     )
                     .await?
                 else {
@@ -3177,7 +3262,7 @@ impl DmlService {
                     include_props: true,
                 },
                 predicate,
-                None,
+                tenant_context,
             )
             .await?;
         Ok(records.into_iter().map(|record| record.oid).collect())
@@ -4745,6 +4830,7 @@ mod tests {
                 &["id".to_string(), "email".to_string(), "age".to_string()],
                 None,
                 &[],
+                None,
             )
             .await
             .expect("select users");
@@ -5318,6 +5404,7 @@ mod tests {
                         literal: "i1".to_string(),
                     },
                 }],
+                None,
             )
             .await
             .expect("select after update");
@@ -5343,7 +5430,7 @@ mod tests {
 
         // Verify i2 is no longer returned by a full scan.
         let after_delete = dml
-            .select_table_records_with_projection("items", &["id".to_string()], None, &[])
+            .select_table_records_with_projection("items", &["id".to_string()], None, &[], None)
             .await
             .expect("select after delete");
         let ids: Vec<&ProximaValue> = after_delete.rows.iter().map(|r| &r[0]).collect();
@@ -5422,6 +5509,7 @@ mod tests {
                             literal: id.to_string(),
                         },
                     }],
+                    None,
                 )
                 .await
                 .expect("select");
@@ -5598,6 +5686,7 @@ mod tests {
                     &["id".to_string()],
                     limit,
                     where_clause.as_ref(),
+                    None,
                 )
                 .await
                 .expect("select");
@@ -5784,7 +5873,7 @@ mod tests {
 
         // (a) No predicate / no projection → all rows, full column order [id,status,qty].
         let (schema, rows) = dml
-            .scan_table_relational("inv", None, None, None)
+            .scan_table_relational("inv", None, None, None, None)
             .await
             .expect("scan all");
         assert_eq!(schema.columns.len(), 3);
@@ -5795,7 +5884,7 @@ mod tests {
         let pred =
             |row: &[ProximaValue]| matches!(&row[1], ProximaValue::String(s) if s == "active");
         let (_s, rows) = dml
-            .scan_table_relational("inv", None, Some(&pred), None)
+            .scan_table_relational("inv", None, Some(&pred), None, None)
             .await
             .expect("scan predicate");
         let mut ids: Vec<String> = rows
@@ -5811,7 +5900,7 @@ mod tests {
         // (c) Output projection narrows + orders columns → just [status].
         let cols = vec!["status".to_string()];
         let (_s, rows) = dml
-            .scan_table_relational("inv", Some(&cols), None, None)
+            .scan_table_relational("inv", Some(&cols), None, None, None)
             .await
             .expect("scan projection");
         assert_eq!(rows.len(), 4);
@@ -5819,7 +5908,7 @@ mod tests {
 
         // (d) Limit caps the result.
         let (_s, rows) = dml
-            .scan_table_relational("inv", None, None, Some(2))
+            .scan_table_relational("inv", None, None, Some(2), None)
             .await
             .expect("scan limit");
         assert_eq!(rows.len(), 2, "limit caps the scan");
@@ -6141,7 +6230,7 @@ mod tests {
 
         // Existing key → full row [id, status, qty] in schema order.
         let row = dml
-            .point_lookup_relational("inv", "i2")
+            .point_lookup_relational("inv", "i2", None)
             .await
             .expect("lookup")
             .expect("row present");
@@ -6152,7 +6241,7 @@ mod tests {
 
         // Missing key → None.
         let missing = dml
-            .point_lookup_relational("inv", "nope")
+            .point_lookup_relational("inv", "nope", None)
             .await
             .expect("lookup");
         assert!(missing.is_none(), "absent key returns None");
@@ -6226,6 +6315,7 @@ mod tests {
                             literal: id.to_string(),
                         },
                     }],
+                    None,
                 )
                 .await
                 .expect("select");
@@ -6590,6 +6680,7 @@ mod tests {
                 &["id".to_string(), "tag".to_string(), "rating".to_string()],
                 None,
                 &[],
+                None,
             )
             .await
             .expect("select");
