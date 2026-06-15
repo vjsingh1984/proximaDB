@@ -175,10 +175,10 @@ impl FloydWarshallAPSP {
         {
             if is_x86_feature_detected!("avx2") {
                 // SAFETY: We've checked for AVX2 support at runtime
-                return unsafe { self.floyd_warshall_avx2(dist) };
+                unsafe { self.floyd_warshall_avx2(dist) }
             } else {
                 // Fallback to scalar when AVX2 is not available
-                return self.floyd_warshall_scalar(dist);
+                self.floyd_warshall_scalar(dist)
             }
         }
 
@@ -201,7 +201,7 @@ impl FloydWarshallAPSP {
     /// Processes 4 f64 distances per instruction using 256-bit AVX2 vectors
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
-    unsafe fn floyd_warshall_avx2(&self, dist: &mut Vec<Vec<f64>>) -> Result<(), ProximaDBError> {
+    unsafe fn floyd_warshall_avx2(&self, dist: &mut [Vec<f64>]) -> Result<(), ProximaDBError> {
         #[cfg(target_arch = "x86")]
         use std::arch::x86::*;
         #[cfg(target_arch = "x86_64")]

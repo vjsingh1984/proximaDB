@@ -1527,9 +1527,9 @@ impl UnifiedDistanceCompute {
         #[cfg(target_arch = "x86_64")]
         {
             match self.platform_capability {
-                PlatformCapability::X86Avx512 => return 128, // AVX-512: Process more vectors for better cache use
-                PlatformCapability::X86Avx2 => return 64, // AVX2: Good balance of cache and register use
-                _ => return 32,                           // SSE2: Smaller batches
+                PlatformCapability::X86Avx512 => 128, // AVX-512: Process more vectors for better cache use
+                PlatformCapability::X86Avx2 => 64, // AVX2: Good balance of cache and register use
+                _ => 32,                           // SSE2: Smaller batches
             }
         }
 

@@ -563,7 +563,7 @@ fn decode_variable_bits_i64(input: &[u8], bits: u8, output: &mut [i64]) -> Resul
         let bit_in_byte = bit_offset % 8;
 
         // Read enough bytes
-        let bytes_needed = ((bit_in_byte + bits_usize) + 7) / 8;
+        let bytes_needed = (bit_in_byte + bits_usize).div_ceil(8);
         if byte_offset + bytes_needed > input.len() {
             break;
         }
@@ -604,7 +604,7 @@ fn decode_variable_bits_i32(input: &[u8], bits: u8, output: &mut [i32]) -> Resul
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
 
-        let bytes_needed = ((bit_in_byte + bits_usize) + 7) / 8;
+        let bytes_needed = (bit_in_byte + bits_usize).div_ceil(8);
         if byte_offset + bytes_needed > input.len() {
             break;
         }
@@ -663,10 +663,10 @@ unsafe fn prefix_sum_i64_avx2(output: &mut [i64], base: i64) {
 
     // For prefix sum, we need sequential dependency
     // AVX2 can help with parallel partial sums, but final accumulation is sequential
-    output[0] = base + output[0];
+    output[0] += base;
 
     for i in 1..output.len() {
-        output[i] = output[i - 1] + output[i];
+        output[i] += output[i - 1];
     }
 }
 

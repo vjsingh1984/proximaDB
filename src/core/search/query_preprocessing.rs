@@ -296,7 +296,7 @@ impl QueryPreprocessor {
             let mut result = vec![0.0f32; len];
 
             // Compute magnitude squared using AVX2
-            let mut mag_sq = 0.0f32;
+            let mut mag_sq;
             let chunks = len / 8;
             let _remainder = len % 8;
 
@@ -364,7 +364,7 @@ impl QueryPreprocessor {
             let mut result = vec![0.0f32; len];
 
             // Compute magnitude squared using SSE
-            let mut mag_sq = 0.0f32;
+            let mut mag_sq;
             let chunks = len / 4;
             let _remainder = len % 4;
 
@@ -437,6 +437,7 @@ impl QueryPreprocessor {
 
     /// Stub for NEON when not on aarch64
     #[cfg(not(target_arch = "aarch64"))]
+    #[allow(dead_code)] // cfg-completeness stub; the aarch64 build provides the real impl
     fn normalize_neon(&self, _vector: &[f32]) -> Vec<f32> {
         // This should never be called on non-ARM platforms
         unreachable!("normalize_neon called on non-ARM platform")

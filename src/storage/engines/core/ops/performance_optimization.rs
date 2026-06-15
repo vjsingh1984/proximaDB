@@ -66,13 +66,13 @@ fn calculate_smart_pool_size() -> usize {
             // Parse MemAvailable or MemTotal from /proc/meminfo
             for line in meminfo.lines() {
                 if line.starts_with("MemAvailable:") || line.starts_with("MemTotal:") {
-                    if let Some(kb_str) = line.split_whitespace().nth(1) {
-                        if let Ok(kb) = kb_str.parse::<usize>() {
+                    if let Some(kb_str) = line.split_whitespace().nth(1)
+                        && let Ok(kb) = kb_str.parse::<usize>() {
                             let mb = kb / 1024;
                             // Use 10-15% of available memory for the pool
                             let pool_size = (mb as f64 * 0.12) as usize;
                             // Cap between 512MB and 8GB
-                            let capped_size = pool_size.max(512).min(8192);
+                            let capped_size = pool_size.clamp(512, 8192);
                             tracing::info!(
                                 "Smart memory pool sizing: System memory {}MB, pool size {}MB (12% of available)",
                                 mb,
@@ -80,7 +80,6 @@ fn calculate_smart_pool_size() -> usize {
                             );
                             return capped_size;
                         }
-                    }
                     break;
                 }
             }

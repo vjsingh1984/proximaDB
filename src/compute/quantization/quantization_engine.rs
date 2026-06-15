@@ -1744,6 +1744,7 @@ impl UnifiedQuantizationEngine {
     }
 
     /// Generic Hamming distance calculation
+    #[allow(dead_code)] // scalar fallback retained for non-SIMD paths / tests
     fn calculate_hamming_generic(&self, a: &[u8], b: &[u8]) -> u32 {
         a.iter()
             .zip(b.iter())

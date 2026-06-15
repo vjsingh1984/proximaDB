@@ -820,6 +820,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "x86_64")]
+    #[allow(dead_code)] // x86_64 cache-size probe; retained for the detection path / tests
     fn detect_x86_cache_sizes() -> CacheSizes {
         use raw_cpuid::CpuId;
         let cpuid = CpuId::new();
@@ -837,24 +838,20 @@ impl HardwareCapabilities {
                     1 => {
                         let cache_type = cache.cache_type();
                         if cache_type == raw_cpuid::CacheType::Data {
-                            l1_data = (cache.sets()
+                            l1_data = cache.sets()
                                 * cache.associativity()
-                                * cache.coherency_line_size())
-                                as usize;
+                                * cache.coherency_line_size();
                         } else if cache_type == raw_cpuid::CacheType::Instruction {
-                            l1_instruction = (cache.sets()
+                            l1_instruction = cache.sets()
                                 * cache.associativity()
-                                * cache.coherency_line_size())
-                                as usize;
+                                * cache.coherency_line_size();
                         }
                     }
                     2 => {
-                        l2 = (cache.sets() * cache.associativity() * cache.coherency_line_size())
-                            as usize
+                        l2 = cache.sets() * cache.associativity() * cache.coherency_line_size()
                     }
                     3 => {
-                        l3 = (cache.sets() * cache.associativity() * cache.coherency_line_size())
-                            as usize
+                        l3 = cache.sets() * cache.associativity() * cache.coherency_line_size()
                     }
                     _ => {}
                 }
@@ -944,32 +941,28 @@ impl HardwareCapabilities {
         let base_path = "/sys/devices/system/cpu/cpu0/cache";
 
         // L1 data cache (index0)
-        if let Ok(size_str) = fs::read_to_string(format!("{}/index0/size", base_path)) {
-            if let Some(size) = Self::parse_linux_cache_size(&size_str) {
+        if let Ok(size_str) = fs::read_to_string(format!("{}/index0/size", base_path))
+            && let Some(size) = Self::parse_linux_cache_size(&size_str) {
                 cache_sizes.l1_data = size;
             }
-        }
 
         // L1 instruction cache (index1)
-        if let Ok(size_str) = fs::read_to_string(format!("{}/index1/size", base_path)) {
-            if let Some(size) = Self::parse_linux_cache_size(&size_str) {
+        if let Ok(size_str) = fs::read_to_string(format!("{}/index1/size", base_path))
+            && let Some(size) = Self::parse_linux_cache_size(&size_str) {
                 cache_sizes.l1_instruction = size;
             }
-        }
 
         // L2 cache (index2)
-        if let Ok(size_str) = fs::read_to_string(format!("{}/index2/size", base_path)) {
-            if let Some(size) = Self::parse_linux_cache_size(&size_str) {
+        if let Ok(size_str) = fs::read_to_string(format!("{}/index2/size", base_path))
+            && let Some(size) = Self::parse_linux_cache_size(&size_str) {
                 cache_sizes.l2 = size;
             }
-        }
 
         // L3 cache (index3)
-        if let Ok(size_str) = fs::read_to_string(format!("{}/index3/size", base_path)) {
-            if let Some(size) = Self::parse_linux_cache_size(&size_str) {
+        if let Ok(size_str) = fs::read_to_string(format!("{}/index3/size", base_path))
+            && let Some(size) = Self::parse_linux_cache_size(&size_str) {
                 cache_sizes.l3 = size;
             }
-        }
 
         tracing::info!(
             "Detected Linux cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB",
@@ -985,16 +978,10 @@ impl HardwareCapabilities {
     #[cfg(target_os = "linux")]
     fn parse_linux_cache_size(size_str: &str) -> Option<usize> {
         let trimmed = size_str.trim();
-        if trimmed.ends_with('K') {
-            trimmed[..trimmed.len() - 1]
-                .parse::<usize>()
-                .ok()
-                .map(|n| n * 1024)
-        } else if trimmed.ends_with('M') {
-            trimmed[..trimmed.len() - 1]
-                .parse::<usize>()
-                .ok()
-                .map(|n| n * 1024 * 1024)
+        if let Some(s) = trimmed.strip_suffix('K') {
+            s.parse::<usize>().ok().map(|n| n * 1024)
+        } else if let Some(s) = trimmed.strip_suffix('M') {
+            s.parse::<usize>().ok().map(|n| n * 1024 * 1024)
         } else {
             trimmed.parse::<usize>().ok()
         }

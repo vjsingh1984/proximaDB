@@ -318,11 +318,10 @@ impl AdvancedSearchOptimizer {
                 for line in contents.lines() {
                     if line.starts_with("MemTotal:") {
                         let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 {
-                            if let Ok(kb) = parts[1].parse::<u64>() {
+                        if parts.len() >= 2
+                            && let Ok(kb) = parts[1].parse::<u64>() {
                                 return (kb as f64 / 1024.0 / 1024.0) as f32; // Convert KB to GB
                             }
-                        }
                     }
                 }
             }
