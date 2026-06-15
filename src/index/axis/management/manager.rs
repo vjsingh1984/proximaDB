@@ -1824,6 +1824,14 @@ impl AxisManager {
         // (default 2×) when a policy is present; Inline keeps the 2× default
         // regardless. Either way we apply max(top_k) so we never request
         // FEWER candidates than the caller asked for.
+        //
+        // NB (1.3 investigation, 2026-06-14): oversample *escalation* on shortfall
+        // was evaluated and rejected — `search_layer_predicate` pushes ALL
+        // neighbours onto an unbounded frontier and only early-terminates once it
+        // has `ef` PASSING results, so when matches are sparse it already drains
+        // the full reachable graph regardless of `oversample_k`. A larger pool
+        // therefore cannot recover more matches; the real lever for filtered
+        // recall is graph connectivity (ACORN `gamma`), not oversampling.
         let oversample_k = match (effective_mode, query.ann_filtering_policy.as_ref()) {
             (AnnFilteringMode::PostFilter, Some(policy)) => {
                 policy.effective_top_k_for_post_filter(query.top_k)
@@ -5110,6 +5118,124 @@ mod recluster_apply_tests {
                 rec(&format!("{prefix}{i}"), x)
             })
             .collect()
+    }
+
+    /// `rec` plus a single filterable `grp` property for predicate-aware tests.
+    fn rec_grp(id: &str, v: Vec<f32>, grp: &str) -> ProximaRecord {
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::ProximaTreeNode;
+        let mut r = rec(id, v);
+        r.props.insert(
+            "grp".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String(grp.to_string())),
+        );
+        r
+    }
+
+    /// TD-064 / 1.3 characterization: a selective metadata filter whose matches
+    /// rank BEYOND the base 2× oversample window is still fully recovered by the
+    /// predicate-aware HNSW walk — WITHOUT any oversample escalation. This is the
+    /// evidence that escalation is unnecessary here: `search_layer_predicate`
+    /// pushes every neighbour onto an unbounded frontier and only early-terminates
+    /// once it holds `ef` PASSING results, so when matches are sparse it drains
+    /// the whole reachable graph regardless of `oversample_k`. Guards against a
+    /// future regression that would re-introduce premature termination.
+    #[tokio::test]
+    async fn predicate_aware_search_recovers_sparse_matches_without_oversampling() {
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
+        use std::collections::HashMap;
+
+        let dim = 8;
+        let top_k = 5usize;
+        let n = 40usize;
+        // Matching records sit at ranks 12..36 — all well beyond the base
+        // oversample window (2×top_k = 10) — but reachable along a connected
+        // manifold (a line), so this exercises window/ef breadth, NOT graph
+        // disconnection.
+        let target_ranks = [12usize, 18, 24, 30, 36];
+
+        let q = vec![0.0f32; dim]; // query at the origin (rank 0 is nearest)
+
+        // (id, vector, grp): points spread along axis 0 at increasing distance,
+        // so consecutive ranks are neighbours → a connected HNSW graph.
+        let specs: Vec<(String, Vec<f32>, &str)> = (0..n)
+            .map(|i| {
+                let mut v = vec![0.0f32; dim];
+                v[0] = 0.5 * i as f32;
+                let grp = if target_ranks.contains(&i) {
+                    "target"
+                } else {
+                    "other"
+                };
+                (format!("v{i:02}"), v, grp)
+            })
+            .collect();
+
+        // Tiny search `ef`: `ef = config.ef.max(k)` so the base pool is 10.
+        let config = AxisHnswConfig {
+            ef: 4,
+            distance_metric: DistanceMetric::Euclidean,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(config, dim).unwrap();
+        for (id, v, _) in &specs {
+            index.add(id.clone(), v.clone()).await.unwrap();
+        }
+
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        manager
+            .hnsw_indexes
+            .write()
+            .await
+            .insert("col".to_string(), std::sync::Arc::new(index));
+        let by_id: HashMap<String, ProximaRecord> = specs
+            .iter()
+            .map(|(id, v, grp)| (id.clone(), rec_grp(id, v.clone(), grp)))
+            .collect();
+        manager
+            .collection_vectors
+            .write()
+            .await
+            .insert("col".to_string(), by_id);
+
+        let query = AxisHybridQuery {
+            collection_id: "col".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: q.clone(),
+                similarity_threshold: 0.0,
+            }),
+            metadata_filters: vec![AxisMetadataFilter {
+                field: "grp".to_string(),
+                operator: FilterOperator::Equals,
+                value: serde_json::json!("target"),
+            }],
+            id_filters: vec![],
+            top_k,
+            include_expired: false,
+            ann_filtering_mode: AnnFilteringMode::Inline,
+            ann_filtering_policy: None,
+            estimated_selectivity: None,
+        };
+
+        let (results, _shortfall) = manager
+            .query_hnsw_with_predicate("col", &query, AnnFilteringMode::Inline)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            results.len(),
+            top_k,
+            "predicate-aware search must recover all {top_k} reachable matches \
+             (ranks {target_ranks:?}) despite the base 2× window, got {}",
+            results.len()
+        );
+        assert!(
+            results.iter().all(|r| r.vector_id.starts_with('v')
+                && target_ranks.contains(&r.vector_id[1..].parse::<usize>().unwrap_or(usize::MAX))),
+            "only matching records may be returned: {:?}",
+            results.iter().map(|r| &r.vector_id).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]
