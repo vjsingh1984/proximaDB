@@ -4262,11 +4262,10 @@ impl AxisManager {
     }
 
     fn record_filter_metadata(&self, record: &ProximaRecord) -> HashMap<String, Value> {
-        let mut metadata: HashMap<String, Value> = record
-            .props
-            .iter()
-            .map(|(key, value)| (key.clone(), Self::tree_node_to_json(value)))
-            .collect();
+        // Reuse the canonical ProximaTree→json-map converter (single source) and
+        // add the synthetic identity fields the filter grammar may reference.
+        let mut metadata =
+            crate::core::search::sql_value_filter::proxima_tree_to_json_map(&record.props);
         metadata.insert("id".to_string(), Value::String(record.oid.clone()));
         metadata.insert("oid".to_string(), Value::String(record.oid.clone()));
         metadata.insert(
@@ -4282,68 +4281,6 @@ impl AxisManager {
             .iter()
             .find(|embedding| !embedding.values.is_empty())
             .map(|embedding| embedding.as_fp32_slice())
-    }
-
-    fn tree_node_to_json(node: &ProximaTreeNode) -> Value {
-        match node {
-            ProximaTreeNode::Value(value) => Self::proxima_value_to_json(value),
-            ProximaTreeNode::Object(tree) => Value::Object(
-                tree.iter()
-                    .map(|(key, value)| (key.clone(), Self::tree_node_to_json(value)))
-                    .collect(),
-            ),
-        }
-    }
-
-    fn proxima_value_to_json(value: &ProximaValue) -> Value {
-        match value {
-            ProximaValue::Boolean(value) => Value::Bool(*value),
-            ProximaValue::Int8(value) => Value::from(*value),
-            ProximaValue::Int16(value) => Value::from(*value),
-            ProximaValue::Int32(value) => Value::from(*value),
-            ProximaValue::Int64(value) => Value::from(*value),
-            ProximaValue::UInt8(value) => Value::from(*value),
-            ProximaValue::UInt16(value) => Value::from(*value),
-            ProximaValue::UInt32(value) => Value::from(*value),
-            ProximaValue::UInt64(value) => Value::from(*value),
-            ProximaValue::Float16(value) => Value::from(*value as f64),
-            ProximaValue::Float32(value) => Value::from(*value as f64),
-            ProximaValue::Float64(value) => Value::from(*value),
-            ProximaValue::Decimal(value)
-            | ProximaValue::String(value)
-            | ProximaValue::Symbol(value) => Value::String(value.clone()),
-            ProximaValue::Binary(value) | ProximaValue::BinaryVector(value) => {
-                Value::Array(value.iter().map(|byte| Value::from(*byte)).collect())
-            }
-            ProximaValue::Date(value) => Value::from(*value),
-            ProximaValue::Time(value, _)
-            | ProximaValue::Timestamp(value, _)
-            | ProximaValue::TimestampTz(value, _) => Value::from(*value),
-            ProximaValue::Uuid(value) | ProximaValue::ULID(value) => {
-                Value::Array(value.iter().map(|byte| Value::from(*byte)).collect())
-            }
-            ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
-            ProximaValue::Array(values) => {
-                Value::Array(values.iter().map(Self::proxima_value_to_json).collect())
-            }
-            ProximaValue::Map(values) | ProximaValue::Struct(values) => Value::Object(
-                values
-                    .iter()
-                    .map(|(key, value)| (key.clone(), Self::proxima_value_to_json(value)))
-                    .collect(),
-            ),
-            ProximaValue::DenseVector(values) => Value::Array(
-                values
-                    .iter()
-                    .map(|value| Value::from(*value as f64))
-                    .collect(),
-            ),
-            ProximaValue::SparseVector { indices, values } => serde_json::json!({
-                "indices": indices,
-                "values": values,
-            }),
-            ProximaValue::Null => Value::Null,
-        }
     }
 
     fn datetime_from_timestamp_ns(timestamp_ns: i64) -> Option<DateTime<Utc>> {

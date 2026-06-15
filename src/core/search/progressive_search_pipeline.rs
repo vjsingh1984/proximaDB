@@ -675,15 +675,11 @@ impl UnifiedProgressiveSearchPipeline {
         records: Vec<Arc<ProximaRecord>>,
         filter: &FilterExpression,
     ) -> Vec<Arc<ProximaRecord>> {
-        use crate::core::search::json_comparison::evaluate_filter;
-        use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
+        use crate::core::search::sql_value_filter::evaluate_filter_proxima;
 
         records
             .into_iter()
-            .filter(|record| {
-                let metadata = proxima_tree_to_json_map(&record.props);
-                evaluate_filter(filter, &metadata)
-            })
+            .filter(|record| evaluate_filter_proxima(filter, &record.props))
             .collect()
     }
 
