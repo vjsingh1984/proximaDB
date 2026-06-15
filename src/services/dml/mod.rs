@@ -32,7 +32,6 @@ use crate::query::table_write_plan::{
     LogicalTableRef, ReadSource, RoutedExecutionPlan, TableWriteRouteExplanation,
     WriteIntentOverrides, WriteMode,
 };
-use crate::storage::tenant::context::TenantContext;
 use crate::services::operations::VectorOps;
 use crate::services::operations::vectors::RichSearchResult;
 use crate::services::record_store::{
@@ -44,6 +43,7 @@ use crate::services::record_store::{
 use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLaneDecision, WriteLaneRouter, WriteOperationKind,
 };
+use crate::storage::tenant::context::TenantContext;
 use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 
 /// Comparison operators supported by the lightweight catalog-table SELECT path.
@@ -879,8 +879,7 @@ impl DmlService {
         //    atomic, so a re-materialize swaps the snapshot without torn reads;
         //    multi-file/versioned snapshots (via the atomic manifest committer) are a
         //    follow-up that also needs manifest-aware reads.
-        let data_object =
-            object_store::path::Path::from(format!("{prefix}/data/part-0.parquet"));
+        let data_object = object_store::path::Path::from(format!("{prefix}/data/part-0.parquet"));
         bridge
             .write_records_to_parquet_with_schema(&data_object, &records, &schema, Some(tenant_id))
             .await?;
@@ -2046,13 +2045,16 @@ impl DmlService {
         // lookup (no full scan). Single-column PK; multi-column PK and non-PK UNIQUE constraints
         // still fail-closed in `CatalogRow::validate` pending the index-backed slice.
         if let Some(pk_column) = Self::primary_key_column(&table_schema) {
-            let mut batch_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut batch_keys: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             for record in &records {
                 let key = record.oid.clone();
                 if !batch_keys.insert(key.clone()) {
                     return Err(anyhow!(
                         "duplicate key value violates primary key '{}' on table '{}': '{}' appears more than once in this INSERT",
-                        pk_column, table_schema.name, key
+                        pk_column,
+                        table_schema.name,
+                        key
                     ));
                 }
                 let existing = self
@@ -2071,7 +2073,9 @@ impl DmlService {
                 if existing.is_some() {
                     return Err(anyhow!(
                         "duplicate key value violates primary key '{}' on table '{}': '{}' already exists",
-                        pk_column, table_schema.name, key
+                        pk_column,
+                        table_schema.name,
+                        key
                     ));
                 }
             }
@@ -2328,13 +2332,8 @@ impl DmlService {
         // RESTRICT/NO ACTION/CASCADE/SET NULL) before removing the parent rows.
         // RESTRICT/NO ACTION rejects the DELETE; CASCADE/SET NULL mutate children
         // first so the parent removal leaves no dangling references.
-        self.enforce_delete_referential_actions(
-            &catalog,
-            &table_id,
-            &table_schema,
-            &ids_to_delete,
-        )
-        .await?;
+        self.enforce_delete_referential_actions(&catalog, &table_id, &table_schema, &ids_to_delete)
+            .await?;
 
         let (write_intent, write_lane_decision) = Self::route_row_dml_write_intent(
             &table_schema,
@@ -3219,11 +3218,15 @@ impl DmlService {
                 ));
             }
             let parent_schema = parent_catalog.get_table(&parent_table_id).await?;
-            if Self::primary_key_column(&parent_schema).as_deref() != Some(referenced_column.as_str())
+            if Self::primary_key_column(&parent_schema).as_deref()
+                != Some(referenced_column.as_str())
             {
                 return Err(anyhow!(
                     "FOREIGN KEY ({}) REFERENCES {}({}) on table '{}' is only supported when it references the parent primary key",
-                    fk_column, references_table, referenced_column, table_schema.name
+                    fk_column,
+                    references_table,
+                    referenced_column,
+                    table_schema.name
                 ));
             }
 
@@ -3253,7 +3256,11 @@ impl DmlService {
                 if !referenced_exists {
                     return Err(anyhow!(
                         "FOREIGN KEY ({}) on table '{}' violates reference: '{}' is not present in {}({})",
-                        fk_column, table_schema.name, key, references_table, referenced_column
+                        fk_column,
+                        table_schema.name,
+                        key,
+                        references_table,
+                        referenced_column
                     ));
                 }
             }
@@ -3586,27 +3593,27 @@ impl DmlService {
             for column_name in &columns {
                 let is_text = table_schema.columns.iter().any(|column| {
                     column.name.eq_ignore_ascii_case(column_name)
-                        && matches!(
-                            column.data_type,
-                            ProximaType::String | ProximaType::Symbol
-                        )
+                        && matches!(column.data_type, ProximaType::String | ProximaType::Symbol)
                 });
                 if !is_text {
                     all_pinned = false;
                     break;
                 }
-                let found = where_clause.conditions.iter().find_map(|condition| match condition {
-                    Condition::Comparison {
-                        column,
-                        operator,
-                        value,
-                    } if column.eq_ignore_ascii_case(column_name)
-                        && matches!(operator, ComparisonOperator::Equal) =>
-                    {
-                        Some(self.literal_to_string(value))
-                    }
-                    _ => None,
-                });
+                let found = where_clause
+                    .conditions
+                    .iter()
+                    .find_map(|condition| match condition {
+                        Condition::Comparison {
+                            column,
+                            operator,
+                            value,
+                        } if column.eq_ignore_ascii_case(column_name)
+                            && matches!(operator, ComparisonOperator::Equal) =>
+                        {
+                            Some(self.literal_to_string(value))
+                        }
+                        _ => None,
+                    });
                 match found {
                     Some(Ok(value)) => values.push(value),
                     Some(Err(err)) => return Err(err),
@@ -4205,12 +4212,7 @@ impl DmlTableMaterializer {
 impl crate::services::ddl::TableMaterializer for DmlTableMaterializer {
     async fn materialize(&self, table_name: &str) -> Result<String> {
         self.dml
-            .materialize_table_to_parquet(
-                &*self.bridge,
-                &self.warehouse_root_url,
-                table_name,
-                None,
-            )
+            .materialize_table_to_parquet(&*self.bridge, &self.warehouse_root_url, table_name, None)
             .await
     }
 }
@@ -5200,7 +5202,9 @@ mod tests {
         .expect("create namespace");
         let parser = crate::query::sql_frontend::SqlFrontendParser::new();
         let ddl_stmt = parser
-            .parse_ddl("CREATE TABLE users (id TEXT NOT NULL, email TEXT NOT NULL, PRIMARY KEY (id));")
+            .parse_ddl(
+                "CREATE TABLE users (id TEXT NOT NULL, email TEXT NOT NULL, PRIMARY KEY (id));",
+            )
             .expect("parse create")
             .expect("ddl");
         ddl.execute(ddl_stmt).await.expect("create table");
@@ -5241,7 +5245,8 @@ mod tests {
             .await
             .expect_err("duplicate PK must be rejected");
         assert!(
-            err.to_string().contains("duplicate key value violates primary key"),
+            err.to_string()
+                .contains("duplicate key value violates primary key"),
             "unexpected error: {err}"
         );
 
@@ -5311,9 +5316,7 @@ mod tests {
             Arc::new(PlannedOnlyTableWriteExecutor::new()),
         );
 
-        let insert = |sql: &'static str| {
-            parser.parse_dml(sql).expect("parse dml").expect("dml")
-        };
+        let insert = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
 
         // First insert succeeds.
         dml.execute(insert(
@@ -5434,32 +5437,42 @@ mod tests {
         let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
 
         // DELETE frees the value: insert d1=x@x.com, delete it, then d2=x@x.com inserts.
-        dml.execute(run("INSERT INTO members (id, email) VALUES ('d1', 'x@x.com');"))
-            .await
-            .expect("insert d1");
+        dml.execute(run(
+            "INSERT INTO members (id, email) VALUES ('d1', 'x@x.com');",
+        ))
+        .await
+        .expect("insert d1");
         dml.execute(run("DELETE FROM members WHERE id = 'd1';"))
             .await
             .expect("delete d1");
-        dml.execute(run("INSERT INTO members (id, email) VALUES ('d2', 'x@x.com');"))
-            .await
-            .expect("x@x.com is free after delete — d2 must insert");
+        dml.execute(run(
+            "INSERT INTO members (id, email) VALUES ('d2', 'x@x.com');",
+        ))
+        .await
+        .expect("x@x.com is free after delete — d2 must insert");
 
         // UPDATE moves a value: u3 holds y@x.com, update it to z@x.com.
-        dml.execute(run("INSERT INTO members (id, email) VALUES ('u3', 'y@x.com');"))
-            .await
-            .expect("insert u3");
+        dml.execute(run(
+            "INSERT INTO members (id, email) VALUES ('u3', 'y@x.com');",
+        ))
+        .await
+        .expect("insert u3");
         dml.execute(run("UPDATE members SET email = 'z@x.com' WHERE id = 'u3';"))
             .await
             .expect("update u3 email");
 
         // The vacated value (y@x.com) is now insertable…
-        dml.execute(run("INSERT INTO members (id, email) VALUES ('u4', 'y@x.com');"))
-            .await
-            .expect("y@x.com freed by update — u4 must insert");
+        dml.execute(run(
+            "INSERT INTO members (id, email) VALUES ('u4', 'y@x.com');",
+        ))
+        .await
+        .expect("y@x.com freed by update — u4 must insert");
 
         // …and the new value (z@x.com) is now claimed by u3 → rejected.
         let err = dml
-            .execute(run("INSERT INTO members (id, email) VALUES ('u5', 'z@x.com');"))
+            .execute(run(
+                "INSERT INTO members (id, email) VALUES ('u5', 'z@x.com');",
+            ))
             .await
             .expect_err("z@x.com taken by u3 after update — must be rejected");
         assert!(
@@ -5516,12 +5529,16 @@ mod tests {
         );
         let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
 
-        dml.execute(run("INSERT INTO members (id, email) VALUES ('a', 'a@x.com');"))
-            .await
-            .expect("insert a");
-        dml.execute(run("INSERT INTO members (id, email) VALUES ('b', 'b@x.com');"))
-            .await
-            .expect("insert b");
+        dml.execute(run(
+            "INSERT INTO members (id, email) VALUES ('a', 'a@x.com');",
+        ))
+        .await
+        .expect("insert a");
+        dml.execute(run(
+            "INSERT INTO members (id, email) VALUES ('b', 'b@x.com');",
+        ))
+        .await
+        .expect("insert b");
 
         // UPDATE a -> b@x.com (owned by b) must be rejected.
         let err = dml
@@ -5572,7 +5589,10 @@ mod tests {
             "CREATE TABLE customers (id TEXT NOT NULL, name TEXT, PRIMARY KEY (id));",
             "CREATE TABLE orders (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id));",
         ] {
-            let stmt = parser.parse_ddl(create).expect("parse create").expect("ddl");
+            let stmt = parser
+                .parse_ddl(create)
+                .expect("parse create")
+                .expect("ddl");
             ddl.execute(stmt).await.expect("create table");
         }
 
@@ -5593,16 +5613,22 @@ mod tests {
         let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
 
         // Parent row, then a child referencing it — allowed.
-        dml.execute(run("INSERT INTO customers (id, name) VALUES ('c1', 'Alice');"))
-            .await
-            .expect("insert parent customer");
-        dml.execute(run("INSERT INTO orders (id, customer_id) VALUES ('o1', 'c1');"))
-            .await
-            .expect("child referencing existing parent must insert");
+        dml.execute(run(
+            "INSERT INTO customers (id, name) VALUES ('c1', 'Alice');",
+        ))
+        .await
+        .expect("insert parent customer");
+        dml.execute(run(
+            "INSERT INTO orders (id, customer_id) VALUES ('o1', 'c1');",
+        ))
+        .await
+        .expect("child referencing existing parent must insert");
 
         // Child referencing a missing parent — rejected.
         let err = dml
-            .execute(run("INSERT INTO orders (id, customer_id) VALUES ('o2', 'c99');"))
+            .execute(run(
+                "INSERT INTO orders (id, customer_id) VALUES ('o2', 'c99');",
+            ))
             .await
             .expect_err("FK to a missing parent must be rejected");
         assert!(
@@ -5617,7 +5643,9 @@ mod tests {
 
         // UPDATE re-checks: pointing an order at a missing parent is rejected.
         let err = dml
-            .execute(run("UPDATE orders SET customer_id = 'c99' WHERE id = 'o1';"))
+            .execute(run(
+                "UPDATE orders SET customer_id = 'c99' WHERE id = 'o1';",
+            ))
             .await
             .expect_err("UPDATE to a missing FK parent must be rejected");
         assert!(
@@ -5655,7 +5683,10 @@ mod tests {
             "CREATE TABLE orders_cascade (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE);",
             "CREATE TABLE orders_setnull (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE SET NULL);",
         ] {
-            let stmt = parser.parse_ddl(create).expect("parse create").expect("ddl");
+            let stmt = parser
+                .parse_ddl(create)
+                .expect("parse create")
+                .expect("ddl");
             ddl.execute(stmt).await.expect("create table");
         }
 
@@ -6151,7 +6182,12 @@ mod tests {
         }
 
         // Tree path: equality on the UNIQUE column → index point lookup, right row.
-        let (path, ids) = run_where(&dml, &parser, "SELECT id FROM users WHERE email = 'b@x.com'").await;
+        let (path, ids) = run_where(
+            &dml,
+            &parser,
+            "SELECT id FROM users WHERE email = 'b@x.com'",
+        )
+        .await;
         assert_eq!(path, RelationalSelectAccessPath::UniqueIndexLookup);
         assert_eq!(ids, vec!["u2"]);
 
@@ -6166,7 +6202,12 @@ mod tests {
         assert!(ids.is_empty(), "full predicate re-check drops the row");
 
         // Missing unique value → index path, empty result.
-        let (path, ids) = run_where(&dml, &parser, "SELECT id FROM users WHERE email = 'zzz@x.com'").await;
+        let (path, ids) = run_where(
+            &dml,
+            &parser,
+            "SELECT id FROM users WHERE email = 'zzz@x.com'",
+        )
+        .await;
         assert_eq!(path, RelationalSelectAccessPath::UniqueIndexLookup);
         assert!(ids.is_empty());
 
@@ -6545,21 +6586,31 @@ mod tests {
 
         let parser = crate::query::sql_frontend::SqlFrontendParser::new();
         let ddl_stmt = parser
-            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));")
+            .parse_ddl(
+                "CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));",
+            )
             .expect("parse ddl")
             .expect("ddl stmt");
         ddl.execute(ddl_stmt).await.expect("create table");
 
         let record_store = Arc::new(DirectWalTableRecordStore::new(
             Arc::new(MemtableRecordStorage::new()),
-            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
         ));
         let dml = DmlService::with_record_store_and_table_write_executor(
             manager.clone(),
             record_store,
             Arc::new(PlannedOnlyTableWriteExecutor::new()),
         );
-        for (id, status, qty) in [("i1", "active", 5), ("i2", "active", 15), ("i3", "idle", 25)] {
+        for (id, status, qty) in [
+            ("i1", "active", 5),
+            ("i2", "active", 15),
+            ("i3", "idle", 25),
+        ] {
             let stmt = parser
                 .parse_dml(&format!(
                     "INSERT INTO inv (id, status, qty) VALUES ('{id}', '{status}', {qty});"
@@ -6579,15 +6630,22 @@ mod tests {
             .expect("materialize");
 
         // The published location is the tenant-isolated base URL.
-        assert_eq!(location, "memory:///warehouse/data/default_tenant/default/inv");
+        assert_eq!(
+            location,
+            "memory:///warehouse/data/default_tenant/default/inv"
+        );
 
         // The Parquet snapshot landed where the OLAP reader lists `{location}/data/*.parquet`,
         // and reads back all three rows.
-        let data_object = object_store::path::Path::from(
-            "data/default_tenant/default/inv/data/part-0.parquet",
-        );
+        let data_object =
+            object_store::path::Path::from("data/default_tenant/default/inv/data/part-0.parquet");
         let mut stream = bridge
-            .read_parquet_batches(&data_object, Arc::new(arrow_schema::Schema::empty()), 1024, None)
+            .read_parquet_batches(
+                &data_object,
+                Arc::new(arrow_schema::Schema::empty()),
+                1024,
+                None,
+            )
             .await
             .expect("read materialized parquet");
         let mut total = 0usize;
@@ -6637,13 +6695,19 @@ mod tests {
         .expect("create namespace");
         let parser = crate::query::sql_frontend::SqlFrontendParser::new();
         let ddl_stmt = parser
-            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));")
+            .parse_ddl(
+                "CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));",
+            )
             .expect("parse ddl")
             .expect("ddl stmt");
         ddl.execute(ddl_stmt).await.expect("create table");
         let record_store = Arc::new(DirectWalTableRecordStore::new(
             Arc::new(MemtableRecordStorage::new()),
-            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
         ));
         let dml = Arc::new(DmlService::with_record_store_and_table_write_executor(
             manager.clone(),
@@ -6669,7 +6733,9 @@ mod tests {
         ));
         let ddl_mat = DdlService::new(manager.clone()).with_materializer(materializer);
         ddl_mat
-            .execute(DdlStatement::MaterializeTable { name: "inv".to_string() })
+            .execute(DdlStatement::MaterializeTable {
+                name: "inv".to_string(),
+            })
             .await
             .expect("materialize via DDL");
 
@@ -6689,7 +6755,9 @@ mod tests {
         let ddl_bare = DdlService::new(manager.clone());
         assert!(
             ddl_bare
-                .execute(DdlStatement::MaterializeTable { name: "inv".to_string() })
+                .execute(DdlStatement::MaterializeTable {
+                    name: "inv".to_string()
+                })
                 .await
                 .is_err(),
             "MATERIALIZE without a configured materializer must error"
@@ -6727,20 +6795,30 @@ mod tests {
         .expect("create namespace");
         let parser = crate::query::sql_frontend::SqlFrontendParser::new();
         let ddl_stmt = parser
-            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));")
+            .parse_ddl(
+                "CREATE TABLE inv (id TEXT NOT NULL, status TEXT, qty INT, PRIMARY KEY (id));",
+            )
             .expect("parse ddl")
             .expect("ddl stmt");
         ddl.execute(ddl_stmt).await.expect("create table");
         let record_store = Arc::new(DirectWalTableRecordStore::new(
             Arc::new(MemtableRecordStorage::new()),
-            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
         ));
         let dml = DmlService::with_record_store_and_table_write_executor(
             manager.clone(),
             record_store,
             Arc::new(PlannedOnlyTableWriteExecutor::new()),
         );
-        for (id, status, qty) in [("i1", "active", 5), ("i2", "active", 15), ("i3", "idle", 25)] {
+        for (id, status, qty) in [
+            ("i1", "active", 5),
+            ("i2", "active", 15),
+            ("i3", "idle", 25),
+        ] {
             let stmt = parser
                 .parse_dml(&format!(
                     "INSERT INTO inv (id, status, qty) VALUES ('{id}', '{status}', {qty});"
@@ -6773,7 +6851,10 @@ mod tests {
             .await
             .expect("collect");
         let total: usize = batches.iter().map(|b| b.num_rows()).sum();
-        assert_eq!(total, 3, "DataFusion reads all materialized rows from the published location");
+        assert_eq!(
+            total, 3,
+            "DataFusion reads all materialized rows from the published location"
+        );
     }
 
     /// `point_lookup_relational` (PATH B PkLookup backend) returns the full row by

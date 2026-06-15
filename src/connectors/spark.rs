@@ -1036,7 +1036,7 @@ pub fn arrow_ipc_to_record_batch(bytes: &[u8]) -> Result<RecordBatch, arrow::err
     use arrow::error::ArrowError;
     use arrow::ipc::reader::StreamReader;
     let mut reader = StreamReader::try_new(bytes, None)?;
-    
+
     reader
         .next()
         .ok_or_else(|| ArrowError::IpcError("arrow IPC stream contained no batches".to_string()))?

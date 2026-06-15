@@ -840,9 +840,7 @@ impl LogicalNode {
                 }
                 Ok(())
             }
-            LogicalNode::SetOp {
-                left, right, ..
-            } => {
+            LogicalNode::SetOp { left, right, .. } => {
                 left.validate()?;
                 right.validate()?;
                 let l = left.output_schema();

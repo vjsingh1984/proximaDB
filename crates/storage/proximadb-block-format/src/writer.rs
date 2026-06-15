@@ -1079,10 +1079,10 @@ mod tests {
     #[test]
     fn select_f64_scheme_only_returns_encodable_schemes() {
         let cases: Vec<Vec<Option<f64>>> = vec![
-            vec![Some(1.0); 64],                              // constant run
-            (0..64).map(|i| Some((i % 4) as f64)).collect(),  // low cardinality / runs
-            (0..64).map(|i| Some(i as f64 * 0.5)).collect(),  // monotone
-            vec![Some(0.5), None, Some(0.5), None, Some(0.5)],// nulls + repeats
+            vec![Some(1.0); 64],                               // constant run
+            (0..64).map(|i| Some((i % 4) as f64)).collect(),   // low cardinality / runs
+            (0..64).map(|i| Some(i as f64 * 0.5)).collect(),   // monotone
+            vec![Some(0.5), None, Some(0.5), None, Some(0.5)], // nulls + repeats
         ];
         // Edge → General domain; UserDefined → TimeSeries domain (the path that
         // previously selected RunLength for an f64 user column).

@@ -370,13 +370,13 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
                         ComparisonOperator::In => match &json_val {
                             // Array-valued prop (e.g. `member_oids`): match when
                             // the prop set intersects the query list.
-                            serde_json::Value::Array(items) => value.as_array().is_some_and(
-                                |values| {
+                            serde_json::Value::Array(items) => {
+                                value.as_array().is_some_and(|values| {
                                     items
                                         .iter()
                                         .any(|item| values.iter().any(|v| json_eq(item, v)))
-                                },
-                            ),
+                                })
+                            }
                             // Scalar prop: membership in the query list.
                             _ => value
                                 .as_array()
@@ -385,13 +385,13 @@ pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> 
                         ComparisonOperator::NotIn => match &json_val {
                             // Array-valued prop: pass when the prop set is
                             // disjoint from the query list.
-                            serde_json::Value::Array(items) => value.as_array().is_none_or(
-                                |values| {
+                            serde_json::Value::Array(items) => {
+                                value.as_array().is_none_or(|values| {
                                     !items
                                         .iter()
                                         .any(|item| values.iter().any(|v| json_eq(item, v)))
-                                },
-                            ),
+                                })
+                            }
                             _ => value
                                 .as_array()
                                 .is_none_or(|values| values.iter().all(|v| !json_eq(&json_val, v))),
@@ -534,14 +534,29 @@ mod tests {
         );
 
         let cases: Vec<(&str, ComparisonOperator, serde_json::Value, bool)> = vec![
-            ("account_id", ComparisonOperator::Equals, json!("acctA"), true),
-            ("account_id", ComparisonOperator::Equals, json!("acctB"), false),
+            (
+                "account_id",
+                ComparisonOperator::Equals,
+                json!("acctA"),
+                true,
+            ),
+            (
+                "account_id",
+                ComparisonOperator::Equals,
+                json!("acctB"),
+                false,
+            ),
             // int prop vs int literal AND float-typed literal (numeric-aware).
             ("tier", ComparisonOperator::Equals, json!(2), true),
             ("tier", ComparisonOperator::Equals, json!(2.0), true),
             ("tier", ComparisonOperator::GreaterThan, json!(1), true),
             ("tier", ComparisonOperator::LessThan, json!(2), false),
-            ("score", ComparisonOperator::LessThanOrEqual, json!(0.5), true),
+            (
+                "score",
+                ComparisonOperator::LessThanOrEqual,
+                json!(0.5),
+                true,
+            ),
             ("score", ComparisonOperator::GreaterThan, json!(0.9), false),
             ("active", ComparisonOperator::Equals, json!(true), true),
             ("active", ComparisonOperator::NotEquals, json!(false), true),
@@ -553,7 +568,11 @@ mod tests {
                 operator,
                 value,
             };
-            assert_eq!(evaluate_filter_proxima(&filter, &props), expected, "{label}");
+            assert_eq!(
+                evaluate_filter_proxima(&filter, &props),
+                expected,
+                "{label}"
+            );
         }
     }
 

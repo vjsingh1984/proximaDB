@@ -239,11 +239,20 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         self.store.put(path, Bytes::from(bytes)).await
     }
 
-    async fn fetch_vector_segment(&self, path: &Path, _tenant_id: Option<&str>) -> Result<Vec<u8>, StorageError> {
+    async fn fetch_vector_segment(
+        &self,
+        path: &Path,
+        _tenant_id: Option<&str>,
+    ) -> Result<Vec<u8>, StorageError> {
         Ok(self.store.get(path).await?.to_vec())
     }
 
-    async fn persist_vector_segment(&self, path: &Path, data: &[u8], _tenant_id: Option<&str>) -> Result<(), StorageError> {
+    async fn persist_vector_segment(
+        &self,
+        path: &Path,
+        data: &[u8],
+        _tenant_id: Option<&str>,
+    ) -> Result<(), StorageError> {
         self.store.put(path, Bytes::copy_from_slice(data)).await
     }
 
@@ -320,7 +329,9 @@ mod tests {
             ],
         );
 
-        b.write_records_to_parquet(&path, &[r0, r1], None).await.unwrap();
+        b.write_records_to_parquet(&path, &[r0, r1], None)
+            .await
+            .unwrap();
 
         let mut stream = b
             .read_parquet_batches(&path, Arc::new(ArrowSchema::empty()), 1024, None)
@@ -378,7 +389,9 @@ mod tests {
                 ("city", ProximaValue::String("rome".into())),
             ],
         );
-        b.write_records_to_parquet(&path, &[r0, r1], None).await.unwrap();
+        b.write_records_to_parquet(&path, &[r0, r1], None)
+            .await
+            .unwrap();
 
         // Project to {name, age} plus a name that does not exist in the file.
         let projection = Arc::new(ArrowSchema::new(vec![
@@ -402,10 +415,17 @@ mod tests {
         let batch = &batches[0];
         // Only the two existing projected columns are present — `city` is pruned and the
         // bogus requested name does not materialize a column.
-        assert_eq!(batch.num_columns(), 2, "projection must drop unrequested columns");
+        assert_eq!(
+            batch.num_columns(),
+            2,
+            "projection must drop unrequested columns"
+        );
         assert!(batch.column_by_name("name").is_some());
         assert!(batch.column_by_name("age").is_some());
-        assert!(batch.column_by_name("city").is_none(), "city was not requested");
+        assert!(
+            batch.column_by_name("city").is_none(),
+            "city was not requested"
+        );
         assert!(batch.column_by_name("does_not_exist").is_none());
 
         let names = batch
@@ -428,14 +448,20 @@ mod tests {
         let p1 = Path::from("t/data/part-1.parquet");
         b.write_records_to_parquet(
             &p0,
-            &[record("r0", vec![("name", ProximaValue::String("alice".into()))])],
+            &[record(
+                "r0",
+                vec![("name", ProximaValue::String("alice".into()))],
+            )],
             None,
         )
         .await
         .unwrap();
         b.write_records_to_parquet(
             &p1,
-            &[record("r1", vec![("name", ProximaValue::String("bob".into()))])],
+            &[record(
+                "r1",
+                vec![("name", ProximaValue::String("bob".into()))],
+            )],
             None,
         )
         .await
@@ -514,7 +540,9 @@ mod tests {
         let path = Path::from("warehouse/vec/seg_000.pax");
         let payload: Vec<u8> = (0u8..200).collect();
 
-        b.persist_vector_segment(&path, &payload, None).await.unwrap();
+        b.persist_vector_segment(&path, &payload, None)
+            .await
+            .unwrap();
         let got = b.fetch_vector_segment(&path, None).await.unwrap();
         assert_eq!(got, payload);
     }
@@ -532,7 +560,9 @@ mod tests {
 
         let path = Path::from("t/data/part-0.parquet");
         let r0 = record("r0", vec![("name", ProximaValue::String("alice".into()))]);
-        b.write_records_to_parquet(&path, &[r0], None).await.unwrap();
+        b.write_records_to_parquet(&path, &[r0], None)
+            .await
+            .unwrap();
 
         let listed = b.list_objects(&Path::from("t/data")).await.unwrap();
         assert_eq!(listed.len(), 1, "the written object must be discoverable");
@@ -623,7 +653,9 @@ mod tests {
 
         // Schema-less (inferred) write: `score` is omitted (no record carries it).
         let inferred = Path::from("wh/inferred.parquet");
-        b.write_records_to_parquet(&inferred, &[r0, r1], None).await.unwrap();
+        b.write_records_to_parquet(&inferred, &[r0, r1], None)
+            .await
+            .unwrap();
         let batch = read_first_batch(&b, &inferred).await;
         assert!(
             batch.column_by_name("score").is_none(),

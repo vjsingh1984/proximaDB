@@ -41,7 +41,7 @@ pub use rest::{RestApiHandler, RestRequest, RestResponse};
 // Re-export v1 handlers
 pub use grpc::v1::{
     CollectionServiceImpl, DocumentServiceImpl, EntityServiceImpl, GraphServiceImpl,
-    HybridSearchServiceImpl, ObservabilityServiceImpl, SecurityServiceImpl, QueryServiceImpl,
+    HybridSearchServiceImpl, ObservabilityServiceImpl, QueryServiceImpl, SecurityServiceImpl,
     StreamingServiceImpl, VectorServiceImpl,
 };
 pub use rest::v1::{

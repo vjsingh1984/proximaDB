@@ -60,11 +60,7 @@ pub async fn lower_logical_node(ctx: &SessionContext, node: &LogicalNode) -> DFR
 fn inline_ctes(node: &LogicalNode, env: &[(String, LogicalNode)]) -> DFResult<LogicalNode> {
     let recur = |n: &LogicalNode| inline_ctes(n, env);
     Ok(match node {
-        LogicalNode::CteBind {
-            name,
-            body,
-            usages,
-        } => {
+        LogicalNode::CteBind { name, body, usages } => {
             // Resolve the body in the CURRENT scope, then bind it for `usages`.
             let resolved_body = inline_ctes(body, env)?;
             let mut inner_env = env.to_vec();

@@ -73,9 +73,7 @@ use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::datafusion::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
 };
-use crate::storage::formats::{
-    CacheStatus, FileSplit, SpatialBounds, SplitType, StorageTier,
-};
+use crate::storage::formats::{CacheStatus, FileSplit, SpatialBounds, SplitType, StorageTier};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 use super::common::vector_collection_schema;
@@ -250,9 +248,10 @@ impl HelixTableProvider {
     /// Parse LSM level from filename.
     fn parse_level_from_filename(filename: &str) -> usize {
         if let Some(level_str) = filename.strip_prefix("L")
-            && let Some(underscore_pos) = level_str.find('_') {
-                return level_str[..underscore_pos].parse().unwrap_or(0);
-            }
+            && let Some(underscore_pos) = level_str.find('_')
+        {
+            return level_str[..underscore_pos].parse().unwrap_or(0);
+        }
         0
     }
 

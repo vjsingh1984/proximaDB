@@ -401,58 +401,60 @@ unsafe fn fused_decode_int4_avx2(
     output: &mut [f32],
     count: usize,
     params: &QuantizationParams,
-) -> Result<usize> { unsafe {
-    let scale = params.scale;
-    let zero_point = params.zero_point;
+) -> Result<usize> {
+    unsafe {
+        let scale = params.scale;
+        let zero_point = params.zero_point;
 
-    // Create broadcast vectors
-    let scale_vec = _mm256_set1_ps(scale);
-    let zp_vec = _mm256_set1_ps(zero_point as f32);
+        // Create broadcast vectors
+        let scale_vec = _mm256_set1_ps(scale);
+        let zp_vec = _mm256_set1_ps(zero_point as f32);
 
-    // Process 8 INT4 values (4 bytes) at a time
-    let chunks = count / 8;
+        // Process 8 INT4 values (4 bytes) at a time
+        let chunks = count / 8;
 
-    for i in 0..chunks {
-        let byte_base = i * 4;
-        let out_base = i * 8;
+        for i in 0..chunks {
+            let byte_base = i * 4;
+            let out_base = i * 8;
 
-        // Extract 8 INT4 values from 4 bytes
-        let mut int4_vals = [0i32; 8];
-        for j in 0..4 {
-            let byte = input[byte_base + j];
-            let lo = (byte & 0x0F) as i8;
-            let hi = ((byte >> 4) & 0x0F) as i8;
+            // Extract 8 INT4 values from 4 bytes
+            let mut int4_vals = [0i32; 8];
+            for j in 0..4 {
+                let byte = input[byte_base + j];
+                let lo = (byte & 0x0F) as i8;
+                let hi = ((byte >> 4) & 0x0F) as i8;
 
-            // Sign-extend 4-bit to 32-bit
-            int4_vals[j * 2] = if lo > 7 { lo as i32 - 16 } else { lo as i32 };
-            int4_vals[j * 2 + 1] = if hi > 7 { hi as i32 - 16 } else { hi as i32 };
+                // Sign-extend 4-bit to 32-bit
+                int4_vals[j * 2] = if lo > 7 { lo as i32 - 16 } else { lo as i32 };
+                int4_vals[j * 2 + 1] = if hi > 7 { hi as i32 - 16 } else { hi as i32 };
+            }
+
+            // Convert to f32 vector
+            let int_vec = _mm256_loadu_si256(int4_vals.as_ptr() as *const __m256i);
+            let float_vec = _mm256_cvtepi32_ps(int_vec);
+
+            // Dequantize: (value - zero_point) * scale
+            let dequant = _mm256_mul_ps(_mm256_sub_ps(float_vec, zp_vec), scale_vec);
+
+            _mm256_storeu_ps(output.as_mut_ptr().add(out_base), dequant);
         }
 
-        // Convert to f32 vector
-        let int_vec = _mm256_loadu_si256(int4_vals.as_ptr() as *const __m256i);
-        let float_vec = _mm256_cvtepi32_ps(int_vec);
+        // Handle remaining
+        let start = chunks * 8;
+        for i in start..count {
+            let byte_idx = i / 2;
+            let nibble = if i % 2 == 0 {
+                (input[byte_idx] & 0x0F) as i8
+            } else {
+                ((input[byte_idx] >> 4) & 0x0F) as i8
+            };
+            let signed = if nibble > 7 { nibble - 16 } else { nibble };
+            output[i] = (signed as i32 - zero_point) as f32 * scale;
+        }
 
-        // Dequantize: (value - zero_point) * scale
-        let dequant = _mm256_mul_ps(_mm256_sub_ps(float_vec, zp_vec), scale_vec);
-
-        _mm256_storeu_ps(output.as_mut_ptr().add(out_base), dequant);
+        Ok(count)
     }
-
-    // Handle remaining
-    let start = chunks * 8;
-    for i in start..count {
-        let byte_idx = i / 2;
-        let nibble = if i % 2 == 0 {
-            (input[byte_idx] & 0x0F) as i8
-        } else {
-            ((input[byte_idx] >> 4) & 0x0F) as i8
-        };
-        let signed = if nibble > 7 { nibble - 16 } else { nibble };
-        output[i] = (signed as i32 - zero_point) as f32 * scale;
-    }
-
-    Ok(count)
-}}
+}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
@@ -461,46 +463,48 @@ unsafe fn fused_decode_int8_avx2(
     output: &mut [f32],
     count: usize,
     params: &QuantizationParams,
-) -> Result<usize> { unsafe {
-    let scale = params.scale;
-    let zero_point = params.zero_point;
+) -> Result<usize> {
+    unsafe {
+        let scale = params.scale;
+        let zero_point = params.zero_point;
 
-    // Create broadcast vectors
-    let scale_vec = _mm256_set1_ps(scale);
-    let zp_vec = _mm256_set1_ps(zero_point as f32);
+        // Create broadcast vectors
+        let scale_vec = _mm256_set1_ps(scale);
+        let zp_vec = _mm256_set1_ps(zero_point as f32);
 
-    // Process 8 INT8 values at a time
-    let chunks = count / 8;
+        // Process 8 INT8 values at a time
+        let chunks = count / 8;
 
-    for i in 0..chunks {
-        let in_base = i * 8;
-        let out_base = i * 8;
+        for i in 0..chunks {
+            let in_base = i * 8;
+            let out_base = i * 8;
 
-        // Load 8 bytes
-        let bytes = _mm_loadl_epi64(input.as_ptr().add(in_base) as *const __m128i);
+            // Load 8 bytes
+            let bytes = _mm_loadl_epi64(input.as_ptr().add(in_base) as *const __m128i);
 
-        // Sign-extend bytes to i32: first to i16, then to i32
-        let i16_vals = _mm_cvtepi8_epi16(bytes);
-        let i32_lo = _mm256_cvtepi16_epi32(i16_vals);
+            // Sign-extend bytes to i32: first to i16, then to i32
+            let i16_vals = _mm_cvtepi8_epi16(bytes);
+            let i32_lo = _mm256_cvtepi16_epi32(i16_vals);
 
-        // Convert to f32
-        let float_vec = _mm256_cvtepi32_ps(i32_lo);
+            // Convert to f32
+            let float_vec = _mm256_cvtepi32_ps(i32_lo);
 
-        // Dequantize: (value - zero_point) * scale
-        let dequant = _mm256_mul_ps(_mm256_sub_ps(float_vec, zp_vec), scale_vec);
+            // Dequantize: (value - zero_point) * scale
+            let dequant = _mm256_mul_ps(_mm256_sub_ps(float_vec, zp_vec), scale_vec);
 
-        _mm256_storeu_ps(output.as_mut_ptr().add(out_base), dequant);
+            _mm256_storeu_ps(output.as_mut_ptr().add(out_base), dequant);
+        }
+
+        // Handle remaining
+        let start = chunks * 8;
+        for i in start..count {
+            let value = input[i] as i8;
+            output[i] = (value as i32 - zero_point) as f32 * scale;
+        }
+
+        Ok(count)
     }
-
-    // Handle remaining
-    let start = chunks * 8;
-    for i in start..count {
-        let value = input[i] as i8;
-        output[i] = (value as i32 - zero_point) as f32 * scale;
-    }
-
-    Ok(count)
-}}
+}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
@@ -510,49 +514,51 @@ unsafe fn progressive_decode_avx2(
     count: usize,
     params: &QuantizationParams,
     bipolar: bool,
-) -> Result<usize> { unsafe {
-    let scale = params.scale;
-    let zero_point = params.zero_point;
+) -> Result<usize> {
+    unsafe {
+        let scale = params.scale;
+        let zero_point = params.zero_point;
 
-    let (int8_0, int8_1): (i8, i8) = if bipolar { (-127, 127) } else { (0, -1) };
+        let (int8_0, int8_1): (i8, i8) = if bipolar { (-127, 127) } else { (0, -1) };
 
-    let scale_vec = _mm256_set1_ps(scale);
-    let zp_vec = _mm256_set1_ps(zero_point as f32);
+        let scale_vec = _mm256_set1_ps(scale);
+        let zp_vec = _mm256_set1_ps(zero_point as f32);
 
-    // Process 8 bits at a time
-    let chunks = count / 8;
+        // Process 8 bits at a time
+        let chunks = count / 8;
 
-    for i in 0..chunks {
-        let byte = input[i];
-        let out_base = i * 8;
+        for i in 0..chunks {
+            let byte = input[i];
+            let out_base = i * 8;
 
-        // Stage 1: Binary -> INT8
-        let mut int8_vals = [0i32; 8];
-        for bit in 0..8 {
-            let is_set = (byte >> bit) & 1 == 1;
-            int8_vals[bit] = if is_set { int8_1 as i32 } else { int8_0 as i32 };
+            // Stage 1: Binary -> INT8
+            let mut int8_vals = [0i32; 8];
+            for bit in 0..8 {
+                let is_set = (byte >> bit) & 1 == 1;
+                int8_vals[bit] = if is_set { int8_1 as i32 } else { int8_0 as i32 };
+            }
+
+            // Stage 2: INT8 -> FP32 with SIMD
+            let int_vec = _mm256_loadu_si256(int8_vals.as_ptr() as *const __m256i);
+            let float_vec = _mm256_cvtepi32_ps(int_vec);
+            let dequant = _mm256_mul_ps(_mm256_sub_ps(float_vec, zp_vec), scale_vec);
+
+            _mm256_storeu_ps(output.as_mut_ptr().add(out_base), dequant);
         }
 
-        // Stage 2: INT8 -> FP32 with SIMD
-        let int_vec = _mm256_loadu_si256(int8_vals.as_ptr() as *const __m256i);
-        let float_vec = _mm256_cvtepi32_ps(int_vec);
-        let dequant = _mm256_mul_ps(_mm256_sub_ps(float_vec, zp_vec), scale_vec);
+        // Handle remaining
+        let start = chunks * 8;
+        for i in start..count {
+            let byte_idx = i / 8;
+            let bit_idx = i % 8;
+            let bit = (input[byte_idx] >> bit_idx) & 1;
+            let int8_val = if bit == 1 { int8_1 } else { int8_0 };
+            output[i] = (int8_val as i32 - zero_point) as f32 * scale;
+        }
 
-        _mm256_storeu_ps(output.as_mut_ptr().add(out_base), dequant);
+        Ok(count)
     }
-
-    // Handle remaining
-    let start = chunks * 8;
-    for i in start..count {
-        let byte_idx = i / 8;
-        let bit_idx = i % 8;
-        let bit = (input[byte_idx] >> bit_idx) & 1;
-        let int8_val = if bit == 1 { int8_1 } else { int8_0 };
-        output[i] = (int8_val as i32 - zero_point) as f32 * scale;
-    }
-
-    Ok(count)
-}}
+}
 
 // ============================================================================
 // NEON Implementations

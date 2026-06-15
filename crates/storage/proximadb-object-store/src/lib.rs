@@ -308,7 +308,9 @@ mod tests {
             "n == 0 returns empty"
         );
         assert!(
-            os.get_suffix(&Path::from("missing.parquet"), 4).await.is_err(),
+            os.get_suffix(&Path::from("missing.parquet"), 4)
+                .await
+                .is_err(),
             "missing object errors"
         );
     }

@@ -195,7 +195,10 @@ fn lower_set_expr(
                     right: Box::new(r),
                     all,
                 }),
-                other => Err(FrontendError::Unsupported(format!("set operator {:?}", other))),
+                other => Err(FrontendError::Unsupported(format!(
+                    "set operator {:?}",
+                    other
+                ))),
             }
         }
         other => Err(FrontendError::Unsupported(format!(
@@ -293,8 +296,11 @@ fn lower_select(
             let mut ctx = LoweringCtx::new(catalog, base_width);
             let mut predicate = lower_expr(first, &scope, &mut ctx)?;
             for conj in rest {
-                predicate =
-                    Expr::bin(BinaryOp::And, predicate, lower_expr(conj, &scope, &mut ctx)?);
+                predicate = Expr::bin(
+                    BinaryOp::And,
+                    predicate,
+                    lower_expr(conj, &scope, &mut ctx)?,
+                );
             }
             for hoisted in ctx.hoisted.drain(..) {
                 plan = LogicalNode::Join {
@@ -688,14 +694,14 @@ fn single_projected_column(
         _ => return Ok(None),
     };
     match col_expr {
-        SqlExpr::Identifier(_) | SqlExpr::CompoundIdentifier(_) => {
-            Ok(Some(lower_expr_sealed(col_expr, inner_scope).and_then(
-                |e| match e {
-                    Expr::Column(c) => Ok(c),
-                    _ => Err(FrontendError::Unsupported("non-column IN projection".into())),
-                },
-            )?))
-        }
+        SqlExpr::Identifier(_) | SqlExpr::CompoundIdentifier(_) => Ok(Some(
+            lower_expr_sealed(col_expr, inner_scope).and_then(|e| match e {
+                Expr::Column(c) => Ok(c),
+                _ => Err(FrontendError::Unsupported(
+                    "non-column IN projection".into(),
+                )),
+            })?,
+        )),
         _ => Ok(None),
     }
 }
@@ -732,7 +738,9 @@ fn is_aggregate_function_name(name: &ObjectName) -> bool {
     // Builtin aggregates, plus any aggregate registered in the shared function registry
     // (so a custom UDAF like `product` is routed to the aggregate path, not scalar lowering).
     matches!(n.as_str(), "COUNT" | "SUM" | "AVG" | "MIN" | "MAX")
-        || proximadb_functions::builtins().lookup_aggregate(&n).is_some()
+        || proximadb_functions::builtins()
+            .lookup_aggregate(&n)
+            .is_some()
 }
 
 fn projection_alias_for_expr(e: &SqlExpr) -> Option<String> {
@@ -1152,10 +1160,7 @@ fn lower_correlated_scalar_aggregate(
         }),
     );
     let value_ty = agg.result_type();
-    ctx.hoisted.push(HoistedSub {
-        plan,
-        on: Some(on),
-    });
+    ctx.hoisted.push(HoistedSub { plan, on: Some(on) });
     Ok(Expr::column(ColumnRef {
         name: agg_name,
         ordinal: base + 1,
@@ -1200,11 +1205,7 @@ fn strip_nested(expr: &SqlExpr) -> &SqlExpr {
     }
 }
 
-fn lower_expr(
-    expr: &SqlExpr,
-    scope: &Scope,
-    ctx: &mut LoweringCtx,
-) -> Result<Expr, FrontendError> {
+fn lower_expr(expr: &SqlExpr, scope: &Scope, ctx: &mut LoweringCtx) -> Result<Expr, FrontendError> {
     match expr {
         SqlExpr::Nested(inner) => lower_expr(inner, scope, ctx),
         SqlExpr::Identifier(id) => scope.resolve_unqualified(&id.value).map(Expr::column),
@@ -2095,7 +2096,13 @@ mod tests {
         ));
         match plan {
             LogicalNode::Filter { input, predicate } => {
-                assert!(matches!(predicate, Expr::BinaryOp { op: BinaryOp::Gt, .. }));
+                assert!(matches!(
+                    predicate,
+                    Expr::BinaryOp {
+                        op: BinaryOp::Gt,
+                        ..
+                    }
+                ));
                 assert!(matches!(
                     *input,
                     LogicalNode::Join {
@@ -2139,7 +2146,10 @@ mod tests {
                 plan,
                 LogicalNode::Join {
                     kind: JoinKind::Semi,
-                    on: Some(Expr::BinaryOp { op: BinaryOp::And, .. }),
+                    on: Some(Expr::BinaryOp {
+                        op: BinaryOp::And,
+                        ..
+                    }),
                     ..
                 }
             ),
@@ -2151,11 +2161,13 @@ mod tests {
     fn in_subquery_arity_mismatch_is_declined() {
         // A scalar operand against a 2-column subquery is an arity mismatch → decline
         // (falls through to legacy). Multi-column IN needs a matching tuple operand.
-        assert!(lower_sql(
-            "SELECT name FROM users WHERE id IN (SELECT oid, uid FROM orders)",
-            &catalog()
-        )
-        .is_err());
+        assert!(
+            lower_sql(
+                "SELECT name FROM users WHERE id IN (SELECT oid, uid FROM orders)",
+                &catalog()
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2216,7 +2228,10 @@ mod tests {
                 right,
                 ..
             } => {
-                assert!(matches!(*left, LogicalNode::Scan { .. }), "left is base Scan");
+                assert!(
+                    matches!(*left, LogicalNode::Scan { .. }),
+                    "left is base Scan"
+                );
                 assert!(
                     matches!(*right, LogicalNode::AssertMaxOneRow { .. }),
                     "right is AssertMaxOneRow, got {right:?}"
@@ -2236,7 +2251,11 @@ mod tests {
         else {
             panic!("expected Project");
         };
-        assert_eq!(outputs.len(), 4, "3 base columns + 1 explicit subquery column");
+        assert_eq!(
+            outputs.len(),
+            4,
+            "3 base columns + 1 explicit subquery column"
+        );
         // The wildcard-expanded columns keep base ordinals 0,1,2.
         let base: Vec<usize> = outputs
             .iter()
@@ -2297,7 +2316,10 @@ mod tests {
         match *input {
             LogicalNode::Join {
                 kind: JoinKind::Left,
-                on: Some(Expr::BinaryOp { op: BinaryOp::Eq, .. }),
+                on:
+                    Some(Expr::BinaryOp {
+                        op: BinaryOp::Eq, ..
+                    }),
                 right,
                 ..
             } => assert!(
@@ -2349,7 +2371,11 @@ mod tests {
         };
         // The predicate's right operand is the hoisted scalar column at ordinal 3.
         match predicate {
-            Expr::BinaryOp { op: BinaryOp::Gt, right, .. } => {
+            Expr::BinaryOp {
+                op: BinaryOp::Gt,
+                right,
+                ..
+            } => {
                 assert!(matches!(*right, Expr::Column(c) if c.ordinal == 3));
             }
             other => panic!("expected `age > col(3)`, got {other:?}"),
@@ -2383,7 +2409,13 @@ mod tests {
         );
         // The WHERE scalar's join sits below the Filter, the projection scalar's
         // above it — two nested LEFT JOINs total.
-        assert!(matches!(*input, LogicalNode::Join { kind: JoinKind::Left, .. }));
+        assert!(matches!(
+            *input,
+            LogicalNode::Join {
+                kind: JoinKind::Left,
+                ..
+            }
+        ));
     }
 
     // --- Stage 3: correlated subqueries via decorrelation ----------------------
@@ -2400,7 +2432,12 @@ mod tests {
         match plan {
             LogicalNode::Join {
                 kind: JoinKind::Semi,
-                on: Some(Expr::BinaryOp { op: BinaryOp::Eq, left, right }),
+                on:
+                    Some(Expr::BinaryOp {
+                        op: BinaryOp::Eq,
+                        left,
+                        right,
+                    }),
                 right: inner,
                 ..
             } => {
@@ -2418,7 +2455,10 @@ mod tests {
                     ords.contains(&0) && ords.contains(&4),
                     "correlation references outer users.id(0) and inner orders.uid(4): {ords:?}"
                 );
-                assert!(matches!(*inner, LogicalNode::Scan { .. }), "right is the bare inner Scan");
+                assert!(
+                    matches!(*inner, LogicalNode::Scan { .. }),
+                    "right is the bare inner Scan"
+                );
             }
             other => panic!("expected correlated Semi join with equi ON, got {other:?}"),
         }
@@ -2475,7 +2515,10 @@ mod tests {
                 plan,
                 LogicalNode::Join {
                     kind: JoinKind::Semi,
-                    on: Some(Expr::BinaryOp { op: BinaryOp::And, .. }),
+                    on: Some(Expr::BinaryOp {
+                        op: BinaryOp::And,
+                        ..
+                    }),
                     ..
                 }
             ),
@@ -2986,8 +3029,7 @@ mod tests {
     #[test]
     fn lower_function_body_lowers_param_expression() {
         // F5: `CREATE FUNCTION double(x BIGINT) AS 'x * 2'` body → BinaryOp(Mul, Col(0), Lit).
-        let body =
-            lower_function_body("x * 2", &[("x".to_string(), ProximaType::Int64)]).unwrap();
+        let body = lower_function_body("x * 2", &[("x".to_string(), ProximaType::Int64)]).unwrap();
         match body {
             Expr::BinaryOp { op, left, right } => {
                 assert_eq!(op, BinaryOp::Mul);
@@ -3001,12 +3043,10 @@ mod tests {
     #[test]
     fn lower_function_body_supports_builtins_and_rejects_unknown_param() {
         // body may call builtins (resolved at execution against the registry) ...
-        assert!(
-            lower_function_body("abs(x)", &[("x".to_string(), ProximaType::Float64)]).is_ok()
-        );
+        assert!(lower_function_body("abs(x)", &[("x".to_string(), ProximaType::Float64)]).is_ok());
         // ... and a reference to an undeclared parameter errors clearly.
-        let err = lower_function_body("y + 1", &[("x".to_string(), ProximaType::Int64)])
-            .unwrap_err();
+        let err =
+            lower_function_body("y + 1", &[("x".to_string(), ProximaType::Int64)]).unwrap_err();
         assert!(matches!(err, FrontendError::ColumnNotFound(_)));
     }
 }

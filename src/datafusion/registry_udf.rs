@@ -128,7 +128,9 @@ fn eval_registry_scalar(
     for r in 0..num_rows {
         row.clear();
         for arr in &arrays {
-            row.push(scalar_value_to_proxima(&ScalarValue::try_from_array(arr, r)?)?);
+            row.push(scalar_value_to_proxima(&ScalarValue::try_from_array(
+                arr, r,
+            )?)?);
         }
         let result =
             (kernel)(&row).map_err(|e| DataFusionError::Execution(format!("{name}: {e}")))?;
@@ -227,7 +229,9 @@ impl Accumulator for ProximaDfAccumulator {
         for r in 0..num_rows {
             row.clear();
             for arr in values {
-                row.push(scalar_value_to_proxima(&ScalarValue::try_from_array(arr, r)?)?);
+                row.push(scalar_value_to_proxima(&ScalarValue::try_from_array(
+                    arr, r,
+                )?)?);
             }
             self.inner
                 .update(&row)
@@ -245,7 +249,9 @@ impl Accumulator for ProximaDfAccumulator {
         for r in 0..num_rows {
             st.clear();
             for arr in states {
-                st.push(scalar_value_to_proxima(&ScalarValue::try_from_array(arr, r)?)?);
+                st.push(scalar_value_to_proxima(&ScalarValue::try_from_array(
+                    arr, r,
+                )?)?);
             }
             self.inner
                 .merge(&st)
@@ -295,14 +301,16 @@ pub fn proxima_aggregate_udf(def: Arc<AggregateFunctionDef>) -> AggregateUDF {
     let ret = return_type.clone();
     let st = state_types.clone();
 
-    let factory = Arc::new(move |_args: datafusion::logical_expr::function::AccumulatorArgs| {
-        Ok(Box::new(ProximaDfAccumulator {
-            inner: kernel.new_accumulator(),
-            name: name.clone(),
-            return_type: ret.clone(),
-            state_types: st.clone(),
-        }) as Box<dyn Accumulator>)
-    });
+    let factory = Arc::new(
+        move |_args: datafusion::logical_expr::function::AccumulatorArgs| {
+            Ok(Box::new(ProximaDfAccumulator {
+                inner: kernel.new_accumulator(),
+                name: name.clone(),
+                return_type: ret.clone(),
+                state_types: st.clone(),
+            }) as Box<dyn Accumulator>)
+        },
+    );
 
     create_udaf(
         &def.signature.name,
@@ -345,8 +353,8 @@ mod tests {
         let def = upper_def();
         let rt = def.signature.return_ty.to_arrow_type();
         let input = Arc::new(StringArray::from(vec![Some("ab"), None, Some("Cd")])) as ArrayRef;
-        let out =
-            eval_registry_scalar("upper", &def.kernel, &rt, &[ColumnarValue::Array(input)]).unwrap();
+        let out = eval_registry_scalar("upper", &def.kernel, &rt, &[ColumnarValue::Array(input)])
+            .unwrap();
         let arr = out.into_array(3).unwrap();
         let s = arr.as_any().downcast_ref::<StringArray>().unwrap();
         assert_eq!(s.value(0), "AB");
@@ -358,7 +366,10 @@ mod tests {
     fn native_builtins_are_excluded_from_registration() {
         // The adapter must never shadow DataFusion's faster vectorized builtins.
         for n in ["upper", "lower", "abs", "concat"] {
-            assert!(DATAFUSION_NATIVE_SCALARS.contains(&n), "{n} must be excluded");
+            assert!(
+                DATAFUSION_NATIVE_SCALARS.contains(&n),
+                "{n} must be excluded"
+            );
         }
     }
 
@@ -393,8 +404,12 @@ mod tests {
     fn df_accumulator_update_and_evaluate() {
         // product over [2, NULL, 3, 4] = 24 through DataFusion's Accumulator interface.
         let mut acc = product_accumulator();
-        let col = Arc::new(Float64Array::from(vec![Some(2.0), None, Some(3.0), Some(4.0)]))
-            as ArrayRef;
+        let col = Arc::new(Float64Array::from(vec![
+            Some(2.0),
+            None,
+            Some(3.0),
+            Some(4.0),
+        ])) as ArrayRef;
         acc.update_batch(&[col]).unwrap();
         assert_eq!(acc.evaluate().unwrap(), ScalarValue::Float64(Some(24.0)));
     }

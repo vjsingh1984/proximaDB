@@ -66,16 +66,26 @@ pub trait ObjectStoreBridge: Send + Sync {
         tenant_id: Option<&str>,
     ) -> Result<(), StorageError> {
         let _ = schema;
-        self.write_records_to_parquet(path, records, tenant_id).await
+        self.write_records_to_parquet(path, records, tenant_id)
+            .await
     }
 
     /// Fetches a specialized PAX block or Segment (SST, HELIX, etc.) from object storage
     /// into memory for high-performance Vector SIMD scans.
-    async fn fetch_vector_segment(&self, path: &Path, tenant_id: Option<&str>) -> Result<Vec<u8>, StorageError>;
+    async fn fetch_vector_segment(
+        &self,
+        path: &Path,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<u8>, StorageError>;
 
     /// Persists a specialized PAX block or Segment to decoupled object storage.
     /// Implementers MUST emit `proximadb_object_store_ops_total` and `proximadb_storage_bytes_seconds` for billing.
-    async fn persist_vector_segment(&self, path: &Path, data: &[u8], tenant_id: Option<&str>) -> Result<(), StorageError>;
+    async fn persist_vector_segment(
+        &self,
+        path: &Path,
+        data: &[u8],
+        tenant_id: Option<&str>,
+    ) -> Result<(), StorageError>;
 
     /// Enumerate the object keys under `prefix`, returned as paths that are
     /// directly consumable by this bridge's read methods (`read_parquet_batches`

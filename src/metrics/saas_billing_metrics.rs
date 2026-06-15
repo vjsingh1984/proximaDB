@@ -1,4 +1,5 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)] // dedicated metric-registration module: static registration is infallible / fail-fast at startup; lazy_static can't carry per-site allows
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+// dedicated metric-registration module: static registration is infallible / fail-fast at startup; lazy_static can't carry per-site allows
 // Copyright 2026 ProximaDB
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,13 +23,16 @@ lazy_static! {
         &["tenant_id", "operation"]
     )
     .unwrap_or_else(|err| {
-        error!("failed to register proximadb_object_store_ops_total: {}", err);
+        error!(
+            "failed to register proximadb_object_store_ops_total: {}",
+            err
+        );
         CounterVec::new(
             Opts::new("proximadb_object_store_ops_total", ""),
-            &["tenant_id", "operation"]
-        ).unwrap()
+            &["tenant_id", "operation"],
+        )
+        .unwrap()
     });
-
     pub static ref STORAGE_BYTES_SECONDS: GaugeVec = register_gauge_vec!(
         Opts::new(
             "proximadb_storage_bytes_seconds",
@@ -37,13 +41,16 @@ lazy_static! {
         &["tenant_id", "storage_type"]
     )
     .unwrap_or_else(|err| {
-        error!("failed to register proximadb_storage_bytes_seconds: {}", err);
+        error!(
+            "failed to register proximadb_storage_bytes_seconds: {}",
+            err
+        );
         GaugeVec::new(
             Opts::new("proximadb_storage_bytes_seconds", ""),
-            &["tenant_id", "storage_type"]
-        ).unwrap()
+            &["tenant_id", "storage_type"],
+        )
+        .unwrap()
     });
-
     pub static ref TASK_EXECUTION_TIME_MS: CounterVec = register_counter_vec!(
         Opts::new(
             "proximadb_task_execution_time_ms",
@@ -52,28 +59,38 @@ lazy_static! {
         &["tenant_id", "engine"]
     )
     .unwrap_or_else(|err| {
-        error!("failed to register proximadb_task_execution_time_ms: {}", err);
+        error!(
+            "failed to register proximadb_task_execution_time_ms: {}",
+            err
+        );
         CounterVec::new(
             Opts::new("proximadb_task_execution_time_ms", ""),
-            &["tenant_id", "engine"]
-        ).unwrap()
+            &["tenant_id", "engine"],
+        )
+        .unwrap()
     });
 }
 
 /// Helper to record an object store operation.
 pub fn record_object_store_op(tenant_id: Option<&str>, operation: &str) {
     let t_id = tenant_id.unwrap_or("default");
-    OBJECT_STORE_OPS_TOTAL.with_label_values(&[t_id, operation]).inc();
+    OBJECT_STORE_OPS_TOTAL
+        .with_label_values(&[t_id, operation])
+        .inc();
 }
 
 /// Helper to update storage capacity usage gauge.
 pub fn record_storage_bytes(tenant_id: Option<&str>, storage_type: &str, bytes: f64) {
     let t_id = tenant_id.unwrap_or("default");
-    STORAGE_BYTES_SECONDS.with_label_values(&[t_id, storage_type]).set(bytes);
+    STORAGE_BYTES_SECONDS
+        .with_label_values(&[t_id, storage_type])
+        .set(bytes);
 }
 
 /// Helper to record compute execution time.
 pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duration_ms: f64) {
     let t_id = tenant_id.unwrap_or("default");
-    TASK_EXECUTION_TIME_MS.with_label_values(&[t_id, engine]).inc_by(duration_ms);
+    TASK_EXECUTION_TIME_MS
+        .with_label_values(&[t_id, engine])
+        .inc_by(duration_ms);
 }

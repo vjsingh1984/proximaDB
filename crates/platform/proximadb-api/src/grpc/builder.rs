@@ -21,7 +21,7 @@ use proximadb_proto::v1::{
     graph_service_server::GraphServiceServer,
     hybrid_search_service_server::HybridSearchServiceServer,
     observability_service_server::ObservabilityServiceServer,
-    security_service_server::SecurityServiceServer, query_service_server::QueryServiceServer,
+    query_service_server::QueryServiceServer, security_service_server::SecurityServiceServer,
     vector_service_server::VectorServiceServer,
 };
 use proximadb_runtime::{

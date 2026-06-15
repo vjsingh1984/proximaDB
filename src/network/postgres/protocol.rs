@@ -561,21 +561,21 @@ impl PostgresProtocol {
                 return self;
             }
         };
-        let bridge = match proximadb_iceberg_engine::IcebergObjectStoreBridge::from_url(
-            &warehouse_root_url,
-        ) {
-            Ok(bridge) => Arc::new(bridge)
-                as Arc<dyn proximadb_storage_common::object_store_bridge::ObjectStoreBridge>,
-            Err(e) => {
-                tracing::warn!(
-                    target: "proximadb::pgwire::materialize",
-                    "warehouse object store unavailable at {warehouse_root_url}: {e}; \
-                     ALTER TABLE … MATERIALIZE stays unwired"
-                );
-                self.ddl_service = Some(Arc::new(ddl));
-                return self;
-            }
-        };
+        let bridge =
+            match proximadb_iceberg_engine::IcebergObjectStoreBridge::from_url(&warehouse_root_url)
+            {
+                Ok(bridge) => Arc::new(bridge)
+                    as Arc<dyn proximadb_storage_common::object_store_bridge::ObjectStoreBridge>,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "proximadb::pgwire::materialize",
+                        "warehouse object store unavailable at {warehouse_root_url}: {e}; \
+                         ALTER TABLE … MATERIALIZE stays unwired"
+                    );
+                    self.ddl_service = Some(Arc::new(ddl));
+                    return self;
+                }
+            };
         let materializer = Arc::new(crate::services::dml::DmlTableMaterializer::new(
             dml,
             bridge,

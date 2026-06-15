@@ -179,9 +179,7 @@ pub enum PhysicalPlan {
     /// Cardinality guard for an uncorrelated scalar subquery: passes its input
     /// through unchanged, erroring at execution if the input yields >1 row.
     /// One input, same output schema.
-    AssertMaxOneRow {
-        input: Box<PhysicalPlan>,
-    },
+    AssertMaxOneRow { input: Box<PhysicalPlan> },
     Union {
         inputs: Vec<PhysicalPlan>,
         all: bool,
@@ -400,7 +398,10 @@ fn render_explain_node(plan: &PhysicalPlan, depth: usize, lines: &mut Vec<String
             }
         }
         PhysicalPlan::SetOp {
-            op, left, right, all,
+            op,
+            left,
+            right,
+            all,
         } => {
             lines.push(format!("{indent}SetOp op={op:?} all={all}"));
             render_explain_node(left, depth + 1, lines);

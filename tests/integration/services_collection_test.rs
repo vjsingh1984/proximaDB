@@ -363,15 +363,24 @@ async fn test_collection_port_get_collection_is_tenant_scoped() -> Result<()> {
         .await?;
 
     // Owner tenant resolves the collection → pgwire gate allows the search.
-    let owned =
-        CollectionPort::get_collection(service.as_ref(), "scoped_vectors", Some(&tenant_a.tenant_id))
-            .await?;
-    assert!(owned.is_some(), "owner tenant must resolve its own collection");
+    let owned = CollectionPort::get_collection(
+        service.as_ref(),
+        "scoped_vectors",
+        Some(&tenant_a.tenant_id),
+    )
+    .await?;
+    assert!(
+        owned.is_some(),
+        "owner tenant must resolve its own collection"
+    );
 
     // Cross-tenant resolves to None → pgwire gate denies (relation does not exist).
-    let cross =
-        CollectionPort::get_collection(service.as_ref(), "scoped_vectors", Some(&tenant_b.tenant_id))
-            .await?;
+    let cross = CollectionPort::get_collection(
+        service.as_ref(),
+        "scoped_vectors",
+        Some(&tenant_b.tenant_id),
+    )
+    .await?;
     assert!(
         cross.is_none(),
         "cross-tenant vector-search access must be denied (structural isolation)"

@@ -51,12 +51,12 @@ mod legacy;
 // Public exports
 pub use config::{SearchPlanHints, UnifiedSearchConfig};
 pub use hybrid::build_axis_hybrid_query;
+pub(crate) use legacy::rich_filters_to_filter_expression;
 pub use legacy::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
     RichRecordGetRequest, RichRecordGetResponse, RichSearchRequest, RichSearchResponse,
     RichSearchResult, VectorOperationsService,
 };
-pub(crate) use legacy::rich_filters_to_filter_expression;
 pub use search::{
     executor::{VectorSearchExecutorResult, proto_results_to_vector_records},
     pipeline::{ProgressiveSearchPipeline, StageResult, default_progressive_stages},

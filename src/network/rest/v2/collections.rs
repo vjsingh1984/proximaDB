@@ -512,7 +512,9 @@ pub async fn create_collection_v2(
     let index_configs = match request.index_configs.take() {
         None => Vec::new(),
         Some(inputs) => {
-            use crate::proto::proximadb_v1::{HnswConfig, IndexConfig, IndexingAlgorithm, IvfConfig};
+            use crate::proto::proximadb_v1::{
+                HnswConfig, IndexConfig, IndexingAlgorithm, IvfConfig,
+            };
             let mut out = Vec::with_capacity(inputs.len());
             for (idx, cfg) in inputs.into_iter().enumerate() {
                 let algorithm = match cfg.algorithm.trim().to_ascii_lowercase().as_str() {
@@ -530,9 +532,7 @@ pub async fn create_collection_v2(
                     }
                 };
                 out.push(IndexConfig {
-                    index_name: cfg
-                        .index_name
-                        .unwrap_or_else(|| format!("index_{}", idx)),
+                    index_name: cfg.index_name.unwrap_or_else(|| format!("index_{}", idx)),
                     algorithm: algorithm as i32,
                     parameters: cfg.parameters,
                     hnsw_config: cfg.hnsw_config.map(|h| HnswConfig {

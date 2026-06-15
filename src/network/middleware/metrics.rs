@@ -1,4 +1,5 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)] // dedicated metric-registration module: static registration is infallible / fail-fast at startup; lazy_static can't carry per-site allows
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+// dedicated metric-registration module: static registration is infallible / fail-fast at startup; lazy_static can't carry per-site allows
 //! Per-route REST metrics middleware.
 //!
 //! Emits Prometheus series for every REST request so operators get latency and
@@ -14,9 +15,7 @@ use axum::response::Response;
 use std::time::Instant;
 
 use lazy_static::lazy_static;
-use prometheus::{
-    CounterVec, HistogramVec, register_counter_vec, register_histogram_vec,
-};
+use prometheus::{CounterVec, HistogramVec, register_counter_vec, register_histogram_vec};
 
 lazy_static! {
     static ref HTTP_REQUESTS_TOTAL: CounterVec = register_counter_vec!(

@@ -18,12 +18,7 @@ mod schema_tests {
     use proximadb::storage::schema::{ProximaColumn, ProximaSchema};
     use proximadb_data_model::{ProximaType, VectorElement};
 
-    fn make_column(
-        id: i32,
-        name: &str,
-        data_type: ProximaType,
-        nullable: bool,
-    ) -> ProximaColumn {
+    fn make_column(id: i32, name: &str, data_type: ProximaType, nullable: bool) -> ProximaColumn {
         ProximaColumn {
             id,
             name: name.to_string(),

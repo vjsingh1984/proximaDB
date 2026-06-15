@@ -1,4 +1,5 @@
-#![allow(clippy::doc_lazy_continuation)] // cosmetic: newer clippy lint on pre-existing doc list-rendering; no functional impact
+#![allow(clippy::doc_lazy_continuation)]
+// cosmetic: newer clippy lint on pre-existing doc list-rendering; no functional impact
 // Copyright 2025 Vijaykumar Singh.
 // Licensed under the Apache License, Version 2.0.
 

@@ -1,4 +1,5 @@
-#![allow(clippy::doc_lazy_continuation)] // cosmetic: newer clippy lint on pre-existing doc list-rendering; no functional impact
+#![allow(clippy::doc_lazy_continuation)]
+// cosmetic: newer clippy lint on pre-existing doc list-rendering; no functional impact
 /*
  * Copyright 2025 ProximaDB
  *
@@ -838,21 +839,15 @@ impl HardwareCapabilities {
                     1 => {
                         let cache_type = cache.cache_type();
                         if cache_type == raw_cpuid::CacheType::Data {
-                            l1_data = cache.sets()
-                                * cache.associativity()
-                                * cache.coherency_line_size();
+                            l1_data =
+                                cache.sets() * cache.associativity() * cache.coherency_line_size();
                         } else if cache_type == raw_cpuid::CacheType::Instruction {
-                            l1_instruction = cache.sets()
-                                * cache.associativity()
-                                * cache.coherency_line_size();
+                            l1_instruction =
+                                cache.sets() * cache.associativity() * cache.coherency_line_size();
                         }
                     }
-                    2 => {
-                        l2 = cache.sets() * cache.associativity() * cache.coherency_line_size()
-                    }
-                    3 => {
-                        l3 = cache.sets() * cache.associativity() * cache.coherency_line_size()
-                    }
+                    2 => l2 = cache.sets() * cache.associativity() * cache.coherency_line_size(),
+                    3 => l3 = cache.sets() * cache.associativity() * cache.coherency_line_size(),
                     _ => {}
                 }
             }
@@ -942,27 +937,31 @@ impl HardwareCapabilities {
 
         // L1 data cache (index0)
         if let Ok(size_str) = fs::read_to_string(format!("{}/index0/size", base_path))
-            && let Some(size) = Self::parse_linux_cache_size(&size_str) {
-                cache_sizes.l1_data = size;
-            }
+            && let Some(size) = Self::parse_linux_cache_size(&size_str)
+        {
+            cache_sizes.l1_data = size;
+        }
 
         // L1 instruction cache (index1)
         if let Ok(size_str) = fs::read_to_string(format!("{}/index1/size", base_path))
-            && let Some(size) = Self::parse_linux_cache_size(&size_str) {
-                cache_sizes.l1_instruction = size;
-            }
+            && let Some(size) = Self::parse_linux_cache_size(&size_str)
+        {
+            cache_sizes.l1_instruction = size;
+        }
 
         // L2 cache (index2)
         if let Ok(size_str) = fs::read_to_string(format!("{}/index2/size", base_path))
-            && let Some(size) = Self::parse_linux_cache_size(&size_str) {
-                cache_sizes.l2 = size;
-            }
+            && let Some(size) = Self::parse_linux_cache_size(&size_str)
+        {
+            cache_sizes.l2 = size;
+        }
 
         // L3 cache (index3)
         if let Ok(size_str) = fs::read_to_string(format!("{}/index3/size", base_path))
-            && let Some(size) = Self::parse_linux_cache_size(&size_str) {
-                cache_sizes.l3 = size;
-            }
+            && let Some(size) = Self::parse_linux_cache_size(&size_str)
+        {
+            cache_sizes.l3 = size;
+        }
 
         tracing::info!(
             "Detected Linux cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB",

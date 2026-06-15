@@ -155,7 +155,9 @@ async fn v2_metadata_filter_is_enforced_on_all_paths() {
     );
 
     let insert = http
-        .post(format!("{base}/api/v2/collections/{collection}/records/batch"))
+        .post(format!(
+            "{base}/api/v2/collections/{collection}/records/batch"
+        ))
         .json(&json!({
             "records": [
                 { "id": "a1", "vector": [0.0], "props": { "account_id": "acctA" } },
@@ -180,7 +182,9 @@ async fn v2_metadata_filter_is_enforced_on_all_paths() {
 
     // ── Path C: /records/scan with an equality-map filter ───────────────────
     let scan = http
-        .post(format!("{base}/api/v2/collections/{collection}/records/scan"))
+        .post(format!(
+            "{base}/api/v2/collections/{collection}/records/scan"
+        ))
         .json(&json!({ "limit": 10, "filter": { "account_id": "acctA" } }))
         .send()
         .await
@@ -281,8 +285,17 @@ async fn v2_metadata_filter_is_enforced_on_all_paths() {
             if let Some(f) = filters {
                 body["filters"] = f;
             }
-            let resp = http.post(url).json(&body).send().await.expect("hybrid search");
-            assert!(resp.status().is_success(), "hybrid status {}", resp.status());
+            let resp = http
+                .post(url)
+                .json(&body)
+                .send()
+                .await
+                .expect("hybrid search");
+            assert!(
+                resp.status().is_success(),
+                "hybrid status {}",
+                resp.status()
+            );
             let parsed: serde_json::Value = resp.json().await.expect("hybrid json");
             let recs = parsed
                 .get("results")

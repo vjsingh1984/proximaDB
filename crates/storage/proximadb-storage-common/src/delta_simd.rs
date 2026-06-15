@@ -197,30 +197,32 @@ unsafe fn delta_decode_f32_avx2(
     base_bits: i64,
     output: &mut [f32],
     count: usize,
-) -> Result<usize> { unsafe {
-    let chunks = count / 4;
+) -> Result<usize> {
+    unsafe {
+        let chunks = count / 4;
 
-    for i in 0..chunks {
-        let idx = i * 4;
+        for i in 0..chunks {
+            let idx = i * 4;
 
-        let v0 = (base_bits + deltas[idx]) as u32;
-        let v1 = (base_bits + deltas[idx + 1]) as u32;
-        let v2 = (base_bits + deltas[idx + 2]) as u32;
-        let v3 = (base_bits + deltas[idx + 3]) as u32;
+            let v0 = (base_bits + deltas[idx]) as u32;
+            let v1 = (base_bits + deltas[idx + 1]) as u32;
+            let v2 = (base_bits + deltas[idx + 2]) as u32;
+            let v3 = (base_bits + deltas[idx + 3]) as u32;
 
-        let u32_vec = _mm_set_epi32(v3 as i32, v2 as i32, v1 as i32, v0 as i32);
-        let f32_vec = _mm_castsi128_ps(u32_vec);
+            let u32_vec = _mm_set_epi32(v3 as i32, v2 as i32, v1 as i32, v0 as i32);
+            let f32_vec = _mm_castsi128_ps(u32_vec);
 
-        _mm_storeu_ps(output.as_mut_ptr().add(idx), f32_vec);
+            _mm_storeu_ps(output.as_mut_ptr().add(idx), f32_vec);
+        }
+
+        for i in (chunks * 4)..count {
+            let value_bits = (base_bits + deltas[i]) as u32;
+            output[i] = f32::from_bits(value_bits);
+        }
+
+        Ok(count)
     }
-
-    for i in (chunks * 4)..count {
-        let value_bits = (base_bits + deltas[i]) as u32;
-        output[i] = f32::from_bits(value_bits);
-    }
-
-    Ok(count)
-}}
+}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
@@ -229,20 +231,22 @@ unsafe fn prefix_sum_i64_avx2(
     base: i64,
     output: &mut [i64],
     count: usize,
-) -> Result<usize> { unsafe {
-    if count == 0 {
-        return Ok(0);
+) -> Result<usize> {
+    unsafe {
+        if count == 0 {
+            return Ok(0);
+        }
+
+        std::ptr::copy_nonoverlapping(deltas.as_ptr(), output.as_mut_ptr(), count);
+
+        output[0] += base;
+        for i in 1..count {
+            output[i] += output[i - 1];
+        }
+
+        Ok(count)
     }
-
-    std::ptr::copy_nonoverlapping(deltas.as_ptr(), output.as_mut_ptr(), count);
-
-    output[0] += base;
-    for i in 1..count {
-        output[i] += output[i - 1];
-    }
-
-    Ok(count)
-}}
+}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]

@@ -201,9 +201,8 @@ pub(crate) fn rich_filters_to_filter_expression(
                 } else {
                     filter.value_list.clone()
                 };
-                let array = serde_json::Value::Array(
-                    values.iter().map(proxima_value_to_json).collect(),
-                );
+                let array =
+                    serde_json::Value::Array(values.iter().map(proxima_value_to_json).collect());
                 conditions.push(FilterExpression::Comparison {
                     field,
                     operator: if matches!(filter.operator, RichFilterOperator::In) {
@@ -4847,7 +4846,10 @@ mod tenant_tests {
         // starts_with / ends_with must NOT collapse to Contains (which would
         // broaden the match and risk leaking cross-scope records).
         for (op, expected) in [
-            (RichFilterOperator::StartsWith, ComparisonOperator::StartsWith),
+            (
+                RichFilterOperator::StartsWith,
+                ComparisonOperator::StartsWith,
+            ),
             (RichFilterOperator::EndsWith, ComparisonOperator::EndsWith),
             (RichFilterOperator::Contains, ComparisonOperator::Contains),
         ] {
@@ -5958,10 +5960,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         let matching = records
             .into_iter()
             .filter(|record| {
-                crate::core::search::sql_value_filter::evaluate_filter_proxima(
-                    &expr,
-                    &record.props,
-                )
+                crate::core::search::sql_value_filter::evaluate_filter_proxima(&expr, &record.props)
             })
             .map(|record| {
                 // Mirror the v2 scan serializer's id selection (oid, then the

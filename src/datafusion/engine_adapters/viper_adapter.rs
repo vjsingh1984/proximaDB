@@ -72,9 +72,7 @@ use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::datafusion::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
 };
-use crate::storage::formats::{
-    CacheStatus, ColumnBounds, FileSplit, SplitType, StorageTier,
-};
+use crate::storage::formats::{CacheStatus, ColumnBounds, FileSplit, SplitType, StorageTier};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 use super::common::vector_collection_schema;

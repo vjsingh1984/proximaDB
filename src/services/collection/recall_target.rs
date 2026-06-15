@@ -389,34 +389,33 @@ pub fn apply_advisor_to_indexes(
                     max_memory_mb,
                     binary_rerank_allowed,
                     modalities: modalities.clone(),
-                })
-                    && let IndexAlgorithm::HNSW {
-                        m,
-                        ef_construction,
-                        ef_search,
-                        ..
-                    } = out.algorithm
-                    {
-                        idx.hnsw_config = Some(HnswConfig {
-                            m: Some(m),
-                            ef_construction: Some(ef_construction),
-                            // If the operator pinned max_ef_search
-                            // (legacy tag), clamp here too — the
-                            // HnswIndexAdvisor::advise call above
-                            // skipped max_query_latency_ms for that
-                            // reason, so we re-apply.
-                            ef_search: Some(
-                                max_ef_search_legacy
-                                    .map(|cap| ef_search.min(cap))
-                                    .unwrap_or(ef_search),
-                            ),
-                            ..idx.hnsw_config.unwrap_or_default()
-                        });
-                        applied.push(AppliedAdvice {
-                            index_name: idx.index_name.clone(),
-                            output: out,
-                        });
-                    }
+                }) && let IndexAlgorithm::HNSW {
+                    m,
+                    ef_construction,
+                    ef_search,
+                    ..
+                } = out.algorithm
+                {
+                    idx.hnsw_config = Some(HnswConfig {
+                        m: Some(m),
+                        ef_construction: Some(ef_construction),
+                        // If the operator pinned max_ef_search
+                        // (legacy tag), clamp here too — the
+                        // HnswIndexAdvisor::advise call above
+                        // skipped max_query_latency_ms for that
+                        // reason, so we re-apply.
+                        ef_search: Some(
+                            max_ef_search_legacy
+                                .map(|cap| ef_search.min(cap))
+                                .unwrap_or(ef_search),
+                        ),
+                        ..idx.hnsw_config.unwrap_or_default()
+                    });
+                    applied.push(AppliedAdvice {
+                        index_name: idx.index_name.clone(),
+                        output: out,
+                    });
+                }
             }
             IndexingAlgorithm::Ivf => {
                 // Skip caller-pinned IVF.

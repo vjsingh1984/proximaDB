@@ -492,10 +492,7 @@ impl DdlService {
 
     /// Attach the durable function catalog (F5). When present, every successful
     /// `CREATE FUNCTION` is persisted so it survives a restart (boot re-registers it).
-    pub fn with_function_store(
-        mut self,
-        store: Arc<dyn crate::services::FunctionStore>,
-    ) -> Self {
+    pub fn with_function_store(mut self, store: Arc<dyn crate::services::FunctionStore>) -> Self {
         self.function_store = Some(store);
         self
     }

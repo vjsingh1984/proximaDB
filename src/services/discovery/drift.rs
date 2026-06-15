@@ -143,13 +143,14 @@ impl DriftWatcher {
         let mut by_name: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         if let Some(source) = &self.collection_source
-            && let Ok(cols) = source.list_collections(None).await {
-                for c in cols {
-                    if let Some(name) = c.config.as_ref().map(|cfg| cfg.name.clone()) {
-                        by_name.entry(name).or_insert(c.id);
-                    }
+            && let Ok(cols) = source.list_collections(None).await
+        {
+            for c in cols {
+                if let Some(name) = c.config.as_ref().map(|cfg| cfg.name.clone()) {
+                    by_name.entry(name).or_insert(c.id);
                 }
             }
+        }
         // History-only collections may not be in the catalog list; fall back to
         // name-as-id (the manifest lookup then returns 0 — no spurious signal).
         for c in self.service.registry().collections() {

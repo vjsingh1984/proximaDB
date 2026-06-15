@@ -9,11 +9,11 @@
 //! `WindowExecutor` from `window_executor.rs`.
 
 use super::QueryRow;
+#[cfg(feature = "datafusion-integration")]
+use super::window_executor::WindowFunction;
 use super::window_executor::{
     FrameBound, FrameDefinition, SortDirection, WindowFunctionCall, WindowSpec,
 };
-#[cfg(feature = "datafusion-integration")]
-use super::window_executor::WindowFunction;
 use anyhow::Result;
 #[cfg(feature = "datafusion-integration")]
 use anyhow::anyhow;

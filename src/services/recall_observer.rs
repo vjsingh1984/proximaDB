@@ -23,8 +23,8 @@
 //! episode and won't re-fire until recall recovers (3 passes reopen the gate)
 //! and drops again — no thrash even if a collection stays below the floor.
 
-use std::collections::HashMap;
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 

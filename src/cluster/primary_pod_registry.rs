@@ -172,7 +172,6 @@ pub enum PersistenceMode {
     CatalogPrimary,
 }
 
-
 impl PersistenceMode {
     /// Stable string for logging / metric labels. Matches the
     /// `#[serde(rename_all = "snake_case")]` wire format so config

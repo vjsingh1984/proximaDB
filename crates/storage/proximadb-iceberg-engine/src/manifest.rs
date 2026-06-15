@@ -135,10 +135,16 @@ mod tests {
         let c = committer();
         assert_eq!(c.latest_version().await.unwrap(), None);
 
-        let out = c.commit(None, Bytes::from_static(b"snapshot-0")).await.unwrap();
+        let out = c
+            .commit(None, Bytes::from_static(b"snapshot-0"))
+            .await
+            .unwrap();
         assert_eq!(out, CommitOutcome::Committed(0));
         assert_eq!(c.latest_version().await.unwrap(), Some(0));
-        assert_eq!(c.read_manifest(0).await.unwrap(), Bytes::from_static(b"snapshot-0"));
+        assert_eq!(
+            c.read_manifest(0).await.unwrap(),
+            Bytes::from_static(b"snapshot-0")
+        );
     }
 
     /// Sequential commits advance the version monotonically and each is independently readable.
@@ -170,13 +176,22 @@ mod tests {
         c.commit(None, Bytes::from_static(b"s0")).await.unwrap();
 
         // Both attempt to publish v1 as the successor of v0.
-        let winner = c.commit(Some(0), Bytes::from_static(b"winner")).await.unwrap();
-        let loser = c.commit(Some(0), Bytes::from_static(b"loser")).await.unwrap();
+        let winner = c
+            .commit(Some(0), Bytes::from_static(b"winner"))
+            .await
+            .unwrap();
+        let loser = c
+            .commit(Some(0), Bytes::from_static(b"loser"))
+            .await
+            .unwrap();
 
         assert_eq!(winner, CommitOutcome::Committed(1));
         assert_eq!(loser, CommitOutcome::Conflict { latest: Some(1) });
         // The slot holds the winner's manifest, untouched by the loser.
-        assert_eq!(c.read_manifest(1).await.unwrap(), Bytes::from_static(b"winner"));
+        assert_eq!(
+            c.read_manifest(1).await.unwrap(),
+            Bytes::from_static(b"winner")
+        );
     }
 
     /// A trailing slash in the prefix must not change where manifests land.
@@ -190,7 +205,10 @@ mod tests {
             c.commit(None, Bytes::from_static(b"x")).await.unwrap(),
             CommitOutcome::Committed(0)
         );
-        assert_eq!(c.manifest_path(0).as_ref(), "a/b/_manifests/v00000000000000000000.manifest");
+        assert_eq!(
+            c.manifest_path(0).as_ref(),
+            "a/b/_manifests/v00000000000000000000.manifest"
+        );
         assert_eq!(c.latest_version().await.unwrap(), Some(0));
     }
 
@@ -199,11 +217,18 @@ mod tests {
     async fn unrelated_objects_under_prefix_are_ignored() {
         let store = ProximaObjectStore::new(Arc::new(InMemory::new()));
         store
-            .put(&Path::from("data/t/ns/_manifests/README.txt"), Bytes::from_static(b"hi"))
+            .put(
+                &Path::from("data/t/ns/_manifests/README.txt"),
+                Bytes::from_static(b"hi"),
+            )
             .await
             .unwrap();
         let c = ManifestCommitter::new(store, "data/t/ns/_manifests");
-        assert_eq!(c.latest_version().await.unwrap(), None, "non-manifest objects don't count");
+        assert_eq!(
+            c.latest_version().await.unwrap(),
+            None,
+            "non-manifest objects don't count"
+        );
         assert_eq!(
             c.commit(None, Bytes::from_static(b"s0")).await.unwrap(),
             CommitOutcome::Committed(0)

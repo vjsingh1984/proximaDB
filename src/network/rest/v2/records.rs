@@ -952,9 +952,8 @@ fn parse_metadata_filter(
         serde_json::Value::Array(items) if items.is_empty() => Ok(None),
         serde_json::Value::Object(map) if map.is_empty() => Ok(None),
         serde_json::Value::Array(_) => {
-            let typed: Vec<TypedFilter> = serde_json::from_value(value.clone()).map_err(|e| {
-                ApiError::InvalidArgument(format!("invalid filter list: {e}"))
-            })?;
+            let typed: Vec<TypedFilter> = serde_json::from_value(value.clone())
+                .map_err(|e| ApiError::InvalidArgument(format!("invalid filter list: {e}")))?;
             validate_typed_filters(&typed)?;
             let rich = typed
                 .iter()
@@ -2319,10 +2318,9 @@ mod tests {
         }
 
         // Multiple keys → an AND of equality comparisons.
-        let expr =
-            parse_metadata_filter(&serde_json::json!({ "account_id": "acctA", "tier": 2 }))
-                .expect("valid")
-                .expect("some");
+        let expr = parse_metadata_filter(&serde_json::json!({ "account_id": "acctA", "tier": 2 }))
+            .expect("valid")
+            .expect("some");
         match expr {
             FilterExpression::And(conditions) => assert_eq!(conditions.len(), 2),
             other => panic!("expected AND, got {other:?}"),
@@ -2352,9 +2350,21 @@ mod tests {
 
     #[test]
     fn parse_metadata_filter_empty_and_invalid() {
-        assert!(parse_metadata_filter(&serde_json::Value::Null).unwrap().is_none());
-        assert!(parse_metadata_filter(&serde_json::json!({})).unwrap().is_none());
-        assert!(parse_metadata_filter(&serde_json::json!([])).unwrap().is_none());
+        assert!(
+            parse_metadata_filter(&serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            parse_metadata_filter(&serde_json::json!({}))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            parse_metadata_filter(&serde_json::json!([]))
+                .unwrap()
+                .is_none()
+        );
         // Bad operator in the typed-list form is rejected.
         assert!(
             parse_metadata_filter(&serde_json::json!([

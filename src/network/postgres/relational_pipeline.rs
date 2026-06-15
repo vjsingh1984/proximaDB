@@ -725,14 +725,22 @@ mod datafusion_route_tests {
         ddl.execute(ddl_stmt).await.expect("create table");
         let record_store = Arc::new(DirectWalTableRecordStore::new(
             Arc::new(MemtableRecordStorage::new()),
-            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
         ));
         let dml = Arc::new(DmlService::with_record_store_and_table_write_executor(
             manager.clone(),
             record_store,
             Arc::new(PlannedOnlyTableWriteExecutor::new()),
         ));
-        for (id, status, qty) in [("i1", "active", 5), ("i2", "active", 15), ("i3", "idle", 25)] {
+        for (id, status, qty) in [
+            ("i1", "active", 5),
+            ("i2", "active", 15),
+            ("i3", "idle", 25),
+        ] {
             let stmt = parser
                 .parse_dml(&format!(
                     "INSERT INTO inv_route_e2e (id, status, qty) VALUES ('{id}', '{status}', {qty});"
@@ -768,7 +776,10 @@ mod datafusion_route_tests {
             .expect("pipeline engaged")
             .expect("select ok");
         assert_eq!(result.rows.len(), 2, "two status groups");
-        assert_eq!(result.rows[0][0], ProximaValue::String("active".to_string()));
+        assert_eq!(
+            result.rows[0][0],
+            ProximaValue::String("active".to_string())
+        );
         assert_eq!(result.rows[0][1], ProximaValue::Int64(2));
         assert_eq!(result.rows[1][0], ProximaValue::String("idle".to_string()));
         assert_eq!(result.rows[1][1], ProximaValue::Int64(1));
@@ -1383,12 +1394,12 @@ async fn route_and_plan_select(
     if matches!(
         decision.backend,
         crate::query::table_write_plan::ComputeBackend::DataFusionLocal
-    )
-        && let Some(summary) = parquet_split_summary(&parquet_locations).await {
-            explanation.read_route = decision
-                .routed_read_plan_with_splits(summary)
-                .route_explanation();
-        }
+    ) && let Some(summary) = parquet_split_summary(&parquet_locations).await
+    {
+        explanation.read_route = decision
+            .routed_read_plan_with_splits(summary)
+            .route_explanation();
+    }
     // Disclose the planned physical plan for native (Volcano) PATH B queries — the same
     // plan execution runs (via the shared `prepare_select_plan` / `execute_physical`).
     if engages
@@ -1396,21 +1407,22 @@ async fn route_and_plan_select(
             decision.backend,
             crate::query::table_write_plan::ComputeBackend::Native
         )
-        && let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml).await {
-            let base_lines = explain_physical(&physical);
-            if analyze {
-                // EXPLAIN ANALYZE: run the query (read-only) and record actuals —
-                // whole-query totals plus per-operator rows/time annotated onto the
-                // plan lines (metrics are pre-order aligned with `base_lines`).
-                let started = std::time::Instant::now();
-                let (result, node_metrics) = execute_physical_metered(physical, &snapshot).await?;
-                explanation.execution_rows = Some(result.rows.len() as u64);
-                explanation.execution_elapsed_us = Some(started.elapsed().as_micros() as u64);
-                explanation.physical_plan = Some(annotate_plan_lines(base_lines, &node_metrics));
-            } else {
-                explanation.physical_plan = Some(base_lines);
-            }
+        && let Some((snapshot, physical)) = prepare_select_plan(sql, query, dml).await
+    {
+        let base_lines = explain_physical(&physical);
+        if analyze {
+            // EXPLAIN ANALYZE: run the query (read-only) and record actuals —
+            // whole-query totals plus per-operator rows/time annotated onto the
+            // plan lines (metrics are pre-order aligned with `base_lines`).
+            let started = std::time::Instant::now();
+            let (result, node_metrics) = execute_physical_metered(physical, &snapshot).await?;
+            explanation.execution_rows = Some(result.rows.len() as u64);
+            explanation.execution_elapsed_us = Some(started.elapsed().as_micros() as u64);
+            explanation.physical_plan = Some(annotate_plan_lines(base_lines, &node_metrics));
+        } else {
+            explanation.physical_plan = Some(base_lines);
         }
+    }
     Ok(explanation)
 }
 
@@ -1558,10 +1570,7 @@ fn set_expr_engages(body: &SetExpr) -> bool {
                 GroupByExpr::All(_) => true,
                 GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
             };
-            let has_aggregate = select
-                .projection
-                .iter()
-                .any(select_item_has_aggregate);
+            let has_aggregate = select.projection.iter().any(select_item_has_aggregate);
             // A WHERE subquery (IN/EXISTS) lowers to a Semi/Anti join — a shape the
             // legacy single-table path can't serve — so engage PATH B. If it turns out
             // unliftable (correlated/NOT IN), lowering declines and the caller falls
@@ -1571,10 +1580,7 @@ fn set_expr_engages(body: &SetExpr) -> bool {
             // `SELECT a, (SELECT max(x) FROM t)`) is hoisted by PATH B into a LEFT
             // JOIN; the legacy single-table path can't serve it. Same safety as the
             // WHERE case — an unliftable shape declines back to legacy.
-            let has_projection_subquery = select
-                .projection
-                .iter()
-                .any(select_item_has_subquery);
+            let has_projection_subquery = select.projection.iter().any(select_item_has_subquery);
             has_join
                 || has_group_by
                 || select.having.is_some()

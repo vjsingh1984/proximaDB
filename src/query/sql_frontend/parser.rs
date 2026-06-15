@@ -2315,7 +2315,10 @@ mod tests {
     fn parse_ddl_alter_table_materialize_routes_through_pre_parser() {
         let parser = SqlFrontendParser::new();
 
-        for sql in ["ALTER TABLE inv MATERIALIZE", "alter table \"inv\" materialize;"] {
+        for sql in [
+            "ALTER TABLE inv MATERIALIZE",
+            "alter table \"inv\" materialize;",
+        ] {
             let statement = parser
                 .parse_ddl(sql)
                 .expect("expected ddl parse to succeed")

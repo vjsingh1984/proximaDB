@@ -300,10 +300,7 @@ impl NativeTableWriteExecutor {
     /// Enable FOREIGN KEY enforcement on the native write path by supplying a
     /// catalog lookup port. Without it, FK constraints are not checked here
     /// (the row-local catalog validator no longer fails them closed).
-    pub fn with_parent_table_resolver(
-        mut self,
-        resolver: Arc<dyn ParentTableResolver>,
-    ) -> Self {
+    pub fn with_parent_table_resolver(mut self, resolver: Arc<dyn ParentTableResolver>) -> Self {
         self.parent_table_resolver = Some(resolver);
         self
     }
@@ -447,8 +444,7 @@ async fn enforce_foreign_keys_for_batch(
     target_schema: &CatalogTableSchema,
     batch: &[ProximaRecord],
 ) -> Result<()> {
-    let child_primary_key =
-        crate::services::record_store::schema_primary_key_column(target_schema);
+    let child_primary_key = crate::services::record_store::schema_primary_key_column(target_schema);
     for constraint in &target_schema.relational_capabilities.constraints {
         let ColumnConstraint::ForeignKey {
             columns,
@@ -1200,7 +1196,9 @@ mod tests {
             existing_parent_keys: std::collections::HashSet::from(["c1".to_string()]),
             writes: Mutex::new(Vec::new()),
         });
-        let source = Arc::new(VecSourceReader::new(vec![vec![fk_child_record("o2", "c99")]]));
+        let source = Arc::new(VecSourceReader::new(vec![vec![fk_child_record(
+            "o2", "c99",
+        )]]));
         let err = NativeTableWriteExecutor::new(source, store.clone())
             .with_parent_table_resolver(resolver)
             .execute(TableWriteExecutionRequest {
@@ -1224,7 +1222,9 @@ mod tests {
             existing_parent_keys: std::collections::HashSet::new(),
             writes: Mutex::new(Vec::new()),
         });
-        let source = Arc::new(VecSourceReader::new(vec![vec![fk_child_record("o1", "c99")]]));
+        let source = Arc::new(VecSourceReader::new(vec![vec![fk_child_record(
+            "o1", "c99",
+        )]]));
         let result = NativeTableWriteExecutor::new(source, store.clone())
             .execute(TableWriteExecutionRequest {
                 target_schema: &schema,
@@ -1256,8 +1256,12 @@ mod tests {
             .with_relational_capabilities(RelationalCapabilities {
                 primary_key: vec!["id".to_string()],
                 unique_indexes: vec![
-                    CatalogIndex::new("uq_email", vec!["email".to_string()], CatalogIndexType::BTree)
-                        .unique(),
+                    CatalogIndex::new(
+                        "uq_email",
+                        vec!["email".to_string()],
+                        CatalogIndexType::BTree,
+                    )
+                    .unique(),
                 ],
                 ..Default::default()
             });
