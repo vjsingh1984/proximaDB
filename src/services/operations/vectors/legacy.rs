@@ -1763,7 +1763,7 @@ impl VectorOperationsService {
             return Err(anyhow::anyhow!(e));
         }
 
-        self.insert_batch_internal(collection_id, records).await
+        self.write_coordinator().insert_batch_internal(collection_id, records).await
     }
 
     /// Alias kept for callers already using ProximaRecord envelopes.
@@ -1816,7 +1816,7 @@ impl VectorOperationsService {
             }
         }
 
-        self.insert_batch_internal(collection_id, records).await
+        self.write_coordinator().insert_batch_internal(collection_id, records).await
     }
 
     /// Check whether a rich record ID already exists in WAL or the collection's
@@ -1855,48 +1855,6 @@ impl VectorOperationsService {
             .vector_by_id(collection_id, base_path, record_id)
             .await?
             .is_some())
-    }
-
-    async fn insert_batch_internal(
-        &self,
-        collection_id: &str,
-        vectors: Vec<ProximaRecord>,
-    ) -> Result<BatchOperationResult> {
-        let mut vectors = vectors;
-        apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
-
-        self.validate_records_for_insert(collection_id, &vectors)
-            .await?;
-
-        let decision = self.bulk_write_router.route_records(&vectors);
-
-        debug!(
-            "📦 insert_batch: collection={}, vectors={}, estimated_size={} bytes, path={}",
-            collection_id,
-            decision.vector_count,
-            decision.estimated_size_bytes,
-            if decision.use_bulk_lane {
-                "BULK_WAL"
-            } else {
-                "WAL"
-            }
-        );
-
-        if decision.use_bulk_lane {
-            // Large batch: use bulk write (optimized for throughput)
-            info!(
-                "🚀 Routing to bulk_write: {} (vectors: {}, size: {} bytes)",
-                decision.reason, decision.vector_count, decision.estimated_size_bytes
-            );
-            self.bulk_write(collection_id, vectors).await
-        } else {
-            // Small batch: use standard WAL path (optimized for durability)
-            debug!(
-                "📝 Routing to WAL path: {} (vectors: {}, size: {} bytes)",
-                decision.reason, decision.vector_count, decision.estimated_size_bytes
-            );
-            self.insert_vectors_via_wal(collection_id, vectors).await
-        }
     }
 
     /// Return lightweight, default planning/pruning hints without executing search.
@@ -3729,15 +3687,9 @@ impl VectorOperationsService {
         collection_id: &str,
         records: &[ProximaRecord],
     ) -> Result<()> {
-        let collection = self.get_or_load_collection(collection_id).await?;
-        match &collection.config {
-            Some(config) => super::input_validation::validate_records_for_insert(
-                collection_id,
-                config,
-                records,
-            ),
-            None => Ok(()),
-        }
+        self.write_coordinator()
+            .validate_records_for_insert(collection_id, records)
+            .await
     }
 
     /// Retrieve a single vector record by ID.
@@ -3870,6 +3822,7 @@ impl VectorOperationsService {
             self.wal_manager.clone(),
             self.bulk_write_router.clone(),
             self.pseudo_query_generator.clone(),
+            self.collection_resolver(),
         )
     }
 

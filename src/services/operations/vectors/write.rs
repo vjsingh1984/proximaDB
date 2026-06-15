@@ -20,6 +20,7 @@ use proximadb_records::ProximaRecord;
 use crate::services::operations::{BatchOperationResult, BulkWriteRouter, OperationMetrics};
 use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
+use super::resolver::CollectionResolver;
 use super::validation::{PseudoQueryGenerator, apply_pseudo_query_metadata};
 
 /// Stamp each record with the request tenant, rejecting any record that already
@@ -112,6 +113,7 @@ pub(crate) struct VectorWriteCoordinator {
     wal_manager: Arc<WriteAheadLogManager>,
     bulk_write_router: BulkWriteRouter,
     pseudo_query_generator: Arc<dyn PseudoQueryGenerator>,
+    resolver: CollectionResolver,
 }
 
 impl VectorWriteCoordinator {
@@ -119,11 +121,78 @@ impl VectorWriteCoordinator {
         wal_manager: Arc<WriteAheadLogManager>,
         bulk_write_router: BulkWriteRouter,
         pseudo_query_generator: Arc<dyn PseudoQueryGenerator>,
+        resolver: CollectionResolver,
     ) -> Self {
         Self {
             wal_manager,
             bulk_write_router,
             pseudo_query_generator,
+            resolver,
+        }
+    }
+
+    /// Validate a record batch against the target collection's schema
+    /// (dimension, embedding finiteness, …). Resolves the collection via the
+    /// owned resolver, then runs the pure validators; a collection without a
+    /// config is treated as unconstrained (`Ok`).
+    pub(crate) async fn validate_records_for_insert(
+        &self,
+        collection_id: &str,
+        records: &[ProximaRecord],
+    ) -> Result<()> {
+        let collection = self.resolver.get_or_load_collection(collection_id).await?;
+        match &collection.config {
+            Some(config) => super::input_validation::validate_records_for_insert(
+                collection_id,
+                config,
+                records,
+            ),
+            None => Ok(()),
+        }
+    }
+
+    /// Insert a batch of canonical records with smart routing: enrich with
+    /// pseudo-query metadata, validate against the collection schema, then
+    /// route to the bulk lane or the standard WAL path per the router decision.
+    pub(crate) async fn insert_batch_internal(
+        &self,
+        collection_id: &str,
+        vectors: Vec<ProximaRecord>,
+    ) -> Result<BatchOperationResult> {
+        let mut vectors = vectors;
+        apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
+
+        self.validate_records_for_insert(collection_id, &vectors)
+            .await?;
+
+        let decision = self.bulk_write_router.route_records(&vectors);
+
+        debug!(
+            "📦 insert_batch: collection={}, vectors={}, estimated_size={} bytes, path={}",
+            collection_id,
+            decision.vector_count,
+            decision.estimated_size_bytes,
+            if decision.use_bulk_lane {
+                "BULK_WAL"
+            } else {
+                "WAL"
+            }
+        );
+
+        if decision.use_bulk_lane {
+            // Large batch: use bulk write (optimized for throughput)
+            info!(
+                "🚀 Routing to bulk_write: {} (vectors: {}, size: {} bytes)",
+                decision.reason, decision.vector_count, decision.estimated_size_bytes
+            );
+            self.bulk_write(collection_id, vectors).await
+        } else {
+            // Small batch: use standard WAL path (optimized for durability)
+            debug!(
+                "📝 Routing to WAL path: {} (vectors: {}, size: {} bytes)",
+                decision.reason, decision.vector_count, decision.estimated_size_bytes
+            );
+            self.insert_vectors_via_wal(collection_id, vectors).await
         }
     }
 
