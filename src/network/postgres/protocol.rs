@@ -35,11 +35,10 @@ use crate::services::dml::{
     RelationalSelectPredicateInput as SelectPredicate,
     RelationalSelectPredicateOperator as SelectPredicateOperator,
 };
-use crate::services::{DdlService, DmlService, TableWalAppender};
+use crate::services::{DdlService, DmlService};
 use crate::storage::document::DocumentService;
 use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
-use proximadb_records::RecordStorage;
 
 /// PostgreSQL protocol handler
 pub struct PostgresProtocol {
@@ -427,15 +426,13 @@ impl PostgresProtocol {
         collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         vector_ops: Arc<VectorOperationsService>,
         catalog_manager: Arc<CatalogManager>,
-        record_storage: Arc<dyn RecordStorage>,
-        wal_appender: Arc<dyn TableWalAppender>,
+        canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
     ) -> Self {
         let ddl_service = Arc::new(DdlService::new(catalog_manager.clone()));
         let dml_service = Arc::new(DmlService::with_direct_record_storage(
             catalog_manager.clone(),
             vector_ops.clone(),
-            record_storage,
-            wal_appender,
+            canonical_store,
         ));
 
         Self {
@@ -493,15 +490,13 @@ impl PostgresProtocol {
     pub fn with_direct_catalog_manager(
         mut self,
         catalog_manager: Arc<CatalogManager>,
-        record_storage: Arc<dyn RecordStorage>,
-        wal_appender: Arc<dyn TableWalAppender>,
+        canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
     ) -> Self {
         self.ddl_service = Some(Arc::new(DdlService::new(catalog_manager.clone())));
         self.dml_service = Some(Arc::new(DmlService::with_direct_record_storage(
             catalog_manager.clone(),
             self.vector_ops.clone(),
-            record_storage,
-            wal_appender,
+            canonical_store,
         )));
         self.catalog_manager = Some(catalog_manager);
         self

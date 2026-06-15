@@ -477,17 +477,16 @@ impl DmlService {
     pub fn with_direct_record_storage(
         catalog_manager: Arc<CatalogManager>,
         vector_ops: Arc<VectorOps>,
-        record_storage: Arc<dyn RecordStorage>,
-        wal_appender: Arc<dyn TableWalAppender>,
+        canonical_store: Arc<DirectWalTableRecordStore>,
     ) -> Self {
-        let canonical_store =
-            Arc::new(DirectWalTableRecordStore::new(record_storage, wal_appender));
         let legacy_store = Arc::new(VectorOpsTableRecordStore::new(vector_ops));
         let routed_store: Arc<dyn TableRecordStore> = Arc::new(
             // Temporary wiring during migration: canonical acts as the native
-            // row/delta path, legacy acts as the vector-specialized path.
+            // row/delta path, legacy acts as the vector-specialized path. The
+            // canonical store is shared across all pgwire connections so its
+            // per-(tenant, collection) partitions hold one authoritative state.
             CatalogRoutingTableRecordStore::new(
-                canonical_store.clone(),
+                canonical_store,
                 legacy_store.clone(),
                 legacy_store,
             ),
