@@ -48,6 +48,9 @@ pub mod validation;
 // Diagnostics / metrics collaborator (Phase 2.1 decomposition)
 mod diagnostics;
 
+// Flush + compaction coordinator (Phase 2.1 decomposition)
+mod flush;
+
 // Legacy main service implementation (being decomposed)
 mod legacy;
 

@@ -4264,95 +4264,28 @@ impl VectorOperationsService {
     }
 
     /// Flush all pending WAL entries across every collection to durable storage.
+    /// Force-flush all collections' WAL to storage + compact. Phase 2.1:
+    /// delegates to `super::flush::FlushCompactionCoordinator`.
     pub async fn force_flush_all(&self) -> Result<()> {
-        info!("🔄 Force flushing all collections");
-
-        // Flush the WAL manager
-        self.wal_manager.force_flush_all().await?;
-
-        // Trigger compaction in storage engine
-        // Note: compact_all is not available in UnifiedStorageFormat trait
-        // Instead, we need to compact each collection individually
-        let collections: Vec<String> = self
-            .collection_cache
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect();
-
-        for collection_id in collections {
-            if let Some(collection) = self.collection_cache.get(&collection_id) {
-                match self
-                    .unified_engine()
-                    .compact_collection(&collection_id, Some(&**collection))
-                    .await
-                {
-                    Ok(result) => {
-                        info!(
-                            "✅ Compacted collection {}: {} files processed",
-                            collection_id,
-                            result.output_files.unwrap_or(0)
-                        );
-                    }
-                    Err(e) => {
-                        debug!(
-                            "⚠️ Compaction failed for collection {}: {}",
-                            collection_id, e
-                        );
-                        // Continue with other collections
-                    }
-                }
-            }
-        }
-
-        debug!("Force flush all completed");
-        Ok(())
+        self.flush_coordinator().force_flush_all().await
     }
 
     /// Flush all pending WAL entries for a specific collection to durable storage.
     pub async fn force_flush_collection(&self, collection_id: &str) -> Result<()> {
-        info!("🔄 Force flushing collection: {}", collection_id);
-
-        // Flush the WAL manager for this collection
-        self.wal_manager
-            .force_flush_collection(collection_id, None)
-            .await?;
-
-        // Trigger compaction for this collection
-        if let Some(collection) = self.collection_cache.get(collection_id) {
-            match self
-                .unified_engine()
-                .compact_collection(collection_id, Some(&**collection))
-                .await
-            {
-                Ok(result) => {
-                    info!(
-                        "✅ Compacted collection {}: {} files created, {} files processed",
-                        collection_id,
-                        result.output_files.unwrap_or(0),
-                        result.input_files.unwrap_or(0)
-                    );
-                }
-                Err(e) => {
-                    debug!(
-                        "⚠️ Compaction failed for collection {}: {}",
-                        collection_id, e
-                    );
-                    // Don't fail the entire flush operation due to compaction issues
-                }
-            }
-        } else {
-            debug!(
-                "⚠️ Collection {} not found in cache, skipping compaction",
-                collection_id
-            );
-        }
-
-        debug!("Force flush for collection {} completed", collection_id);
-        Ok(())
+        self.flush_coordinator()
+            .force_flush_collection(collection_id)
+            .await
     }
 
-    /// Collect and return a JSON snapshot of key operational metrics (WAL, storage, query cache,
-    /// and collection counts).
+    /// Build the flush + compaction coordinator on demand (cheap `Arc` clones).
+    fn flush_coordinator(&self) -> super::flush::FlushCompactionCoordinator {
+        super::flush::FlushCompactionCoordinator::new(
+            self.wal_manager.clone(),
+            self.unified_engine(),
+            self.collection_cache.clone(),
+        )
+    }
+
     /// Build the read-only diagnostics collaborator on demand (cheap `Arc`
     /// clones). Phase 2.1: metrics/health/unflushed-inspection logic lives in
     /// `super::diagnostics::VectorServiceDiagnostics`; the service keeps the
