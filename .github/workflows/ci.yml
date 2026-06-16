@@ -783,7 +783,12 @@ jobs:
       - name: Run Tests
         run: |
           if [ "${{ matrix.test-type }}" = "unit" ]; then
-            cargo nextest run --lib --profile unit
+            # CARGO_BUILD_JOBS=1: the root `proximadb` crate's test binary
+            # (8400+ tests) is memory-heavy to compile; serializing crate
+            # compilation keeps the 16GB hosted runner from OOMing (it was
+            # being killed mid-link with exit 143 / "runner received a shutdown
+            # signal"). --test-threads bounds nextest's run-phase memory too.
+            CARGO_BUILD_JOBS=1 cargo nextest run --lib --profile unit --test-threads=2
           else
             cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
           fi

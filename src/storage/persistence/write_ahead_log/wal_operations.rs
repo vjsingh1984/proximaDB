@@ -170,7 +170,10 @@ fn write_canonical_json_value(value: &serde_json::Value, out: &mut Vec<u8>) {
         }
         serde_json::Value::Number(value) => out.extend_from_slice(value.to_string().as_bytes()),
         serde_json::Value::String(value) => {
-            serde_json::to_writer(out, value).expect("serializing a JSON string cannot fail");
+            // Writing a JSON string into an in-memory buffer is infallible; ignore
+            // the Result rather than expect() to keep the encoder panic-free
+            // (CLAUDE.md: no expect/unwrap/panic in production code).
+            let _ = serde_json::to_writer(out, value);
         }
         serde_json::Value::Array(values) => {
             out.push(b'[');
@@ -190,8 +193,8 @@ fn write_canonical_json_value(value: &serde_json::Value, out: &mut Vec<u8>) {
                 if index > 0 {
                     out.push(b',');
                 }
-                serde_json::to_writer(&mut *out, key)
-                    .expect("serializing a JSON object key cannot fail");
+                // Infallible in-memory write; ignore the Result (see above).
+                let _ = serde_json::to_writer(&mut *out, key);
                 out.push(b':');
                 write_canonical_json_value(&values[key], out);
             }
