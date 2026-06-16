@@ -222,7 +222,7 @@ jobs:
           cd clients/python
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install pytest grpcio grpcio-tools protobuf pyyaml jsonschema
+          python -m pip install pytest grpcio grpcio-tools protobuf pyyaml jsonschema httpx requests
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-proto-compat"

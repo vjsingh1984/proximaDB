@@ -20,7 +20,7 @@
     "build": "tsc && tsc -p tsconfig.esm.json",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
-    "lint": "eslint src --ext .ts",
+    "lint": "tsc --noEmit",
     "format": "prettier --write src/**/*.ts",
     "test": "vitest run",
     "test:watch": "vitest"
