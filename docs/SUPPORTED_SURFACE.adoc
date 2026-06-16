@@ -38,6 +38,9 @@ marking themselves historical, aspirational, or implementation-only:
 
 | Release blockers / reconciliation
 | link:./_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc].
+
+| Performance / benchmark claims (what is *measured*)
+| link:./_internal/roadmap/BENCHMARK_EVIDENCE.toml[BENCHMARK_EVIDENCE.toml] — every external perf number maps to a runnable bench; only `status = "measured"` entries carry a dated artifact. Do not quote a perf figure as validated unless its ledger entry is `measured`.
 |===
 
 The Technical Debt Register tracks _implementation state_, which can run ahead of support

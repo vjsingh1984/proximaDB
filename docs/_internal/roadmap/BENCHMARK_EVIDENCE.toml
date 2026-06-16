@@ -1,0 +1,192 @@
+# Benchmark Evidence Ledger
+#
+# Ties each externally-facing PERFORMANCE/CAPABILITY claim to its evidence:
+# where the claim is asserted, the bench that (could) substantiate it, and — for
+# claims we actually stand behind — the reproducible provenance (command, source,
+# artifact, hardware, date, version).
+#
+# This exists because perf claims were scattered across README / BENCHMARKS /
+# PRD with no link back to a runnable benchmark or a dated artifact. The ledger
+# makes the gap explicit and machine-checkable (scripts/validate_benchmark_evidence.py).
+#
+# Status taxonomy (enforced by the validator):
+#   measured     - backed by a checked-in dated artifact; REQUIRES bench_source,
+#                  bench_command, artifact, hardware, date, version.
+#   unverified   - a benchmark exists that could substantiate it, but there is no
+#                  dated reproducible artifact tying THIS number to a run.
+#                  REQUIRES bench_source; artifact/date/hardware may be empty.
+#   aspirational - a target / acceptance-criterion only; no benchmark yet.
+#                  REQUIRES bench_source empty.
+#
+# DO NOT promote an entry to `measured` without real provenance. Numbers in
+# README/BENCHMARKS are claims, not evidence, until an artifact backs them.
+
+as_of_date = "2026-06-15"
+source_of_truth = "benches/ + checked-in dated artifacts"
+header_status = "seeded-2026-06-15; most external claims are unverified pending dated artifacts"
+
+# ---------------------------------------------------------------------------
+# MEASURED — backed by a dated, checked-in artifact.
+# ---------------------------------------------------------------------------
+
+[[claims]]
+id = "object_economy_cpu_cost"
+claim = "Object-economy vector route building-block CPU costs (100/1K/10K/100K records) non-regression baseline"
+metric = "cpu_cost_ms"
+status = "measured"
+asserted_in = ["docs/_internal/status/OBJECT_ECONOMY_BENCH_REPORT_2026_05_28.adoc:57"]
+bench_source = "benches/bench_vector_object_economy.rs"
+bench_command = "cargo bench --bench bench_vector_object_economy"
+artifact = "docs/_internal/status/OBJECT_ECONOMY_BENCH_REPORT_2026_05_28.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-05-28"
+version = "v0.2"
+notes = "Non-regression baseline only — explicitly NOT a cost/recall SLA (route is Beta). Cosine, Criterion release profile."
+
+# ---------------------------------------------------------------------------
+# UNVERIFIED — a bench exists, but no dated artifact backs the claimed number.
+# ---------------------------------------------------------------------------
+
+[[claims]]
+id = "vector_search_latency"
+claim = "~8 ms avg, ~15 ms p99 search latency (HNSW, M=32)"
+metric = "search_latency_ms"
+status = "unverified"
+asserted_in = ["README.adoc:97", "docs/10-quality/benchmarks/BENCHMARKS.adoc:16"]
+bench_source = "benches/bench_04_storage_unified.rs"
+bench_command = "cargo bench --bench bench_04_storage_unified"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "BENCHMARKS.adoc cites '10M vectors, 768-d, M1 Max' but its changelog date (2025-02-23) is inconsistent with the 2026 timeline and no reproducible artifact is checked in. README carries an explicit 'not an SLA / YMMV' caveat."
+
+[[claims]]
+id = "ingest_throughput"
+claim = "~125K vectors/sec ingest (small-batch WAL path)"
+metric = "ingest_vectors_per_sec"
+status = "unverified"
+asserted_in = ["README.adoc:98", "docs/10-quality/benchmarks/BENCHMARKS.adoc:17"]
+bench_source = "benches/bench_08_quantization_sst.rs"
+bench_command = "cargo bench --bench bench_08_quantization_sst"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "SST throughput benches exist; no dated artifact links the 125K figure to a specific run."
+
+[[claims]]
+id = "recall_at_10"
+claim = "~97% Recall@10 (HNSW, M=32)"
+metric = "recall_at_10_pct"
+status = "unverified"
+asserted_in = ["README.adoc:99", "docs/10-quality/benchmarks/BENCHMARKS.adoc:18"]
+bench_source = "benches/bench_23_recall_at_k.rs"
+bench_command = "cargo bench --bench bench_23_recall_at_k"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Dedicated recall@k bench (ground-truth vs approximate) exists. README states 'not an SLA'."
+
+[[claims]]
+id = "hybrid_search_latency"
+claim = "~8 ms hybrid search (vector + BM25, RRF fusion)"
+metric = "hybrid_search_latency_ms"
+status = "unverified"
+asserted_in = ["README.adoc:101"]
+bench_source = "benches/bench_21_hybrid_search_fusion.rs"
+bench_command = "cargo bench --bench bench_21_hybrid_search_fusion"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Fusion-strategy latency bench exists. Quality deltas (NDCG/recall improvement) need a labeled IR dataset and are NOT claimed here."
+
+[[claims]]
+id = "qps_throughput"
+claim = "100K+ QPS throughput on commodity hardware"
+metric = "qps"
+status = "unverified"
+asserted_in = ["docs/10-quality/benchmarks/BENCHMARKS.adoc:12"]
+bench_source = "benches/bench_04_storage_unified.rs"
+bench_command = "cargo bench --bench bench_04_storage_unified"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Broad throughput claim; needs full-scale validation and a dated artifact before it can be marketed."
+
+[[claims]]
+id = "object_economy_e2e_latency"
+claim = "Object-economy cold/warm end-to-end retrieval latency"
+metric = "e2e_latency_ms"
+status = "unverified"
+asserted_in = ["docs/_internal/status/OBJECT_ECONOMY_BENCH_REPORT_2026_05_28.adoc:154"]
+bench_source = "benches/bench_vector_object_economy_e2e.rs"
+bench_command = "cargo bench --bench bench_vector_object_economy_e2e"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Bench is registered but was explicitly NOT run for v0.2 (per the object-economy report); e2e budget is dominated by object-store round trips."
+
+# ---------------------------------------------------------------------------
+# ASPIRATIONAL — target / acceptance-criterion only; no benchmark yet.
+# ---------------------------------------------------------------------------
+
+[[claims]]
+id = "tst_ohlc_latency"
+claim = "Sub-millisecond OHLC bar queries (TST engine)"
+metric = "ohlc_query_latency_ms"
+status = "aspirational"
+asserted_in = ["docs/00-product/PRD.adoc:206"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "PRD acceptance criterion for the Beta TST engine. No benchmark under benches/ measures OHLC query latency."
+
+[[claims]]
+id = "tst_ingest_rate"
+claim = ">100K bars/second sustained ingest (TST engine)"
+metric = "tst_ingest_bars_per_sec"
+status = "aspirational"
+asserted_in = ["docs/00-product/PRD.adoc:217"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "PRD acceptance criterion; no TST ingest benchmark exists."
+
+[[claims]]
+id = "recovery_time"
+claim = "<5s recovery"
+metric = "recovery_time_s"
+status = "aspirational"
+asserted_in = ["docs/00-product/PRD.adoc:48"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Platform-engineer requirement; recovery time is not benchmarked."
+
+[[claims]]
+id = "asof_join_latency"
+claim = "ASOF join point-in-time lookup performance (TST engine)"
+metric = "asof_join_latency_ms"
+status = "aspirational"
+asserted_in = ["docs/00-product/PRD.adoc:211"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "PRD acceptance criterion for the Beta TST engine; no ASOF-join benchmark exists."
