@@ -56,16 +56,18 @@ Technical debt items are prioritized based on their impact on the four developme
 | *Resolved*
 | Cannot integrate with Iceberg/Delta data lakes
 | 3-4 months
-| *Implemented (engine), Mar 2026.* **v0.2 support tier: _Experimental in v0.2 (see SUPPORTED_SURFACE)_** -- external-table / external-catalog execution is not a v0.2 supported surface; do not market it as supported or production. _Implementation detail:_ all major catalog backends are code-complete:
-|  |  |  |  |  |
-|---|---|---|---|---
-| Catalog | Status | Location | Features |
-| **Iceberg** | ✅ Production Ready | `src/catalog/iceberg.rs` | JDBC, Hadoop, Memory backends; schema evolution; time travel; snapshot isolation |
-| **Delta Lake** | ✅ Production Ready | `src/catalog/delta.rs` | Delta log protocol; ACID transactions; time travel; partitioning |
-| **AWS Glue** | ✅ Production Ready | `src/catalog/glue.rs` | AWS Glue Data Catalog; Athena/Redshift compatible; vector extensions |
-| **Unity Catalog** | ✅ Production Ready | `src/catalog/unity.rs` | Databricks Unity; 3-level namespace; REST API integration |
-| **Polaris** | ✅ Production Ready | `src/catalog/polaris.rs` | Apache Polaris; Iceberg REST Catalog; OAuth2 |
-| **Hive** | ✅ Production Ready | `src/catalog/hive.rs` | Apache Hive Metastore; Thrift protocol |
+a| *Implemented (engine), Mar 2026.* **v0.2 support tier: _Experimental in v0.2 (see SUPPORTED_SURFACE)_** -- external-table / external-catalog execution is not a v0.2 supported surface; do not market it as supported or production. _Implementation detail:_ all major catalog backends are code-complete:
+
+[%header%autowidth]
+!===
+! Catalog ! Status ! Location ! Features
+! Iceberg ! ✅ Production Ready ! `src/catalog/iceberg.rs` ! JDBC, Hadoop, Memory backends; schema evolution; time travel; snapshot isolation
+! Delta Lake ! ✅ Production Ready ! `src/catalog/delta.rs` ! Delta log protocol; ACID transactions; time travel; partitioning
+! AWS Glue ! ✅ Production Ready ! `src/catalog/glue.rs` ! AWS Glue Data Catalog; Athena/Redshift compatible; vector extensions
+! Unity Catalog ! ✅ Production Ready ! `src/catalog/unity.rs` ! Databricks Unity; 3-level namespace; REST API integration
+! Polaris ! ✅ Production Ready ! `src/catalog/polaris.rs` ! Apache Polaris; Iceberg REST Catalog; OAuth2
+! Hive ! ✅ Production Ready ! `src/catalog/hive.rs` ! Apache Hive Metastore; Thrift protocol
+!===
 
 All catalogs implement the `Catalog` trait with full CRUD operations, health checks, and caching. Feature-gated behind appropriate flags: `delta-lake`, `aws`, `unity-catalog`, `polaris-catalog`.
 
@@ -85,13 +87,15 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot capture changes from PostgreSQL/MySQL/MongoDB natively
 | 1-2 months
-| *RESOLVED Mar 2026*: **All three CDC connectors 100% complete**. Full production-ready CDC implementations with live streaming support:
-|  |  |  |  |
-|---|---|---|---
-| **Connector** | **Status** | **Location** | **Features** |
-| **PostgreSQL** | ✅ Complete | `src/cdc/connectors/postgres/connector.rs` | Logical replication, pgoutput protocol, WAL streaming, slot management, LSN tracking, offset storage |
-| **MySQL** | ✅ Complete | `src/cdc/connectors/mysql/connector.rs` | Binlog decoder complete, live polling event loop, query_binlog_events(), convert_binlog_to_change_event(), position/GTID tracking |
-| **MongoDB** | ✅ Complete | `src/cdc/connectors/mongodb/connector.rs` | Live change stream with async iteration, run_mongodb_change_stream(), BSON to JSON conversion, resume token handling, tokio::select! for shutdown |
+a| *RESOLVED Mar 2026*: **All three CDC connectors 100% complete**. Full production-ready CDC implementations with live streaming support:
+
+[%header%autowidth]
+!===
+! Connector ! Status ! Location ! Features
+! PostgreSQL ! ✅ Complete ! `src/cdc/connectors/postgres/connector.rs` ! Logical replication, pgoutput protocol, WAL streaming, slot management, LSN tracking, offset storage
+! MySQL ! ✅ Complete ! `src/cdc/connectors/mysql/connector.rs` ! Binlog decoder complete, live polling event loop, query_binlog_events(), convert_binlog_to_change_event(), position/GTID tracking
+! MongoDB ! ✅ Complete ! `src/cdc/connectors/mongodb/connector.rs` ! Live change stream with async iteration, run_mongodb_change_stream(), BSON to JSON conversion, resume token handling, tokio::select for shutdown
+!===
 
 | TD-005
 | Multi-language SDKs
@@ -109,15 +113,17 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot meet enterprise security requirements
 | 1 month
-| *Implemented (engine), Mar 2026.* **v0.2 support tier: _Beta in v0.2 (see SUPPORTED_SURFACE)_** -- the security runtime is Beta; admin/status APIs and stronger online revocation policy remain incomplete. _Implementation detail:_ enterprise-grade mutual TLS infrastructure is code-complete:
-|  |  |  |  |
-|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **Certificate Manager** | ✅ Production Ready | `src/network/tls/certificate_manager.rs` | Self-signed cert generation, CA generation for mTLS, cert parsing/validation, automatic renewal |
-| **TLS Configuration** | ✅ Production Ready | `src/network/tls/mod.rs` | Rustls ServerConfig builder, mTLS support, ALPN protocols |
-| **TLS Acceptor** | ✅ Production Ready | `src/network/tls/acceptor.rs` | Client certificate extraction, Axum layer integration, peer cert parsing |
-| **Client Cert Middleware** | ✅ Production Ready | `src/network/middleware/tls.rs` | CN validation, pattern matching, expiration checking, user mapping |
-| **Unified Auth** | ✅ Supports mTLS | `src/security/unified_auth.rs` | `ClientCertificate` auth method, integration with JWT/API keys |
+a| *Implemented (engine), Mar 2026.* **v0.2 support tier: _Beta in v0.2 (see SUPPORTED_SURFACE)_** -- the security runtime is Beta; admin/status APIs and stronger online revocation policy remain incomplete. _Implementation detail:_ enterprise-grade mutual TLS infrastructure is code-complete:
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! Certificate Manager ! ✅ Production Ready ! `src/network/tls/certificate_manager.rs` ! Self-signed cert generation, CA generation for mTLS, cert parsing/validation, automatic renewal
+! TLS Configuration ! ✅ Production Ready ! `src/network/tls/mod.rs` ! Rustls ServerConfig builder, mTLS support, ALPN protocols
+! TLS Acceptor ! ✅ Production Ready ! `src/network/tls/acceptor.rs` ! Client certificate extraction, Axum layer integration, peer cert parsing
+! Client Cert Middleware ! ✅ Production Ready ! `src/network/middleware/tls.rs` ! CN validation, pattern matching, expiration checking, user mapping
+! Unified Auth ! ✅ Supports mTLS ! `src/security/unified_auth.rs` ! `ClientCertificate` auth method, integration with JWT/API keys
+!===
 
 **mTLS Pipeline Complete:**
 1. TLS handshake with client certificate verification (rustls)
@@ -177,17 +183,19 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot be used with LangChain, LlamaIndex, Haystack, CrewAI without custom code. Every competitor has these.
 | 1-2 months
-| *Implemented (SDK), Mar 2026.* **_Not a v0.2 supported surface (see SUPPORTED_SURFACE)_** -- framework integrations ship in the Python SDK but are not listed as a Supported v0.2 product surface; do not release-note them as production. _Implementation detail:_ 7 frameworks implemented:
-|  |  |  |  |
-|---|---|---|---|---
-| **Framework** | **Status** | **Location** | **Features** |
-| **LangChain** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/langchain.py` | VectorStore, from_texts/from_documents, similarity_search |
-| **LangGraph** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/langgraph.py` | Retriever integration with LangGraph |
-| **LlamaIndex** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/llama_index.py` | VectorStore, Retriever, Node with embeddings |
-| **Haystack** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/haystack.py` | DocumentStore, Retriever, write_documents |
-| **CrewAI** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/crewai.py` | SearchTool, KnowledgeSource |
-| **DSPy** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/dspy.py` | RM (Retrieval Model) integration |
-| **AutoGen** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/autogen.py` | VectorDB adapter |
+a| *Implemented (SDK), Mar 2026.* **_Not a v0.2 supported surface (see SUPPORTED_SURFACE)_** -- framework integrations ship in the Python SDK but are not listed as a Supported v0.2 product surface; do not release-note them as production. _Implementation detail:_ 7 frameworks implemented:
+
+[%header%autowidth]
+!===
+! Framework ! Status ! Location ! Features
+! LangChain ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/langchain.py` ! VectorStore, from_texts/from_documents, similarity_search
+! LangGraph ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/langgraph.py` ! Retriever integration with LangGraph
+! LlamaIndex ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/llama_index.py` ! VectorStore, Retriever, Node with embeddings
+! Haystack ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/haystack.py` ! DocumentStore, Retriever, write_documents
+! CrewAI ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/crewai.py` ! SearchTool, KnowledgeSource
+! DSPy ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/dspy.py` ! RM (Retrieval Model) integration
+! AutoGen ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/autogen.py` ! VectorDB adapter
+!===
 
 **Installation:**
 ```bash
@@ -223,13 +231,15 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Enterprise requirement. No mechanism for incremental backup or point-in-time recovery.
 | 1-2 months
-| *RESOLVED Mar 2026*: **Backup/restore infrastructure fully implemented**. Complete enterprise-grade backup and restore system:
-|  |  |  |  |
-|---|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **Backup Manager** | ✅ Production Ready | `src/operations/backup/mod.rs` | Incremental snapshots, S3/GCS/Azure targets, WAL checkpointing, compression, checksums |
-| **Restore Manager** | ✅ Production Ready | `src/operations/restore/mod.rs` | Manifest restore, checksum verification, WAL replay, dry-run mode, continue-on-error |
-| **CLI Scripts** | ✅ Production Ready | `scripts/backup.sh`, `scripts/restore.sh` | User-friendly CLI with incremental/full support, retention policy, verification |
+a| *RESOLVED Mar 2026*: **Backup/restore infrastructure fully implemented**. Complete enterprise-grade backup and restore system:
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! Backup Manager ! ✅ Production Ready ! `src/operations/backup/mod.rs` ! Incremental snapshots, S3/GCS/Azure targets, WAL checkpointing, compression, checksums
+! Restore Manager ! ✅ Production Ready ! `src/operations/restore/mod.rs` ! Manifest restore, checksum verification, WAL replay, dry-run mode, continue-on-error
+! CLI Scripts ! ✅ Production Ready ! `scripts/backup.sh`, `scripts/restore.sh` ! User-friendly CLI with incremental/full support, retention policy, verification
+!===
 
 **Features:**
 - RPO <1 minute (WAL checkpoint frequency)
@@ -245,15 +255,17 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Cannot prove performance claims. No ANN-benchmark submission.
 | 2 weeks
-| *RESOLVED Mar 2026*: **Comprehensive benchmark infrastructure complete**. All components implemented:
-|  |  |  |  |
-|---|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **ANN-Benchmarks Adapter** | ✅ Complete | `src/bench/ann_benchmarks/adapter.rs` | HNSW, IVF, DiskANN, Annoy, LSH, PQ algorithms; SIFT/GIST/MNIST/DEEP1B datasets |
-| **Binary Runner** | ✅ Complete | `src/bin/ann-benchmarks.rs` | CLI runner with CSV/JSON export |
-| **VectorDBBench Comparison** | ✅ Complete | `src/bin/vectordb_comparison.rs` | Competitor comparison (Qdrant, Weaviate, Milvus, Pinecone) |
-| **Public Documentation** | ✅ Complete | `docs/10-quality/benchmarks/PERFORMANCE.md` | 271 lines with methodology, results, competitor comparisons |
-| **Python Benchmarks** | ✅ Complete | `clients/python/tests/` | 15+ benchmark scripts for SDK validation |
+a| *RESOLVED Mar 2026*: **Comprehensive benchmark infrastructure complete**. All components implemented:
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! ANN-Benchmarks Adapter ! ✅ Complete ! `src/bench/ann_benchmarks/adapter.rs` ! HNSW, IVF, DiskANN, Annoy, LSH, PQ algorithms; SIFT/GIST/MNIST/DEEP1B datasets
+! Binary Runner ! ✅ Complete ! `src/bin/ann-benchmarks.rs` ! CLI runner with CSV/JSON export
+! VectorDBBench Comparison ! ✅ Complete ! `src/bin/vectordb_comparison.rs` ! Competitor comparison (Qdrant, Weaviate, Milvus, Pinecone)
+! Public Documentation ! ✅ Complete ! `docs/10-quality/benchmarks/PERFORMANCE.md` ! 271 lines with methodology, results, competitor comparisons
+! Python Benchmarks ! ✅ Complete ! `clients/python/tests/` ! 15+ benchmark scripts for SDK validation
+!===
 
 **ANN-Benchmarks Status:**
 - Infrastructure production-ready
@@ -268,14 +280,16 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Data stored unencrypted on disk. Fails SOC 2 requirements.
 | 1-2 months
-| *RESOLVED Mar 2026*: **Storage engine file encryption complete**. Integrated FileEncryptionLayer into LocalFileSystem with transparent AES-256-GCM encryption for all storage engines (SST, VIPER, NOVA, SWIFT, HELIX, RAPTOR). WAL encryption was previously complete. Key rotation support implemented.
-|  |  |  |  |
-|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **WAL Encryption** | ✅ Complete | `src/storage/persistence/write_ahead_log/encryption.rs` | WALEncryptionLayer for transaction logs |
-| **File Encryption** | ✅ Complete | `src/storage/persistence/filesystem/local.rs` | FileEncryptionLayer for all storage files |
-| **Key Manager** | ✅ Complete | `src/storage/encryption/key_manager.rs` | KeyVersionManager with rotation support |
-| **Tests** | ✅ Complete | `tests/storage_encryption_test.rs` | 5 integration tests passing |
+a| *RESOLVED Mar 2026*: **Storage engine file encryption complete**. Integrated FileEncryptionLayer into LocalFileSystem with transparent AES-256-GCM encryption for all storage engines (SST, VIPER, NOVA, SWIFT, HELIX, RAPTOR). WAL encryption was previously complete. Key rotation support implemented.
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! WAL Encryption ! ✅ Complete ! `src/storage/persistence/write_ahead_log/encryption.rs` ! WALEncryptionLayer for transaction logs
+! File Encryption ! ✅ Complete ! `src/storage/persistence/filesystem/local.rs` ! FileEncryptionLayer for all storage files
+! Key Manager ! ✅ Complete ! `src/storage/encryption/key_manager.rs` ! KeyVersionManager with rotation support
+! Tests ! ✅ Complete ! `tests/storage_encryption_test.rs` ! 5 integration tests passing
+!===
 
 **Features:**
 - Transparent encryption/decryption at filesystem level
@@ -311,15 +325,17 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Parser exists (`src/graph/query/parser.rs`) but incomplete engine integration. Not production-ready vs. Neo4j openCypher.
 | 2-3 months
-| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete OpenCypher-compatible query language:
-|  |  |  |  |
-|---|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **Parser** | ✅ Complete | `src/graph/query/parser.rs` | MATCH, WHERE, RETURN, ORDER BY, SKIP, LIMIT, WITH, UNION |
-| **AST** | ✅ Complete | `src/graph/query/ast.rs` | ReturnSpec, WithClause, UnionClause with full support |
-| **Planner** | ✅ Complete | `src/graph/query/planner.rs` | Cost-based optimization, join ordering, index selection |
-| **Executor** | ✅ Complete | `src/graph/query/pattern.rs` | `apply_ordering_and_limits`, `apply_with_clauses`, `apply_union` |
-| **Distributed** | ✅ Complete | `src/query/facade/strategies/distributed.rs` | Distributed query execution, REST endpoint |
+a| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete OpenCypher-compatible query language:
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! Parser ! ✅ Complete ! `src/graph/query/parser.rs` ! MATCH, WHERE, RETURN, ORDER BY, SKIP, LIMIT, WITH, UNION
+! AST ! ✅ Complete ! `src/graph/query/ast.rs` ! ReturnSpec, WithClause, UnionClause with full support
+! Planner ! ✅ Complete ! `src/graph/query/planner.rs` ! Cost-based optimization, join ordering, index selection
+! Executor ! ✅ Complete ! `src/graph/query/pattern.rs` ! `apply_ordering_and_limits`, `apply_with_clauses`, `apply_union`
+! Distributed ! ✅ Complete ! `src/query/facade/strategies/distributed.rs` ! Distributed query execution, REST endpoint
+!===
 
 **Clauses Implemented:**
 - RETURN: Projections, variables, DISTINCT
@@ -359,7 +375,7 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 
 | Operations
 | ~TD-014~, ~TD-015~
-| No (All resolved: comprehensive backup/restore and benchmark infrastructure complete) |
+| No (All resolved: comprehensive backup/restore and benchmark infrastructure complete)
 
 | Ecosystem
 | TD-004, TD-005
@@ -367,7 +383,7 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 
 | Honesty/Trust
 | ~TD-001~, ~TD-017~
-| No (but erodes credibility). Both resolved. |
+| No (but erodes credibility). Both resolved.
 |===
 
 == Priority Legend
@@ -409,7 +425,7 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 
 | Phase 4 (Context DB)
 | ~TD-015~
-| *COMPLETED* (All Phase 4 items resolved) |
+| *COMPLETED* (All Phase 4 items resolved)
 |===
 
 == Recently Resolved (Phase 1 & Phase 2 Complete)
@@ -1084,7 +1100,7 @@ physical layouts.
 | Open
 | Optimizer (`src/index/axis/management/manager.rs:653-694`) routes filtered ANN through a default `AnnFilteringPolicy` instance. ADR-011 contract says per-collection policy (low/medium/high-selectivity preferences, recall floor, pushdown candidate cap) should be cataloged. Without it, operators cannot tune per workload; recall envelope is policy-uniform across collections.
 | 3-5 days
-| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `AnnFilteringPolicy` field on collection metadata in xCatalog; (2) optimizer resolves catalog policy → falls back to default; (3) DDL surface (REST `PATCH /api/v2/collections/:id`) updates it; (4) route-health surfaces `policy_source: "catalog"|"default"`. v0.2 ships Beta with differential recall coverage via `tests/filtered_ann_recall_bands.rs` only.
+| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `AnnFilteringPolicy` field on collection metadata in xCatalog; (2) optimizer resolves catalog policy → falls back to default; (3) DDL surface (REST `PATCH /api/v2/collections/:id`) updates it; (4) route-health surfaces `policy_source: "catalog"\|"default"`. v0.2 ships Beta with differential recall coverage via `tests/filtered_ann_recall_bands.rs` only.
 
 | TD-074
 | Collection-default freshness mode not catalog-wired
@@ -1441,8 +1457,8 @@ physical layouts.
 | Warehouse materialize path does not enforce tenant isolation (DrPathBuilder mandate gap)
 | P1
 | HIGH (SaaS isolation)
-| Partially mitigated (2026-06-15) — input validation landed; isolation still best-effort
-| Surfaced 2026-06-15 by the new DrPathBuilder tenant-path guard (`scripts/check_tenant_path_guard.py`). `DmlService::materialize_table_to_parquet` (`src/services/dml/mod.rs`) builds the object prefix `data/{tenant}/{ns...}/{table}` by hand instead of routing through `DrPathBuilder::build`, and the production trigger (`DmlTableMaterializer::materialize`, the `ALTER TABLE … MATERIALIZE` path) passes `None` for `TenantContext` → everything materializes under the literal `DEFAULT_TENANT_PLACEHOLDER` ("default_tenant"). So warehouse snapshots are NOT tenant-isolated on this path. DONE (interim hardening, `e93dcf91d`): every segment (tenant_id / each namespace level / table) is now validated via the canonical `DrPathBuilder::validate_id` (no `..`/separator/whitespace/NUL injection into the key), and the default is a named, documented constant. BLOCKED on two things for the real fix: (a) the native catalog leaves `CatalogNamespace.namespace_id`/`tenant_id` = `None` (pending the P0.5 backfill migration), so `DrPathBuilder::build` would fail-closed today; (b) the DDL `TableMaterializer` trait carries no `TenantContext`, so request tenancy never reaches the writer.
-| ~1 sprint (after namespace-id backfill)
-| Acceptance: (1) thread a real `TenantContext` from the DDL/DML entrypoints through `TableMaterializer::materialize` into `materialize_table_to_parquet` (no silent default in multi-tenant mode). (2) Once namespace-id backfill lands, route the prefix through `DrPathBuilder::build`/`build_for_pool` and use `DrResolvedPath::root_prefix()` rather than a `format!` literal; remove the guard's `KNOWN_BYPASSES` entry. (3) Assert the materialized object's owning-namespace tenant matches the request tenant (reject cross-tenant materialize). (4) e2e proving two tenants materializing the same table name land under distinct, isolated prefixes.
+| *Mostly resolved (2026-06-16)* — tenant isolation enforced; DrPathBuilder layout opt-in
+| Surfaced 2026-06-15 by the DrPathBuilder tenant-path guard (`scripts/check_tenant_path_guard.py`): `DmlService::materialize_table_to_parquet` built the object prefix by hand and the production `ALTER TABLE … MATERIALIZE` trigger passed `None` for `TenantContext`, so warehouse snapshots co-mingled under the literal `"default_tenant"`. *RESOLVED:* (1) interim id-injection hardening (`e93dcf91d`); (2) **Phase 1** — the real request `TenantContext` is now threaded through `TableMaterializer::materialize` (trait + DDL dispatch in `ddl/mod.rs`) into `materialize_table_to_parquet`, so each tenant's snapshot lands under its own `data/{tenant}/…` prefix and tenant-scoped table resolution rejects cross-tenant materialize; (3) **Phase 2** — opaque, rename-stable `namespace_id` (`ns_<uuid>`) is populated at native-catalog `create_namespace` + idempotently backfilled on load, and a flag-gated DrPathBuilder layout (`PROXIMADB_WAREHOUSE_DRPATH`, default OFF → `data/{tenant}/{namespace_id}/{table}` via the new `DrPathBuilder::build_from_parts`) ships with graceful fallback to the validated manual layout + a cross-tenant owner assertion. Validated by unit tests (`build_from_parts_validates_each_segment`, `resolve_materialize_prefix_layouts_and_cross_tenant`) and a two-tenant materialize-isolation test.
+| done (flag flip = follow-up)
+| Remaining (follow-up, lower priority): flip `PROXIMADB_WAREHOUSE_DRPATH` on by default after a backfill/repath migration for snapshots written under the legacy `data/{tenant}/{ns.join}/{table}` layout; populate `CatalogNamespace.tenant_id` (DR/CRR P0.5) so `build_for_pool` pool-class routing applies.
 |===
