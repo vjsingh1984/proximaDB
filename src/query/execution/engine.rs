@@ -113,11 +113,27 @@ pub trait ExecutionEngine: Send + Sync {
     }
 }
 
+/// How a physical engine reacts when a result reaches `max_rows`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowLimitMode {
+    /// Fail loud with [`ExecutionError::RowLimitExceeded`] when the result would
+    /// exceed `max_rows`. This is the safety-cap behavior used by internal
+    /// callers that treat an oversized result as an error.
+    #[default]
+    Error,
+    /// Silently stop after `max_rows` rows and return them. This is the
+    /// PostgreSQL extended-query portal behavior (`Execute` with a row cap),
+    /// where a partial result is expected and resumable.
+    Truncate,
+}
+
 /// Request-scoped execution controls shared by physical engines.
 #[derive(Clone, Default)]
 pub struct ExecutionControls {
     /// Optional maximum number of materialized rows the caller will accept.
     pub max_rows: Option<usize>,
+    /// How to react when `max_rows` is reached (error vs. truncate).
+    pub row_limit_mode: RowLimitMode,
     /// Optional cooperative cancellation flag checked by engines at stable
     /// boundaries.
     pub cancellation_flag: Option<Arc<AtomicBool>>,
@@ -197,6 +213,42 @@ pub async fn execute_sql_stream_with_backend(
     }
 }
 
+/// Push a request-scoped row cap into the physical plan as a `Limit`, so the
+/// executor stops early instead of draining the whole result and then rejecting
+/// it. Returns the plan unchanged when no cap is set.
+///
+/// In [`RowLimitMode::Truncate`] the cap is exact (`Limit n`). In
+/// [`RowLimitMode::Error`] one extra row is allowed through (`Limit n+1`) so the
+/// engine can observe the overflow and raise [`ExecutionError::RowLimitExceeded`]
+/// rather than silently truncating.
+fn cap_plan(plan: PhysicalPlan, controls: &ExecutionControls) -> PhysicalPlan {
+    let Some(max_rows) = controls.max_rows else {
+        return plan;
+    };
+    let limit = match controls.row_limit_mode {
+        RowLimitMode::Truncate => max_rows as u64,
+        RowLimitMode::Error => (max_rows as u64).saturating_add(1),
+    };
+    PhysicalPlan::Limit {
+        input: Box::new(plan),
+        limit: Some(limit),
+        offset: 0,
+    }
+}
+
+/// Apply the row-limit mode to a fully materialized result. `cap_plan` has
+/// already bounded the row count, so this only needs to turn an `Error`-mode
+/// overflow into [`ExecutionError::RowLimitExceeded`]; `Truncate` passes through.
+fn finalize_row_limit(
+    result: ExecutionPipelineResult,
+    controls: &ExecutionControls,
+) -> Result<ExecutionPipelineResult, ExecutionError> {
+    match controls.row_limit_mode {
+        RowLimitMode::Error => result.enforce_row_limit(controls.max_rows),
+        RowLimitMode::Truncate => Ok(result),
+    }
+}
+
 /// Native Volcano execution engine for already-planned physical plans.
 pub struct NativeVolcanoEngine;
 
@@ -209,6 +261,7 @@ impl NativeVolcanoEngine {
         controls: ExecutionControls,
     ) -> Result<ExecutionPipelineResult, ExecutionError> {
         controls.check_cancelled()?;
+        let physical = cap_plan(physical, &controls);
         let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())
             .map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
         controls.check_cancelled()?;
@@ -221,7 +274,7 @@ impl NativeVolcanoEngine {
             .await
             .map_err(|e| ExecutionError::Execution(format!("scan: {e}")))?;
         controls.check_cancelled()?;
-        ExecutionPipelineResult { schema, rows }.enforce_row_limit(controls.max_rows)
+        finalize_row_limit(ExecutionPipelineResult { schema, rows }, &controls)
     }
 
     /// Build and open a physical plan, then return its rows through the
@@ -242,6 +295,7 @@ impl NativeVolcanoEngine {
         controls: ExecutionControls,
     ) -> Result<ExecutionStreamResult, ExecutionError> {
         controls.check_cancelled()?;
+        let physical = cap_plan(physical, &controls);
         let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())
             .map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
         controls.check_cancelled()?;
@@ -262,7 +316,12 @@ impl NativeVolcanoEngine {
                     .map_err(|e| ExecutionError::Execution(format!("scan: {e}")))?
                 {
                     Some(row) => {
-                        if let Some(limit) = controls.max_rows
+                        // `cap_plan` pushed `Limit n` (Truncate) or `Limit n+1`
+                        // (Error) into the plan. In Truncate mode the stream simply
+                        // ends at n; in Error mode the (n+1)th row that the plan let
+                        // through is surfaced as an overflow error here.
+                        if controls.row_limit_mode == RowLimitMode::Error
+                            && let Some(limit) = controls.max_rows
                             && emitted >= limit
                         {
                             return Err(ExecutionError::RowLimitExceeded {
@@ -565,6 +624,65 @@ mod tests {
             .await
             .expect("a stream item")
             .expect_err("row limit should reject the overflow row");
+        assert!(matches!(
+            err,
+            ExecutionError::RowLimitExceeded {
+                limit: 1,
+                actual: 2
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_volcano_stream_truncates_without_error() {
+        let controls = ExecutionControls {
+            max_rows: Some(1),
+            row_limit_mode: RowLimitMode::Truncate,
+            ..Default::default()
+        };
+        let result = NativeVolcanoEngine::execute_physical_stream(
+            values_plan(),
+            &EmptyReaderFactory,
+            controls,
+        )
+        .await
+        .expect("values plan should open for streaming");
+
+        let mut rows = result.rows;
+        let first = rows.next().await.expect("first row").expect("row ok");
+        assert_eq!(first, vec![ProximaValue::Int64(1)]);
+        // Truncate mode stops at the cap with no overflow error: the second row
+        // of the values plan is never produced.
+        assert!(rows.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn native_volcano_materialized_truncates_without_error() {
+        let controls = ExecutionControls {
+            max_rows: Some(1),
+            row_limit_mode: RowLimitMode::Truncate,
+            ..Default::default()
+        };
+        let result =
+            NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
+                .await
+                .expect("truncate mode returns the capped result, not an error");
+
+        assert_eq!(result.rows, vec![vec![ProximaValue::Int64(1)]]);
+    }
+
+    #[tokio::test]
+    async fn native_volcano_materialized_errors_on_overflow() {
+        let controls = ExecutionControls {
+            max_rows: Some(1),
+            row_limit_mode: RowLimitMode::Error,
+            ..Default::default()
+        };
+        let err =
+            NativeVolcanoEngine::execute_physical(values_plan(), &EmptyReaderFactory, controls)
+                .await
+                .expect_err("error mode rejects an oversized result");
+
         assert!(matches!(
             err,
             ExecutionError::RowLimitExceeded {
