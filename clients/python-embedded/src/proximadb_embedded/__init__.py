@@ -116,7 +116,16 @@ __all__ = [
     "ProximaFrame",
     "ProximaSession",
     "ProximaSessionBuilder",
+    "DataFrame",
+    "DataFusionSession",
+    "Expr",
     "col",
+    "lit",
+    "count",
+    "sum",
+    "avg",
+    "min",
+    "max",
     "__version__",
 ]
 

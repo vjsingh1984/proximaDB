@@ -755,7 +755,6 @@ pub struct IndexEntry {
         crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode,
     >,
     // REMOVED: compression_ratio - can be calculated on-demand from size and DataBlock.uncompressed_size
-
     /// TD-040: per-dimension vector component bounds for this block, enabling
     /// L2 lower-bound block pruning (see `VectorBoundsPruner`). `None` for blocks
     /// written before TD-040 (index magic < `IDX3`) or with no/mixed-dim vectors —
@@ -2098,8 +2097,8 @@ mod bplustree_tests {
             block_component_max: Some(vec![3.0, 4.5, 9.0]),
             ..Default::default()
         };
-        let back = IndexEntry::deserialize(&entry.serialize().expect("serialize"))
-            .expect("deserialize");
+        let back =
+            IndexEntry::deserialize(&entry.serialize().expect("serialize")).expect("deserialize");
         assert_eq!(back.key, "k0");
         assert_eq!(back.block_id, 7);
         assert_eq!(back.block_centroid, vec![1.0, 2.0, 3.0]);

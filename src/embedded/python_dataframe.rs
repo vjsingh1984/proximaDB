@@ -3,37 +3,51 @@
 //! Provides a Rust-native distributed execution engine based on DataFusion
 //! with a Python front-end via PyO3.
 
-use crate::datafusion::ProximaDataFusionTable;
 use crate::embedded::EmbeddedProximaDB;
 use arrow::pyarrow::ToPyArrow;
-use datafusion::arrow::util::pretty;
-use datafusion::logical_expr::{Expr, LogicalPlan, Operator, ExprSchemable};
+use datafusion::logical_expr::{Expr, ExprSchemable};
 use datafusion::prelude::*;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyDict, PyList};
 use std::sync::Arc;
+
+fn require_non_blank(label: &str, value: &str) -> PyResult<()> {
+    if value.trim().is_empty() {
+        Err(PyValueError::new_err(format!(
+            "{} must not be empty",
+            label
+        )))
+    } else {
+        Ok(())
+    }
+}
 
 #[pyclass]
 #[derive(Clone)]
 pub struct PyExpr {
     pub expr: Expr,
+    sort_options: Option<(bool, bool)>,
 }
 
 #[pymethods]
 impl PyExpr {
     #[new]
     fn new(expr_str: String) -> PyResult<Self> {
+        require_non_blank("Column name", &expr_str)?;
         Ok(Self {
             expr: col(expr_str),
+            sort_options: None,
         })
     }
 
     /// Give this expression an alias
-    fn alias(&self, name: String) -> Self {
-        Self {
+    fn alias(&self, name: String) -> PyResult<Self> {
+        require_non_blank("Alias name", &name)?;
+        Ok(Self {
             expr: self.expr.clone().alias(name),
-        }
+            sort_options: None,
+        })
     }
 
     /// Cast this expression to a different data type
@@ -54,7 +68,12 @@ impl PyExpr {
         };
         let empty_schema = datafusion::common::DFSchema::empty();
         Ok(Self {
-            expr: self.expr.clone().cast_to(&dt, &empty_schema).map_err(|e| PyRuntimeError::new_err(format!("{}", e)))?,
+            expr: self
+                .expr
+                .clone()
+                .cast_to(&dt, &empty_schema)
+                .map_err(|e| PyRuntimeError::new_err(format!("{}", e)))?,
+            sort_options: None,
         })
     }
 
@@ -62,6 +81,16 @@ impl PyExpr {
     fn is_null(&self) -> Self {
         Self {
             expr: self.expr.clone().is_null(),
+            sort_options: None,
+        }
+    }
+
+    /// Build a sort expression for DataFrame.sort().
+    #[pyo3(signature = (ascending=true, nulls_first=false))]
+    fn sort(&self, ascending: bool, nulls_first: bool) -> Self {
+        Self {
+            expr: self.expr.clone(),
+            sort_options: Some((ascending, nulls_first)),
         }
     }
 
@@ -70,78 +99,91 @@ impl PyExpr {
     fn __add__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone() + rhs.expr,
+            sort_options: None,
         }
     }
 
     fn __sub__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone() - rhs.expr,
+            sort_options: None,
         }
     }
 
     fn __mul__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone() * rhs.expr,
+            sort_options: None,
         }
     }
 
     fn __truediv__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone() / rhs.expr,
+            sort_options: None,
         }
     }
 
     fn __eq__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone().eq(rhs.expr),
+            sort_options: None,
         }
     }
 
     fn __ne__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone().not_eq(rhs.expr),
+            sort_options: None,
         }
     }
 
     fn __gt__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone().gt(rhs.expr),
+            sort_options: None,
         }
     }
 
     fn __ge__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone().gt_eq(rhs.expr),
+            sort_options: None,
         }
     }
 
     fn __lt__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone().lt(rhs.expr),
+            sort_options: None,
         }
     }
 
     fn __le__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone().lt_eq(rhs.expr),
+            sort_options: None,
         }
     }
 
     fn __and__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone().and(rhs.expr),
+            sort_options: None,
         }
     }
 
     fn __or__(&self, rhs: PyExpr) -> Self {
         Self {
             expr: self.expr.clone().or(rhs.expr),
+            sort_options: None,
         }
     }
 
     fn __invert__(&self) -> Self {
         Self {
             expr: self.expr.clone().not(),
+            sort_options: None,
         }
     }
 
@@ -152,8 +194,12 @@ impl PyExpr {
 
 /// Create a column expression
 #[pyfunction]
-pub fn py_col(name: String) -> PyExpr {
-    PyExpr { expr: col(name) }
+pub fn py_col(name: String) -> PyResult<PyExpr> {
+    require_non_blank("Column name", &name)?;
+    Ok(PyExpr {
+        expr: col(name),
+        sort_options: None,
+    })
 }
 
 /// Create a literal expression
@@ -162,15 +208,28 @@ pub fn py_lit(value: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
     if value.is_none() {
         Ok(PyExpr {
             expr: Expr::Literal(datafusion::common::ScalarValue::Null, None),
+            sort_options: None,
         })
     } else if let Ok(b) = value.extract::<bool>() {
-        Ok(PyExpr { expr: lit(b) })
+        Ok(PyExpr {
+            expr: lit(b),
+            sort_options: None,
+        })
     } else if let Ok(i) = value.extract::<i64>() {
-        Ok(PyExpr { expr: lit(i) })
+        Ok(PyExpr {
+            expr: lit(i),
+            sort_options: None,
+        })
     } else if let Ok(f) = value.extract::<f64>() {
-        Ok(PyExpr { expr: lit(f) })
+        Ok(PyExpr {
+            expr: lit(f),
+            sort_options: None,
+        })
     } else if let Ok(s) = value.extract::<String>() {
-        Ok(PyExpr { expr: lit(s) })
+        Ok(PyExpr {
+            expr: lit(s),
+            sort_options: None,
+        })
     } else {
         Err(PyValueError::new_err("Unsupported literal type"))
     }
@@ -180,27 +239,42 @@ pub fn py_lit(value: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
 
 #[pyfunction]
 pub fn py_count(expr: PyExpr) -> PyExpr {
-    PyExpr { expr: datafusion::functions_aggregate::expr_fn::count(expr.expr) }
+    PyExpr {
+        expr: datafusion::functions_aggregate::expr_fn::count(expr.expr),
+        sort_options: None,
+    }
 }
 
 #[pyfunction]
 pub fn py_sum(expr: PyExpr) -> PyExpr {
-    PyExpr { expr: datafusion::functions_aggregate::expr_fn::sum(expr.expr) }
+    PyExpr {
+        expr: datafusion::functions_aggregate::expr_fn::sum(expr.expr),
+        sort_options: None,
+    }
 }
 
 #[pyfunction]
 pub fn py_avg(expr: PyExpr) -> PyExpr {
-    PyExpr { expr: datafusion::functions_aggregate::expr_fn::avg(expr.expr) }
+    PyExpr {
+        expr: datafusion::functions_aggregate::expr_fn::avg(expr.expr),
+        sort_options: None,
+    }
 }
 
 #[pyfunction]
 pub fn py_min(expr: PyExpr) -> PyExpr {
-    PyExpr { expr: datafusion::functions_aggregate::expr_fn::min(expr.expr) }
+    PyExpr {
+        expr: datafusion::functions_aggregate::expr_fn::min(expr.expr),
+        sort_options: None,
+    }
 }
 
 #[pyfunction]
 pub fn py_max(expr: PyExpr) -> PyExpr {
-    PyExpr { expr: datafusion::functions_aggregate::expr_fn::max(expr.expr) }
+    PyExpr {
+        expr: datafusion::functions_aggregate::expr_fn::max(expr.expr),
+        sort_options: None,
+    }
 }
 
 #[pyclass]
@@ -213,19 +287,49 @@ impl PyDataFusionSession {
     pub fn new(ctx: SessionContext, db: Arc<EmbeddedProximaDB>) -> Self {
         Self { ctx, db }
     }
+
+    fn collection_arrow_schema(
+        &self,
+        table_name: &str,
+        dimension: u32,
+    ) -> PyResult<arrow::datatypes::SchemaRef> {
+        use crate::datafusion::infer_schema_from_collection;
+        use proximadb_storage_common::proxima_schema::ProximaSchema;
+
+        let proxima_schema = self.db.runtime().block_on(async {
+            match self
+                .db
+                .shared_services()
+                .catalog_manager
+                .resolve_table(table_name)
+                .await
+            {
+                Ok((catalog, id)) => catalog.get_table(&id).await.ok(),
+                Err(_) => None,
+            }
+        });
+
+        let schema =
+            proxima_schema.unwrap_or_else(|| ProximaSchema::vector_record_schema(dimension));
+        infer_schema_from_collection(&schema).map_err(|e| {
+            PyRuntimeError::new_err(format!(
+                "Schema inference failed for table '{}': {}",
+                table_name, e
+            ))
+        })
+    }
 }
 
 #[pymethods]
 impl PyDataFusionSession {
     /// Execute a SQL query and return a DataFrame
     fn sql(&self, _py: Python<'_>, query: String) -> PyResult<PyDataFrame> {
+        require_non_blank("SQL query", &query)?;
         let df = self
             .db
             .runtime()
             .block_on(async { self.ctx.sql(&query).await })
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-            })?;
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         Ok(PyDataFrame {
             df: Arc::new(df),
@@ -235,13 +339,12 @@ impl PyDataFusionSession {
 
     /// Register a ProximaDB collection as a table in the DataFusion session
     fn table(&self, _py: Python<'_>, name: String) -> PyResult<PyDataFrame> {
+        require_non_blank("Table name", &name)?;
         let df = self
             .db
             .runtime()
             .block_on(async { self.ctx.table(&name).await })
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-            })?;
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         Ok(PyDataFrame {
             df: Arc::new(df),
@@ -252,46 +355,22 @@ impl PyDataFusionSession {
     /// Register all ProximaDB collections as tables in the DataFusion session
     fn refresh_tables(&self, _py: Python<'_>) -> PyResult<()> {
         use crate::datafusion::CollectionInfo;
-        use crate::datafusion::NullSplitReader;
         use crate::datafusion::ProximaDataFusionTable;
-        use crate::datafusion::infer_schema_from_collection;
         use std::sync::Arc;
 
-        let collections = self.db.list_collections().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to list collections: {}", e))
-        })?;
+        let collections = self
+            .db
+            .list_collections()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list collections: {}", e)))?;
 
         for info in collections {
             let table_name = info.name.clone();
 
-            // 1. Get the real schema from the database
-            let proxima_schema = self
-                .db
-                .runtime()
-                .block_on(async {
-                    if let Some(registry) = crate::storage::schema::registry::global_schema_registry() {
-                        registry.get_latest_schema(&table_name).await
-                    } else {
-                        Ok(None)
-                    }
-                })
-                .map_err(|e| {
-                    PyRuntimeError::new_err(format!(
-                        "Failed to get schema for {}: {}",
-                        table_name, e
-                    ))
-                })?;
-
-            let schema = if let Some(ps) = proxima_schema {
-                infer_schema_from_collection(&ps).map_err(|e| {
-                    PyRuntimeError::new_err(format!(
-                        "Schema inference failed: {}",
-                        e
-                    ))
-                })?
-            } else {
-                Arc::new(arrow::datatypes::Schema::empty())
-            };
+            // 1. Get the catalog-authoritative schema when available. Plain
+            // vector collections created through the embedded API may not have
+            // a relational table schema yet, so fall back to the canonical
+            // vector-record shape instead of registering an empty schema.
+            let schema = self.collection_arrow_schema(&table_name, info.dimension)?;
 
             // 2. Create collection info for DataFusion
             let df_info = CollectionInfo::new(
@@ -305,13 +384,50 @@ impl PyDataFusionSession {
             );
 
             // 3. Create appropriate reader for the engine
-            let reader = Arc::new(NullSplitReader::new(
-                schema.clone(),
-                df_info.engine_type.clone(),
-            ));
+            let filesystem_factory = self.db.shared_services().filesystem_factory.clone();
 
-            // 4. Create and register table
+            let reader: Arc<dyn crate::datafusion::proxima_scan_exec::SplitReader> =
+                match df_info.engine_type {
+                    crate::datafusion::EngineType::Sst => {
+                        Arc::new(crate::datafusion::engine_adapters::SstSplitReader::new(
+                            schema.clone(),
+                            filesystem_factory.clone(),
+                            df_info.dimension,
+                        ))
+                    }
+                    crate::datafusion::EngineType::Viper => {
+                        Arc::new(crate::datafusion::engine_adapters::ViperSplitReader::new(
+                            schema.clone(),
+                            filesystem_factory.clone(),
+                            df_info.dimension,
+                        ))
+                    }
+                    crate::datafusion::EngineType::Helix => {
+                        Arc::new(crate::datafusion::engine_adapters::HelixSplitReader::new(
+                            schema.clone(),
+                            filesystem_factory.clone(),
+                            df_info.dimension,
+                            6, // default hilbert order
+                        ))
+                    }
+                    _ => Arc::new(crate::datafusion::proxima_scan_exec::NullSplitReader::new(
+                        schema.clone(),
+                        df_info.engine_type.clone(),
+                    )),
+                };
+
+            // 4. Create and register table. Refreshing is expected to be safe
+            // in long-lived notebook sessions, so replace an existing provider
+            // for the collection instead of treating duplicate registration as
+            // fatal.
             let table = ProximaDataFusionTable::new(table_name.clone(), df_info, schema, reader);
+
+            self.ctx.deregister_table(&table_name).map_err(|e| {
+                PyRuntimeError::new_err(format!(
+                    "Failed to refresh table {} before registration: {}",
+                    table_name, e
+                ))
+            })?;
 
             self.ctx
                 .register_table(&table_name, Arc::new(table))
@@ -345,9 +461,9 @@ impl PyDataFrame {
     fn select(&self, exprs: Vec<PyExpr>) -> PyResult<Self> {
         let df_exprs = exprs.into_iter().map(|e| e.expr).collect::<Vec<_>>();
         let df = (*self.df).clone();
-        let new_df = df.select(df_exprs).map_err(|e| {
-            PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-        })?;
+        let new_df = df
+            .select(df_exprs)
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         Ok(Self {
             df: Arc::new(new_df),
@@ -358,9 +474,9 @@ impl PyDataFrame {
     /// Filter the DataFrame
     fn filter(&self, predicate: PyExpr) -> PyResult<Self> {
         let df = (*self.df).clone();
-        let new_df = df.filter(predicate.expr).map_err(|e| {
-            PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-        })?;
+        let new_df = df
+            .filter(predicate.expr)
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         Ok(Self {
             df: Arc::new(new_df),
@@ -377,9 +493,9 @@ impl PyDataFrame {
     /// Limit the number of rows
     fn limit(&self, n: usize) -> PyResult<Self> {
         let df = (*self.df).clone();
-        let new_df = df.limit(0, Some(n)).map_err(|e| {
-            PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-        })?;
+        let new_df = df
+            .limit(0, Some(n))
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         Ok(Self {
             df: Arc::new(new_df),
@@ -390,12 +506,18 @@ impl PyDataFrame {
     /// Sort the DataFrame
     #[pyo3(signature = (*exprs))]
     fn sort(&self, exprs: Vec<PyExpr>) -> PyResult<Self> {
-        let sort_exprs = exprs.into_iter().map(|e| e.expr.sort(true, false)).collect::<Vec<_>>();
+        let sort_exprs = exprs
+            .into_iter()
+            .map(|e| {
+                let (ascending, nulls_first) = e.sort_options.unwrap_or((true, false));
+                e.expr.sort(ascending, nulls_first)
+            })
+            .collect::<Vec<_>>();
         let df = (*self.df).clone();
-        
-        let new_df = df.sort(sort_exprs).map_err(|e| {
-            PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-        })?;
+
+        let new_df = df
+            .sort(sort_exprs)
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         Ok(Self {
             df: Arc::new(new_df),
@@ -405,13 +527,18 @@ impl PyDataFrame {
 
     /// Aggregate the DataFrame
     fn aggregate(&self, group_exprs: Vec<PyExpr>, agg_exprs: Vec<PyExpr>) -> PyResult<Self> {
+        if agg_exprs.is_empty() {
+            return Err(PyValueError::new_err(
+                "aggregate requires at least one aggregate expression",
+            ));
+        }
         let df_group = group_exprs.into_iter().map(|e| e.expr).collect::<Vec<_>>();
         let df_agg = agg_exprs.into_iter().map(|e| e.expr).collect::<Vec<_>>();
         let df = (*self.df).clone();
-        
-        let new_df = df.aggregate(df_group, df_agg).map_err(|e| {
-            PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-        })?;
+
+        let new_df = df
+            .aggregate(df_group, df_agg)
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         Ok(Self {
             df: Arc::new(new_df),
@@ -422,21 +549,39 @@ impl PyDataFrame {
     /// Join with another DataFrame
     #[pyo3(signature = (other, on, how="inner"))]
     fn join(&self, other: &PyDataFrame, on: Vec<String>, how: &str) -> PyResult<Self> {
-        let join_type = match how.to_lowercase().as_str() {
+        if on.is_empty() {
+            return Err(PyValueError::new_err("join requires at least one key"));
+        }
+        for key in &on {
+            require_non_blank("Join key", key)?;
+        }
+
+        let join_type = match how.trim().to_lowercase().as_str() {
             "inner" => datafusion::logical_expr::JoinType::Inner,
             "left" => datafusion::logical_expr::JoinType::Left,
             "right" => datafusion::logical_expr::JoinType::Right,
             "full" => datafusion::logical_expr::JoinType::Full,
-            _ => return Err(PyValueError::new_err(format!("Unsupported join type: {}", how))),
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "Unsupported join type: {}",
+                    how
+                )));
+            }
         };
 
         let left_cols = on.iter().map(|s| s.as_str()).collect::<Vec<_>>();
         let right_cols = on.iter().map(|s| s.as_str()).collect::<Vec<_>>();
         let df = (*self.df).clone();
 
-        let new_df = df.join(other.df.as_ref().clone(), join_type, &left_cols, &right_cols, None).map_err(|e| {
-            PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-        })?;
+        let new_df = df
+            .join(
+                other.df.as_ref().clone(),
+                join_type,
+                &left_cols,
+                &right_cols,
+                None,
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         Ok(Self {
             df: Arc::new(new_df),
@@ -446,10 +591,11 @@ impl PyDataFrame {
 
     /// Add a new column or replace an existing one
     fn with_column(&self, name: String, expr: PyExpr) -> PyResult<Self> {
+        require_non_blank("Column name", &name)?;
         let df = (*self.df).clone();
-        let new_df = df.with_column(&name, expr.expr).map_err(|e| {
-            PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-        })?;
+        let new_df = df
+            .with_column(&name, expr.expr)
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         Ok(Self {
             df: Arc::new(new_df),
@@ -463,13 +609,7 @@ impl PyDataFrame {
             .db
             .runtime()
             .block_on(async { (*self.df).clone().collect().await })
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-            })?;
-
-        if batches.is_empty() {
-            return Ok(py.None());
-        }
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         let pyarrow = py.import("pyarrow")?;
         let py_batches = PyList::empty(py);
@@ -479,7 +619,13 @@ impl PyDataFrame {
             py_batches.append(py_batch)?;
         }
 
-        let table = pyarrow.call_method1("Table", (py_batches,))?;
+        let schema = self.df.schema().as_arrow().to_pyarrow(py)?;
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("schema", schema)?;
+        let table =
+            pyarrow
+                .getattr("Table")?
+                .call_method("from_batches", (py_batches,), Some(&kwargs))?;
         Ok(table.into_any().unbind())
     }
 
@@ -489,9 +635,7 @@ impl PyDataFrame {
             .db
             .runtime()
             .block_on(async { (*self.df).clone().collect().await })
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-            })?;
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
 
         let list = PyList::empty(py);
         for batch in batches {
@@ -516,9 +660,7 @@ impl PyDataFrame {
                     .show()
                     .await
             })
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("DataFusion error: {}", e))
-            })?;
+            .map_err(|e| PyRuntimeError::new_err(format!("DataFusion error: {}", e)))?;
         Ok(())
     }
 }

@@ -294,9 +294,11 @@ impl NovaSearchOperations {
                 .embeddings
                 .first()
                 .map_or(Vec::new(), |embedding| embedding.values.to_fp32_owned());
-            let similarity_result =
-                self.distance_engine
-                    .calculate_distance(query_vector, &vector, &ctx.distance_metric());
+            let similarity_result = self.distance_engine.calculate_distance(
+                query_vector,
+                &vector,
+                &ctx.distance_metric(),
+            );
             let record_id = record
                 .local_id
                 .clone()
@@ -416,9 +418,7 @@ impl NovaSearchOperations {
             let recs = read_selected_row_groups(file_path, &survivors)
                 .await?
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "NOVA ranged reader became unavailable mid-file: {file_path}"
-                    )
+                    anyhow::anyhow!("NOVA ranged reader became unavailable mid-file: {file_path}")
                 })?;
             self.score_records_into_queue(recs, query_vector, ctx, priority_queue);
         }

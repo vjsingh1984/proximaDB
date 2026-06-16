@@ -40,6 +40,8 @@ use proximadb_kernel::uuid::Uuid;
 /// Responsibilities: business logic, metadata configuration, service coordination
 #[derive(Clone)]
 pub struct SharedServices {
+    /// Filesystem factory for reading blocks
+    pub filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     /// Shared xCatalog control plane for REST, gRPC, Arrow Flight, SQL, and query routing.
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
     /// PAX segment registry — bridges write path with Iceberg REST snapshot stats.
@@ -1747,6 +1749,7 @@ impl SharedServices {
 
         Ok((
             Self {
+                filesystem_factory,
                 catalog_manager,
                 segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
                 collection_service: collection_service.clone(),
@@ -2148,27 +2151,30 @@ async fn build_function_store(
         CanonicalWalFunctionStore, FramedTableWalAppender, MemoryTableWalAppender,
     };
 
-    let (store_appender, recovered_entries): (Arc<dyn TableWalAppender>, _) =
-        if let Some(appender) = canonical_wal_appender {
-            let path = appender.path().to_path_buf();
-            let entries = match FramedTableWalAppender::read_entries_from_path(&path).await {
-                Ok(entries) => entries,
-                Err(err) => {
-                    warn!(
-                        "SharedServices: failed to replay function-catalog WAL at {}: {} — starting with empty function catalog",
-                        path.display(),
-                        err
-                    );
-                    Vec::new()
-                }
-            };
-            (appender as Arc<dyn TableWalAppender>, entries)
-        } else {
-            (
-                Arc::new(MemoryTableWalAppender::new()) as Arc<dyn TableWalAppender>,
-                Vec::new(),
-            )
+    let (store_appender, recovered_entries): (Arc<dyn TableWalAppender>, _) = if let Some(
+        appender,
+    ) =
+        canonical_wal_appender
+    {
+        let path = appender.path().to_path_buf();
+        let entries = match FramedTableWalAppender::read_entries_from_path(&path).await {
+            Ok(entries) => entries,
+            Err(err) => {
+                warn!(
+                    "SharedServices: failed to replay function-catalog WAL at {}: {} — starting with empty function catalog",
+                    path.display(),
+                    err
+                );
+                Vec::new()
+            }
         };
+        (appender as Arc<dyn TableWalAppender>, entries)
+    } else {
+        (
+            Arc::new(MemoryTableWalAppender::new()) as Arc<dyn TableWalAppender>,
+            Vec::new(),
+        )
+    };
 
     let store: Arc<dyn crate::services::FunctionStore> = Arc::new(
         CanonicalWalFunctionStore::from_wal_entries(store_appender, &recovered_entries),
