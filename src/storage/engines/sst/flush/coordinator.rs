@@ -173,7 +173,43 @@ impl FlushCoordinator {
             }
         }
 
+        // TD-112: register the just-flushed vectors into the per-collection AXIS
+        // ANN index so cold (flushed) segments are served by the index rather
+        // than a brute-force segment scan. Runs after durability, so it is
+        // best-effort — a failure degrades recall but must not fail the flush.
+        self.index_flushed_vectors_into_axis(params).await;
+
         Ok(())
+    }
+
+    /// Index just-flushed vectors into the per-collection AXIS ANN index (TD-112).
+    ///
+    /// Without this, flushed/compacted vectors are never registered with AXIS,
+    /// so post-flush vector search falls back to a brute-force segment scan
+    /// (`sst/search` `fallback_to_direct_search`) and recall degrades as data
+    /// ages out of the WAL memtable. This is intentionally best-effort: the
+    /// segments are already durable, so an indexing error is logged, not
+    /// propagated. The per-collection `IndexUpdateMode` governs whether indexing
+    /// blocks flush completion (Synchronous) or runs in the background.
+    async fn index_flushed_vectors_into_axis(&self, params: &FlushParameters) {
+        let Some(axis_manager) = self.engine.axis_manager() else {
+            return;
+        };
+        let Some(collection_id) = params.collection_id.as_ref() else {
+            return;
+        };
+        if params.vector_records.is_empty() {
+            return;
+        }
+        if let Err(e) = axis_manager
+            .handle_flushed_vectors(collection_id, params.vector_records.clone(), Vec::new())
+            .await
+        {
+            tracing::warn!(
+                "TD-112: AXIS index-on-flush failed for collection {collection_id}: {e} \
+                 (post-flush search will fall back to a segment scan)"
+            );
+        }
     }
 }
 
@@ -240,5 +276,68 @@ mod tests {
         SstEngine::new_with_config(config, filesystem, distance_compute)
             .await
             .unwrap()
+    }
+
+    /// TD-112: the flush coordinator must register just-flushed vectors into the
+    /// AXIS ANN index. Exercises the index-on-flush hook directly (no full SST
+    /// write needed) and asserts the vectors land in AXIS, so post-flush search
+    /// is served by the index rather than a brute-force scan.
+    #[tokio::test]
+    async fn td112_coordinator_indexes_flushed_vectors_into_axis() {
+        use crate::index::axis::management::manager::AxisManager;
+        use crate::index::axis::types::AxisConfig;
+        use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
+
+        // Attach an AXIS manager via the process-global OnceLock (a no-op if a
+        // prior test already set one). We read the *effective* manager back from
+        // the engine so the assertion targets whatever the coordinator will use.
+        crate::storage::engines::sst::core::set_sst_axis_manager(Arc::new(
+            AxisManager::new(AxisConfig::default()).await.unwrap(),
+        ));
+        let engine = Arc::new(create_test_engine().await);
+        let axis = engine
+            .axis_manager()
+            .expect("an AXIS manager must be attached for index-on-flush");
+        let coordinator = FlushCoordinator::new(engine);
+
+        let collection = "td112_coord_flush";
+        let records: Vec<ProximaRecord> = (0..4)
+            .map(|i| {
+                let mut v = vec![0.0f32; 8];
+                v[i % 8] = 1.0;
+                ProximaRecord {
+                    oid: format!("v{i}"),
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "t".to_string(),
+                        modality: "dense_vector".to_string(),
+                        dim: 8,
+                        values: EmbeddingValues::Fp32(v),
+                        ..Default::default()
+                    }],
+                    ..ProximaRecord::default()
+                }
+            })
+            .collect();
+
+        let params = FlushParameters {
+            vector_records: records,
+            batch_ids: vec![],
+            collection_id: Some(collection.to_string()),
+            collection_config: None,
+            force: true,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            estimated_size: 0,
+        };
+
+        coordinator.index_flushed_vectors_into_axis(&params).await;
+
+        assert_eq!(
+            axis.registered_vector_count(collection).await,
+            4,
+            "flush coordinator must register all flushed vectors into AXIS (TD-112)"
+        );
     }
 }

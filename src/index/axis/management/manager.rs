@@ -2905,6 +2905,18 @@ impl AxisManager {
         Ok(())
     }
 
+    /// Number of vectors currently registered in the in-memory store for a
+    /// collection. Test/diagnostic accessor used to assert that the flush path
+    /// populates AXIS (TD-112).
+    #[cfg(test)]
+    pub(crate) async fn registered_vector_count(&self, collection_id: &str) -> usize {
+        self.collection_vectors
+            .read()
+            .await
+            .get(collection_id)
+            .map_or(0, |m| m.len())
+    }
+
     /// Index vectors synchronously (blocking the flush completion)
     ///
     /// For batches >= 500 vectors, uses batch-aware IVF training to ensure
