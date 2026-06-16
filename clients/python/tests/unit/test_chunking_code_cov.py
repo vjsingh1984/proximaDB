@@ -539,8 +539,7 @@ def test_java_parser_treesitter(ts_pack):
     cls = next(
         s
         for s in parsed.symbols
-        if s.simple_name == "Calculator"
-        and s.symbol_type == CodeSymbolType.CLASS
+        if s.simple_name == "Calculator" and s.symbol_type == CodeSymbolType.CLASS
     )
     assert by_name["add"].symbol_type == CodeSymbolType.METHOD
     # constructor
@@ -686,7 +685,7 @@ def test_c_parser_treesitter(ts_pack):
     p = CppParser(c_mode=True)
     assert p._parser is not None
     assert p.language == "c"
-    src = '#include <stdio.h>\nstruct S { int a; };\nint add(int x, int y) { return x + y; }\n'
+    src = "#include <stdio.h>\nstruct S { int a; };\nint add(int x, int y) { return x + y; }\n"
     parsed = p.parse(src, "m.c")
     names = {s.simple_name for s in parsed.symbols}
     assert "add" in names
@@ -702,7 +701,7 @@ def test_cpp_parser_regex_fallback(no_ts_pack):
     assert p._parser is None
     assert p.language == "cpp"
     assert ".cpp" in p.file_extensions
-    parsed = p.parse('#include <iostream>\nint main() { return 0; }', "m.cpp")
+    parsed = p.parse("#include <iostream>\nint main() { return 0; }", "m.cpp")
     assert any("#include" in i for i in parsed.imports)
     assert parsed.language == "cpp"
 

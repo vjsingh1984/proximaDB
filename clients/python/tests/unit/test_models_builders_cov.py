@@ -9,15 +9,13 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from proximadb_sdk import models
-from proximadb_sdk import models_v2
+from proximadb_sdk import models, models_v2
 from proximadb_sdk.builders import collection as bcoll
 from proximadb_sdk.builders import insert as binsert
 from proximadb_sdk.builders import search as bsearch
 from proximadb_sdk.builders.collection import CollectionBuilder
 from proximadb_sdk.builders.insert import InsertBuilder
 from proximadb_sdk.builders.search import SearchBuilder
-
 
 # ---------------------------------------------------------------------------
 # models.py - enums
@@ -97,9 +95,15 @@ def test_server_capabilities_methods():
     assert models.ServerCapabilities.is_supported("quantization_type", "binary")
     assert models.ServerCapabilities.is_supported("unknown_type", "whatever")
     # fallbacks
-    assert models.ServerCapabilities.get_fallback_for("storage_engine", "mmap") == "viper"
-    assert models.ServerCapabilities.get_fallback_for("distance_metric", "cosine") is None
-    assert models.ServerCapabilities.get_fallback_for("indexing_algorithm", "hnsw") is None
+    assert (
+        models.ServerCapabilities.get_fallback_for("storage_engine", "mmap") == "viper"
+    )
+    assert (
+        models.ServerCapabilities.get_fallback_for("distance_metric", "cosine") is None
+    )
+    assert (
+        models.ServerCapabilities.get_fallback_for("indexing_algorithm", "hnsw") is None
+    )
     assert models.ServerCapabilities.get_fallback_for("bogus", "x") is None
 
 
@@ -207,9 +211,7 @@ def test_index_configuration():
         use_cases=["search"],
     )
     assert ic.index_name == "primary"
-    ic2 = models.IndexConfiguration(
-        index_name="grpc", algorithm=models.IndexType.IVF
-    )
+    ic2 = models.IndexConfiguration(index_name="grpc", algorithm=models.IndexType.IVF)
     assert ic2.algorithm == models.IndexType.IVF
 
 
@@ -263,9 +265,7 @@ def test_collection_config_index_config_property():
     ic = models.IndexConfiguration(
         index_name="primary", algorithm=models.IndexingAlgorithm.HNSW
     )
-    cfg = models.CollectionConfig(
-        name="collection1", dimension=8, index_configs=[ic]
-    )
+    cfg = models.CollectionConfig(name="collection1", dimension=8, index_configs=[ic])
     assert cfg.index_config is ic
 
 
@@ -316,7 +316,9 @@ def test_collection_config_sst_quant_warns_and_default_block():
 
 
 def test_collection_config_zstd_level_too_high():
-    comp = models.CompressionConfig(algorithm=models.CompressionAlgorithm.ZSTD, level=20)
+    comp = models.CompressionConfig(
+        algorithm=models.CompressionAlgorithm.ZSTD, level=20
+    )
     # 20 is valid (<=22). Bump to test the post-init >22 branch via direct mutation.
     comp.level = 23
     with pytest.raises(ValueError):
@@ -445,8 +447,12 @@ def test_search_models():
     li = models.ListCollectionsResponse(
         collections=[
             models.CollectionInfo(
-                id="a", name="collection1", dimension=8, metric="cosine",
-                created_at_ms=1, updated_at_ms=1,
+                id="a",
+                name="collection1",
+                dimension=8,
+                metric="cosine",
+                created_at_ms=1,
+                updated_at_ms=1,
             )
         ],
         total_count=1,
@@ -461,9 +467,7 @@ def test_request_response_models():
     )
     assert req.operation == models.CollectionOperationType.CREATE
     coll = models.Collection(id="x", config=cfg)
-    resp = models.CollectionResponse(
-        success=True, operation="create", collection=coll
-    )
+    resp = models.CollectionResponse(success=True, operation="create", collection=coll)
     assert resp.affected_count == 0
 
     vr = models.VectorRecord(id="v1", vector=[0.1])
@@ -511,8 +515,11 @@ def test_storage_and_health_models():
     assert sc.persistent is True
     models.FlushConfig(force_flush=True)
     hs = models.HealthStatus(
-        status="ok", version="1.0", uptime_seconds=10,
-        services={"db": "up"}, timestamp_ms=5000,
+        status="ok",
+        version="1.0",
+        uptime_seconds=10,
+        services={"db": "up"},
+        timestamp_ms=5000,
     )
     assert hs.timestamp == 5
     hs.timestamp = 9
@@ -521,13 +528,20 @@ def test_storage_and_health_models():
     col = models.ColumnDefinition(name="c", data_type="text")
     schema = models.SchemaDefinition(columns=[col], enforcement="strict")
     resp = models.SchemaResponse(
-        schema_id="s", schema_version="1", collection_id="c",
-        **{"schema": schema}, created_at="now",
+        schema_id="s",
+        schema_version="1",
+        collection_id="c",
+        **{"schema": schema},
+        created_at="now",
     )
     assert resp.schema_.columns[0].name == "c"
     models.UpdateSchemaResponse(
-        schema_id="s", schema_version="2", previous_schema_id="p",
-        changes=[{"a": "b"}], warnings=[], updated_at="now",
+        schema_id="s",
+        schema_version="2",
+        previous_schema_id="p",
+        changes=[{"a": "b"}],
+        warnings=[],
+        updated_at="now",
     )
 
 
@@ -553,7 +567,9 @@ def test_text_field_validators():
 
 
 def test_text_column_config_validators_and_factories():
-    cfg = models_v2.TextColumnConfig(column_name="  col_1  ", chunk_size=512, chunk_overlap=50)
+    cfg = models_v2.TextColumnConfig(
+        column_name="  col_1  ", chunk_size=512, chunk_overlap=50
+    )
     assert cfg.column_name == "col_1"
     assert cfg.to_dict()["column_name"] == "col_1"
     with pytest.raises(ValueError):
@@ -567,7 +583,9 @@ def test_text_column_config_validators_and_factories():
 
     rag = models_v2.TextColumnConfig.for_rag("content", embedding_model="m")
     assert rag.strategy == models_v2.TextStorageStrategy.CHUNKED
-    short = models_v2.TextColumnConfig.for_short_text("title", enable_full_text_search=True)
+    short = models_v2.TextColumnConfig.for_short_text(
+        "title", enable_full_text_search=True
+    )
     assert short.strategy == models_v2.TextStorageStrategy.INLINE
     large = models_v2.TextColumnConfig.for_large_documents("body", language="en")
     assert large.strategy == models_v2.TextStorageStrategy.SIDECAR
@@ -577,7 +595,10 @@ def test_text_column_config_validators_and_factories():
 
 def test_typed_value_factories():
     assert models_v2.TypedValue.text("x").value_type == models_v2.ColumnDataType.TEXT
-    assert models_v2.TypedValue.text_large("x").value_type == models_v2.ColumnDataType.TEXT_LARGE
+    assert (
+        models_v2.TypedValue.text_large("x").value_type
+        == models_v2.ColumnDataType.TEXT_LARGE
+    )
     assert models_v2.TypedValue.integer(1).value == 1
     assert models_v2.TypedValue.float_(1.5).value == 1.5
     assert models_v2.TypedValue.decimal("1.5").value == "1.5"
@@ -677,7 +698,9 @@ def test_record_schema_validate_record():
     assert any("missing" in e for e in errors3)
 
     # flexible mode = no errors
-    flex_schema = models_v2.RecordSchema(enforcement=models_v2.SchemaEnforcement.FLEXIBLE)
+    flex_schema = models_v2.RecordSchema(
+        enforcement=models_v2.SchemaEnforcement.FLEXIBLE
+    )
     flex_schema.add_column("price", models_v2.ColumnDataType.FLOAT, nullable=False)
     assert flex_schema.validate_record(rec_missing) == []
 
@@ -715,8 +738,10 @@ def test_filter_builder_v2():
 
 def test_typed_filter_condition():
     c = models_v2.TypedFilterCondition(
-        field_name="price", operator=models_v2.FilterOperator.BETWEEN,
-        value=10.0, value_upper=100.0,
+        field_name="price",
+        operator=models_v2.FilterOperator.BETWEEN,
+        value=10.0,
+        value_upper=100.0,
     )
     assert c.value_upper == 100.0
 
@@ -725,11 +750,13 @@ def test_search_request_v2_fluent():
     req = (
         models_v2.SearchRequestV2.create([0.1, 0.2, 0.3], top_k=5)
         .with_filter(models_v2.FilterBuilderV2("category").eq("electronics"))
-        .with_filters([
-            models_v2.TypedFilterCondition(
-                field_name="x", operator=models_v2.FilterOperator.EQ, value=1
-            )
-        ])
+        .with_filters(
+            [
+                models_v2.TypedFilterCondition(
+                    field_name="x", operator=models_v2.FilterOperator.EQ, value=1
+                )
+            ]
+        )
         .with_text()
         .with_vectors()
         .with_ef_search(50)
@@ -745,12 +772,16 @@ def test_v2_convenience_functions():
     schema = models_v2.create_text_column_schema(
         text_columns=[models_v2.TextColumnConfig.for_rag("content")],
         additional_columns=[
-            models_v2.ColumnDefinition(name="title", data_type=models_v2.ColumnDataType.TEXT)
+            models_v2.ColumnDefinition(
+                name="title", data_type=models_v2.ColumnDataType.TEXT
+            )
         ],
     )
     assert schema.get_text_column_config("content") is not None
     assert schema.get_column("title") is not None
-    tc = models_v2.text_column("desc", strategy=models_v2.TextStorageStrategy.CHUNKED, chunk_size=256)
+    tc = models_v2.text_column(
+        "desc", strategy=models_v2.TextStorageStrategy.CHUNKED, chunk_size=256
+    )
     assert tc.chunk_size == 256
 
 
@@ -852,7 +883,13 @@ def test_insert_builder_from_arrays_numpy():
 
 
 def test_insert_builder_options_and_validation():
-    b = InsertBuilder().batch_size(500).overwrite_existing().validate_vectors(False).async_mode()
+    b = (
+        InsertBuilder()
+        .batch_size(500)
+        .overwrite_existing()
+        .validate_vectors(False)
+        .async_mode()
+    )
     opts = b.build_options()
     assert opts["batch_size"] == 500
     assert opts["overwrite"] is True
@@ -883,7 +920,11 @@ def test_insert_builder_transforms():
 
 
 def test_insert_builder_build_and_summary():
-    b = InsertBuilder().add_vector("v1", [0.1, 0.2], {"a": 1}).add_vector("v2", [0.3, 0.4])
+    b = (
+        InsertBuilder()
+        .add_vector("v1", [0.1, 0.2], {"a": 1})
+        .add_vector("v2", [0.3, 0.4])
+    )
     records, options = b.build()
     assert len(records) == 2
     assert options["batch_size"] == 1000

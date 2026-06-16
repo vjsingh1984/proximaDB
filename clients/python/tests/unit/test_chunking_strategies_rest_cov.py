@@ -27,7 +27,6 @@ from proximadb_sdk.chunking_strategies.recursive import RecursiveStrategy
 from proximadb_sdk.chunking_strategies.semantic import SemanticStrategy
 from proximadb_sdk.chunking_strategies.sentence import SentenceStrategy
 
-
 # --------------------------------------------------------------------------- #
 # base.py — TextChunk + ChunkingConfig + interface helpers
 # --------------------------------------------------------------------------- #
@@ -444,7 +443,9 @@ def test_recursive_split_sentence_level_direct():
     # paragraph (paragraph strategy pre-splits those), so exercise the
     # level-2 sentence descent directly. Each sentence fits under max so they
     # stay at 'sentence' level and inherit the start_pos offset.
-    cfg = ChunkingConfig(chunk_size=40, chunk_overlap=5, min_chunk_size=1, max_chunk_size=40)
+    cfg = ChunkingConfig(
+        chunk_size=40, chunk_overlap=5, min_chunk_size=1, max_chunk_size=40
+    )
     s = RecursiveStrategy(cfg)
     text = "Alpha one here. Bravo two here. Gamma three here."
     out = s._recursive_split(
@@ -467,7 +468,9 @@ def test_recursive_descends_to_sliding_window_via_chunk():
     # A long single paragraph with NO sentence endings can't be split by the
     # paragraph or sentence strategies, so chunk() falls through to the
     # sliding-window level with forced_split metadata.
-    cfg = ChunkingConfig(chunk_size=30, chunk_overlap=5, min_chunk_size=1, max_chunk_size=30)
+    cfg = ChunkingConfig(
+        chunk_size=30, chunk_overlap=5, min_chunk_size=1, max_chunk_size=30
+    )
     s = RecursiveStrategy(cfg)
     text = ("word " * 30).strip()
     chunks = s.chunk(text, "doc")

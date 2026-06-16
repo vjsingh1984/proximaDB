@@ -29,15 +29,16 @@ def _delete_resp():
     return VectorOperationResponse(
         success=True, operation="DELETE", metrics=OperationMetrics()
     )
+
+
 from proximadb_sdk.unified_client import (
     ProximaDBClient,
     _is_connection_error,
     connect,
+    connect_legacy,
     connect_rest,
     connect_unified,
-    connect_legacy,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -179,7 +180,9 @@ def test_create_collection_via_adapter():
 
 def test_create_collection_builds_config_from_kwargs():
     adapter = MagicMock()
-    adapter.create_collection.side_effect = lambda name, config, **kw: a_collection(name)
+    adapter.create_collection.side_effect = lambda name, config, **kw: a_collection(
+        name
+    )
     c = make_client(adapter)
     result = c.create_collection("autocoll", dimension=8)
     assert result.id == "autocoll"
@@ -215,7 +218,9 @@ def test_create_collection_server_error_propagates():
 
 def test_create_collection_config_name_mismatch_recopies():
     adapter = MagicMock()
-    adapter.create_collection.side_effect = lambda name, config, **kw: a_collection(name)
+    adapter.create_collection.side_effect = lambda name, config, **kw: a_collection(
+        name
+    )
     c = make_client(adapter)
     cfg = CollectionConfig(name="othercol", dimension=4)
     result = c.create_collection("renamedx", cfg)
@@ -450,7 +455,9 @@ def test_search_adapter_error_falls_back_local():
     adapter.search.side_effect = Exception("boom")
     c = make_client(adapter)
     c._store_local_collection(a_collection("colxxxxx"))
-    c._store_local_vector_records("colxxxxx", [VectorRecord(id="x", vector=[1.0, 2.0, 3.0])])
+    c._store_local_vector_records(
+        "colxxxxx", [VectorRecord(id="x", vector=[1.0, 2.0, 3.0])]
+    )
     res = c.search("colxxxxx", [1.0, 2.0, 3.0], top_k=3)
     assert res[0].id == "x"
     assert c._prefer_local_fallback is True
@@ -538,7 +545,9 @@ def test_get_vector_client_error_falls_back():
     c = make_client()
     c._client.get_vector.side_effect = Exception("boom")
     c._store_local_collection(a_collection("colxxxxx"))
-    c._store_local_vector_records("colxxxxx", [VectorRecord(id="v1", vector=[1.0, 2.0, 3.0])])
+    c._store_local_vector_records(
+        "colxxxxx", [VectorRecord(id="v1", vector=[1.0, 2.0, 3.0])]
+    )
     rec = c.get_vector("colxxxxx", "v1", include_vector=False, include_metadata=False)
     assert rec.id == "v1"
     assert c._prefer_local_fallback is True
@@ -557,7 +566,8 @@ def test_delete_vectors_prefer_local():
     c._prefer_local_fallback = True
     c._store_local_collection(a_collection("colxxxxx"))
     c._store_local_vector_records(
-        "colxxxxx", [VectorRecord(id="a", vector=[1.0]), VectorRecord(id="b", vector=[2.0])]
+        "colxxxxx",
+        [VectorRecord(id="a", vector=[1.0]), VectorRecord(id="b", vector=[2.0])],
     )
     resp = c.delete_vectors("colxxxxx", ["a"])
     assert resp.metrics.successful_count == 1
@@ -643,7 +653,9 @@ def test_execute_sql_local_missing_from():
 def test_execute_sql_local_vector_search():
     c = make_client()
     c._store_local_collection(a_collection("colxxxxx"))
-    c._store_local_vector_records("colxxxxx", [VectorRecord(id="1", vector=[1.0, 0.0, 0.0])])
+    c._store_local_vector_records(
+        "colxxxxx", [VectorRecord(id="1", vector=[1.0, 0.0, 0.0])]
+    )
     res = c._execute_sql_local(
         "SELECT id, score FROM vector_search('colxxxxx', '[1.0, 0.0, 0.0]', 5)"
     )
@@ -1364,7 +1376,9 @@ def test_hybrid_search_rest_adapter_error_then_local(monkeypatch):
     import proximadb_sdk.hybrid as hybrid_mod
 
     monkeypatch.setattr(hybrid_mod, "ProximaDBHybrid", FakeHybrid)
-    out = c.hybrid_search("colxxxxx", "text", [1.0, 2.0], fusion_strategy="weighted_linear")
+    out = c.hybrid_search(
+        "colxxxxx", "text", [1.0, 2.0], fusion_strategy="weighted_linear"
+    )
     assert out["results"] == []
     assert "metrics" in out
 
@@ -1382,7 +1396,9 @@ def test_document_create_via_repository(monkeypatch):
     fake_repo = MagicMock()
     fake_repo.create_collection.return_value = "docid"
     monkeypatch.setattr(c, "_get_document_repository", lambda: fake_repo)
-    out = c.create_document_collection("docs", {"indexes": [{"name": "i", "path": "$.a"}]})
+    out = c.create_document_collection(
+        "docs", {"indexes": [{"name": "i", "path": "$.a"}]}
+    )
     assert out["collection_id"] == "docid"
 
 
@@ -1473,7 +1489,9 @@ def test_list_collections_raw_rest():
 def test_create_collection_raw_rest_error_falls_back_local():
     c = raw_rest_client()
     c._client.create_collection.side_effect = Exception("any error")
-    out = c.create_collection("rawcrecl", CollectionConfig(name="rawcrecl", dimension=3))
+    out = c.create_collection(
+        "rawcrecl", CollectionConfig(name="rawcrecl", dimension=3)
+    )
     assert out.id == "rawcrecl"
     assert c._prefer_local_fallback is True
 
@@ -1534,9 +1552,7 @@ from proximadb_sdk.unified_client import (  # noqa: E402
 def test_connect_grpc_falls_back_on_import_error():
     # Force the gRPC constructor to raise an import-style ProximaDBError so the
     # AUTO fallback branch executes.
-    with patch.object(
-        _uc, "ProximaDBClient", wraps=_uc.ProximaDBClient
-    ) as cls:
+    with patch.object(_uc, "ProximaDBClient", wraps=_uc.ProximaDBClient) as cls:
         calls = {"n": 0}
 
         def side_effect(*args, **kwargs):
@@ -1693,10 +1709,10 @@ def test_get_optimal_client_no_selector_returns_default():
 def test_setup_operation_routing_builds_router():
     c = make_client()
     c.routing_strategy = RoutingStrategy.HYBRID
-    with patch.object(_uc, "OperationRouter") as router_cls, patch.object(
-        c, "_create_rest_client", return_value=MagicMock()
-    ), patch.object(
-        c, "_create_grpc_client", return_value=MagicMock()
+    with (
+        patch.object(_uc, "OperationRouter") as router_cls,
+        patch.object(c, "_create_rest_client", return_value=MagicMock()),
+        patch.object(c, "_create_grpc_client", return_value=MagicMock()),
     ):
         c._setup_operation_routing(None)
     assert c._operation_router is router_cls.return_value
@@ -1705,9 +1721,7 @@ def test_setup_operation_routing_builds_router():
 def test_setup_operation_routing_failure_disables():
     c = make_client()
     c.routing_strategy = RoutingStrategy.HYBRID
-    with patch.object(
-        _uc, "OperationRouter", side_effect=RuntimeError("boom")
-    ):
+    with patch.object(_uc, "OperationRouter", side_effect=RuntimeError("boom")):
         c._setup_operation_routing(None)
     assert c.enable_operation_routing is False
     assert c._operation_router is None
@@ -1728,9 +1742,10 @@ def test_setup_intelligent_selection_success():
 def test_setup_intelligent_selection_failure_falls_back():
     c = make_client()
     c.selection_strategy = SelectionStrategy.BALANCED
-    with patch.object(
-        _uc, "create_protocol_selector", side_effect=RuntimeError("no")
-    ), patch.object(c, "_setup_client") as setup:
+    with (
+        patch.object(_uc, "create_protocol_selector", side_effect=RuntimeError("no")),
+        patch.object(c, "_setup_client") as setup,
+    ):
         c._setup_intelligent_selection()
     assert c.enable_intelligent_selection is False
     setup.assert_called_once()
@@ -1999,7 +2014,9 @@ def test_create_collection_raw_grpc_success():
     resp = MagicMock(spec=["success"])
     resp.success = True
     c._client.create_collection.return_value = resp
-    out = c.create_collection("rawgrpc1", config=CollectionConfig(name="rawgrpc1", dimension=4))
+    out = c.create_collection(
+        "rawgrpc1", config=CollectionConfig(name="rawgrpc1", dimension=4)
+    )
     assert isinstance(out, Collection)
     c._client.create_collection.assert_called_once()
 
@@ -2009,7 +2026,9 @@ def test_create_collection_raw_grpc_connection_error_local_fallback():
     c._adapter = None
     c._active_protocol = Protocol.GRPC
     c._client.create_collection.side_effect = ConnectionError("connection failed")
-    out = c.create_collection("rawgrpc2", config=CollectionConfig(name="rawgrpc2", dimension=4))
+    out = c.create_collection(
+        "rawgrpc2", config=CollectionConfig(name="rawgrpc2", dimension=4)
+    )
     assert isinstance(out, Collection)
     assert c._prefer_local_fallback is True
 
@@ -2148,9 +2167,7 @@ def test_upsert_vectors_prefer_local_rest_count():
     c._prefer_local_fallback = True
     c._active_protocol = Protocol.REST
     c._store_local_collection(a_collection("upprfrst"))
-    out = c.upsert_vectors(
-        "upprfrst", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
-    )
+    out = c.upsert_vectors("upprfrst", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])])
     assert out.success == 1
 
 
@@ -2256,9 +2273,7 @@ def test_upsert_vectors_adapter_embedded_stores_local():
         success=True, operation="UPSERT", metrics=OperationMetrics()
     )
     c._adapter = adapter
-    out = c.upsert_vectors(
-        "upembedd", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
-    )
+    out = c.upsert_vectors("upembedd", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])])
     assert out.success is True
     assert len(c._get_local_vector_records("upembedd")) == 1
 
@@ -2270,9 +2285,7 @@ def test_upsert_vectors_adapter_error_local_fallback():
     adapter = MagicMock(spec=["upsert_vectors"])
     adapter.upsert_vectors.side_effect = ConnectionError("connection failed")
     c._adapter = adapter
-    out = c.upsert_vectors(
-        "upfallbk", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
-    )
+    out = c.upsert_vectors("upfallbk", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])])
     # REST local fallback returns success as a count
     assert out.success == 1
     assert c._prefer_local_fallback is True
@@ -2283,9 +2296,7 @@ def test_upsert_vectors_prefer_local():
     c._prefer_local_fallback = True
     c._active_protocol = Protocol.REST
     c._store_local_collection(a_collection("upprefer"))
-    out = c.upsert_vectors(
-        "upprefer", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])]
-    )
+    out = c.upsert_vectors("upprefer", [VectorRecord(id="a", vector=[1.0, 2.0, 3.0])])
     assert out.operation == "UPSERT"
 
 

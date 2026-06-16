@@ -90,9 +90,7 @@ def test_create_insert_search_get_delete_round_trip(rest_client) -> None:
         for i in range(n):
             vec = [0.0] * dim
             vec[i % dim] = 1.0
-            records.append(
-                {"id": f"rec-{i}", "vector": vec, "props": {"slot": i}}
-            )
+            records.append({"id": f"rec-{i}", "vector": vec, "props": {"slot": i}})
 
         batch = client.insert_records(name, records)
         assert batch.success == n, (
@@ -184,14 +182,20 @@ def test_insert_vectors_helper_and_topk_ordering(rest_client) -> None:
             # Spread vectors around the unit circle in the first two dims so
             # they have distinct cosine similarities to a fixed query.
             ang = (i / n) * 1.5
-            vectors.append([float(__import__("math").cos(ang)),
-                            float(__import__("math").sin(ang)), 0.0, 0.0])
+            vectors.append(
+                [
+                    float(__import__("math").cos(ang)),
+                    float(__import__("math").sin(ang)),
+                    0.0,
+                    0.0,
+                ]
+            )
             ids.append(f"v-{i}")
 
         batch = client.insert_vectors(name, vectors, ids=ids)
-        assert batch.success == n, (
-            f"insert_vectors must report success=={n}; got {batch.success}"
-        )
+        assert (
+            batch.success == n
+        ), f"insert_vectors must report success=={n}; got {batch.success}"
 
         _settle()
 
@@ -202,9 +206,9 @@ def test_insert_vectors_helper_and_topk_ordering(rest_client) -> None:
         assert len(results) <= k, f"top_k={k} must cap result count; got {len(results)}"
 
         scores = [r.score for r in results]
-        assert scores == sorted(scores, reverse=True), (
-            f"knn results must be ordered by descending score; got {scores}"
-        )
+        assert scores == sorted(
+            scores, reverse=True
+        ), f"knn results must be ordered by descending score; got {scores}"
 
     finally:
         try:
@@ -254,9 +258,10 @@ def test_metadata_filter_search(rest_client) -> None:
         # Resilient: filtering may be a no-op in embedded mode. If it filtered,
         # only cat==x ids ('a','c') may appear and 'b' must be absent.
         if "b" not in ids:
-            assert ids <= {"a", "c"}, (
-                f"filtered results must be subset of cat==x ids; got {ids}"
-            )
+            assert ids <= {
+                "a",
+                "c",
+            }, f"filtered results must be subset of cat==x ids; got {ids}"
         else:
             # Filter is a no-op here; just confirm the round-trip returned data.
             assert ids, "search returned no results at all"
@@ -280,6 +285,6 @@ def test_search_missing_collection_surfaces_signal(rest_client) -> None:
     except Exception:  # noqa: BLE001 — error on missing collection is valid
         return
 
-    assert results == [] or not results, (
-        f"search on a missing collection must be empty or raise; got {results}"
-    )
+    assert (
+        results == [] or not results
+    ), f"search on a missing collection must be empty or raise; got {results}"

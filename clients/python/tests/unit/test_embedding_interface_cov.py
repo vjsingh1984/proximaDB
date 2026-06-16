@@ -78,7 +78,9 @@ def test_simulated_default_config():
 
 
 def test_simulated_embed_texts_shape_and_determinism():
-    p = SimulatedEmbeddingProvider(EmbeddingConfig(model_name="simulated", dimension=16))
+    p = SimulatedEmbeddingProvider(
+        EmbeddingConfig(model_name="simulated", dimension=16)
+    )
     out1 = p.embed_texts(["hello world.", "another one!"])
     out2 = p.embed_texts(["hello world.", "another one!"])
     assert out1.shape == (2, 16)
@@ -113,7 +115,9 @@ def test_simulated_embed_texts_with_metadata():
 
 
 def test_simulated_batch_embed_texts():
-    p = SimulatedEmbeddingProvider(EmbeddingConfig(model_name="simulated", dimension=8, batch_size=2))
+    p = SimulatedEmbeddingProvider(
+        EmbeddingConfig(model_name="simulated", dimension=8, batch_size=2)
+    )
     out = p.batch_embed_texts(["a", "b", "c", "d", "e"])
     assert out.shape == (5, 8)
 
@@ -219,12 +223,16 @@ def test_factory_list_providers():
 
 
 def test_factory_create_simulated():
-    p = EmbeddingProviderFactory.create_provider("simulated", EmbeddingConfig(model_name="simulated", dimension=8))
+    p = EmbeddingProviderFactory.create_provider(
+        "simulated", EmbeddingConfig(model_name="simulated", dimension=8)
+    )
     assert isinstance(p, SimulatedEmbeddingProvider)
 
 
 def test_factory_create_bert_available(stub_sentence_transformers):
-    p = EmbeddingProviderFactory.create_provider("bert", EmbeddingConfig(model_name="m", dimension=384))
+    p = EmbeddingProviderFactory.create_provider(
+        "bert", EmbeddingConfig(model_name="m", dimension=384)
+    )
     assert isinstance(p, BERTEmbeddingProvider)
 
 
@@ -235,14 +243,18 @@ def test_factory_create_model_name_as_type(stub_sentence_transformers):
 
 def test_factory_unavailable_falls_back_to_simulated(monkeypatch, capsys):
     monkeypatch.setitem(sys.modules, "sentence_transformers", None)
-    p = EmbeddingProviderFactory.create_provider("bert", EmbeddingConfig(model_name="m", dimension=384))
+    p = EmbeddingProviderFactory.create_provider(
+        "bert", EmbeddingConfig(model_name="m", dimension=384)
+    )
     assert isinstance(p, SimulatedEmbeddingProvider)
     assert "unavailable, using simulated" in capsys.readouterr().out
 
 
 def test_factory_unknown_provider():
     with pytest.raises(ValueError, match="Unknown embedding provider"):
-        EmbeddingProviderFactory.create_provider("nonexistent", EmbeddingConfig(model_name="m", dimension=8))
+        EmbeddingProviderFactory.create_provider(
+            "nonexistent", EmbeddingConfig(model_name="m", dimension=8)
+        )
 
 
 def test_factory_register_provider():
@@ -251,7 +263,9 @@ def test_factory_register_provider():
 
     EmbeddingProviderFactory.register_provider("custom_test", CustomProvider)
     assert "custom_test" in EmbeddingProviderFactory.list_providers()
-    p = EmbeddingProviderFactory.create_provider("custom_test", EmbeddingConfig(model_name="x", dimension=8))
+    p = EmbeddingProviderFactory.create_provider(
+        "custom_test", EmbeddingConfig(model_name="x", dimension=8)
+    )
     assert isinstance(p, CustomProvider)
     # cleanup
     del EmbeddingProviderFactory._providers["custom_test"]

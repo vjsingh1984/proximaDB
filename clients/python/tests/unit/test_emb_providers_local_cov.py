@@ -21,7 +21,6 @@ import types
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Stub the heavy optional dependency BEFORE importing any local provider.
 # SentenceTransformerMixin._load_model() does `from sentence_transformers import
@@ -35,7 +34,9 @@ class _FakeSentenceTransformer:
 
     last_kwargs = None
 
-    def __init__(self, model_name, device=None, trust_remote_code=False, cache_folder=None):
+    def __init__(
+        self, model_name, device=None, trust_remote_code=False, cache_folder=None
+    ):
         type(self).last_kwargs = {
             "model_name": model_name,
             "device": device,
@@ -45,8 +46,14 @@ class _FakeSentenceTransformer:
         self.model_name = model_name
         self.encode_calls = []
 
-    def encode(self, texts, batch_size=32, normalize_embeddings=True,
-               show_progress_bar=False, convert_to_numpy=True):
+    def encode(
+        self,
+        texts,
+        batch_size=32,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+        convert_to_numpy=True,
+    ):
         self.encode_calls.append(
             {
                 "texts": list(texts),
@@ -77,7 +84,9 @@ from proximadb_sdk.embedding_providers.core import (  # noqa: E402
     ModelMetadata,
     ProviderConfig,
 )
-from proximadb_sdk.embedding_providers.providers.local import bge as bge_mod  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
+    bge as bge_mod,
+)
 from proximadb_sdk.embedding_providers.providers.local import e5 as e5_mod  # noqa: E402
 from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
     gte_qwen as gte_qwen_mod,
@@ -88,7 +97,9 @@ from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
 from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
     sentence_transformer as st_mod,
 )
-from proximadb_sdk.embedding_providers.providers.local import sfr as sfr_mod  # noqa: E402
+from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
+    sfr as sfr_mod,
+)
 from proximadb_sdk.embedding_providers.providers.testing import (  # noqa: E402
     simulated as sim_mod,
 )
@@ -115,10 +126,20 @@ def _clean_model_cache():
 LOCAL_CASES = [
     (bge_mod, bge_mod.BGEProvider, "BAAI/bge-large-en-v1.5", 32, True),
     (e5_mod, e5_mod.E5Provider, "intfloat/e5-large-v2", 32, True),
-    (gte_qwen_mod, gte_qwen_mod.GTEQwenProvider,
-     "Alibaba-NLP/gte-Qwen2-1.5B-instruct", 16, True),
-    (gte_qwen_new_mod, gte_qwen_new_mod.GTEQwenProvider,
-     "Alibaba-NLP/gte-Qwen2-1.5B-instruct", 16, True),
+    (
+        gte_qwen_mod,
+        gte_qwen_mod.GTEQwenProvider,
+        "Alibaba-NLP/gte-Qwen2-1.5B-instruct",
+        16,
+        True,
+    ),
+    (
+        gte_qwen_new_mod,
+        gte_qwen_new_mod.GTEQwenProvider,
+        "Alibaba-NLP/gte-Qwen2-1.5B-instruct",
+        16,
+        True,
+    ),
     (st_mod, st_mod.SentenceTransformerProvider, "all-mpnet-base-v2", 32, False),
     (sfr_mod, sfr_mod.SFRProvider, "Salesforce/SFR-Embedding-2_R", 16, True),
 ]
@@ -144,7 +165,9 @@ def test_provider_is_subclass_of_base(mod, cls, default_model, batch, has_instr)
 
 
 @pytest.mark.parametrize("mod,cls,default_model,batch,has_instr", LOCAL_CASES)
-def test_embed_dispatches_to_sentence_transformer(mod, cls, default_model, batch, has_instr):
+def test_embed_dispatches_to_sentence_transformer(
+    mod, cls, default_model, batch, has_instr
+):
     provider = cls()
     out = provider.embed(["hello", "world"])
     # Lazy init must have loaded our fake model.
@@ -162,7 +185,9 @@ def test_embed_dispatches_to_sentence_transformer(mod, cls, default_model, batch
 
 
 @pytest.mark.parametrize("mod,cls,default_model,batch,has_instr", LOCAL_CASES)
-def test_embed_empty_returns_empty_without_loading(mod, cls, default_model, batch, has_instr):
+def test_embed_empty_returns_empty_without_loading(
+    mod, cls, default_model, batch, has_instr
+):
     provider = cls()
     out = provider.embed([])
     assert out.size == 0
@@ -287,7 +312,9 @@ def test_simulated_normalized_rows_are_unit_length():
 
 def test_simulated_no_normalize_keeps_raw_magnitudes():
     model = ModelMetadata(name="simulated-embeddings", dimension=16)
-    cfg = ProviderConfig(model=model, normalize=False, extra={"seed": 7, "method": "hash"})
+    cfg = ProviderConfig(
+        model=model, normalize=False, extra={"seed": 7, "method": "hash"}
+    )
     p = sim_mod.SimulatedEmbeddingProvider(cfg)
     out = p.embed(["raw"])
     assert out.shape == (1, 16)
@@ -303,7 +330,9 @@ def test_simulated_empty_input():
 def test_simulated_large_dimension_rehashes():
     """Dimension > 8 forces the rehash branch (i*4 >= len(hash_bytes))."""
     model = ModelMetadata(name="simulated-embeddings", dimension=100)
-    cfg = ProviderConfig(model=model, normalize=False, extra={"seed": 1, "method": "hash"})
+    cfg = ProviderConfig(
+        model=model, normalize=False, extra={"seed": 1, "method": "hash"}
+    )
     p = sim_mod.SimulatedEmbeddingProvider(cfg)
     out = p.embed(["needs-rehash"])
     assert out.shape == (1, 100)
@@ -325,7 +354,9 @@ def test_simulated_new_hash_method():
 
 def test_simulated_new_random_method():
     model = ModelMetadata(name="simulated-embeddings", dimension=32)
-    cfg = ProviderConfig(model=model, normalize=False, extra={"seed": 9, "method": "random"})
+    cfg = ProviderConfig(
+        model=model, normalize=False, extra={"seed": 9, "method": "random"}
+    )
     p = sim_new_mod.SimulatedEmbeddingProvider(cfg)
     a = p.embed(["r1", "r2"])
     assert a.shape == (2, 32)
@@ -335,7 +366,9 @@ def test_simulated_new_random_method():
 
 def test_simulated_new_gaussian_method():
     model = ModelMetadata(name="simulated-embeddings", dimension=24)
-    cfg = ProviderConfig(model=model, normalize=True, extra={"seed": 3, "method": "gaussian"})
+    cfg = ProviderConfig(
+        model=model, normalize=True, extra={"seed": 3, "method": "gaussian"}
+    )
     p = sim_new_mod.SimulatedEmbeddingProvider(cfg)
     out = p.embed(["g"])
     assert out.shape == (1, 24)
@@ -374,9 +407,13 @@ def test_simulated_zero_vector_normalization_guard():
     """If a generated row is all-zero, normalization must not divide by zero.
     We force this by mocking the per-text generator to emit zeros."""
     model = ModelMetadata(name="simulated-embeddings", dimension=4)
-    cfg = ProviderConfig(model=model, normalize=True, extra={"seed": 0, "method": "hash"})
+    cfg = ProviderConfig(
+        model=model, normalize=True, extra={"seed": 0, "method": "hash"}
+    )
     p = sim_new_mod.SimulatedEmbeddingProvider(cfg)
-    p._hash_based_embedding = lambda text, dimension, seed: np.zeros(dimension, dtype=np.float32)
+    p._hash_based_embedding = lambda text, dimension, seed: np.zeros(
+        dimension, dtype=np.float32
+    )
     out = p.embed(["zero"])
     # norm guard set zero-norm rows divisor to 1.0 -> output stays zeros, no NaN
     assert not np.isnan(out).any()

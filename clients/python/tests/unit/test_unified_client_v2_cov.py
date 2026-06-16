@@ -12,13 +12,6 @@ import numpy as np
 import pytest
 
 import proximadb_sdk.unified_client_v2 as uc
-from proximadb_sdk.unified_client_v2 import (
-    ProximaDBClient,
-    connect,
-    connect_embedded,
-    connect_grpc,
-    connect_rest,
-)
 from proximadb_sdk.config import Protocol
 from proximadb_sdk.exceptions import ProximaDBError
 from proximadb_sdk.models import (
@@ -30,7 +23,13 @@ from proximadb_sdk.models import (
     SearchResult,
     VectorRecord,
 )
-
+from proximadb_sdk.unified_client_v2 import (
+    ProximaDBClient,
+    connect,
+    connect_embedded,
+    connect_grpc,
+    connect_rest,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -100,9 +99,7 @@ def test_init_grpc_protocol(mock_adapter):
 
 def test_init_embedded_protocol(mock_adapter):
     with patch.object(uc, "create_adapter", return_value=mock_adapter) as factory:
-        c = ProximaDBClient(
-            url="http://h:5678", protocol="embedded", data_dir="/tmp/x"
-        )
+        c = ProximaDBClient(url="http://h:5678", protocol="embedded", data_dir="/tmp/x")
     assert c.active_protocol == Protocol.EMBEDDED
     args, kwargs = factory.call_args
     assert args[0] == "embedded"
@@ -379,9 +376,7 @@ def test_update_vector_metadata(client, mock_adapter):
     mock_adapter.update_vector_metadata.return_value = "ok"
     out = client.update_vector_metadata("cid", "v0", {"x": "1"})
     assert out == "ok"
-    mock_adapter.update_vector_metadata.assert_called_once_with(
-        "cid", "v0", {"x": "1"}
-    )
+    mock_adapter.update_vector_metadata.assert_called_once_with("cid", "v0", {"x": "1"})
 
 
 def test_insert_vector_insert_path(client, mock_adapter):

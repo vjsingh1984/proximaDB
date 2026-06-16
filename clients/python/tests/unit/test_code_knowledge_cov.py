@@ -421,7 +421,11 @@ def test_insert_records_empty_noop():
 def test_insert_records_default_symbol_id_uses_chunk_id():
     client, collection, _ = make_client()
     b = make_builder(client)
-    run(b._insert_records([make_chunk("chunkid", symbol_id=None)], [[0.1]], Path("/a.py"), "python"))
+    run(
+        b._insert_records(
+            [make_chunk("chunkid", symbol_id=None)], [[0.1]], Path("/a.py"), "python"
+        )
+    )
     rec = collection.insert_records.await_args.args[0][0]
     assert rec["id"] == "chunkid"
 

@@ -273,9 +273,7 @@ def test_delete_collection_exception():
 
 def test_to_collection_passthrough_collection():
     a = make_adapter()
-    existing = Collection(
-        id="x", config=CollectionConfig(name="passcoll", dimension=1)
-    )
+    existing = Collection(id="x", config=CollectionConfig(name="passcoll", dimension=1))
     assert a._to_collection(existing) is existing
 
 

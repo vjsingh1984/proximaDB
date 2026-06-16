@@ -353,9 +353,7 @@ def test_ingest_server_path_and_local_cache():
 def test_ingest_fallback_on_server_error():
     client = FakeClient(ingest_raises=True)
     repo = TimeSeriesRepository(client)
-    res = repo.ingest(
-        "c", [{"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1}}]
-    )
+    res = repo.ingest("c", [{"timestamp": "2026-01-01T00:00:00Z", "values": {"v": 1}}])
     assert res["fallback"] == "local"
     assert res["ingested_count"] == 1
 
@@ -674,9 +672,7 @@ def test_high_level_api_full_flow():
     assert ing["success"] is True
 
     with pytest.warns(UserWarning):
-        resp = ts.query(
-            "code_metrics", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
+        resp = ts.query("code_metrics", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
     assert isinstance(resp, TimeSeriesQueryResponse)
 
     latest = ts.get_latest("code_metrics", {"h": "a"})

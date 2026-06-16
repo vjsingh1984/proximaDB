@@ -21,7 +21,6 @@ from proximadb_sdk.proto_conversion import (
     storage_engine_to_str,
 )
 
-
 # --- helper enums to exercise the Enum branches -----------------------------
 
 
@@ -86,7 +85,9 @@ def test_distance_metric_to_str_all_inputs():
     assert ProtoConverter.distance_metric_to_str(None) == "cosine"
     assert ProtoConverter.distance_metric_to_str("euclidean") == "euclidean"
     assert ProtoConverter.distance_metric_to_str("EUCLIDEAN") == "euclidean"
-    assert ProtoConverter.distance_metric_to_str("bogus") == "cosine"  # unknown str default
+    assert (
+        ProtoConverter.distance_metric_to_str("bogus") == "cosine"
+    )  # unknown str default
     assert ProtoConverter.distance_metric_to_str(1) == "cosine"
     assert ProtoConverter.distance_metric_to_str(2) == "euclidean"
     assert ProtoConverter.distance_metric_to_str(999) == "cosine"  # unknown int default

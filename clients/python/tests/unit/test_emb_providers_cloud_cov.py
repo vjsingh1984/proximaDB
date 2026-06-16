@@ -125,8 +125,15 @@ def _install_optional_stubs():
         def __init__(self, api_key=None):
             self.api_key = api_key
 
-        def embed(self, texts=None, model=None, input_type=None, truncate=None,
-                  compress=None, compression_codebook=None):
+        def embed(
+            self,
+            texts=None,
+            model=None,
+            input_type=None,
+            truncate=None,
+            compress=None,
+            compression_codebook=None,
+        ):
             return _CohereResp(len(texts))
 
     cohere_mod.Client = _CohereClient
@@ -138,8 +145,9 @@ def _install_optional_stubs():
     class _TextEmbedding:
         last_kwargs = None
 
-        def __init__(self, model_name=None, max_length=None, normalize=None,
-                     cache_dir=None):
+        def __init__(
+            self, model_name=None, max_length=None, normalize=None, cache_dir=None
+        ):
             self.model_name = model_name
             _TextEmbedding.last_kwargs = {
                 "model_name": model_name,
@@ -167,8 +175,14 @@ def _install_optional_stubs():
             self.model_name = model_name
             self.device = device
 
-        def encode(self, instruction_pairs, batch_size=None, show_progress_bar=None,
-                   normalize_embeddings=None, convert_to_numpy=None):
+        def encode(
+            self,
+            instruction_pairs,
+            batch_size=None,
+            show_progress_bar=None,
+            normalize_embeddings=None,
+            convert_to_numpy=None,
+        ):
             return np.array([[0.1, 0.2, 0.3, 0.4] for _ in instruction_pairs])
 
     instructor_mod.INSTRUCTOR = _INSTRUCTOR
@@ -183,7 +197,9 @@ _install_optional_stubs()
 # --------------------------------------------------------------------------- #
 from proximadb_sdk.embedding_providers.cohere import CohereProvider  # noqa: E402
 from proximadb_sdk.embedding_providers.fastembed import FastEmbedProvider  # noqa: E402
-from proximadb_sdk.embedding_providers.instructor import InstructorProvider  # noqa: E402
+from proximadb_sdk.embedding_providers.instructor import (  # noqa: E402
+    InstructorProvider,
+)
 from proximadb_sdk.embedding_providers.openai_compatible import (  # noqa: E402
     OpenAICompatibleProvider,
 )
@@ -234,7 +250,8 @@ class TestOpenAIProvider:
     def test_initialize_without_key_unavailable(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-small", dimension=1536,
+            model_name="text-embedding-3-small",
+            dimension=1536,
             extra_params={"api_key": None, "show_cost_warnings": False},
         )
         p = OpenAIProvider(cfg)
@@ -245,7 +262,8 @@ class TestOpenAIProvider:
     def test_initialize_with_key_sets_dimension(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-large", dimension=1,
+            model_name="text-embedding-3-large",
+            dimension=1,
             extra_params={
                 "api_key": "sk-key",
                 "organization": "org-1",
@@ -264,7 +282,8 @@ class TestOpenAIProvider:
 
     def test_initialize_cost_warning_emitted(self):
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-small", dimension=1536,
+            model_name="text-embedding-3-small",
+            dimension=1536,
             extra_params={"api_key": "sk-key", "show_cost_warnings": True},
         )
         p = OpenAIProvider(cfg)
@@ -276,7 +295,8 @@ class TestOpenAIProvider:
         # Force the in-function `import openai` to fail.
         monkeypatch.setitem(sys.modules, "openai", None)
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-small", dimension=1536,
+            model_name="text-embedding-3-small",
+            dimension=1536,
             extra_params={"api_key": "sk-key", "show_cost_warnings": False},
         )
         p = OpenAIProvider(cfg)
@@ -291,7 +311,9 @@ class TestOpenAIProvider:
     )
     def test_embed_texts_dispatch_and_parse(self):
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-small", dimension=1536, batch_size=2,
+            model_name="text-embedding-3-small",
+            dimension=1536,
+            batch_size=2,
             normalize=False,
             extra_params={"api_key": "sk-key", "show_cost_warnings": False},
         )
@@ -305,7 +327,9 @@ class TestOpenAIProvider:
 
     def test_embed_texts_normalize(self):
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-small", dimension=1536, batch_size=10,
+            model_name="text-embedding-3-small",
+            dimension=1536,
+            batch_size=10,
             normalize=True,
             extra_params={"api_key": "sk-key", "show_cost_warnings": False},
         )
@@ -317,7 +341,8 @@ class TestOpenAIProvider:
 
     def test_embed_texts_empty(self):
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-small", dimension=1536,
+            model_name="text-embedding-3-small",
+            dimension=1536,
             extra_params={"api_key": "sk-key", "show_cost_warnings": False},
         )
         p = OpenAIProvider(cfg)
@@ -336,7 +361,9 @@ class TestOpenAIProvider:
 
     def test_embed_texts_large_token_warning(self):
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-small", dimension=1536, batch_size=100,
+            model_name="text-embedding-3-small",
+            dimension=1536,
+            batch_size=100,
             normalize=False,
             extra_params={"api_key": "sk-key", "show_cost_warnings": True},
         )
@@ -349,7 +376,9 @@ class TestOpenAIProvider:
 
     def test_embed_texts_api_error_wrapped(self):
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-small", dimension=1536, batch_size=10,
+            model_name="text-embedding-3-small",
+            dimension=1536,
+            batch_size=10,
             extra_params={"api_key": "sk-key", "show_cost_warnings": False},
         )
         p = OpenAIProvider(cfg)
@@ -375,7 +404,8 @@ class TestOpenAIProvider:
 
     def test_get_token_usage(self):
         cfg = EmbeddingConfig(
-            model_name="text-embedding-3-small", dimension=1536,
+            model_name="text-embedding-3-small",
+            dimension=1536,
             extra_params={"api_key": "sk-key", "show_cost_warnings": False},
         )
         p = OpenAIProvider(cfg)
@@ -413,7 +443,8 @@ class TestOpenAICompatibleProvider:
         post = _fake_post_factory(embedding=(0.1, 0.2, 0.3))
         self._provider(monkeypatch, post)
         cfg = EmbeddingConfig(
-            model_name="nomic-embed-text", dimension=768,
+            model_name="nomic-embed-text",
+            dimension=768,
             extra_params={"api_base": "http://x/v1", "api_key": "k", "timeout": 1.0},
         )
         p = OpenAICompatibleProvider(cfg)
@@ -429,7 +460,8 @@ class TestOpenAICompatibleProvider:
         post = _fake_post_factory(embedding=(0.1, 0.2))
         self._provider(monkeypatch, post)
         cfg = EmbeddingConfig(
-            model_name="all-minilm", dimension=384,
+            model_name="all-minilm",
+            dimension=384,
             extra_params={"api_base": "http://x/v1", "api_key": None},
         )
         p = OpenAICompatibleProvider(cfg)
@@ -443,7 +475,8 @@ class TestOpenAICompatibleProvider:
         post = _fake_post_factory(status=500)
         self._provider(monkeypatch, post)
         cfg = EmbeddingConfig(
-            model_name="nomic-embed-text", dimension=768,
+            model_name="nomic-embed-text",
+            dimension=768,
             extra_params={"api_base": "http://x/v1", "api_key": None},
         )
         p = OpenAICompatibleProvider(cfg)
@@ -455,7 +488,9 @@ class TestOpenAICompatibleProvider:
         post = _fake_post_factory(embedding=(1.0, 0.0, 0.0))
         self._provider(monkeypatch, post)
         cfg = EmbeddingConfig(
-            model_name="nomic-embed-text", dimension=3, batch_size=2,
+            model_name="nomic-embed-text",
+            dimension=3,
+            batch_size=2,
             normalize=False,
             extra_params={"api_base": "http://x/v1", "api_key": "k"},
         )
@@ -476,7 +511,9 @@ class TestOpenAICompatibleProvider:
         post = _fake_post_factory(embedding=(3.0, 4.0))
         self._provider(monkeypatch, post)
         cfg = EmbeddingConfig(
-            model_name="nomic-embed-text", dimension=2, batch_size=10,
+            model_name="nomic-embed-text",
+            dimension=2,
+            batch_size=10,
             normalize=True,
             extra_params={"api_base": "http://x/v1", "api_key": None},
         )
@@ -493,7 +530,9 @@ class TestOpenAICompatibleProvider:
         post = _fake_post_factory(status=503)
         self._provider(monkeypatch, post)
         cfg = EmbeddingConfig(
-            model_name="nomic-embed-text", dimension=3, batch_size=10,
+            model_name="nomic-embed-text",
+            dimension=3,
+            batch_size=10,
             extra_params={"api_base": "http://x/v1", "api_key": None},
         )
         p = OpenAICompatibleProvider(cfg)
@@ -552,7 +591,8 @@ class TestCohereProvider:
     def test_initialize_no_key(self, monkeypatch):
         monkeypatch.delenv("COHERE_API_KEY", raising=False)
         cfg = EmbeddingConfig(
-            model_name="embed-english-v3.0", dimension=1024,
+            model_name="embed-english-v3.0",
+            dimension=1024,
             extra_params={"api_key": None, "show_cost_warnings": False},
         )
         p = CohereProvider(cfg)
@@ -561,7 +601,8 @@ class TestCohereProvider:
 
     def test_initialize_with_key(self):
         cfg = EmbeddingConfig(
-            model_name="embed-english-v3.0", dimension=1,
+            model_name="embed-english-v3.0",
+            dimension=1,
             extra_params={"api_key": "co-key", "show_cost_warnings": False},
         )
         p = CohereProvider(cfg)
@@ -572,7 +613,8 @@ class TestCohereProvider:
 
     def test_initialize_cost_warning(self):
         cfg = EmbeddingConfig(
-            model_name="embed-english-v3.0", dimension=1024,
+            model_name="embed-english-v3.0",
+            dimension=1024,
             extra_params={"api_key": "co-key", "show_cost_warnings": True},
         )
         p = CohereProvider(cfg)
@@ -583,7 +625,8 @@ class TestCohereProvider:
     def test_initialize_import_error(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "cohere", None)
         cfg = EmbeddingConfig(
-            model_name="embed-english-v3.0", dimension=1024,
+            model_name="embed-english-v3.0",
+            dimension=1024,
             extra_params={"api_key": "co-key", "show_cost_warnings": False},
         )
         p = CohereProvider(cfg)
@@ -592,10 +635,15 @@ class TestCohereProvider:
 
     def test_embed_texts_dispatch(self):
         cfg = EmbeddingConfig(
-            model_name="embed-english-light-v3.0", dimension=3, batch_size=2,
+            model_name="embed-english-light-v3.0",
+            dimension=3,
+            batch_size=2,
             normalize=False,
-            extra_params={"api_key": "co-key", "show_cost_warnings": False,
-                          "input_type": "search_document"},
+            extra_params={
+                "api_key": "co-key",
+                "show_cost_warnings": False,
+                "input_type": "search_document",
+            },
         )
         p = CohereProvider(cfg)
         p._initialize()
@@ -605,7 +653,9 @@ class TestCohereProvider:
 
     def test_embed_texts_normalize_zero_safe(self):
         cfg = EmbeddingConfig(
-            model_name="embed-english-light-v3.0", dimension=3, batch_size=10,
+            model_name="embed-english-light-v3.0",
+            dimension=3,
+            batch_size=10,
             normalize=True,
             extra_params={"api_key": "co-key", "show_cost_warnings": False},
         )
@@ -616,7 +666,8 @@ class TestCohereProvider:
 
     def test_embed_texts_empty(self):
         cfg = EmbeddingConfig(
-            model_name="embed-english-light-v3.0", dimension=3,
+            model_name="embed-english-light-v3.0",
+            dimension=3,
             extra_params={"api_key": "co-key", "show_cost_warnings": False},
         )
         p = CohereProvider(cfg)
@@ -632,7 +683,9 @@ class TestCohereProvider:
 
     def test_embed_texts_api_error_wrapped(self):
         cfg = EmbeddingConfig(
-            model_name="embed-english-light-v3.0", dimension=3, batch_size=10,
+            model_name="embed-english-light-v3.0",
+            dimension=3,
+            batch_size=10,
             extra_params={"api_key": "co-key", "show_cost_warnings": False},
         )
         p = CohereProvider(cfg)
@@ -647,10 +700,15 @@ class TestCohereProvider:
 
     def test_embed_with_type_restores_input_type(self):
         cfg = EmbeddingConfig(
-            model_name="embed-english-light-v3.0", dimension=3, batch_size=10,
+            model_name="embed-english-light-v3.0",
+            dimension=3,
+            batch_size=10,
             normalize=False,
-            extra_params={"api_key": "co-key", "show_cost_warnings": False,
-                          "input_type": "search_document"},
+            extra_params={
+                "api_key": "co-key",
+                "show_cost_warnings": False,
+                "input_type": "search_document",
+            },
         )
         p = CohereProvider(cfg)
         p._initialize()
@@ -668,7 +726,8 @@ class TestCohereProvider:
 
     def test_get_token_usage(self):
         cfg = EmbeddingConfig(
-            model_name="embed-english-light-v3.0", dimension=3,
+            model_name="embed-english-light-v3.0",
+            dimension=3,
             extra_params={"api_key": "co-key", "show_cost_warnings": False},
         )
         p = CohereProvider(cfg)
@@ -767,7 +826,9 @@ class TestInstructorProvider:
             p.embed_texts_with_instructions(["a"], "x:")
 
     def test_create_with_instruction(self):
-        p = InstructorProvider.create_with_instruction("represent:", model_name="hkunlp/instructor-large")
+        p = InstructorProvider.create_with_instruction(
+            "represent:", model_name="hkunlp/instructor-large"
+        )
         assert isinstance(p, InstructorProvider)
         assert p.config.extra_params["instruction"] == "represent:"
         assert p.config.model_name == "hkunlp/instructor-large"

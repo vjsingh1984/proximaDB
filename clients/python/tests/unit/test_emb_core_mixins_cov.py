@@ -52,7 +52,9 @@ from proximadb_sdk.embedding_providers.core.config import (  # noqa: E402
 from proximadb_sdk.embedding_providers.core.registry import (  # noqa: E402
     ProviderRegistry,
 )
-from proximadb_sdk.embedding_providers.mixins.batching import BatchingMixin  # noqa: E402
+from proximadb_sdk.embedding_providers.mixins.batching import (  # noqa: E402
+    BatchingMixin,
+)
 from proximadb_sdk.embedding_providers.mixins.instruction import (  # noqa: E402
     InstructionMixin,
 )
@@ -110,8 +112,13 @@ class DummyProvider(BaseEmbeddingProvider):
         return self._model.encode(texts)
 
 
-class STProvider(SentenceTransformerMixin, InstructionMixin, NormalizationMixin,
-                  BatchingMixin, BaseEmbeddingProvider):
+class STProvider(
+    SentenceTransformerMixin,
+    InstructionMixin,
+    NormalizationMixin,
+    BatchingMixin,
+    BaseEmbeddingProvider,
+):
     """Provider composed of all mixins for integration-ish coverage."""
 
     def __init__(self, config=None):
@@ -319,12 +326,12 @@ def fresh_registry():
     )
     ProviderRegistry.clear()
     yield ProviderRegistry
-    (ProviderRegistry._providers,
-     ProviderRegistry._metadata,
-     ProviderRegistry._aliases,
-     ProviderRegistry._descriptions) = (
-        dict(snap[0]), dict(snap[1]), dict(snap[2]), dict(snap[3])
-    )
+    (
+        ProviderRegistry._providers,
+        ProviderRegistry._metadata,
+        ProviderRegistry._aliases,
+        ProviderRegistry._descriptions,
+    ) = (dict(snap[0]), dict(snap[1]), dict(snap[2]), dict(snap[3]))
 
 
 def _register(reg, name, aliases=None, desc="", models=None):
@@ -346,6 +353,7 @@ def test_registry_register_and_get(fresh_registry):
 
 def test_registry_register_rejects_non_subclass(fresh_registry):
     with pytest.raises(TypeError):
+
         @fresh_registry.register(name="bad", models={})
         class NotAProvider:
             pass
@@ -510,7 +518,10 @@ def test_check_normalized_variants():
     assert NormalizationMixin.check_normalized(np.array([])) is True
     assert bool(NormalizationMixin.check_normalized(np.array([0.6, 0.8]))) is True
     assert bool(NormalizationMixin.check_normalized(np.array([3.0, 4.0]))) is False
-    assert bool(NormalizationMixin.check_normalized(np.array([[0.6, 0.8], [1.0, 0.0]]))) is True
+    assert (
+        bool(NormalizationMixin.check_normalized(np.array([[0.6, 0.8], [1.0, 0.0]])))
+        is True
+    )
     assert bool(NormalizationMixin.check_normalized(np.array([[3.0, 4.0]]))) is False
 
 
@@ -530,8 +541,9 @@ def test_cosine_similarity():
 # --------------------------------------------------------------------------
 class BatchProvider(BatchingMixin):
     def __init__(self, batch_size=32, dimension=768):
-        self.config = make_config(batch_size=batch_size,
-                                  model=make_model(dimension=dimension))
+        self.config = make_config(
+            batch_size=batch_size, model=make_model(dimension=dimension)
+        )
 
 
 def test_create_batches_default_and_custom():
@@ -549,11 +561,11 @@ def test_create_batches_default_and_custom():
 def test_adaptive_batch_size_buckets():
     bp = BatchProvider()
     assert bp.adaptive_batch_size([]) == 32  # empty -> config default
-    assert bp.adaptive_batch_size(["hi"] * 5) == 64           # <100
-    assert bp.adaptive_batch_size(["x" * 200]) == 32          # <500
-    assert bp.adaptive_batch_size(["x" * 1000]) == 16         # <2000
-    assert bp.adaptive_batch_size(["x" * 3000]) == 8          # <5000
-    assert bp.adaptive_batch_size(["x" * 6000]) == 4          # >=5000
+    assert bp.adaptive_batch_size(["hi"] * 5) == 64  # <100
+    assert bp.adaptive_batch_size(["x" * 200]) == 32  # <500
+    assert bp.adaptive_batch_size(["x" * 1000]) == 16  # <2000
+    assert bp.adaptive_batch_size(["x" * 3000]) == 8  # <5000
+    assert bp.adaptive_batch_size(["x" * 6000]) == 4  # >=5000
 
 
 def test_estimate_memory_usage_positive():
@@ -614,8 +626,9 @@ def test_instruction_bad_template_keyerror():
 
 
 def test_instruction_embed_query_and_queries():
-    m = make_model(dimension=4, requires_instruction=True,
-                   instruction_template="Q: {query}")
+    m = make_model(
+        dimension=4, requires_instruction=True, instruction_template="Q: {query}"
+    )
     fm = FakeModel(dim=4)
     p = InstrProvider(m, fake_model=fm)
     q = p.embed_query("hi")
@@ -628,8 +641,9 @@ def test_instruction_embed_query_and_queries():
 
 
 def test_instruction_embed_passages_and_documents():
-    m = make_model(dimension=4, requires_instruction=True,
-                   instruction_template="Q: {query}")
+    m = make_model(
+        dimension=4, requires_instruction=True, instruction_template="Q: {query}"
+    )
     fm = FakeModel(dim=4)
     p = InstrProvider(m, fake_model=fm)
     passages = p.embed_passages(["p1", "p2"])
@@ -653,8 +667,9 @@ def test_st_load_model_uses_mocked_sentence_transformers(monkeypatch):
     captured = {}
 
     class FakeST:
-        def __init__(self, name, device=None, trust_remote_code=False,
-                     cache_folder=None):
+        def __init__(
+            self, name, device=None, trust_remote_code=False, cache_folder=None
+        ):
             captured["name"] = name
             captured["device"] = device
             captured["trust_remote_code"] = trust_remote_code
@@ -668,11 +683,16 @@ def test_st_load_model_uses_mocked_sentence_transformers(monkeypatch):
         sys.modules["sentence_transformers"], "SentenceTransformer", FakeST
     )
 
-    p = STProvider(config=make_config(
-        model=make_model(dimension=384, name="my-st"),
-        device="cpu", normalize=True, batch_size=8, trust_remote_code=True,
-        cache_dir="/tmp/cache",
-    ))
+    p = STProvider(
+        config=make_config(
+            model=make_model(dimension=384, name="my-st"),
+            device="cpu",
+            normalize=True,
+            batch_size=8,
+            trust_remote_code=True,
+            cache_dir="/tmp/cache",
+        )
+    )
     out = p.embed(["hello", "world"])
     assert out.shape == (2, 384)
     assert captured["name"] == "my-st"

@@ -9,6 +9,7 @@ health_check_interval_seconds=0 on routers and using min_size=0 pools.
 """
 
 import asyncio
+import importlib
 
 import pytest
 
@@ -16,10 +17,8 @@ from proximadb_sdk.config import ClientConfig, Protocol
 from proximadb_sdk.exceptions import (
     NetworkError,
     ServerError,
-    TimeoutError as PDBTimeoutError,
 )
-
-import importlib
+from proximadb_sdk.exceptions import TimeoutError as PDBTimeoutError
 
 # NOTE: the package __init__ re-exports a `circuit_breaker` *function*, which
 # shadows the submodule attribute on the package. Import the real modules via
@@ -32,14 +31,25 @@ from proximadb_sdk.circuit_breaker import (
     CircuitBreakerConfig,
     CircuitBreakerMetrics,
     CircuitBreakerOpenError,
-    RetryConfig as CBRetryConfig,
+    ResilientClient,
+)
+from proximadb_sdk.circuit_breaker import RetryConfig as CBRetryConfig
+from proximadb_sdk.circuit_breaker import (
     RetryExhaustedError,
     RetryMechanism,
-    ResilientClient,
     circuit_breaker,
     create_resilient_client,
     resilient,
     retry,
+)
+from proximadb_sdk.intelligent_router import (
+    IntelligentRouter,
+    OperationType,
+    ProtocolHealth,
+    ProtocolMetrics,
+    RoutingConfig,
+    RoutingRule,
+    RoutingStrategy,
 )
 from proximadb_sdk.resilience import (
     AdvancedRetryPolicy,
@@ -51,21 +61,14 @@ from proximadb_sdk.resilience import (
 )
 from proximadb_sdk.resource_pool import (
     ObjectPool,
-    PoolMetrics,
     PooledResource,
+    PoolMetrics,
     ResourceFactory,
     ResourceHealth,
     ResourcePool,
 )
-from proximadb_sdk.intelligent_router import (
-    IntelligentRouter,
-    OperationType,
-    ProtocolHealth,
-    ProtocolMetrics,
-    RoutingConfig,
-    RoutingRule,
-    RoutingStrategy,
-)
+
+
 def run(coro):
     """Run a coroutine to completion on a fresh event loop."""
     return asyncio.run(coro)
@@ -371,26 +374,41 @@ def test_retry_should_retry_branches():
 
 
 def test_retry_delay_strategies():
-    base = dict(initial_delay_ms=100, backoff_multiplier=2.0, max_delay_ms=30000,
-                jitter_enabled=False, jitter_max_ms=1000)
+    base = dict(
+        initial_delay_ms=100,
+        backoff_multiplier=2.0,
+        max_delay_ms=30000,
+        jitter_enabled=False,
+        jitter_max_ms=1000,
+    )
 
-    fixed = RetryMechanism(AdvancedRetryPolicy(strategy=RetryStrategy.FIXED_DELAY, **base))
+    fixed = RetryMechanism(
+        AdvancedRetryPolicy(strategy=RetryStrategy.FIXED_DELAY, **base)
+    )
     assert run(fixed._calculate_delay(3)) == pytest.approx(0.1)
 
-    expo = RetryMechanism(AdvancedRetryPolicy(strategy=RetryStrategy.EXPONENTIAL_BACKOFF, **base))
+    expo = RetryMechanism(
+        AdvancedRetryPolicy(strategy=RetryStrategy.EXPONENTIAL_BACKOFF, **base)
+    )
     assert run(expo._calculate_delay(2)) == pytest.approx(0.4)
 
-    linear = RetryMechanism(AdvancedRetryPolicy(strategy=RetryStrategy.LINEAR_BACKOFF, **base))
+    linear = RetryMechanism(
+        AdvancedRetryPolicy(strategy=RetryStrategy.LINEAR_BACKOFF, **base)
+    )
     assert run(linear._calculate_delay(2)) == pytest.approx(0.3)
 
-    jittered = RetryMechanism(AdvancedRetryPolicy(strategy=RetryStrategy.JITTERED, **base))
+    jittered = RetryMechanism(
+        AdvancedRetryPolicy(strategy=RetryStrategy.JITTERED, **base)
+    )
     d = run(jittered._calculate_delay(1))
     assert d >= 0.2  # base portion present
 
     # jitter_enabled adds to a non-jittered strategy
     jcfg = dict(base)
     jcfg["jitter_enabled"] = True
-    jenabled = RetryMechanism(AdvancedRetryPolicy(strategy=RetryStrategy.FIXED_DELAY, **jcfg))
+    jenabled = RetryMechanism(
+        AdvancedRetryPolicy(strategy=RetryStrategy.FIXED_DELAY, **jcfg)
+    )
     dj = run(jenabled._calculate_delay(0))
     assert dj >= 0.1
 
@@ -1163,7 +1181,10 @@ def test_router_update_learned_preferences():
             )
         router._last_learning_update = 0
         router._update_learned_preferences()
-        assert router._learned_preferences.get(OperationType.SINGLE_SEARCH) == Protocol.REST
+        assert (
+            router._learned_preferences.get(OperationType.SINGLE_SEARCH)
+            == Protocol.REST
+        )
     finally:
         router.stop()
 
@@ -1183,6 +1204,7 @@ def test_router_update_learned_preferences_too_soon():
 def test_router_perform_health_checks():
     router = _make_router()
     try:
+
         class HealthyClient:
             def health_check(self):
                 return {"status": "healthy"}

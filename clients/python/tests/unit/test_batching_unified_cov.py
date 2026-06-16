@@ -31,10 +31,10 @@ from proximadb_sdk.batching_unified import (
 )
 from proximadb_sdk.models import VectorRecord
 
-
 # --------------------------------------------------------------------------
 # Dataclasses / enums / simple containers
 # --------------------------------------------------------------------------
+
 
 def test_batch_strategy_values():
     assert BatchStrategy.SIZE_BASED == "size_based"
@@ -81,6 +81,7 @@ def test_batch_request_defaults_and_ordering():
 # BatchProcessor._estimate_request_size (via concrete subclass)
 # --------------------------------------------------------------------------
 
+
 def _make_threaded(config=None):
     return ThreadedBatchProcessor(config or BatchConfig(), MagicMock())
 
@@ -93,7 +94,10 @@ def test_estimate_size_none_data():
 
 def test_estimate_size_vector_record_list():
     proc = _make_threaded()
-    vecs = [VectorRecord(id="a", vector=[0.1] * 128), VectorRecord(id="b", vector=[0.2] * 128)]
+    vecs = [
+        VectorRecord(id="a", vector=[0.1] * 128),
+        VectorRecord(id="b", vector=[0.2] * 128),
+    ]
     req = BatchRequest(data=vecs)
     size = proc._estimate_request_size(req)
     assert size > 0
@@ -120,6 +124,7 @@ def test_get_metrics_returns_metrics():
 # ThreadedBatchProcessor
 # --------------------------------------------------------------------------
 
+
 def test_threaded_submit_not_running_raises():
     proc = _make_threaded()
     req = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c")
@@ -133,7 +138,9 @@ def test_threaded_collect_batch_size_limit():
     key = "insert_records_c"
     for i in range(5):
         proc._request_queues[key].append(
-            BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=i)
+            BatchRequest(
+                operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=i
+            )
         )
     batch = proc._collect_batch(key)
     assert len(batch) == 2
@@ -151,7 +158,9 @@ def test_threaded_collect_batch_time_limit():
     key = "insert_records_c"
     for i in range(5):
         proc._request_queues[key].append(
-            BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=i)
+            BatchRequest(
+                operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=i
+            )
         )
     batch = proc._collect_batch(key)
     # First item appended unconditionally, then time-limit break
@@ -163,7 +172,9 @@ def test_threaded_execute_batch_sync_distributes_list_results():
     proc = ThreadedBatchProcessor(BatchConfig(), fn)
     reqs = []
     for i in range(2):
-        r = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=i)
+        r = BatchRequest(
+            operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=i
+        )
         r.future = Future()
         reqs.append(r)
     proc._execute_batch_sync("insert_records_c", reqs)
@@ -177,7 +188,9 @@ def test_threaded_execute_batch_sync_distributes_list_results():
 def test_threaded_execute_batch_sync_scalar_result():
     fn = MagicMock(return_value={"ok": True})
     proc = ThreadedBatchProcessor(BatchConfig(), fn)
-    r = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1)
+    r = BatchRequest(
+        operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1
+    )
     r.future = Future()
     proc._execute_batch_sync("insert_records_c", [r])
     assert r.future.result() == {"ok": True}
@@ -186,7 +199,9 @@ def test_threaded_execute_batch_sync_scalar_result():
 def test_threaded_execute_batch_sync_exception_propagates():
     fn = MagicMock(side_effect=ValueError("boom"))
     proc = ThreadedBatchProcessor(BatchConfig(), fn)
-    r = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1)
+    r = BatchRequest(
+        operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1
+    )
     r.future = Future()
     proc._execute_batch_sync("insert_records_c", [r])
     with pytest.raises(ValueError):
@@ -216,7 +231,9 @@ def test_threaded_full_submit_flow(_sleep):
     proc = ThreadedBatchProcessor(cfg, fn)
     proc.start()
     assert proc._running is True
-    req = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1)
+    req = BatchRequest(
+        operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1
+    )
     result = proc.submit_request(req)
     assert result == {"status": "ok"}
     proc.stop()
@@ -246,6 +263,7 @@ def test_threaded_stop_idempotent_when_empty():
 # --------------------------------------------------------------------------
 # AsyncBatchProcessor
 # --------------------------------------------------------------------------
+
 
 def test_async_should_execute_empty_false():
     proc = AsyncBatchProcessor(BatchConfig(), MagicMock())
@@ -283,7 +301,9 @@ def test_async_should_execute_time_based():
 
 
 def test_async_should_execute_hybrid_neither():
-    cfg = BatchConfig(strategy=BatchStrategy.HYBRID, max_batch_size=100, max_wait_time_ms=100000.0)
+    cfg = BatchConfig(
+        strategy=BatchStrategy.HYBRID, max_batch_size=100, max_wait_time_ms=100000.0
+    )
     proc = AsyncBatchProcessor(cfg, MagicMock())
     proc._batches["k"].append(BatchRequest(data=1))
     assert asyncio.run(proc._should_execute_batch("k")) is False
@@ -303,7 +323,9 @@ def test_async_start_stop():
 def test_async_submit_not_running_raises():
     async def run():
         proc = AsyncBatchProcessor(BatchConfig(), MagicMock())
-        req = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1)
+        req = BatchRequest(
+            operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1
+        )
         with pytest.raises(RuntimeError):
             await proc.submit_request(req)
 
@@ -318,7 +340,9 @@ def test_async_submit_immediate_executes():
         cfg = BatchConfig(strategy=BatchStrategy.IMMEDIATE)
         proc = AsyncBatchProcessor(cfg, execute_fn)
         await proc.start()
-        req = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1)
+        req = BatchRequest(
+            operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1
+        )
         result = await proc.submit_request(req)
         assert result == {"status": "ok"}
         assert proc.metrics.total_batches == 1
@@ -336,10 +360,16 @@ def test_async_submit_sets_timer_then_stop_flushes():
             return ["done" for _ in data]
 
         # Hybrid with big thresholds -> not executed on submit, timer set instead
-        cfg = BatchConfig(strategy=BatchStrategy.HYBRID, max_batch_size=1000, max_wait_time_ms=100000.0)
+        cfg = BatchConfig(
+            strategy=BatchStrategy.HYBRID,
+            max_batch_size=1000,
+            max_wait_time_ms=100000.0,
+        )
         proc = AsyncBatchProcessor(cfg, execute_fn)
         await proc.start()
-        req = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1)
+        req = BatchRequest(
+            operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1
+        )
         task = asyncio.create_task(proc.submit_request(req))
         await asyncio.sleep(0)  # let submit register the timer
         # timer registered
@@ -361,7 +391,9 @@ def test_async_batch_timer_flushes():
         cfg = BatchConfig(strategy=BatchStrategy.TIME_BASED, max_wait_time_ms=1.0)
         proc = AsyncBatchProcessor(cfg, execute_fn)
         await proc.start()
-        req = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1)
+        req = BatchRequest(
+            operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1
+        )
         req.future = asyncio.Future()
         proc._batches["insert_records_c"].append(req)
         await proc._batch_timer("insert_records_c")
@@ -397,7 +429,9 @@ def test_async_execute_batch_scalar_result():
         proc = AsyncBatchProcessor(BatchConfig(), execute_fn)
         reqs = []
         for i in range(2):
-            r = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=i)
+            r = BatchRequest(
+                operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=i
+            )
             r.future = asyncio.Future()
             reqs.append(r)
         await proc._execute_batch("insert_records_c", reqs)
@@ -413,7 +447,9 @@ def test_async_execute_batch_exception():
             raise RuntimeError("nope")
 
         proc = AsyncBatchProcessor(BatchConfig(), execute_fn)
-        r = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1)
+        r = BatchRequest(
+            operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1
+        )
         r.future = asyncio.Future()
         await proc._execute_batch("insert_records_c", [r])
         with pytest.raises(RuntimeError):
@@ -439,11 +475,15 @@ def test_async_submit_size_executes_and_cancels_existing_timer():
         proc = AsyncBatchProcessor(cfg, execute_fn)
         await proc.start()
         # First submit will not hit threshold -> timer set
-        r1 = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1)
+        r1 = BatchRequest(
+            operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=1
+        )
         t1 = asyncio.create_task(proc.submit_request(r1))
         await asyncio.sleep(0)
         # Second submit hits the size threshold and flushes both
-        r2 = BatchRequest(operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=2)
+        r2 = BatchRequest(
+            operation=BatchOperationType.INSERT_RECORDS, collection_id="c", data=2
+        )
         res2 = await proc.submit_request(r2)
         res1 = await t1
         assert res1 == "x"
@@ -456,6 +496,7 @@ def test_async_submit_size_executes_and_cancels_existing_timer():
 # --------------------------------------------------------------------------
 # UnifiedBatchManager
 # --------------------------------------------------------------------------
+
 
 def test_manager_get_processor_rest():
     mgr = UnifiedBatchManager()
@@ -502,6 +543,7 @@ def test_manager_default_config():
 # --------------------------------------------------------------------------
 # Helper functions / VectorBatcher
 # --------------------------------------------------------------------------
+
 
 def test_create_vector_batcher():
     client = MagicMock()
@@ -550,6 +592,7 @@ def test_batch_insert_records_empty():
 # --------------------------------------------------------------------------
 # Backward-compat aliases
 # --------------------------------------------------------------------------
+
 
 def test_compat_aliases():
     assert RequestBatcher is UnifiedBatchManager

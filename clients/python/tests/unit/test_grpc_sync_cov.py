@@ -12,8 +12,8 @@ import grpc
 import pytest
 
 import proximadb_sdk.protocols.grpc_sync as gs
-from proximadb_sdk.exceptions import ProximaDBError
 from proximadb.v2 import record_pb2 as r
+from proximadb_sdk.exceptions import ProximaDBError
 from proximadb_sdk.v1 import collection_types_pb2 as c
 from proximadb_sdk.v1 import types_pb2 as v1_types
 
@@ -1035,7 +1035,9 @@ def test_query_edges(client, monkeypatch):
 
 def test_get_node(client, monkeypatch):
     gp = gs.v1_graph_pb2
-    _patch_graph_stub(monkeypatch, "GetNode", lambda req: gp.Node(id="n1", labels=["L"]))
+    _patch_graph_stub(
+        monkeypatch, "GetNode", lambda req: gp.Node(id="n1", labels=["L"])
+    )
     res = client.get_node("n1", graph_id="g")
     assert res["id"] == "n1"
 

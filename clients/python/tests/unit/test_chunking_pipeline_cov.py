@@ -34,7 +34,6 @@ from proximadb_sdk.chunking_strategies.pipeline import (
     pipeline_context,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -147,8 +146,7 @@ def test_pipeline_config_keeps_supplied_chunking_config():
 def test_pipeline_result_properties_and_to_dict():
     chunks = [TextChunk("a", 0, 1, "c0"), TextChunk("b", 1, 2, "c1")]
     errors = [{"error": str(i)} for i in range(15)]
-    r = PipelineResult(success=False, chunks=chunks, errors=errors,
-                       metrics={"x": 1})
+    r = PipelineResult(success=False, chunks=chunks, errors=errors, metrics={"x": 1})
     assert r.chunk_count == 2
     assert r.error_count == 15
     d = r.to_dict()
@@ -275,8 +273,9 @@ def test_batch_embedder_retry_then_success():
 
 
 def test_batch_embedder_exhausts_retries_raises():
-    emb = BatchEmbedder(AlwaysFailProvider(), batch_size=10, max_retries=2,
-                        retry_delay=0.0)
+    emb = BatchEmbedder(
+        AlwaysFailProvider(), batch_size=10, max_retries=2, retry_delay=0.0
+    )
     with pytest.raises(RuntimeError, match="Embedding failed after"):
         emb.embed_batch(["a"])
 
@@ -304,8 +303,9 @@ def test_batch_embedder_async_retry_then_success():
 
 
 def test_batch_embedder_async_exhausts_retries():
-    emb = BatchEmbedder(AlwaysFailProvider(), batch_size=10, max_retries=2,
-                        retry_delay=0.0)
+    emb = BatchEmbedder(
+        AlwaysFailProvider(), batch_size=10, max_retries=2, retry_delay=0.0
+    )
     with pytest.raises(RuntimeError, match="Async embedding failed after"):
         asyncio.run(emb.embed_batch_async(["a"]))
 
@@ -349,8 +349,10 @@ def test_pipeline_default_init_no_embedder():
 
 
 def test_pipeline_code_strategy_init_with_code_config():
-    cfg = PipelineConfig(chunking_strategy=ChunkingStrategy.CODE,
-                         chunking_config=CodeChunkingConfig(chunk_size=128))
+    cfg = PipelineConfig(
+        chunking_strategy=ChunkingStrategy.CODE,
+        chunking_config=CodeChunkingConfig(chunk_size=128),
+    )
     p = ChunkingPipeline(cfg)
     assert p.chunker is not None
 
@@ -388,9 +390,13 @@ def test_pipeline_builder_chain():
 
 
 def test_process_text_with_embeddings():
-    p = create_pipeline(strategy=ChunkingStrategy.FIXED_SIZE,
-                        embedding_provider=FakeProvider(),
-                        chunking_config=ChunkingConfig(chunk_size=50, chunk_overlap=0, min_chunk_size=10))
+    p = create_pipeline(
+        strategy=ChunkingStrategy.FIXED_SIZE,
+        embedding_provider=FakeProvider(),
+        chunking_config=ChunkingConfig(
+            chunk_size=50, chunk_overlap=0, min_chunk_size=10
+        ),
+    )
     r = p.process_text(LONG_TEXT, "doc1")
     assert r.success is True
     assert r.chunk_count >= 1
@@ -412,7 +418,9 @@ def test_process_text_validation_error_collected():
         max_text_length=1,
         truncate_long_texts=False,
         error_handling=ErrorHandling.COLLECT_ERRORS,
-        chunking_config=ChunkingConfig(chunk_size=50, chunk_overlap=0, min_chunk_size=10),
+        chunking_config=ChunkingConfig(
+            chunk_size=50, chunk_overlap=0, min_chunk_size=10
+        ),
     )
     r = p.process_text(LONG_TEXT, "doc1")
     assert r.success is False
@@ -425,7 +433,9 @@ def test_process_text_fail_fast_on_validation():
         max_text_length=1,
         truncate_long_texts=False,
         error_handling=ErrorHandling.FAIL_FAST,
-        chunking_config=ChunkingConfig(chunk_size=50, chunk_overlap=0, min_chunk_size=10),
+        chunking_config=ChunkingConfig(
+            chunk_size=50, chunk_overlap=0, min_chunk_size=10
+        ),
     )
     r = p.process_text(LONG_TEXT, "doc1")
     # Outer except catches the re-raised error -> pipeline stage error.
@@ -483,8 +493,9 @@ def test_process_text_metrics_disabled():
 
 
 def test_process_text_async_basic():
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        embedding_provider=FakeProvider())
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE, embedding_provider=FakeProvider()
+    )
     r = asyncio.run(p.process_text_async("One. Two. Three.", "doc1"))
     assert r.success is True
     assert r.metrics["mode"] == "async"
@@ -520,7 +531,9 @@ def test_process_text_async_validation_fail_fast():
         max_text_length=1,
         truncate_long_texts=False,
         error_handling=ErrorHandling.FAIL_FAST,
-        chunking_config=ChunkingConfig(chunk_size=50, chunk_overlap=0, min_chunk_size=10),
+        chunking_config=ChunkingConfig(
+            chunk_size=50, chunk_overlap=0, min_chunk_size=10
+        ),
     )
     r = asyncio.run(p.process_text_async(LONG_TEXT, "doc1"))
     assert r.success is False
@@ -543,7 +556,9 @@ def test_process_stream_skips_invalid_collect():
         max_text_length=1,
         truncate_long_texts=False,
         error_handling=ErrorHandling.COLLECT_ERRORS,
-        chunking_config=ChunkingConfig(chunk_size=50, chunk_overlap=0, min_chunk_size=10),
+        chunking_config=ChunkingConfig(
+            chunk_size=50, chunk_overlap=0, min_chunk_size=10
+        ),
     )
     chunks = list(p.process_stream(LONG_TEXT, "doc1"))
     assert chunks == []  # all skipped
@@ -555,15 +570,18 @@ def test_process_stream_fail_fast_raises():
         max_text_length=1,
         truncate_long_texts=False,
         error_handling=ErrorHandling.FAIL_FAST,
-        chunking_config=ChunkingConfig(chunk_size=50, chunk_overlap=0, min_chunk_size=10),
+        chunking_config=ChunkingConfig(
+            chunk_size=50, chunk_overlap=0, min_chunk_size=10
+        ),
     )
     with pytest.raises(ValueError):
         list(p.process_stream(LONG_TEXT, "doc1"))
 
 
 def test_process_stream_chunker_exception_fail_fast(monkeypatch):
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        error_handling=ErrorHandling.FAIL_FAST)
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE, error_handling=ErrorHandling.FAIL_FAST
+    )
 
     def boom(*a, **k):
         raise RuntimeError("nope")
@@ -574,8 +592,9 @@ def test_process_stream_chunker_exception_fail_fast(monkeypatch):
 
 
 def test_process_stream_chunker_exception_collect(monkeypatch):
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        error_handling=ErrorHandling.COLLECT_ERRORS)
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE, error_handling=ErrorHandling.COLLECT_ERRORS
+    )
 
     def boom(*a, **k):
         raise RuntimeError("nope")
@@ -600,7 +619,9 @@ def test_process_stream_async_skip_collect():
         max_text_length=1,
         truncate_long_texts=False,
         error_handling=ErrorHandling.COLLECT_ERRORS,
-        chunking_config=ChunkingConfig(chunk_size=50, chunk_overlap=0, min_chunk_size=10),
+        chunking_config=ChunkingConfig(
+            chunk_size=50, chunk_overlap=0, min_chunk_size=10
+        ),
     )
 
     async def collect():
@@ -615,7 +636,9 @@ def test_process_stream_async_fail_fast():
         max_text_length=1,
         truncate_long_texts=False,
         error_handling=ErrorHandling.FAIL_FAST,
-        chunking_config=ChunkingConfig(chunk_size=50, chunk_overlap=0, min_chunk_size=10),
+        chunking_config=ChunkingConfig(
+            chunk_size=50, chunk_overlap=0, min_chunk_size=10
+        ),
     )
 
     async def collect():
@@ -626,8 +649,9 @@ def test_process_stream_async_fail_fast():
 
 
 def test_process_stream_async_chunker_exception_fail_fast(monkeypatch):
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        error_handling=ErrorHandling.FAIL_FAST)
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE, error_handling=ErrorHandling.FAIL_FAST
+    )
 
     def boom(*a, **k):
         raise RuntimeError("nope")
@@ -676,8 +700,9 @@ def test_process_batch_item_exception_collect(monkeypatch):
 
 
 def test_process_batch_item_exception_fail_fast(monkeypatch):
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        error_handling=ErrorHandling.FAIL_FAST)
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE, error_handling=ErrorHandling.FAIL_FAST
+    )
 
     def boom(*a, **k):
         raise RuntimeError("stop")
@@ -690,8 +715,10 @@ def test_process_batch_item_exception_fail_fast(monkeypatch):
 
 def test_process_batch_async():
     p = create_pipeline(strategy=ChunkingStrategy.SENTENCE)
-    items = [{"text": "One. Two.", "source_id": "a"},
-             {"text": "Three.", "source_id": "b"}]
+    items = [
+        {"text": "One. Two.", "source_id": "a"},
+        {"text": "Three.", "source_id": "b"},
+    ]
     br = asyncio.run(p.process_batch_async(items, concurrent_limit=2))
     assert br.total_items == 2
     assert br.processed_items == 2
@@ -852,9 +879,11 @@ def test_process_directory_async_non_recursive(tmp_path):
 
 def test_process_and_store_success():
     store = FakeVectorStore()
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        embedding_provider=FakeProvider(),
-                        vector_store=store)
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE,
+        embedding_provider=FakeProvider(),
+        vector_store=store,
+    )
     r = asyncio.run(p.process_and_store("One. Two. Three.", "doc1"))
     assert r.success is True
     assert store.records is not None
@@ -862,23 +891,27 @@ def test_process_and_store_success():
 
 
 def test_process_and_store_requires_vector_store():
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        embedding_provider=FakeProvider())
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE, embedding_provider=FakeProvider()
+    )
     with pytest.raises(ValueError, match="No vector store"):
         asyncio.run(p.process_and_store("text", "doc1"))
 
 
 def test_process_and_store_requires_embedding_provider():
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        vector_store=FakeVectorStore())
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE, vector_store=FakeVectorStore()
+    )
     with pytest.raises(ValueError, match="No embedding provider"):
         asyncio.run(p.process_and_store("text", "doc1"))
 
 
 def test_process_and_store_empty_result_returns_early():
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        embedding_provider=FakeProvider(),
-                        vector_store=FakeVectorStore())
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE,
+        embedding_provider=FakeProvider(),
+        vector_store=FakeVectorStore(),
+    )
     # Empty text -> no chunks -> early return without storing.
     r = asyncio.run(p.process_and_store("", "doc1"))
     assert r.chunk_count == 0
@@ -886,9 +919,11 @@ def test_process_and_store_empty_result_returns_early():
 
 def test_process_and_store_insert_failure():
     store = FakeVectorStore(fail=True)
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        embedding_provider=FakeProvider(),
-                        vector_store=store)
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE,
+        embedding_provider=FakeProvider(),
+        vector_store=store,
+    )
     r = asyncio.run(p.process_and_store("One. Two.", "doc1"))
     assert r.success is False
     assert any(e["stage"] == "storage" for e in r.errors)
@@ -900,8 +935,9 @@ def test_process_and_store_insert_failure():
 
 
 def test_get_and_reset_metrics():
-    p = create_pipeline(strategy=ChunkingStrategy.SENTENCE,
-                        embedding_provider=FakeProvider())
+    p = create_pipeline(
+        strategy=ChunkingStrategy.SENTENCE, embedding_provider=FakeProvider()
+    )
     p.process_text("Hello. World.", "doc1")
     m = p.get_metrics()
     assert "embedder_stats" in m
@@ -947,9 +983,7 @@ def test_pipeline_context_manager():
 
 def test_async_pipeline_context_manager():
     async def run():
-        async with async_pipeline_context(
-            strategy=ChunkingStrategy.SENTENCE
-        ) as p:
+        async with async_pipeline_context(strategy=ChunkingStrategy.SENTENCE) as p:
             return await p.process_text_async("Hi there.", "doc1")
 
     r = asyncio.run(run())

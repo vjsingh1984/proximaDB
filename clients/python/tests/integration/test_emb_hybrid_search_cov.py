@@ -192,9 +192,9 @@ def test_hybrid_vector_arm_round_trip_then_fuse(client):
             if getattr(r, "id", None)
         ]
         result_ids = {v.id for v in vec_results}
-        assert result_ids & inserted_ids, (
-            f"vector arm must return inserted ids; got {result_ids}"
-        )
+        assert (
+            result_ids & inserted_ids
+        ), f"vector arm must return inserted ids; got {result_ids}"
 
         # Synthetic document/BM25 arm that overlaps the vector arm on doc-2.
         doc_results = [
@@ -208,9 +208,9 @@ def test_hybrid_vector_arm_round_trip_then_fuse(client):
         assert all(isinstance(r, HybridSearchResult) for r in fused)
         fused_ids = [r.id for r in fused]
         # doc-2 ranks in both arms -> should be at or near the top.
-        assert "doc-2" in fused_ids[:2], (
-            f"doc-2 (top of both arms) must rank highly; got {fused_ids}"
-        )
+        assert (
+            "doc-2" in fused_ids[:2]
+        ), f"doc-2 (top of both arms) must rank highly; got {fused_ids}"
         # fused output should not exceed top_k.
         assert len(fused) <= n
     finally:

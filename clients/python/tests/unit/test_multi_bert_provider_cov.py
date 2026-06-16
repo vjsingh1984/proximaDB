@@ -127,7 +127,9 @@ for _name, _orig in _SAVED_MODULES.items():
 # ---------------------------------------------------------------------------
 # Map every registered model's HF path -> its configured dimension so fakes
 # can return correctly-sized vectors (the source asserts shape == config dim).
-_PATH_TO_DIM = {cfg["name"]: cfg["dimension"] for cfg in MultiBERTProvider.MODELS.values()}
+_PATH_TO_DIM = {
+    cfg["name"]: cfg["dimension"] for cfg in MultiBERTProvider.MODELS.values()
+}
 
 
 class FakeSentenceTransformer:
@@ -144,8 +146,14 @@ class FakeSentenceTransformer:
         self.model_path = model_path
         self._dim = _PATH_TO_DIM.get(model_path, 768)
 
-    def encode(self, texts, batch_size=32, normalize_embeddings=True,
-               show_progress_bar=False, device=None):
+    def encode(
+        self,
+        texts,
+        batch_size=32,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+        device=None,
+    ):
         # deterministic per-text vectors so cache equality holds
         return np.array(
             [[float(len(t)) + j for j in range(self._dim)] for t in texts],
@@ -223,8 +231,9 @@ class _FakeBatchEncoding(dict):
 
 
 class FakeTokenizerInstance:
-    def __call__(self, batch, padding=True, truncation=True, max_length=512,
-                 return_tensors="pt"):
+    def __call__(
+        self, batch, padding=True, truncation=True, max_length=512, return_tensors="pt"
+    ):
         seq = 4
         mask = np.ones((len(batch), seq), dtype=np.float32)
         return _FakeBatchEncoding({"attention_mask": _FakeTensor(mask)})
@@ -253,6 +262,7 @@ def offline_env(monkeypatch, tmp_path):
     monkeypatch.setattr(mbp.Path, "home", classmethod(lambda cls: tmp_path))
     # torch.no_grad context manager
     import contextlib
+
     monkeypatch.setattr(mbp.torch, "no_grad", lambda: contextlib.nullcontext())
     # F.normalize: row-wise L2 normalize over the fake tensor
     monkeypatch.setattr(
@@ -325,8 +335,9 @@ def test_custom_cache_dir(tmp_path):
 
 
 def test_init_options_propagate():
-    p = make_st_provider("mpnet-base", batch_size=8, normalize=False,
-                         pooling_strategy="cls")
+    p = make_st_provider(
+        "mpnet-base", batch_size=8, normalize=False, pooling_strategy="cls"
+    )
     assert p.batch_size == 8
     assert p.normalize is False
     assert p.pooling_strategy == "cls"
@@ -337,29 +348,33 @@ def test_init_options_propagate():
 # ---------------------------------------------------------------------------
 def test_auto_select_high_ram(monkeypatch):
     p = make_st_provider("mpnet-base")
-    monkeypatch.setattr(psutil, "virtual_memory",
-                        lambda: types.SimpleNamespace(total=32e9))
+    monkeypatch.setattr(
+        psutil, "virtual_memory", lambda: types.SimpleNamespace(total=32e9)
+    )
     assert p._auto_select_model() == "mpnet-base"
 
 
 def test_auto_select_mid_ram(monkeypatch):
     p = make_st_provider("mpnet-base")
-    monkeypatch.setattr(psutil, "virtual_memory",
-                        lambda: types.SimpleNamespace(total=10e9))
+    monkeypatch.setattr(
+        psutil, "virtual_memory", lambda: types.SimpleNamespace(total=10e9)
+    )
     assert p._auto_select_model() == "distilbert"
 
 
 def test_auto_select_low_ram(monkeypatch):
     p = make_st_provider("mpnet-base")
-    monkeypatch.setattr(psutil, "virtual_memory",
-                        lambda: types.SimpleNamespace(total=4e9))
+    monkeypatch.setattr(
+        psutil, "virtual_memory", lambda: types.SimpleNamespace(total=4e9)
+    )
     assert p._auto_select_model() == "minilm-l6"
 
 
 def test_auto_select_max_memory_cap(monkeypatch):
     p = make_st_provider("mpnet-base")
-    monkeypatch.setattr(psutil, "virtual_memory",
-                        lambda: types.SimpleNamespace(total=64e9))
+    monkeypatch.setattr(
+        psutil, "virtual_memory", lambda: types.SimpleNamespace(total=64e9)
+    )
     # cap RAM so it picks the smallest tier
     assert p._auto_select_model(max_memory_gb=4) == "minilm-l6"
 
@@ -509,8 +524,9 @@ def test_compare_models_default_models(monkeypatch):
 # AdaptiveBERTProvider.
 # ---------------------------------------------------------------------------
 def test_adaptive_default_autoselect(monkeypatch):
-    monkeypatch.setattr(psutil, "virtual_memory",
-                        lambda: types.SimpleNamespace(total=32e9))
+    monkeypatch.setattr(
+        psutil, "virtual_memory", lambda: types.SimpleNamespace(total=32e9)
+    )
     p = AdaptiveBERTProvider(device="cpu")
     assert p.prefer_speed is False
     assert p.prefer_accuracy is False

@@ -124,19 +124,27 @@ def test_metrics_collector_record_and_summary():
     c.clear()
     c.record(
         pu.ParserMetrics(
-            language="py", file_path="a.py", parse_time_ms=10.0,
-            symbol_count=2, relation_count=1, error_count=0, cache_hit=True,
+            language="py",
+            file_path="a.py",
+            parse_time_ms=10.0,
+            symbol_count=2,
+            relation_count=1,
+            error_count=0,
+            cache_hit=True,
         )
     )
     c.record(
         pu.ParserMetrics(
-            language="py", file_path="b.py", parse_time_ms=20.0,
-            symbol_count=4, relation_count=3, error_count=1, fallback_used=True,
+            language="py",
+            file_path="b.py",
+            parse_time_ms=20.0,
+            symbol_count=4,
+            relation_count=3,
+            error_count=1,
+            fallback_used=True,
         )
     )
-    c.record(
-        pu.ParserMetrics(language="go", file_path="m.go", parse_time_ms=5.0)
-    )
+    c.record(pu.ParserMetrics(language="go", file_path="m.go", parse_time_ms=5.0))
     summary = c.get_summary()
     assert summary["py"]["total_parses"] == 2
     assert summary["py"]["avg_parse_time_ms"] == 15.0
@@ -393,7 +401,9 @@ def test_with_fallback_partial_without_partial_result_uses_empty():
 
 def test_with_fallback_retries_then_succeeds():
     cfg = pu.FallbackConfig(
-        strategy=pu.FallbackStrategy.NONE, max_retries=2, retry_delay_ms=0,
+        strategy=pu.FallbackStrategy.NONE,
+        max_retries=2,
+        retry_delay_ms=0,
         log_errors=False,
     )
     state = {"calls": 0}

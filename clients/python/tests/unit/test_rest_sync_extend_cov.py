@@ -627,6 +627,7 @@ def test_execute_sql_http_status_error(monkeypatch):
 
 def test_execute_sql_timeout_error(monkeypatch):
     import httpx
+
     from proximadb_sdk.exceptions import TimeoutError as PDBTimeout
 
     c = ProximaDBClient(url="http://testserver")
@@ -643,6 +644,7 @@ def test_execute_sql_timeout_error(monkeypatch):
 
 def test_execute_sql_network_error(monkeypatch):
     import httpx
+
     from proximadb_sdk.exceptions import NetworkError
 
     c = ProximaDBClient(url="http://testserver")
@@ -891,9 +893,7 @@ def test_connect_returns_client(monkeypatch):
             created["url"] = url
             created["api_key"] = api_key
 
-    monkeypatch.setattr(
-        "proximadb_sdk.protocols.rest_sync.ProximaDBClient", Fake
-    )
+    monkeypatch.setattr("proximadb_sdk.protocols.rest_sync.ProximaDBClient", Fake)
     c = connect(url="http://x", api_key="k")
     assert isinstance(c, Fake)
     assert created["url"] == "http://x"
@@ -1026,6 +1026,7 @@ def test_make_request_error_response_maps(monkeypatch):
 
 def test_make_request_timeout_exception(monkeypatch):
     import httpx
+
     from proximadb_sdk.exceptions import TimeoutError as PDBTimeout
 
     c = ProximaDBClient(url="http://testserver")
@@ -1040,6 +1041,7 @@ def test_make_request_timeout_exception(monkeypatch):
 
 def test_make_request_network_exception(monkeypatch):
     import httpx
+
     from proximadb_sdk.exceptions import NetworkError
 
     c = ProximaDBClient(url="http://testserver")

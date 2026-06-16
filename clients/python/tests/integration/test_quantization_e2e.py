@@ -23,9 +23,11 @@ from proximadb_sdk import (
     QuantizationConfig,
     QuantizationHint,
     QuantizationType,
-    VectorRecord,
 )
 from proximadb_sdk import SearchOptimization as SearchOptimizationHints
+from proximadb_sdk import (
+    VectorRecord,
+)
 
 # from proximadb_sdk import proximadb_pb2  # Use SDK models instead
 

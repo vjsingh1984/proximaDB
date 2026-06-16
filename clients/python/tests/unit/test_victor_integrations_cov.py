@@ -284,7 +284,11 @@ def test_upsert_nodes_delete_error_swallowed():
     store, client, graph = make_store()
     graph.get_node_by_id.return_value = SDKGraphNode(id="n1")
     client.delete_node.side_effect = RuntimeError("boom")
-    run(store.upsert_nodes([VictorGraphNode(node_id="n1", type="t", name="a", file="f")]))
+    run(
+        store.upsert_nodes(
+            [VictorGraphNode(node_id="n1", type="t", name="a", file="f")]
+        )
+    )
     graph.batch_create_nodes.assert_called_once()
 
 
@@ -301,7 +305,9 @@ def test_get_neighbors():
     graph.get_neighbors.return_value = [
         SDKGraphEdge(id="e1", from_node="a", to_node="b", edge_type="CALLS")
     ]
-    edges = run(store.get_neighbors("a", edge_types=["CALLS"], direction="out", max_depth=2))
+    edges = run(
+        store.get_neighbors("a", edge_types=["CALLS"], direction="out", max_depth=2)
+    )
     assert len(edges) == 1
     assert edges[0].src == "a"
     graph.get_neighbors.assert_called_once()
@@ -363,9 +369,7 @@ def test_get_stale_files():
             properties={"file": "b.py", "mtime": "50.0"},
         ),
     ]
-    stale = run(
-        store.get_stale_files({"a.py": 200.0, "b.py": 40.0, "c.py": 1.0})
-    )
+    stale = run(store.get_stale_files({"a.py": 200.0, "b.py": 40.0, "c.py": 1.0}))
     assert "a.py" in stale  # newer mtime
     assert "b.py" not in stale  # older mtime
     assert "c.py" in stale  # unknown file
@@ -584,8 +588,13 @@ def test_document_payload():
 def test_store_item_from_document():
     assert ast_mod._store_item_from_document(None) is None
     item = ast_mod._store_item_from_document(
-        {"namespace": ["a"], "key": "k", "value": {"v": 1},
-         "created_at": 1.0, "updated_at": 2.0}
+        {
+            "namespace": ["a"],
+            "key": "k",
+            "value": {"v": 1},
+            "created_at": 1.0,
+            "updated_at": 2.0,
+        }
     )
     assert item.key == "k"
     assert item.value == {"v": 1}
@@ -594,7 +603,9 @@ def test_store_item_from_document():
 def test_text_for_index():
     assert ast_mod._text_for_index({"a": 1}, None) == '{"a": 1}'
     assert ast_mod._text_for_index({"a": 1}, True) == '{"a": 1}'
-    assert ast_mod._text_for_index({"a": "x", "b": "y"}, ["a", "b", "missing"]) == "x\ny"
+    assert (
+        ast_mod._text_for_index({"a": "x", "b": "y"}, ["a", "b", "missing"]) == "x\ny"
+    )
 
 
 def test_matches_filter():
@@ -605,7 +616,13 @@ def test_matches_filter():
 
 def test_checkpoint_keys_and_ids():
     tid, ns, cid = ast_mod._checkpoint_keys(
-        {"configurable": {"thread_id": "t1", "checkpoint_ns": "n", "checkpoint_id": "c"}}
+        {
+            "configurable": {
+                "thread_id": "t1",
+                "checkpoint_ns": "n",
+                "checkpoint_id": "c",
+            }
+        }
     )
     assert (tid, ns, cid) == ("t1", "n", "c")
     with pytest.raises(ValueError):
@@ -677,8 +694,11 @@ def test_base_store_put_existing_deletes_first():
 def test_base_store_get_found_and_missing():
     store, adapter = make_base_store()
     adapter.get_document.return_value = {
-        "namespace": ["a"], "key": "k1", "value": {"v": 1},
-        "created_at": 1.0, "updated_at": 2.0,
+        "namespace": ["a"],
+        "key": "k1",
+        "value": {"v": 1},
+        "created_at": 1.0,
+        "updated_at": 2.0,
     }
     item = store.get(("a",), "k1")
     assert item.key == "k1"
@@ -703,10 +723,20 @@ def test_base_store_search_document_path():
     store, adapter = make_base_store()
     adapter.query_documents.return_value = {
         "documents": [
-            {"namespace": ["a"], "key": "k1", "value": {"x": 1},
-             "created_at": 1.0, "updated_at": 5.0},
-            {"namespace": ["a"], "key": "k2", "value": {"x": 2},
-             "created_at": 1.0, "updated_at": 9.0},
+            {
+                "namespace": ["a"],
+                "key": "k1",
+                "value": {"x": 1},
+                "created_at": 1.0,
+                "updated_at": 5.0,
+            },
+            {
+                "namespace": ["a"],
+                "key": "k2",
+                "value": {"x": 2},
+                "created_at": 1.0,
+                "updated_at": 9.0,
+            },
         ]
     }
     items = store.search(("a",))
@@ -724,8 +754,11 @@ def test_base_store_search_vector_path():
     adapter.search.return_value = [hit, hit_no_key]
     # get() returns a matching item
     adapter.get_document.return_value = {
-        "namespace": ["a"], "key": "k1", "value": {"x": 1},
-        "created_at": 1.0, "updated_at": 2.0,
+        "namespace": ["a"],
+        "key": "k1",
+        "value": {"x": 1},
+        "created_at": 1.0,
+        "updated_at": 2.0,
     }
     items = store.search(("a",), query="find", limit=5)
     assert len(items) == 1
@@ -805,12 +838,26 @@ def test_saver_get_tuple_and_aget():
     saver, adapter = make_saver()
     docs = {
         "documents": [
-            {"thread_id": "t1", "checkpoint_ns": "", "checkpoint_id": "c1",
-             "config": {}, "checkpoint": {"a": 1}, "metadata": {},
-             "parent_config": None, "created_at": 1.0},
-            {"thread_id": "t1", "checkpoint_ns": "", "checkpoint_id": "c2",
-             "config": {}, "checkpoint": {"a": 2}, "metadata": {},
-             "parent_config": None, "created_at": 9.0},
+            {
+                "thread_id": "t1",
+                "checkpoint_ns": "",
+                "checkpoint_id": "c1",
+                "config": {},
+                "checkpoint": {"a": 1},
+                "metadata": {},
+                "parent_config": None,
+                "created_at": 1.0,
+            },
+            {
+                "thread_id": "t1",
+                "checkpoint_ns": "",
+                "checkpoint_id": "c2",
+                "config": {},
+                "checkpoint": {"a": 2},
+                "metadata": {},
+                "parent_config": None,
+                "created_at": 9.0,
+            },
         ]
     }
     # checkpoint query then writes query (empty)
@@ -827,15 +874,19 @@ def test_saver_get_tuple_specific_id():
     saver, adapter = make_saver()
     docs = {
         "documents": [
-            {"thread_id": "t1", "checkpoint_ns": "", "checkpoint_id": "c1",
-             "config": {}, "checkpoint": {"a": 1}, "metadata": {},
-             "created_at": 1.0},
+            {
+                "thread_id": "t1",
+                "checkpoint_ns": "",
+                "checkpoint_id": "c1",
+                "config": {},
+                "checkpoint": {"a": 1},
+                "metadata": {},
+                "created_at": 1.0,
+            },
         ]
     }
     adapter.query_documents.side_effect = [docs, {"documents": []}]
-    tup = saver.get_tuple(
-        {"configurable": {"thread_id": "t1", "checkpoint_id": "c1"}}
-    )
+    tup = saver.get_tuple({"configurable": {"thread_id": "t1", "checkpoint_id": "c1"}})
     assert tup.checkpoint == {"a": 1}
 
 
@@ -849,10 +900,24 @@ def test_saver_list_and_alist():
     saver, adapter = make_saver()
     docs = {
         "documents": [
-            {"thread_id": "t1", "checkpoint_ns": "", "checkpoint_id": "c1",
-             "config": {}, "checkpoint": {}, "metadata": {}, "created_at": 1.0},
-            {"thread_id": "t1", "checkpoint_ns": "", "checkpoint_id": "c3",
-             "config": {}, "checkpoint": {}, "metadata": {}, "created_at": 3.0},
+            {
+                "thread_id": "t1",
+                "checkpoint_ns": "",
+                "checkpoint_id": "c1",
+                "config": {},
+                "checkpoint": {},
+                "metadata": {},
+                "created_at": 1.0,
+            },
+            {
+                "thread_id": "t1",
+                "checkpoint_ns": "",
+                "checkpoint_id": "c3",
+                "config": {},
+                "checkpoint": {},
+                "metadata": {},
+                "created_at": 3.0,
+            },
         ]
     }
     # list: checkpoint docs, then writes for each returned tuple
@@ -876,9 +941,7 @@ def test_saver_list_and_alist():
 
 def test_saver_delete_thread():
     saver, adapter = make_saver()
-    adapter.query_documents.return_value = {
-        "documents": [{"id": "d1"}, {"id": "d2"}]
-    }
+    adapter.query_documents.return_value = {"documents": [{"id": "d1"}, {"id": "d2"}]}
     saver.delete_thread("t1")
     # 2 docs per collection * 2 collections = 4 deletes
     assert adapter.delete_document.call_count == 4
@@ -900,8 +963,14 @@ def test_io_documents_and_payload():
 
 def test_io_event_roundtrip():
     rec = aio.EventRecord(
-        stream_id="s1", version=1, event_type="created", data={"x": 1},
-        metadata={"m": 1}, event_id="e1", global_position=1, created_at=1.0,
+        stream_id="s1",
+        version=1,
+        event_type="created",
+        data={"x": 1},
+        metadata={"m": 1},
+        event_id="e1",
+        global_position=1,
+        created_at=1.0,
     )
     doc = aio._event_to_document(rec)
     back = aio._event_from_document(doc)
@@ -1005,9 +1074,18 @@ def test_event_store_append_version_conflict():
 def test_event_store_read_stream_filters_and_orders():
     store, adapter = make_event_store()
     docs = [
-        aio._event_to_document(aio.EventRecord(
-            stream_id="s1", version=v, event_type="e", data={}, metadata={},
-            event_id=f"e{v}", global_position=v, created_at=float(v)))
+        aio._event_to_document(
+            aio.EventRecord(
+                stream_id="s1",
+                version=v,
+                event_type="e",
+                data={},
+                metadata={},
+                event_id=f"e{v}",
+                global_position=v,
+                created_at=float(v),
+            )
+        )
         for v in (3, 1, 2)
     ]
     adapter.query_documents.return_value = {"documents": docs}
@@ -1018,9 +1096,18 @@ def test_event_store_read_stream_filters_and_orders():
 def test_event_store_read_all():
     store, adapter = make_event_store()
     docs = [
-        aio._event_to_document(aio.EventRecord(
-            stream_id="s", version=1, event_type="e", data={}, metadata={},
-            event_id=f"e{p}", global_position=p, created_at=1.0))
+        aio._event_to_document(
+            aio.EventRecord(
+                stream_id="s",
+                version=1,
+                event_type="e",
+                data={},
+                metadata={},
+                event_id=f"e{p}",
+                global_position=p,
+                created_at=1.0,
+            )
+        )
         for p in (2, 1, 3)
     ]
     adapter.query_documents.return_value = {"documents": docs}
@@ -1031,9 +1118,18 @@ def test_event_store_read_all():
 def test_event_store_append_increments_over_existing():
     store, adapter = make_event_store()
     existing = [
-        aio._event_to_document(aio.EventRecord(
-            stream_id="s1", version=1, event_type="e", data={}, metadata={},
-            event_id="e1", global_position=1, created_at=1.0))
+        aio._event_to_document(
+            aio.EventRecord(
+                stream_id="s1",
+                version=1,
+                event_type="e",
+                data={},
+                metadata={},
+                event_id="e1",
+                global_position=1,
+                created_at=1.0,
+            )
+        )
     ]
     # read_stream (existing) for current version, read_all for global pos
     adapter.query_documents.side_effect = [
@@ -1094,9 +1190,7 @@ def test_session_upsert_generates_id_and_deletes_existing():
 
 def test_session_upsert_with_vector():
     session, adapter = make_session()
-    doc_id = session.upsert(
-        {"id": "i1"}, collection="c", vector=[0.1, 0.2, 0.3]
-    )
+    doc_id = session.upsert({"id": "i1"}, collection="c", vector=[0.1, 0.2, 0.3])
     assert doc_id == "i1"
     adapter.create_collection.assert_called_once()
     assert adapter.insert_records.called or adapter.insert_vectors.called

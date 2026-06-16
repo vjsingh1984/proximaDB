@@ -212,9 +212,7 @@ def test_get_collection_error_generic(monkeypatch):
 def test_get_collection_success_false(monkeypatch):
     from proximadb_sdk.exceptions import ProximaDBError
 
-    c = _make_client(
-        monkeypatch, resp_body={"success": False, "error_message": "boom"}
-    )
+    c = _make_client(monkeypatch, resp_body={"success": False, "error_message": "boom"})
     with pytest.raises(ProximaDBError):
         c.get_collection("longenoughid")
 
@@ -321,9 +319,7 @@ def test_get_collection_stats(monkeypatch):
 
 
 def test_insert_vector_single(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0})
     res = c.insert_vector("cid", "v1", [0.1, 0.2, 0.3], metadata={"k": "v"})
     assert res.success == 1
     assert res.failed == 0
@@ -338,12 +334,8 @@ def test_insert_vector_single(monkeypatch):
 
 
 def test_insert_records_multiple_batches(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 2, "failed_count": 0}
-    )
-    records = [
-        {"id": f"r{i}", "vector": [float(i), float(i + 1)]} for i in range(4)
-    ]
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 2, "failed_count": 0})
+    records = [{"id": f"r{i}", "vector": [float(i), float(i + 1)]} for i in range(4)]
     res = c.insert_records("cid", records, batch_size=2)
     # 4 records / batch_size 2 -> 2 requests, each reporting 2 inserted
     assert len(c._captured["req"]) == 2
@@ -352,9 +344,7 @@ def test_insert_records_multiple_batches(monkeypatch):
 
 
 def test_insert_records_numpy_vector(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0})
     rec = {"id": "n1", "vector": np.array([1.0, 2.0], dtype=np.float64)}
     res = c.insert_records("cid", [rec])
     assert res.success == 1
@@ -371,18 +361,14 @@ def test_insert_records_empty_vector_raises(client):
 
 
 def test_upsert_records_sets_upsert_flag(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0})
     c.upsert_records("cid", [{"id": "u1", "vector": [1.0, 2.0]}])
     _, _, kw = _last(c)
     assert kw["json"]["upsert"] is True
 
 
 def test_insert_vectors_from_arrays(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 2, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 2, "failed_count": 0})
     res = c.insert_vectors(
         "cid",
         [[1.0, 2.0], [3.0, 4.0]],
@@ -393,9 +379,7 @@ def test_insert_vectors_from_arrays(monkeypatch):
 
 
 def test_insert_vectors_autogenerates_ids(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 2, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 2, "failed_count": 0})
     res = c.insert_vectors("cid", [[1.0, 2.0], [3.0, 4.0]])
     assert res.success == 2
     rec_ids = [r["id"] for r in _last(c)[2]["json"]["records"]]
@@ -403,9 +387,7 @@ def test_insert_vectors_autogenerates_ids(monkeypatch):
 
 
 def test_insert_vectors_dict_records(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0})
     res = c.insert_vectors("cid", [{"id": "d1", "vector": [1.0, 2.0]}])
     assert res.success == 1
 
@@ -460,9 +442,7 @@ def test_delete_vectors_handles_exception(monkeypatch):
 
 
 def test_get_vector(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"id": "v1", "vector": [1.0, 2.0]}
-    )
+    c = _make_client(monkeypatch, resp_body={"id": "v1", "vector": [1.0, 2.0]})
     out = c.get_vector("cid", "v1")
     assert out["id"] == "v1"
     method, path, kw = _last(c)
@@ -491,9 +471,7 @@ def test_get_vector_not_found_raises(monkeypatch):
 
 
 def test_upsert_vectors_records(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0})
     rec = MagicMock()
     rec.vector = [1.0, 2.0]
     rec.id = "r1"
@@ -505,9 +483,7 @@ def test_upsert_vectors_records(monkeypatch):
 
 
 def test_update_vector(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0})
     res = c.update_vector("cid", "v1", vector=[1.0, 2.0], metadata={"a": 1})
     assert res.success == 1
     _, _, kw = _last(c)
@@ -515,12 +491,8 @@ def test_update_vector(monkeypatch):
 
 
 def test_update_vector_numpy(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
-    )
-    res = c.update_vector(
-        "cid", "v1", vector=np.array([1.0, 2.0], dtype=np.float64)
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0})
+    res = c.update_vector("cid", "v1", vector=np.array([1.0, 2.0], dtype=np.float64))
     assert res.success == 1
 
 
@@ -559,9 +531,7 @@ def test_search_with_filter_and_numpy(monkeypatch):
         metadata_filter={"category": "x"},
     )
     _, _, kw = _last(c)
-    assert kw["json"]["filters"] == [
-        {"field": "category", "op": "eq", "value": "x"}
-    ]
+    assert kw["json"]["filters"] == [{"field": "category", "op": "eq", "value": "x"}]
 
 
 def test_search_with_hints(monkeypatch):
@@ -576,9 +546,7 @@ def test_search_with_hints(monkeypatch):
 
 
 def test_search_error_not_found_returns_empty(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"error_message": "collection not found"}
-    )
+    c = _make_client(monkeypatch, resp_body={"error_message": "collection not found"})
     assert c.search("cid", [0.1]) == []
 
 
@@ -672,9 +640,7 @@ def test_search_next_page_supported(monkeypatch):
     c = _make_client(
         monkeypatch,
         resp_body={
-            "items": [
-                {"entity_id": "e1", "score": 0.7, "metadata": {"k": "v"}}
-            ],
+            "items": [{"entity_id": "e1", "score": 0.7, "metadata": {"k": "v"}}],
             "page": {"cursor": "next123", "has_more": True},
             "progress": {"stage": 1, "stages": 2, "complete": False},
             "total": 10,
@@ -804,9 +770,7 @@ def _batching_client(monkeypatch):
 def test_insert_vectors_batched_submits(monkeypatch):
     c, fake_proc = _batching_client(monkeypatch)
     fake_proc.submit_request.return_value = "req-1"
-    rid = c.insert_vectors_batched(
-        "cid", [[1.0, 2.0]], ["a"], metadata=[{"k": "v"}]
-    )
+    rid = c.insert_vectors_batched("cid", [[1.0, 2.0]], ["a"], metadata=[{"k": "v"}])
     assert rid == "req-1"
     assert fake_proc.submit_request.called
 
@@ -853,9 +817,7 @@ def test_close_closes_http_client(monkeypatch):
 def test_execute_batch_insert(monkeypatch):
     from proximadb_sdk.batching_unified import BatchOperationType
 
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 2, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 2, "failed_count": 0})
     out = c._execute_batch(
         BatchOperationType.INSERT_VECTORS,
         "cid",
@@ -875,9 +837,7 @@ def test_execute_batch_upsert(monkeypatch):
     # raises TypeError and is surfaced through the except guard as success=False.
     from proximadb_sdk.batching_unified import BatchOperationType
 
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0})
     out = c._execute_batch(
         BatchOperationType.UPSERT_VECTORS,
         "cid",
@@ -893,9 +853,7 @@ def test_execute_batch_delete(monkeypatch):
     from proximadb_sdk.batching_unified import BatchOperationType
 
     c = _make_client(monkeypatch, resp_body={"success": True})
-    out = c._execute_batch(
-        BatchOperationType.DELETE_VECTORS, "cid", [["a", "b"]]
-    )
+    out = c._execute_batch(BatchOperationType.DELETE_VECTORS, "cid", [["a", "b"]])
     assert "success" in out[0]
 
 
@@ -905,9 +863,7 @@ def test_execute_batch_exception_path(monkeypatch):
     c = _make_client(monkeypatch)
     # Pass malformed batch items (missing "vector") so the inner extraction
     # raises -> the except branch returns success=False with an error string.
-    out = c._execute_batch(
-        BatchOperationType.INSERT_VECTORS, "cid", [[{"id": "a"}]]
-    )
+    out = c._execute_batch(BatchOperationType.INSERT_VECTORS, "cid", [[{"id": "a"}]])
     assert out[0]["success"] is False
     assert "error" in out[0]
 
@@ -950,9 +906,7 @@ def test_search_include_vectors(monkeypatch):
     c = _make_client(
         monkeypatch,
         resp_body={
-            "results": [
-                {"id": "a", "score": 0.9, "vector": [1.0, 2.0], "props": {}}
-            ]
+            "results": [{"id": "a", "score": 0.9, "vector": [1.0, 2.0], "props": {}}]
         },
     )
     out = c.search("cid", [0.1, 0.2], include_vectors=True)
@@ -994,9 +948,7 @@ def test_search_next_page_request_raises_returns_empty(monkeypatch):
 
 
 def test_update_vector_empty_vector_list_when_none_metadata(monkeypatch):
-    c = _make_client(
-        monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0}
-    )
+    c = _make_client(monkeypatch, resp_body={"inserted_count": 1, "failed_count": 0})
     # vector provided but metadata None -> props {} path
     res = c.update_vector("cid", "v1", vector=[1.0, 2.0])
     assert res.success == 1

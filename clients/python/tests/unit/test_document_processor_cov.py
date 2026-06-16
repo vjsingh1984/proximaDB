@@ -10,13 +10,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximadb_sdk.document_processor import (
-    AsyncEmbeddingProvider,  # noqa: F401 (Protocol import smoke)
+from proximadb_sdk.document_processor import EmbeddingProvider  # noqa: F401
+from proximadb_sdk.document_processor import VectorStore  # noqa: F401
+from proximadb_sdk.document_processor import (  # noqa: F401 (Protocol import smoke)
+    AsyncEmbeddingProvider,
     CodeDocumentProcessor,
     DocumentProcessor,
     DocumentProcessorRegistry,
     DocumentType,
-    EmbeddingProvider,  # noqa: F401
     EmbeddingProviderAdapter,
     PlaceholderEmbeddingProvider,
     ProcessedChunk,
@@ -25,13 +26,11 @@ from proximadb_sdk.document_processor import (
     ProcessorConfig,
     TextDocumentProcessor,
     VectorRecord,
-    VectorStore,  # noqa: F401
     create_embedding_adapter,
     create_processor,
     detect_document_type,
     get_processor_registry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test doubles
@@ -121,12 +120,16 @@ def test_processed_chunk_post_init_defaults_embedding_text():
 
 
 def test_processed_chunk_keeps_explicit_embedding_text():
-    c = ProcessedChunk(chunk_id="a", text="body", start_pos=0, end_pos=4, embedding_text="EMB")
+    c = ProcessedChunk(
+        chunk_id="a", text="body", start_pos=0, end_pos=4, embedding_text="EMB"
+    )
     assert c.embedding_text == "EMB"
 
 
 def test_vector_record_to_dict():
-    rec = VectorRecord(id="i", vector=[0.1, 0.2], metadata={"k": "v"}, text="t", source_id="s")
+    rec = VectorRecord(
+        id="i", vector=[0.1, 0.2], metadata={"k": "v"}, text="t", source_id="s"
+    )
     d = rec.to_dict()
     assert d["id"] == "i"
     assert d["vector"] == [0.1, 0.2]
@@ -351,14 +354,18 @@ def test_code_prepare_embedding_minimal_metadata():
 
 def test_code_prepare_for_embedding_fallback_to_text():
     p = CodeDocumentProcessor()
-    chunk = ProcessedChunk(chunk_id="c", text="t", start_pos=0, end_pos=1, embedding_text=None)
+    chunk = ProcessedChunk(
+        chunk_id="c", text="t", start_pos=0, end_pos=1, embedding_text=None
+    )
     chunk.embedding_text = None  # force the or-branch
     assert p.prepare_for_embedding(chunk) == "t"
 
 
 def test_code_enrich_metadata_defaults():
     p = CodeDocumentProcessor()
-    chunk = ProcessedChunk(chunk_id="c", text="code", start_pos=0, end_pos=4, metadata={})
+    chunk = ProcessedChunk(
+        chunk_id="c", text="code", start_pos=0, end_pos=4, metadata={}
+    )
     md = p.enrich_metadata(chunk, source_metadata={"file": "a.py"})
     assert md["processor"] == "code"
     assert md["is_code"] is True
@@ -388,7 +395,9 @@ def test_code_get_chunker_lazy_import(monkeypatch):
     fake_mod.CodeChunkingStrategy = CodeChunkingStrategy
     monkeypatch.setitem(sys.modules, "proximadb_sdk.chunking_strategies.code", fake_mod)
 
-    p = CodeDocumentProcessor(ProcessorConfig(chunk_size=100, chunk_overlap=10, extract_symbols=False))
+    p = CodeDocumentProcessor(
+        ProcessorConfig(chunk_size=100, chunk_overlap=10, extract_symbols=False)
+    )
     chunker = p._get_chunker()
     assert isinstance(chunker, CodeChunkingStrategy)
     assert captured["chunk_size"] == 100
@@ -456,7 +465,9 @@ def test_text_get_chunker_lazy_import(monkeypatch):
     sem_mod.SemanticStrategy = SemanticStrategy
 
     monkeypatch.setitem(sys.modules, "proximadb_sdk.chunking_strategies.base", base_mod)
-    monkeypatch.setitem(sys.modules, "proximadb_sdk.chunking_strategies.semantic", sem_mod)
+    monkeypatch.setitem(
+        sys.modules, "proximadb_sdk.chunking_strategies.semantic", sem_mod
+    )
 
     p = TextDocumentProcessor(ProcessorConfig(chunk_size=64, chunk_overlap=8))
     chunker = p._get_chunker()
@@ -543,7 +554,9 @@ def test_process_no_chunks_skips_embedding():
 def test_base_prepare_for_embedding_and_enrich():
     # Exercise the base-class (non-overridden) methods via TextDocumentProcessor.
     p = TextDocumentProcessor()
-    chunk = ProcessedChunk(chunk_id="c", text="t", start_pos=1, end_pos=2, metadata={"a": 1})
+    chunk = ProcessedChunk(
+        chunk_id="c", text="t", start_pos=1, end_pos=2, metadata={"a": 1}
+    )
     assert DocumentProcessor.prepare_for_embedding(p, chunk) == "t"
     md = DocumentProcessor.enrich_metadata(p, chunk)
     assert md["a"] == 1

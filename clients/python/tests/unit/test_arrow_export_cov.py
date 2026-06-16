@@ -25,7 +25,6 @@ from proximadb_sdk.arrow_export import (
     read_proximadb_file,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers to build fake Flight objects (only the attributes the code touches)
 # ---------------------------------------------------------------------------
@@ -446,9 +445,7 @@ def test_to_pandas(monkeypatch):
 
 
 def test_to_numpy(monkeypatch):
-    vectors = pa.table(
-        {"vector": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]}
-    )
+    vectors = pa.table({"vector": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]})
     info = _fake_flight_info()
     c = _read_client(monkeypatch, info, vectors)
     arr = c.to_numpy("c/a.arrow")

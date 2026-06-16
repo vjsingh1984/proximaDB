@@ -652,7 +652,9 @@ class ProximaDBClientV1:
                 proto_param = self._convert_to_sql_value(param)
                 proto_parameters.append(proto_param)
 
-        request = types_pb2.ExecuteQueryRequest(query=query, parameters=proto_parameters)
+        request = types_pb2.ExecuteQueryRequest(
+            query=query, parameters=proto_parameters
+        )
 
         try:
             response = self.sql_stub.ExecuteQuery(request, timeout=self.timeout)

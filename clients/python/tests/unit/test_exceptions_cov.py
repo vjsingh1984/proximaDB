@@ -351,7 +351,9 @@ def test_map_http_429():
 
 
 def test_map_http_413():
-    data = {"error": {"type": "quota", "message": "m", "details": {"quota_type": "vec"}}}
+    data = {
+        "error": {"type": "quota", "message": "m", "details": {"quota_type": "vec"}}
+    }
     e = map_http_error(413, data)
     assert isinstance(e, QuotaExceededError)
     assert e.quota_type == "vec"

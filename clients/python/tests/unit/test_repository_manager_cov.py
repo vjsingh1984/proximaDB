@@ -38,13 +38,15 @@ from proximadb_sdk.repository_manager import (
     repository_context,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _proc(stdout="", returncode=0):
-    return subprocess.CompletedProcess(args=["git"], returncode=returncode, stdout=stdout, stderr="")
+    return subprocess.CompletedProcess(
+        args=["git"], returncode=returncode, stdout=stdout, stderr=""
+    )
 
 
 COMMIT_OUT = (
@@ -124,6 +126,7 @@ class FakeBackend(VCSBackend):
 # Dataclasses / enums / properties
 # ---------------------------------------------------------------------------
 
+
 def test_author_hash_eq():
     a = Author("X", "x@e.com")
     b = Author("X", "x@e.com")
@@ -136,8 +139,18 @@ def test_author_hash_eq():
 
 
 def test_commit_is_merge():
-    c1 = Commit("h", "h", Author("a", "a"), None, datetime.now(), "m", parent_hashes=["p"])
-    c2 = Commit("h", "h", Author("a", "a"), None, datetime.now(), "m", parent_hashes=["p1", "p2"])
+    c1 = Commit(
+        "h", "h", Author("a", "a"), None, datetime.now(), "m", parent_hashes=["p"]
+    )
+    c2 = Commit(
+        "h",
+        "h",
+        Author("a", "a"),
+        None,
+        datetime.now(),
+        "m",
+        parent_hashes=["p1", "p2"],
+    )
     assert c1.is_merge is False
     assert c2.is_merge is True
 
@@ -164,8 +177,12 @@ def test_filechange_is_code_file():
 
 
 def test_filediff_totals():
-    hunk = DiffHunk(1, 2, 1, 2, content="+added\n-removed\n+++header\n---header\n context")
-    fd = FileDiff(path="f", old_path=None, change_type=ChangeType.MODIFIED, hunks=[hunk])
+    hunk = DiffHunk(
+        1, 2, 1, 2, content="+added\n-removed\n+++header\n---header\n context"
+    )
+    fd = FileDiff(
+        path="f", old_path=None, change_type=ChangeType.MODIFIED, hunks=[hunk]
+    )
     assert fd.total_additions == 1
     assert fd.total_deletions == 1
 
@@ -216,6 +233,7 @@ def test_index_state_from_dict_minimal():
 # ---------------------------------------------------------------------------
 # GitRepository with mocked _run_git and filesystem
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def git_repo(monkeypatch):
@@ -429,7 +447,9 @@ def test_get_commits_variants(git_repo, monkeypatch):
 
 
 def test_get_commits_until_only(git_repo, monkeypatch):
-    monkeypatch.setattr(git_repo, "_run_git", lambda *a, **k: _proc(COMMIT_OUT + "\x00"))
+    monkeypatch.setattr(
+        git_repo, "_run_git", lambda *a, **k: _proc(COMMIT_OUT + "\x00")
+    )
     commits = git_repo.get_commits(until="HEAD~5")
     assert len(commits) == 1
 
@@ -565,7 +585,9 @@ new file mode 100644
 
 
 def test_parse_unified_diff_binary(git_repo):
-    out = "diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n"
+    out = (
+        "diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n"
+    )
     fd = git_repo._parse_unified_diff(out, "img.png")
     assert fd.is_binary is True
     assert fd.hunks == []
@@ -672,7 +694,9 @@ def test_get_remote_url_error(git_repo, monkeypatch):
 
 
 def test_get_file_history(git_repo, monkeypatch):
-    monkeypatch.setattr(git_repo, "_run_git", lambda *a, **k: _proc(COMMIT_OUT + "\x00"))
+    monkeypatch.setattr(
+        git_repo, "_run_git", lambda *a, **k: _proc(COMMIT_OUT + "\x00")
+    )
     hist = git_repo.get_file_history("f.py", limit=3)
     assert len(hist) == 1
 
@@ -728,6 +752,7 @@ def test_get_stats_revlist_error(git_repo, monkeypatch):
 # RepositoryManager (facade) with FakeBackend
 # ---------------------------------------------------------------------------
 
+
 def test_manager_init_computes_repo_id():
     mgr = RepositoryManager(FakeBackend())
     assert len(mgr.index_state.repository_id) == 16
@@ -761,6 +786,7 @@ def test_detect_vcs(monkeypatch):
     def make_exists(marker):
         def fake(self):
             return str(self).endswith(marker)
+
         return fake
 
     monkeypatch.setattr(Path, "exists", make_exists("/.git"))
@@ -945,16 +971,23 @@ def test_load_state_missing_key(tmp_path):
 # Module-level utility functions
 # ---------------------------------------------------------------------------
 
+
 def test_is_git_repository(monkeypatch):
-    monkeypatch.setattr(RepositoryManager, "detect_vcs", classmethod(lambda cls, p: VCSType.GIT))
+    monkeypatch.setattr(
+        RepositoryManager, "detect_vcs", classmethod(lambda cls, p: VCSType.GIT)
+    )
     assert is_git_repository("/x") is True
-    monkeypatch.setattr(RepositoryManager, "detect_vcs", classmethod(lambda cls, p: VCSType.NONE))
+    monkeypatch.setattr(
+        RepositoryManager, "detect_vcs", classmethod(lambda cls, p: VCSType.NONE)
+    )
     assert is_git_repository("/x") is False
 
 
 def test_get_repository_root_ok(monkeypatch):
     fake_mgr = RepositoryManager(FakeBackend())
-    monkeypatch.setattr(RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr))
+    monkeypatch.setattr(
+        RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr)
+    )
     assert get_repository_root("/x") == Path("/repo")
 
 
@@ -968,7 +1001,9 @@ def test_get_repository_root_fail(monkeypatch):
 
 def test_get_current_commit_hash_ok(monkeypatch):
     fake_mgr = RepositoryManager(FakeBackend())
-    monkeypatch.setattr(RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr))
+    monkeypatch.setattr(
+        RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr)
+    )
     assert get_current_commit_hash("/x") == "h" * 40
 
 
@@ -976,7 +1011,9 @@ def test_get_current_commit_hash_no_commit(monkeypatch):
     backend = FakeBackend()
     backend._current_commit = None
     fake_mgr = RepositoryManager(backend)
-    monkeypatch.setattr(RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr))
+    monkeypatch.setattr(
+        RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr)
+    )
     monkeypatch.setattr(fake_mgr._backend, "get_commit", lambda ref="HEAD": None)
     assert get_current_commit_hash("/x") is None
 
@@ -995,7 +1032,9 @@ def test_get_file_git_info_ok(monkeypatch):
         rm.BlameEntry("h", Author("Alice", "a@e.com"), datetime.now(), 1, 1, "x"),
     ]
     fake_mgr = RepositoryManager(backend)
-    monkeypatch.setattr(RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr))
+    monkeypatch.setattr(
+        RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr)
+    )
     # Path.resolve and relative_to must yield deterministic values.
     monkeypatch.setattr(Path, "resolve", lambda self: Path("/repo/src/main.py"))
     info = get_file_git_info("/repo/src/main.py")
@@ -1017,9 +1056,12 @@ def test_get_file_git_info_fail(monkeypatch):
 # repository_context context manager
 # ---------------------------------------------------------------------------
 
+
 def test_repository_context_no_state_file(monkeypatch):
     fake_mgr = RepositoryManager(FakeBackend())
-    monkeypatch.setattr(RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr))
+    monkeypatch.setattr(
+        RepositoryManager, "from_path", classmethod(lambda cls, p, s=None: fake_mgr)
+    )
     with repository_context("/repo") as repo:
         assert repo is fake_mgr
 
@@ -1029,7 +1071,9 @@ def test_repository_context_with_state_file(monkeypatch, tmp_path):
     loaded_state = IndexState(repository_id="loaded")
     captured = {}
 
-    monkeypatch.setattr(RepositoryManager, "load_state", classmethod(lambda cls, p: loaded_state))
+    monkeypatch.setattr(
+        RepositoryManager, "load_state", classmethod(lambda cls, p: loaded_state)
+    )
 
     def fake_from_path(cls, p, s=None):
         captured["state"] = s

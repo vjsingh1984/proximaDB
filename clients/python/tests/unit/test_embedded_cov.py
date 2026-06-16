@@ -567,7 +567,9 @@ def test_normalize_record_payload_missing_vector():
 
 
 def test_create_collection_success(patched_http):
-    patched_http.responder = staticmethod(lambda v, u, **kw: FakeResp({"success": True}))
+    patched_http.responder = staticmethod(
+        lambda v, u, **kw: FakeResp({"success": True})
+    )
     db = make_started_db()
     col = run(db.create_collection("c1", dimension=4, distance_metric="euclidean"))
     assert isinstance(col, EmbeddedCollection)
@@ -632,7 +634,9 @@ def test_get_collection_from_server(patched_http):
 
 
 def test_get_collection_not_found(patched_http):
-    patched_http.responder = staticmethod(lambda v, u, **kw: FakeResp({}, status_code=404))
+    patched_http.responder = staticmethod(
+        lambda v, u, **kw: FakeResp({}, status_code=404)
+    )
     db = make_started_db()
     assert run(db.get_collection("nope")) is None
 
@@ -692,7 +696,9 @@ def test_insert_with_embedding(patched_http):
     )
     col = EmbeddedCollection("c", 2, db, embedding_model=model)
     res = run(
-        col.insert_with_embedding([{"id": "d1", "text": "hello", "metadata": {"k": "v"}}])
+        col.insert_with_embedding(
+            [{"id": "d1", "text": "hello", "metadata": {"k": "v"}}]
+        )
     )
     assert res["success"] is True
 
@@ -725,7 +731,9 @@ def test_search_vector_list_results(patched_http):
 
 
 def test_search_vector_empty(patched_http):
-    patched_http.responder = staticmethod(lambda v, u, **kw: FakeResp({"success": False}))
+    patched_http.responder = staticmethod(
+        lambda v, u, **kw: FakeResp({"success": False})
+    )
     db = make_started_db()
     assert run(db._search_vectors("c", [0.0])) == []
 
@@ -855,7 +863,9 @@ def test_get_document_found_and_missing(patched_http):
 
 def test_update_and_delete_document(patched_http):
     db = make_started_db()
-    patched_http.responder = staticmethod(lambda v, u, **kw: FakeResp({"version": 2}, 200))
+    patched_http.responder = staticmethod(
+        lambda v, u, **kw: FakeResp({"version": 2}, 200)
+    )
     assert run(db.update_document("dc", "d", [{"op": "SET"}]))["version"] == 2
     assert run(db.delete_document("dc", "d")) is True
     assert run(db.delete_document_collection("dc")) is True
@@ -863,7 +873,9 @@ def test_update_and_delete_document(patched_http):
 
 def test_query_documents_str_filter(patched_http):
     db = make_started_db()
-    patched_http.responder = staticmethod(lambda v, u, **kw: FakeResp({"documents": []}))
+    patched_http.responder = staticmethod(
+        lambda v, u, **kw: FakeResp({"documents": []})
+    )
     run(db.query_documents("dc", filter="$.x = 1"))
 
 
@@ -883,7 +895,9 @@ def test_timeseries_api(patched_http):
             retention_ms=1000,
         )
     )["ok"]
-    assert run(db.ingest_timeseries("ts", [{"timestamp": 1, "values": {"v": 1.0}}]))["ok"]
+    assert run(db.ingest_timeseries("ts", [{"timestamp": 1, "values": {"v": 1.0}}]))[
+        "ok"
+    ]
     assert run(
         db.query_timeseries(
             "ts", "t0", "t1", aggregation="AVG", bucket_ms=60, tag_filters={"h": "a"}
@@ -1005,9 +1019,7 @@ def test_executor_graph_no_start_nodes(patched_http):
     patched_http.responder = staticmethod(lambda v, u, **kw: FakeResp({"nodes": []}))
     db = make_started_db()
     ex = EmbeddedMultiModalQueryExecutor(db)
-    out = run(
-        ex._execute_graph({"graph_id": "g", "start_label": "L"})
-    )
+    out = run(ex._execute_graph({"graph_id": "g", "start_label": "L"}))
     assert out == []
 
 
@@ -1021,9 +1033,7 @@ def test_executor_logs_and_metrics_empty():
 def test_executor_vector_then_graph_from_previous(patched_http):
     def responder(v, u, **kw):
         if u.endswith("/search"):
-            return FakeResp(
-                {"success": True, "results": [{"id": "n1", "score": 0.5}]}
-            )
+            return FakeResp({"success": True, "results": [{"id": "n1", "score": 0.5}]})
         if u.endswith("/nodes/n1"):
             return FakeResp({"node": {"labels": ["L"], "properties": {}}})
         if u.endswith("/edges/outgoing"):

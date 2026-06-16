@@ -165,9 +165,7 @@ def test_metrics_label_key_empty():
 def test_metrics_register_custom():
     mc = MetricsCollector(prefix="custom")
     mc.register(
-        MetricDefinition(
-            name="my_gauge", metric_type=MetricType.GAUGE, description="d"
-        )
+        MetricDefinition(name="my_gauge", metric_type=MetricType.GAUGE, description="d")
     )
     mc.set("my_gauge", 9)
     assert mc.get_metrics()["custom_my_gauge"][""] == 9

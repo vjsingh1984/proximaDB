@@ -153,7 +153,9 @@ def test_create_edge_path_and_payload(client):
 
 
 def test_traverse_graph_path(client):
-    client.traverse_graph("n1", max_depth=2, edge_types=["R"], algorithm="dfs", limit=10)
+    client.traverse_graph(
+        "n1", max_depth=2, edge_types=["R"], algorithm="dfs", limit=10
+    )
     assert _http_paths(client)[-1] == "/api/v2/graphs/default/traverse"
 
 
@@ -201,20 +203,29 @@ def test_create_get_list_delete_graph(client):
 def test_server_capabilities_and_supports(monkeypatch):
     c = ProximaDBClient(url="http://testserver")
     monkeypatch.setattr(
-        c, "_make_request",
-        lambda m, p, **k: FakeResp({"api_version": "0.2.0", "features": ["hybrid_search", "graphs"]}),
+        c,
+        "_make_request",
+        lambda m, p, **k: FakeResp(
+            {"api_version": "0.2.0", "features": ["hybrid_search", "graphs"]}
+        ),
     )
     caps = c.server_capabilities()
     assert caps["api_version"] == "0.2.0"
     assert c.supports("hybrid_search") is True
     assert c.supports("nope") is False
     # cached: a second call doesn't re-request (swap to a raising stub)
-    monkeypatch.setattr(c, "_make_request", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should be cached")))
+    monkeypatch.setattr(
+        c,
+        "_make_request",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should be cached")),
+    )
     assert c.server_capabilities()["api_version"] == "0.2.0"
 
 
 def test_server_capabilities_graceful_on_old_server(monkeypatch):
     c = ProximaDBClient(url="http://testserver")
-    monkeypatch.setattr(c, "_make_request", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("404")))
+    monkeypatch.setattr(
+        c, "_make_request", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("404"))
+    )
     assert c.server_capabilities() == {}
     assert c.supports("anything") is False

@@ -482,7 +482,13 @@ class TestCanonicalErrorEnvelope:
 
         exc = map_http_error(
             404,
-            {"error": {"type": "collection_not_found", "message": "Collection not found: c1", "code": 404}},
+            {
+                "error": {
+                    "type": "collection_not_found",
+                    "message": "Collection not found: c1",
+                    "code": 404,
+                }
+            },
             headers={"x-request-id": "rid-42"},
         )
         assert isinstance(exc, CollectionNotFoundError)
@@ -493,7 +499,14 @@ class TestCanonicalErrorEnvelope:
 
         exc = map_http_error(
             400,
-            {"error": {"type": "validation_error", "message": "bad", "code": 400, "request_id": "b-7"}},
+            {
+                "error": {
+                    "type": "validation_error",
+                    "message": "bad",
+                    "code": 400,
+                    "request_id": "b-7",
+                }
+            },
         )
         assert isinstance(exc, ValidationError)
         assert exc.request_id == "b-7"

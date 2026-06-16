@@ -96,7 +96,9 @@ def test_v2_records_batch_insert_then_search_round_trips(
         distance_metric="cosine",
     )
     collection = client.create_collection(coll_name, config)
-    assert collection is not None, "client.create_collection must return collection metadata"
+    assert (
+        collection is not None
+    ), "client.create_collection must return collection metadata"
 
     try:
         # 2. INSERT — n records with deterministic vectors. rec-2's vector is

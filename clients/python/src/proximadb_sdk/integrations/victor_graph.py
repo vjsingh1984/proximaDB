@@ -21,15 +21,9 @@ from ..graph import ProximaDBGraph
 from ..unified_client import ProximaDBClient
 
 try:
-    from victor.storage.graph.protocol import (
-        GraphEdge as VictorGraphEdge,
-    )
-    from victor.storage.graph.protocol import (
-        GraphNode as VictorGraphNode,
-    )
-    from victor.storage.graph.protocol import (
-        GraphQueryResult as VictorGraphQueryResult,
-    )
+    from victor.storage.graph.protocol import GraphEdge as VictorGraphEdge
+    from victor.storage.graph.protocol import GraphNode as VictorGraphNode
+    from victor.storage.graph.protocol import GraphQueryResult as VictorGraphQueryResult
     from victor.storage.graph.protocol import (
         GraphStoreProtocol,
         GraphTraversalDirection,

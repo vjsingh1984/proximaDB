@@ -123,7 +123,9 @@ def test_create_collection_rest(rest_client, monkeypatch):
     def fake_post(url, json=None, timeout=None, **kw):
         captured["url"] = url
         captured["json"] = json
-        return FakeResp({"collection_id": "c1", "name": "docs_col", "dimension": 8, "engine": "sst"})
+        return FakeResp(
+            {"collection_id": "c1", "name": "docs_col", "dimension": 8, "engine": "sst"}
+        )
 
     monkeypatch.setattr(cv1.requests, "post", fake_post)
     col = rest_client.create_collection(
@@ -139,7 +141,9 @@ def test_create_collection_rest_string_enums(rest_client, monkeypatch):
     monkeypatch.setattr(
         cv1.requests, "post", lambda *a, **k: FakeResp({"id": "x", "dimension": 4})
     )
-    col = rest_client.create_collection("colnamed", 4, distance_metric="euclidean", storage_engine="nova")
+    col = rest_client.create_collection(
+        "colnamed", 4, distance_metric="euclidean", storage_engine="nova"
+    )
     assert col.config.distance_metric == DistanceMetric.EUCLIDEAN
 
 
@@ -157,7 +161,13 @@ def test_get_collection_rest_found(rest_client, monkeypatch):
         cv1.requests,
         "get",
         lambda *a, **k: FakeResp(
-            {"id": "c1", "name": "docs_col", "dimension": 8, "distance_metric": "COSINE", "engine": "SST"}
+            {
+                "id": "c1",
+                "name": "docs_col",
+                "dimension": 8,
+                "distance_metric": "COSINE",
+                "engine": "SST",
+            }
         ),
     )
     col = rest_client.get_collection("docs_col")
@@ -166,7 +176,9 @@ def test_get_collection_rest_found(rest_client, monkeypatch):
 
 
 def test_get_collection_rest_not_found(rest_client, monkeypatch):
-    monkeypatch.setattr(cv1.requests, "get", lambda *a, **k: FakeResp({}, status_code=404))
+    monkeypatch.setattr(
+        cv1.requests, "get", lambda *a, **k: FakeResp({}, status_code=404)
+    )
     assert rest_client.get_collection("missing") is None
 
 
@@ -208,7 +220,9 @@ def test_create_collection_grpc(grpc_client):
     resp = collection_types_pb2.Collection(
         id="c1",
         config=collection_types_pb2.CollectionConfig(
-            name="docs_col", dimension=8, distance_metric=vector_types_pb2.COSINE,
+            name="docs_col",
+            dimension=8,
+            distance_metric=vector_types_pb2.COSINE,
             storage_engine=vector_types_pb2.SST,
         ),
         stats=collection_types_pb2.CollectionStats(vector_count=3),
@@ -224,7 +238,9 @@ def test_create_collection_grpc(grpc_client):
 
 
 def test_create_collection_grpc_error(grpc_client):
-    grpc_client.collection_stub.CreateCollection.side_effect = FakeRpcError(details="bad")
+    grpc_client.collection_stub.CreateCollection.side_effect = FakeRpcError(
+        details="bad"
+    )
     with pytest.raises(ProximaDBError):
         grpc_client.create_collection("docs", 8)
 
@@ -334,8 +350,17 @@ def test_insert_records_grpc(grpc_client):
     out = grpc_client.insert_records(
         "col",
         [
-            {"id": "r1", "vector": [0.1], "props": {"n": 1, "b": True, "f": 1.5, "s": "x", "z": None}},
-            {"id": "r2", "vector": [0.2], "source": "txt", "text_fields": [{"name": "t", "content": "body"}]},
+            {
+                "id": "r1",
+                "vector": [0.1],
+                "props": {"n": 1, "b": True, "f": 1.5, "s": "x", "z": None},
+            },
+            {
+                "id": "r2",
+                "vector": [0.2],
+                "source": "txt",
+                "text_fields": [{"name": "t", "content": "body"}],
+            },
         ],
     )
     assert out["success"] is True
@@ -455,7 +480,9 @@ def test_get_vector_rest_found(rest_client, monkeypatch):
 
 
 def test_get_vector_rest_404(rest_client, monkeypatch):
-    monkeypatch.setattr(cv1.requests, "get", lambda *a, **k: FakeResp({}, status_code=404))
+    monkeypatch.setattr(
+        cv1.requests, "get", lambda *a, **k: FakeResp({}, status_code=404)
+    )
     assert rest_client.get_vector("col", "v1") is None
 
 
@@ -482,7 +509,10 @@ def test_advanced_vector_search_rest(rest_client, monkeypatch):
         or FakeResp({"results": []}),
     )
     out = rest_client.advanced_vector_search(
-        "col", [0.1], filters={"k": "v"}, accuracy_threshold=0.8,
+        "col",
+        [0.1],
+        filters={"k": "v"},
+        accuracy_threshold=0.8,
         search_params={"timeout_ms": 100},
     )
     assert out == {"results": []}
@@ -513,10 +543,15 @@ def test_advanced_vector_search_grpc(grpc_client):
 
     grpc_client.vector_stub.SearchVectors.return_value = FakeResults()
     out = grpc_client.advanced_vector_search(
-        "col", [0.1], accuracy_threshold=0.9,
-        search_params={"timeout_ms": 50, "enable_two_stage": True,
-                       "enable_clustering_hint": True,
-                       "enable_metadata_filtering_hint": True},
+        "col",
+        [0.1],
+        accuracy_threshold=0.9,
+        search_params={
+            "timeout_ms": 50,
+            "enable_two_stage": True,
+            "enable_clustering_hint": True,
+            "enable_metadata_filtering_hint": True,
+        },
     )
     assert out["total_count"] == 1
     assert out["results"][0]["id"] == "r1"
@@ -559,7 +594,9 @@ def test_execute_sql_rest_network_error(rest_client, monkeypatch):
 def test_execute_sql_grpc(grpc_client):
     row = types_pb2.SqlRow(
         fields=[
-            types_pb2.SqlRowField(key="name", value=types_pb2.SqlValue(string_value="abc")),
+            types_pb2.SqlRowField(
+                key="name", value=types_pb2.SqlValue(string_value="abc")
+            ),
             types_pb2.SqlRowField(key="num", value=types_pb2.SqlValue(int64_value=42)),
         ]
     )
@@ -659,7 +696,8 @@ def test_create_edge_rest(rest_client, monkeypatch):
     monkeypatch.setattr(
         cv1.requests,
         "post",
-        lambda url, json=None, **k: captured.update(json=json) or FakeResp({"id": "e1"}),
+        lambda url, json=None, **k: captured.update(json=json)
+        or FakeResp({"id": "e1"}),
     )
     out = rest_client.create_edge("e1", "a", "b", "KNOWS", {"since": 2020}, weight=0.5)
     assert out == {"id": "e1"}
@@ -680,7 +718,8 @@ def test_traverse_graph_rest(rest_client, monkeypatch):
     monkeypatch.setattr(
         cv1.requests,
         "post",
-        lambda url, json=None, **k: captured.update(json=json) or FakeResp({"nodes": []}),
+        lambda url, json=None, **k: captured.update(json=json)
+        or FakeResp({"nodes": []}),
     )
     out = rest_client.traverse_graph("n1", max_depth=2, edge_types=["KNOWS"], limit=5)
     assert out == {"nodes": []}
@@ -702,9 +741,12 @@ def test_query_nodes_rest(rest_client, monkeypatch):
     monkeypatch.setattr(
         cv1.requests,
         "post",
-        lambda url, json=None, **k: captured.update(json=json) or FakeResp({"nodes": []}),
+        lambda url, json=None, **k: captured.update(json=json)
+        or FakeResp({"nodes": []}),
     )
-    out = rest_client.query_nodes(labels=["Person"], properties={"x": 1}, limit=10, offset=2)
+    out = rest_client.query_nodes(
+        labels=["Person"], properties={"x": 1}, limit=10, offset=2
+    )
     assert out == {"nodes": []}
     assert captured["json"]["limit"] == 10
     assert captured["json"]["offset"] == 2
@@ -724,11 +766,18 @@ def test_hybrid_search_rest(rest_client, monkeypatch):
     monkeypatch.setattr(
         cv1.requests,
         "post",
-        lambda url, json=None, **k: captured.update(json=json) or FakeResp({"nodes": []}),
+        lambda url, json=None, **k: captured.update(json=json)
+        or FakeResp({"nodes": []}),
     )
     out = rest_client.hybrid_search(
-        "col", [0.1], top_k=5, start_node_id="n1", max_depth=3,
-        combination_strategy="balanced", edge_types=["KNOWS"], limit=7,
+        "col",
+        [0.1],
+        top_k=5,
+        start_node_id="n1",
+        max_depth=3,
+        combination_strategy="balanced",
+        edge_types=["KNOWS"],
+        limit=7,
     )
     assert out == {"nodes": []}
     assert captured["json"]["combination_strategy"] == "BALANCED"
@@ -793,7 +842,10 @@ def test_hybrid_search_grpc_error(grpc_client):
     grpc_client.graph_stub.ExecuteHybridQuery.side_effect = FakeRpcError()
     with pytest.raises(ProximaDBError):
         grpc_client.hybrid_search(
-            "col", [0.1], combination_strategy="GRAPH_THEN_VECTOR", limit=5,
+            "col",
+            [0.1],
+            combination_strategy="GRAPH_THEN_VECTOR",
+            limit=5,
         )
 
 
@@ -849,11 +901,20 @@ def test_convert_property_value_fallback(rest_client):
 
 def test_convert_from_property_value_branches(rest_client):
     c = rest_client
-    assert c._convert_from_property_value(graph_pb2.PropertyValue(string_value="s")) == "s"
+    assert (
+        c._convert_from_property_value(graph_pb2.PropertyValue(string_value="s")) == "s"
+    )
     assert c._convert_from_property_value(graph_pb2.PropertyValue(int_value=3)) == 3
-    assert c._convert_from_property_value(graph_pb2.PropertyValue(double_value=1.5)) == 1.5
-    assert c._convert_from_property_value(graph_pb2.PropertyValue(bool_value=True)) is True
-    assert c._convert_from_property_value(graph_pb2.PropertyValue(bytes_value=b"x")) == b"x"
+    assert (
+        c._convert_from_property_value(graph_pb2.PropertyValue(double_value=1.5)) == 1.5
+    )
+    assert (
+        c._convert_from_property_value(graph_pb2.PropertyValue(bool_value=True)) is True
+    )
+    assert (
+        c._convert_from_property_value(graph_pb2.PropertyValue(bytes_value=b"x"))
+        == b"x"
+    )
     arr = graph_pb2.PropertyValue(
         array_value=graph_pb2.PropertyArray(
             values=[graph_pb2.PropertyValue(int_value=1)]

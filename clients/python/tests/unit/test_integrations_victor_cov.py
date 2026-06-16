@@ -49,7 +49,9 @@ def victor(monkeypatch):
     monkeypatch.setattr(victor_mod, "create_embedding_model", lambda cfg: model)
     monkeypatch.setattr(victor_mod, "insert_records", MagicMock())
     p = victor_mod.ProximaDBEmbeddingProvider(_cfg())
-    return SimpleNamespace(p=p, client=client, model=model, insert=victor_mod.insert_records)
+    return SimpleNamespace(
+        p=p, client=client, model=model, insert=victor_mod.insert_records
+    )
 
 
 def _hit(rid="d1", score=0.9, source="text", metadata=None):
@@ -124,7 +126,10 @@ async def test_index_documents_batch_and_empty(victor):
     await victor.p.index_documents([])  # early return, no insert
     victor.insert.assert_not_called()
     await victor.p.index_documents(
-        [{"id": "a", "content": "c1", "metadata": {"k": 1}}, {"id": "b", "content": "c2"}]
+        [
+            {"id": "a", "content": "c1", "metadata": {"k": 1}},
+            {"id": "b", "content": "c2"},
+        ]
     )
     victor.insert.assert_called_once()
 
@@ -161,7 +166,9 @@ async def test_delete_by_file_hits_and_deletes(victor):
     victor.client.search.return_value = [_hit("d1"), _hit("d2")]
     n = await victor.p.delete_by_file("a.py")
     assert n == 2
-    victor.client.delete_vectors.assert_called_once_with("code_embeddings", ["d1", "d2"])
+    victor.client.delete_vectors.assert_called_once_with(
+        "code_embeddings", ["d1", "d2"]
+    )
 
 
 @pytest.mark.asyncio

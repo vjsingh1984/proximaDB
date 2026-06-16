@@ -15,7 +15,6 @@ import pytest
 from proximadb_sdk import metadata_utils as mu
 from proximadb_sdk.performance import data_models as dm
 
-
 # ---------------------------------------------------------------------------
 # metadata_utils
 # ---------------------------------------------------------------------------
@@ -72,6 +71,7 @@ def test_has_field_handles_non_proto():
         pass
 
     assert mu._has_field(Dummy(), "string_value") is False
+
     # Object whose HasField raises ValueError
     class Raiser:
         def HasField(self, name):
@@ -219,7 +219,9 @@ def test_create_throughput_metrics_helper():
 
 
 def test_create_validation_result_threshold_pass_and_fail():
-    ok = dm.create_validation_result("recall", 0.95, 0.9, threshold=0.9, comparator=">=")
+    ok = dm.create_validation_result(
+        "recall", 0.95, 0.9, threshold=0.9, comparator=">="
+    )
     assert ok.status == dm.ValidationStatus.PASS
 
     bad = dm.create_validation_result(
@@ -233,9 +235,7 @@ def test_create_validation_result_threshold_pass_and_fail():
     eq = dm.create_validation_result("n", 5, 5, threshold=5, comparator="==")
     assert eq.status == dm.ValidationStatus.PASS
 
-    unknown = dm.create_validation_result(
-        "x", 1, 2, threshold=1, comparator="!!"
-    )
+    unknown = dm.create_validation_result("x", 1, 2, threshold=1, comparator="!!")
     # unknown comparator -> passed True
     assert unknown.status == dm.ValidationStatus.PASS
 

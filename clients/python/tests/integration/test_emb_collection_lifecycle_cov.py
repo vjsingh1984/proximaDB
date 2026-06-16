@@ -127,9 +127,9 @@ def test_create_then_get_round_trips(rest_client) -> None:
         got = rest_client.get_collection(name)
         assert got is not None, "get_collection must return the created collection"
         assert got.name == name, f"expected name={name!r}, got {got.name!r}"
-        assert got.config.dimension == dim, (
-            f"expected dimension={dim}, got {got.config.dimension}"
-        )
+        assert (
+            got.config.dimension == dim
+        ), f"expected dimension={dim}, got {got.config.dimension}"
     finally:
         try:
             rest_client.delete_collection(name)
@@ -157,9 +157,9 @@ def test_list_grows_after_create(rest_client) -> None:
         )
         # The new id is exactly the set difference.
         new_ids = after_ids - before_ids
-        assert len(new_ids) == 1, (
-            f"exactly one new collection id expected; got {new_ids}"
-        )
+        assert (
+            len(new_ids) == 1
+        ), f"exactly one new collection id expected; got {new_ids}"
     finally:
         rest_client.delete_collection(name)
 
@@ -211,13 +211,13 @@ def test_get_schema_round_trips(rest_client) -> None:
         except Exception as exc:  # noqa: BLE001
             pytest.skip(f"get_schema unimplemented in embedded mode: {exc!r}")
             return
-        assert isinstance(schema, SchemaResponse), (
-            f"get_schema must return a SchemaResponse, got {type(schema)}"
-        )
+        assert isinstance(
+            schema, SchemaResponse
+        ), f"get_schema must return a SchemaResponse, got {type(schema)}"
         assert schema.schema_ is not None, "schema body must be present"
-        assert isinstance(schema.schema_.columns, list), (
-            "schema must expose a columns list"
-        )
+        assert isinstance(
+            schema.schema_.columns, list
+        ), "schema must expose a columns list"
         assert schema.collection_id, "schema must carry a non-empty collection_id"
     finally:
         try:
@@ -256,9 +256,9 @@ def test_update_schema_returns_response_or_documented_error(rest_client) -> None
                 f"update_schema unimplemented/rejected in embedded mode: {exc!r}"
             )
             return
-        assert isinstance(resp, UpdateSchemaResponse), (
-            f"update_schema must return an UpdateSchemaResponse, got {type(resp)}"
-        )
+        assert isinstance(
+            resp, UpdateSchemaResponse
+        ), f"update_schema must return an UpdateSchemaResponse, got {type(resp)}"
         assert resp.schema_id, "update response must carry a new schema_id"
     finally:
         try:
@@ -308,7 +308,9 @@ def test_delete_removes_from_raw_list(rest_client) -> None:
     _make_collection(rest_client, name)
     after_names, after_ids = _raw_list_names_and_ids(rest_client)
     new_ids = after_ids - before_ids
-    assert new_ids, f"create must introduce a new list id; before={before_ids} after={after_ids}"
+    assert (
+        new_ids
+    ), f"create must introduce a new list id; before={before_ids} after={after_ids}"
 
     assert rest_client.delete_collection(name) is True
 
@@ -328,8 +330,7 @@ def test_get_missing_collection_returns_stub_or_raises(rest_client) -> None:
     """
     missing = f"definitely_not_a_real_collection_{uuid.uuid4().hex[:8]}"
     assert _collection_is_gone(rest_client, missing), (
-        "get_collection on a never-created id must not return a populated "
-        "collection"
+        "get_collection on a never-created id must not return a populated " "collection"
     )
 
 
@@ -378,6 +379,6 @@ def test_full_lifecycle_create_get_delete(rest_client) -> None:
         assert rest_client.delete_collection(name) is True
 
     # VERIFY GONE — stub (dimension 0) or documented error.
-    assert _collection_is_gone(rest_client, name), (
-        "deleted collection must not return a populated collection"
-    )
+    assert _collection_is_gone(
+        rest_client, name
+    ), "deleted collection must not return a populated collection"

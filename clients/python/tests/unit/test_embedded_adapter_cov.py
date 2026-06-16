@@ -114,7 +114,10 @@ def test_create_collection_positional_with_config():
     db.create_collection = lambda *a, **k: calls.append((a, k))
     a = make_adapter(db)
     cfg = CollectionConfig(
-        name=COLL, dimension=8, distance_metric=DistanceMetric.COSINE, storage_engine="sst"
+        name=COLL,
+        dimension=8,
+        distance_metric=DistanceMetric.COSINE,
+        storage_engine="sst",
     )
     coll = a.create_collection(COLL, config=cfg)
     assert coll.name == COLL
@@ -581,7 +584,9 @@ def test_update_vector_metadata_native():
 
 def test_update_vector_metadata_fallback_found():
     db = FakeDB()
-    db.get_vectors = lambda cid, ids: [{"id": "a", "vector": [1.0], "metadata": {"old": 1}}]
+    db.get_vectors = lambda cid, ids: [
+        {"id": "a", "vector": [1.0], "metadata": {"old": 1}}
+    ]
     db.upsert_numpy = lambda cid, ids, arr, meta: len(ids)
     a = make_adapter(db)
     resp = a.update_vector_metadata(COLL, "a", {"new": 2})
@@ -622,7 +627,9 @@ def test_search_numpy_tuples():
         ("b", 0.5),
     ]
     a = make_adapter(db)
-    out = a.search(COLL, [1.0, 2.0], top_k=2, include_vectors=True, include_metadata=True)
+    out = a.search(
+        COLL, [1.0, 2.0], top_k=2, include_vectors=True, include_metadata=True
+    )
     assert len(out) == 2
     assert out[0].id == "a"
     assert out[0].score == 0.9
@@ -1060,7 +1067,9 @@ def test_insert_document_vector_fallback():
     db = FakeDB()  # no insert_document
     db.insert_numpy = lambda cid, ids, arr, meta: len(ids)
     a = make_adapter(db)
-    res = a.insert_document("docscoll", {"text": "hi", "metadata": {"k": "v"}}, id="doc1")
+    res = a.insert_document(
+        "docscoll", {"text": "hi", "metadata": {"k": "v"}}, id="doc1"
+    )
     assert res["implementation"] == "vector_fallback"
     assert res["id"] == "doc1"
 
@@ -1090,7 +1099,9 @@ def test_get_document_vector_fallback_with_json_source():
 
     db = FakeDB()
     db.get_vectors = lambda cid, ids, **k: [
-        VectorRecord(id="d1", vector=[0.0], source=json.dumps({"a": 1}), metadata={"m": 1})
+        VectorRecord(
+            id="d1", vector=[0.0], source=json.dumps({"a": 1}), metadata={"m": 1}
+        )
     ]
     a = make_adapter(db)
     res = a.get_document("docscoll", "d1")

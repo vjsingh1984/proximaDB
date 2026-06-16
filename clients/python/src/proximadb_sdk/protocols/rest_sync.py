@@ -2962,9 +2962,7 @@ class ProximaDBClient:
         graph_id: str = "default",
     ) -> dict[str, Any] | None:
         """Get a graph node by ID via REST."""
-        response = self._http_client.get(
-            f"/api/v2/graphs/{graph_id}/nodes/{node_id}"
-        )
+        response = self._http_client.get(f"/api/v2/graphs/{graph_id}/nodes/{node_id}")
         response.raise_for_status()
         result = response.json()
         return result.get("data", result)

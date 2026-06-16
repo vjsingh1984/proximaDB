@@ -13,7 +13,6 @@ import pytest
 from proximadb_sdk import embedded_multi
 from proximadb_sdk.embedded_multi import EmbeddedMultiModelProvider
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------

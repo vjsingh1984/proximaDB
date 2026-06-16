@@ -17,7 +17,6 @@ from proximadb_sdk.search_utils import (
 )
 from proximadb_sdk.v1 import types_pb2, vector_types_pb2
 
-
 # ---------------------------------------------------------------------------
 # build_search_optimization_rest
 # ---------------------------------------------------------------------------

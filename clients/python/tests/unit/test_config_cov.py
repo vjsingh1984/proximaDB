@@ -265,19 +265,31 @@ def test_host_port_default_https():
 # should_use_grpc
 # --------------------------------------------------------------------------- #
 def test_should_use_grpc_grpc():
-    assert ClientConfig(url="http://l:5678", protocol=Protocol.GRPC).should_use_grpc() is True
+    assert (
+        ClientConfig(url="http://l:5678", protocol=Protocol.GRPC).should_use_grpc()
+        is True
+    )
 
 
 def test_should_use_grpc_embedded():
-    assert ClientConfig(url="http://l:5678", protocol=Protocol.EMBEDDED).should_use_grpc() is False
+    assert (
+        ClientConfig(url="http://l:5678", protocol=Protocol.EMBEDDED).should_use_grpc()
+        is False
+    )
 
 
 def test_should_use_grpc_rest():
-    assert ClientConfig(url="http://l:5678", protocol=Protocol.REST).should_use_grpc() is False
+    assert (
+        ClientConfig(url="http://l:5678", protocol=Protocol.REST).should_use_grpc()
+        is False
+    )
 
 
 def test_should_use_grpc_auto():
-    assert ClientConfig(url="http://l:5678", protocol=Protocol.AUTO).should_use_grpc() is True
+    assert (
+        ClientConfig(url="http://l:5678", protocol=Protocol.AUTO).should_use_grpc()
+        is True
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -332,7 +344,10 @@ def test_protocol_url_multi_auto_https_default_port():
 
 def test_is_unified_mode():
     assert ClientConfig(url="http://l:5678").is_unified_mode() is True
-    assert ClientConfig(url="http://l:5678", port_mode=PortMode.MULTI).is_unified_mode() is False
+    assert (
+        ClientConfig(url="http://l:5678", port_mode=PortMode.MULTI).is_unified_mode()
+        is False
+    )
 
 
 # --------------------------------------------------------------------------- #

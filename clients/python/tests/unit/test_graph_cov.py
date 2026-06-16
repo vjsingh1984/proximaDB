@@ -21,7 +21,6 @@ from proximadb_sdk.graph import (
     create_graph_api,
 )
 
-
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -46,9 +45,7 @@ def test_graphedge_to_dict_with_and_without_weight():
     assert "weight" not in d
     assert d["from_node"] == "a" and d["to_node"] == "b"
 
-    e2 = GraphEdge(
-        id="e2", from_node="a", to_node="b", edge_type="CALLS", weight=3.5
-    )
+    e2 = GraphEdge(id="e2", from_node="a", to_node="b", edge_type="CALLS", weight=3.5)
     assert e2.to_dict()["weight"] == 3.5
 
 
@@ -104,8 +101,13 @@ def test_normalize_edge_variants():
     assert ProximaDBGraph._normalize_edge(ge) is ge
 
     from_dict = ProximaDBGraph._normalize_edge(
-        {"id": "e", "from_node_id": "a", "to_node_id": "b", "type": "CALLS",
-         "weight": 2}
+        {
+            "id": "e",
+            "from_node_id": "a",
+            "to_node_id": "b",
+            "type": "CALLS",
+            "weight": 2,
+        }
     )
     assert from_dict.from_node == "a" and from_dict.edge_type == "CALLS"
     assert from_dict.weight == 2
@@ -248,8 +250,12 @@ def test_query_cypher_with_traversal():
     client.traverse_graph.return_value = {
         "nodes": [{"id": "func:parse", "labels": ["Function"], "properties": {}}],
         "edges": [
-            {"id": "e", "from_node_id": "func:main", "to_node_id": "func:parse",
-             "edge_type": "CALLS"}
+            {
+                "id": "e",
+                "from_node_id": "func:main",
+                "to_node_id": "func:parse",
+                "edge_type": "CALLS",
+            }
         ],
     }
     g = ProximaDBGraph(client, "gid")
@@ -372,8 +378,12 @@ def test_get_incoming_edges_scan_fallback():
     def outgoing(node_id, edge_types=None, graph_id=None):
         if node_id == "a":
             return [
-                {"id": "e1", "from_node_id": "a", "to_node_id": "b",
-                 "edge_type": "CALLS"}
+                {
+                    "id": "e1",
+                    "from_node_id": "a",
+                    "to_node_id": "b",
+                    "edge_type": "CALLS",
+                }
             ]
         return []
 
@@ -393,11 +403,17 @@ def test_get_incoming_edges_scan_fallback():
 def test_find_callers_depth_one():
     client = MagicMock()
     client.get_incoming_edges.return_value = [
-        {"id": "e", "from_node_id": "caller", "to_node_id": "target",
-         "edge_type": "CALLS"}
+        {
+            "id": "e",
+            "from_node_id": "caller",
+            "to_node_id": "target",
+            "edge_type": "CALLS",
+        }
     ]
     client.get_node.return_value = {
-        "id": "caller", "labels": ["Function"], "properties": {"name": "c"}
+        "id": "caller",
+        "labels": ["Function"],
+        "properties": {"name": "c"},
     }
     g = ProximaDBGraph(client, "gid")
     callers = g.find_callers("target")
@@ -409,11 +425,23 @@ def test_find_callers_multi_depth():
 
     def incoming(node_id, edge_types=None, graph_id=None):
         if node_id == "target":
-            return [{"id": "e1", "from_node_id": "c1", "to_node_id": "target",
-                     "edge_type": "CALLS"}]
+            return [
+                {
+                    "id": "e1",
+                    "from_node_id": "c1",
+                    "to_node_id": "target",
+                    "edge_type": "CALLS",
+                }
+            ]
         if node_id == "c1":
-            return [{"id": "e2", "from_node_id": "c2", "to_node_id": "c1",
-                     "edge_type": "CALLS"}]
+            return [
+                {
+                    "id": "e2",
+                    "from_node_id": "c2",
+                    "to_node_id": "c1",
+                    "edge_type": "CALLS",
+                }
+            ]
         return []
 
     client.get_incoming_edges.side_effect = incoming
@@ -496,10 +524,16 @@ def test_find_nodes_filters():
     client = MagicMock()
     client.query_nodes.return_value = {
         "nodes": [
-            {"id": "a", "labels": ["Function"],
-             "properties": {"name": "main", "file": "x.py"}},
-            {"id": "b", "labels": ["Function"],
-             "properties": {"name": "main", "file": "other.py"}},
+            {
+                "id": "a",
+                "labels": ["Function"],
+                "properties": {"name": "main", "file": "x.py"},
+            },
+            {
+                "id": "b",
+                "labels": ["Function"],
+                "properties": {"name": "main", "file": "other.py"},
+            },
         ]
     }
     g = ProximaDBGraph(client, "gid")
@@ -528,15 +562,31 @@ def test_search_symbols_ranking_and_type_filter():
     client = MagicMock()
     client.query_nodes.return_value = {
         "nodes": [
-            {"id": "exact", "labels": ["Function"],
-             "properties": {"name": "parse", "file": "a.py", "line": 1}},
-            {"id": "prefix", "labels": ["Function"],
-             "properties": {"name": "parser_helper", "file": "b.py", "line": 2}},
-            {"id": "sig", "labels": ["Function"],
-             "properties": {"name": "x", "signature": "def parse_thing()",
-                            "file": "c.py", "line": 3}},
-            {"id": "wrongtype", "labels": ["Class"],
-             "properties": {"name": "parse", "file": "d.py", "line": 4}},
+            {
+                "id": "exact",
+                "labels": ["Function"],
+                "properties": {"name": "parse", "file": "a.py", "line": 1},
+            },
+            {
+                "id": "prefix",
+                "labels": ["Function"],
+                "properties": {"name": "parser_helper", "file": "b.py", "line": 2},
+            },
+            {
+                "id": "sig",
+                "labels": ["Function"],
+                "properties": {
+                    "name": "x",
+                    "signature": "def parse_thing()",
+                    "file": "c.py",
+                    "line": 3,
+                },
+            },
+            {
+                "id": "wrongtype",
+                "labels": ["Class"],
+                "properties": {"name": "parse", "file": "d.py", "line": 4},
+            },
             {"id": "nohay", "labels": ["Function"], "properties": {}},
         ]
     }
@@ -552,10 +602,16 @@ def test_search_symbols_qualified_and_docstring_paths():
     client = MagicMock()
     client.query_nodes.return_value = {
         "nodes": [
-            {"id": "qn", "labels": ["F"],
-             "properties": {"qualified_name": "pkg.parse", "name": "z"}},
-            {"id": "doc", "labels": ["F"],
-             "properties": {"name": "y", "docstring": "this will parse text"}},
+            {
+                "id": "qn",
+                "labels": ["F"],
+                "properties": {"qualified_name": "pkg.parse", "name": "z"},
+            },
+            {
+                "id": "doc",
+                "labels": ["F"],
+                "properties": {"name": "y", "docstring": "this will parse text"},
+            },
         ]
     }
     g = ProximaDBGraph(client, "gid")

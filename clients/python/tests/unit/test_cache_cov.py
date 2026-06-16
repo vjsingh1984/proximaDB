@@ -512,9 +512,7 @@ def test_objectpool_release_full_pool_discards(no_cleanup_thread):
 
 
 def test_objectpool_release_no_metrics(no_cleanup_thread):
-    pool = ObjectPool(
-        factory=lambda c: object(), key_func=_key, enable_metrics=False
-    )
+    pool = ObjectPool(factory=lambda c: object(), key_func=_key, enable_metrics=False)
     assert pool.metrics is None
     cfg = _Cfg()
     obj = pool.acquire(cfg)
@@ -547,9 +545,7 @@ def test_objectpool_get_stats_with_metrics(no_cleanup_thread):
 
 
 def test_objectpool_get_stats_no_metrics(no_cleanup_thread):
-    pool = ObjectPool(
-        factory=lambda c: object(), key_func=_key, enable_metrics=False
-    )
+    pool = ObjectPool(factory=lambda c: object(), key_func=_key, enable_metrics=False)
     pool.release(object(), _Cfg())
     stats = pool.get_stats()
     assert "hit_rate_percent" not in stats
@@ -563,9 +559,7 @@ def test_objectpool_get_stats_zero_acquisitions_hit_rate(no_cleanup_thread):
 
 
 def test_objectpool_cleanup_idle_pools_removes_stale(no_cleanup_thread):
-    pool = ObjectPool(
-        factory=lambda c: object(), key_func=_key, max_idle_time=10.0
-    )
+    pool = ObjectPool(factory=lambda c: object(), key_func=_key, max_idle_time=10.0)
     cfg = _Cfg()
     pool.acquire(cfg)  # records last_access
     key = _key(cfg)
@@ -579,9 +573,7 @@ def test_objectpool_cleanup_idle_pools_removes_stale(no_cleanup_thread):
 
 
 def test_objectpool_cleanup_idle_pools_keeps_fresh(no_cleanup_thread):
-    pool = ObjectPool(
-        factory=lambda c: object(), key_func=_key, max_idle_time=10000.0
-    )
+    pool = ObjectPool(factory=lambda c: object(), key_func=_key, max_idle_time=10000.0)
     cfg = _Cfg()
     pool.acquire(cfg)
     key = _key(cfg)

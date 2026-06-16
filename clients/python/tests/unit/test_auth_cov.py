@@ -25,7 +25,6 @@ from proximadb_sdk.auth import (
     create_oauth2_auth,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fake transport
 # ---------------------------------------------------------------------------
@@ -461,14 +460,18 @@ def test_headers_triggers_refresh_when_near_expiry():
     def handler(url, kw):
         calls["n"] += 1
         if url.endswith("/auth/validate"):
-            return FakeResponse(200, {"user_id": "u", "permissions": [], "expires_at": near})
+            return FakeResponse(
+                200, {"user_id": "u", "permissions": [], "expires_at": near}
+            )
         if url.endswith("/auth/refresh"):
             return FakeResponse(
                 200,
                 {
                     "access_token": "newtok",
                     "refresh_token": "newref",
-                    "expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+                    "expires_at": (
+                        datetime.now(timezone.utc) + timedelta(hours=2)
+                    ).isoformat(),
                 },
             )
         return FakeResponse(200, {})
@@ -511,7 +514,9 @@ def test_should_refresh_no_auth_result():
 
 
 def test_should_refresh_true_near_expiry():
-    a = make_auth(AuthConfig(enabled=True, auto_refresh_jwt=True, refresh_threshold_minutes=5))
+    a = make_auth(
+        AuthConfig(enabled=True, auto_refresh_jwt=True, refresh_threshold_minutes=5)
+    )
     a.auth_result = AuthResult(
         user_id="u",
         token_expires_at=datetime.now(timezone.utc) + timedelta(minutes=2),
@@ -520,7 +525,9 @@ def test_should_refresh_true_near_expiry():
 
 
 def test_should_refresh_false_far_expiry():
-    a = make_auth(AuthConfig(enabled=True, auto_refresh_jwt=True, refresh_threshold_minutes=5))
+    a = make_auth(
+        AuthConfig(enabled=True, auto_refresh_jwt=True, refresh_threshold_minutes=5)
+    )
     a.auth_result = AuthResult(
         user_id="u",
         token_expires_at=datetime.now(timezone.utc) + timedelta(hours=2),

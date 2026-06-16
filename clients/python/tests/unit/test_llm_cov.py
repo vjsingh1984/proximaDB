@@ -6,7 +6,7 @@
 import asyncio
 import sys
 import types
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -79,7 +79,10 @@ def test_embedding_config_defaults_and_dimension_inference():
     assert EmbeddingConfig(model_name="embed-english-v3.0").get_dimension() == 1024
     assert EmbeddingConfig(model_name="qwen3-embedding:8b").get_dimension() == 4096
     assert EmbeddingConfig(model_name="totally-unknown").get_dimension() == 384
-    assert EmbeddingConfig(model_name="all-mpnet-base-v2", dimension=99).get_dimension() == 99
+    assert (
+        EmbeddingConfig(model_name="all-mpnet-base-v2", dimension=99).get_dimension()
+        == 99
+    )
 
 
 def test_enum_values():
@@ -216,7 +219,13 @@ def test_lookup_hit_fresh():
             "tokens_used": 5,
             "hit_count": 2,
             "sources": [
-                {"id": "x", "title": "Tx", "url": "ux", "relevance": 0.5, "snippet": "sn"}
+                {
+                    "id": "x",
+                    "title": "Tx",
+                    "url": "ux",
+                    "relevance": 0.5,
+                    "snippet": "sn",
+                }
             ],
         },
     }
@@ -453,7 +462,9 @@ def stub_heavy_deps():
 
 
 def test_embedding_sentence_transformers_fallback(stub_heavy_deps):
-    svc = EmbeddingService(EmbeddingConfig(provider=EmbeddingProvider.SENTENCE_TRANSFORMERS))
+    svc = EmbeddingService(
+        EmbeddingConfig(provider=EmbeddingProvider.SENTENCE_TRANSFORMERS)
+    )
     run(svc.initialize())
     assert svc._use_victor is False
     assert run(svc.embed_text("hi")) == [0.1, 0.2]
@@ -486,15 +497,19 @@ def test_embedding_ollama_fallback(stub_heavy_deps):
 
 
 def test_embedding_batch_empty(stub_heavy_deps):
-    svc = EmbeddingService(EmbeddingConfig(provider=EmbeddingProvider.SENTENCE_TRANSFORMERS))
+    svc = EmbeddingService(
+        EmbeddingConfig(provider=EmbeddingProvider.SENTENCE_TRANSFORMERS)
+    )
     run(svc.initialize())
     assert run(svc.embed_batch([])) == []
 
 
 def test_embedding_uses_victor_when_available():
     """Drive the _use_victor=True branches by providing victor modules."""
-    saved = {k: sys.modules.get(k) for k in [
-        "victor", "victor.embeddings", "victor.embeddings.service"]}
+    saved = {
+        k: sys.modules.get(k)
+        for k in ["victor", "victor.embeddings", "victor.embeddings.service"]
+    }
     victor = types.ModuleType("victor")
     emb = types.ModuleType("victor.embeddings")
     svc_mod = types.ModuleType("victor.embeddings.service")
@@ -548,7 +563,9 @@ def test_embedding_properties_and_close(stub_heavy_deps):
 
 
 def test_embedding_unknown_provider_raises_in_embed(stub_heavy_deps):
-    svc = EmbeddingService(EmbeddingConfig(provider=EmbeddingProvider.SENTENCE_TRANSFORMERS))
+    svc = EmbeddingService(
+        EmbeddingConfig(provider=EmbeddingProvider.SENTENCE_TRANSFORMERS)
+    )
     run(svc.initialize())
     svc.config.provider = "bogus"
     with pytest.raises(ValueError):
@@ -583,7 +600,9 @@ def test_rag_index_documents(stub_heavy_deps):
     client = FakeClient()
     pipe = RAGPipeline(client, LLMConfig())
     docs = [
-        Document(id="1", title="A", content="content one", source="f1", metadata={"k": "v"}),
+        Document(
+            id="1", title="A", content="content one", source="f1", metadata={"k": "v"}
+        ),
         Document(id="2", title="B", content="content two", source="f2"),
     ]
     n = run(pipe.index_documents("kb", docs))
@@ -622,7 +641,11 @@ def test_rag_query_full_fallback_llm(stub_heavy_deps):
         {
             "id": "d1",
             "distance": 0.1,
-            "metadata": {"title": "Doc1", "content": "proxima is a vector database", "source": "f1"},
+            "metadata": {
+                "title": "Doc1",
+                "content": "proxima is a vector database",
+                "source": "f1",
+            },
         }
     ]
     client = FakeClient(search_results=search_results)
@@ -644,7 +667,8 @@ def test_rag_query_skip_cache_and_top_k(stub_heavy_deps):
     assert resp.sources == []
     assert resp.confidence == 0.0
     assert not any(
-        c[0] == "search" and c[1].get("collection") == "_rag_cache" for c in client.calls
+        c[0] == "search" and c[1].get("collection") == "_rag_cache"
+        for c in client.calls
     )
 
 
@@ -707,7 +731,11 @@ def test_rag_query_with_victor_llm(stub_heavy_deps):
     sys.modules["victor.providers.registry"] = registry_mod
 
     search_results = [
-        {"id": "d1", "distance": 0.2, "metadata": {"title": "D", "content": "ctx", "source": "s"}}
+        {
+            "id": "d1",
+            "distance": 0.2,
+            "metadata": {"title": "D", "content": "ctx", "source": "s"},
+        }
     ]
     client = FakeClient(search_results=search_results)
     pipe = RAGPipeline(client, LLMConfig())

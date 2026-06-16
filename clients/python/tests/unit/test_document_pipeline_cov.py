@@ -18,7 +18,6 @@ from proximadb_sdk.document_processor import (
     VectorRecord,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -43,9 +42,11 @@ class FakeProcessor:
 
     def __init__(self, name="fake", chunks=None, raise_on_process=False):
         self._name = name
-        self._chunks = chunks if chunks is not None else [
-            ProcessedChunk(chunk_id="c0", text="hello", start_pos=0, end_pos=5)
-        ]
+        self._chunks = (
+            chunks
+            if chunks is not None
+            else [ProcessedChunk(chunk_id="c0", text="hello", start_pos=0, end_pos=5)]
+        )
         self._raise = raise_on_process
 
     @property
@@ -148,7 +149,9 @@ def test_batch_result_counts_and_vectors():
             VectorRecord(id="1", vector=[0.1], metadata={}, text="t", source_id="a")
         ],
     )
-    bad = ProcessingResult(success=False, source_id="b", document_type=DocumentType.TEXT)
+    bad = ProcessingResult(
+        success=False, source_id="b", document_type=DocumentType.TEXT
+    )
     br = dp.BatchResult(results=[ok, bad])
     assert br.success_count == 1
     assert br.failure_count == 1

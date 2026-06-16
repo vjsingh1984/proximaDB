@@ -77,7 +77,9 @@ def _install_langchain_stubs() -> None:
     tools_mod = types.ModuleType("langchain_core.tools")
 
     class BaseTool:
-        def __init__(self, name: str = "", description: str = "", retriever: Any = None):
+        def __init__(
+            self, name: str = "", description: str = "", retriever: Any = None
+        ):
             self.name = name
             self.description = description
             self.retriever = retriever
@@ -164,8 +166,14 @@ class FakeClient:
         self.inserted.append((collection_name, records))
         return {"inserted": len(records or [])}
 
-    def search(self, collection_name, vector=None, top_k=None, metadata_filter=None,
-               include_vectors=None):
+    def search(
+        self,
+        collection_name,
+        vector=None,
+        top_k=None,
+        metadata_filter=None,
+        include_vectors=None,
+    ):
         self.searches.append(
             dict(
                 collection_name=collection_name,
@@ -288,8 +296,12 @@ def test_langchain_from_texts_creates_store():
     lc = _import_langchain()
     client = FakeClient()
     store = lc.ProximaDBVectorStore.from_texts(
-        ["a", "b"], FakeEmbeddings(), metadatas=[{}, {}], client=client,
-        collection_name="c", text_key="text",
+        ["a", "b"],
+        FakeEmbeddings(),
+        metadatas=[{}, {}],
+        client=client,
+        collection_name="c",
+        text_key="text",
     )
     assert isinstance(store, lc.ProximaDBVectorStore)
     assert len(client.inserted) == 1
@@ -300,7 +312,9 @@ def test_langchain_from_documents():
     Document = sys.modules["langchain_core.documents"].Document
     client = FakeClient()
     docs = [Document(page_content="x", metadata={"a": 1})]
-    store = lc.ProximaDBVectorStore.from_documents(docs, FakeEmbeddings(), client=client)
+    store = lc.ProximaDBVectorStore.from_documents(
+        docs, FakeEmbeddings(), client=client
+    )
     assert isinstance(store, lc.ProximaDBVectorStore)
 
 

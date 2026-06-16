@@ -8,11 +8,13 @@ from typing import Any
 import pytest
 
 from proximadb_sdk.chunking import (
+    create_enhanced_semantic_chunker,  # Alias for semantic chunker
+)
+from proximadb_sdk.chunking import (
     ChunkingConfig,
     ChunkingStrategy,
     TextChunk,
     TextChunker,
-    create_enhanced_semantic_chunker,  # Alias for semantic chunker
 )
 
 # Note: EnhancedSemanticChunker functionality has been consolidated into chunking strategies

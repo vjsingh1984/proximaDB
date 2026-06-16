@@ -344,7 +344,12 @@ def test_reranker_context_intents_and_temporal_historical():
     now_ns = int(time.time() * 1e9)
     records = [
         {"id": "a", "score": 0.95, "_source_type": "vector", "timestamp": now_ns},
-        {"id": "b", "score": 0.5, "_source_type": "graph", "created_at": now_ns - 10**12},
+        {
+            "id": "b",
+            "score": 0.5,
+            "_source_type": "graph",
+            "created_at": now_ns - 10**12,
+        },
         {"id": "c", "score": 0.5, "_source_type": "logs"},
     ]
     for intent in (
@@ -555,7 +560,9 @@ def test_executor_apply_joins_inner_merges():
     ex = MultiModalQueryExecutor(_FakeClient())
     left = [{"id": "1", "a": 1}, {"id": "2"}]
     right = [{"id": "1", "b": 2}]
-    out = ex._apply_joins([left, right], [{"join_type": "inner", "left_field": "id", "right_field": "id"}])
+    out = ex._apply_joins(
+        [left, right], [{"join_type": "inner", "left_field": "id", "right_field": "id"}]
+    )
     assert out[0][0]["a"] == 1 and out[0][0]["b"] == 2
 
 
@@ -620,7 +627,10 @@ def test_fusion_features_to_flat_vector():
 def test_feature_extractor_extract():
     fe = FeatureExtractor(num_features=8)
     results = [
-        {"source": "vector", "records": [{"id": "1", "score": 0.9}, {"id": "2", "score": 0.5}]},
+        {
+            "source": "vector",
+            "records": [{"id": "1", "score": 0.9}, {"id": "2", "score": 0.5}],
+        },
         {"source": "document", "records": [{"id": "2", "score": 0.8}]},
         {"source": "graph", "records": []},
         {"source": "other", "records": [{"id": "3"}]},
@@ -657,8 +667,14 @@ def test_learned_fusion_fuse_empty_and_single():
 def test_learned_fusion_fuse_untrained_rrf_fallback():
     lf = LearnedFusion()
     results = [
-        {"source": "vector", "records": [{"id": "1", "score": 0.9}, {"id": "2", "score": 0.4}]},
-        {"source": "document", "records": [{"id": "2", "score": 0.8}, {"id": "3", "score": 0.1}]},
+        {
+            "source": "vector",
+            "records": [{"id": "1", "score": 0.9}, {"id": "2", "score": 0.4}],
+        },
+        {
+            "source": "document",
+            "records": [{"id": "2", "score": 0.8}, {"id": "3", "score": 0.1}],
+        },
     ]
     fused = lf.fuse(results)
     assert all("_fusion_score" in r for r in fused)
@@ -677,10 +693,12 @@ def test_learned_fusion_record_feedback_and_train_linear():
         feats, FeedbackSignal(FeedbackType.CLICK, record_id="r", position=0)
     )
     lf.record_feedback(
-        feats, FeedbackSignal(FeedbackType.RELEVANCE_JUDGMENT, record_id="r", relevant=True)
+        feats,
+        FeedbackSignal(FeedbackType.RELEVANCE_JUDGMENT, record_id="r", relevant=True),
     )
     lf.record_feedback(
-        feats, FeedbackSignal(FeedbackType.RELEVANCE_JUDGMENT, record_id="r", relevant=False)
+        feats,
+        FeedbackSignal(FeedbackType.RELEVANCE_JUDGMENT, record_id="r", relevant=False),
     )
     assert lf.training_buffer_size == 3
     metrics = lf.train()
@@ -703,7 +721,9 @@ def test_learned_fusion_gradient_boosting_train_and_predict():
     )
     lf = LearnedFusion(cfg)
     for i in range(4):
-        feats = FusionFeatures(query_features=[float(i), 0.5], interaction_features=[0.1])
+        feats = FusionFeatures(
+            query_features=[float(i), 0.5], interaction_features=[0.1]
+        )
         lf.add_training_sample(
             TrainingSample(features=feats, target_scores={"r": float(i % 2)})
         )
@@ -768,7 +788,12 @@ def test_learned_fusion_online_learning_triggers_train():
 
 def test_learned_fusion_stump_predict_branches():
     lf = LearnedFusion()
-    stump = {"feature_index": 0, "threshold": 1.0, "left_value": -1.0, "right_value": 2.0}
+    stump = {
+        "feature_index": 0,
+        "threshold": 1.0,
+        "left_value": -1.0,
+        "right_value": 2.0,
+    }
     assert lf._stump_predict(stump, [0.5]) == -1.0
     assert lf._stump_predict(stump, [5.0]) == 2.0
     assert lf._stump_predict(stump, []) == -1.0

@@ -22,15 +22,15 @@ import pytest
 # ---------------------------------------------------------------------------
 # rest_async.ProximaDBAsyncClient
 # ---------------------------------------------------------------------------
-from proximadb_sdk.protocols import rest_async
 from proximadb_sdk.protocols import connection_pools as cp
+from proximadb_sdk.protocols import rest_async
 from proximadb_sdk.protocols.connection_pools import (
+    GrpcChannelContext,
+    GrpcChannelFactory,
+    GrpcConnectionPool,
     PoolHealth,
     PoolMetrics,
-    GrpcChannelFactory,
-    GrpcChannelContext,
     RestClientContext,
-    GrpcConnectionPool,
     RestConnectionPool,
 )
 
@@ -73,9 +73,7 @@ def async_client(monkeypatch):
     fake = _FakeAsyncClient()
     # Patch the httpx.AsyncClient used inside rest_async so __init__ never opens
     # a real transport.
-    monkeypatch.setattr(
-        rest_async.httpx, "AsyncClient", lambda *a, **k: fake
-    )
+    monkeypatch.setattr(rest_async.httpx, "AsyncClient", lambda *a, **k: fake)
     client = rest_async.ProximaDBAsyncClient(url="http://testserver:5678/")
     # client._client is the fake instance
     return client, fake
@@ -252,9 +250,7 @@ def test_grpc_async_client_construction_warns():
         args, kwargs = parent_init.call_args
         assert args[0] == "localhost:5679"
         assert kwargs == {"foo": "bar"}
-        assert any(
-            issubclass(w.category, DeprecationWarning) for w in caught
-        )
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
 # ---------------------------------------------------------------------------
@@ -292,18 +288,14 @@ def test_grpc_factory_channel_options_with_compression():
 def test_grpc_factory_create_insecure(monkeypatch):
     f = GrpcChannelFactory(endpoint="localhost:5679")
     sentinel = object()
-    monkeypatch.setattr(
-        cp.grpc, "insecure_channel", lambda ep, options: sentinel
-    )
+    monkeypatch.setattr(cp.grpc, "insecure_channel", lambda ep, options: sentinel)
     assert f.create() is sentinel
 
 
 def test_grpc_factory_create_secure(monkeypatch):
     f = GrpcChannelFactory(endpoint="localhost:5679", use_tls=True)
     sentinel = object()
-    monkeypatch.setattr(
-        cp.grpc, "ssl_channel_credentials", lambda: "creds"
-    )
+    monkeypatch.setattr(cp.grpc, "ssl_channel_credentials", lambda: "creds")
     captured = {}
 
     def fake_secure(ep, creds, options):
@@ -328,9 +320,7 @@ def test_grpc_factory_validate_ok(monkeypatch):
     f = GrpcChannelFactory(endpoint="h:1")
     fake_future = MagicMock()
     fake_future.result.return_value = None
-    monkeypatch.setattr(
-        cp.grpc, "channel_ready_future", lambda ch: fake_future
-    )
+    monkeypatch.setattr(cp.grpc, "channel_ready_future", lambda ch: fake_future)
     assert f.validate(MagicMock()) is True
 
 
@@ -574,7 +564,9 @@ class _FakeHttpxClient:
 def rest_pool(monkeypatch):
     _FakeHttpxClient.instances = []
     monkeypatch.setattr(cp.httpx, "Client", _FakeHttpxClient)
-    pool = RestConnectionPool(base_url="http://testserver:5678", pool_size=4, timeout=15.0)
+    pool = RestConnectionPool(
+        base_url="http://testserver:5678", pool_size=4, timeout=15.0
+    )
     return pool
 
 

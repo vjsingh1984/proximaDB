@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 from proximadb_sdk.document import (
     CompressionAlgorithm,
@@ -175,8 +175,18 @@ def test_filter_all_operators():
     d = f.to_dict()
     ops = [c["op"] for c in d["conditions"]]
     assert ops == [
-        "eq", "ne", "gt", "gte", "lt", "lte",
-        "contains", "fulltext", "starts_with", "ends_with", "in", "exists",
+        "eq",
+        "ne",
+        "gt",
+        "gte",
+        "lt",
+        "lte",
+        "contains",
+        "fulltext",
+        "starts_with",
+        "ends_with",
+        "in",
+        "exists",
     ]
     assert d["logic"] == "AND"
 
@@ -305,11 +315,15 @@ def test_matches_condition_every_op():
     assert repo._matches_condition(doc, {"path": "n", "op": "lt", "value": 9})
     assert repo._matches_condition(doc, {"path": "n", "op": "lte", "value": 5})
     assert repo._matches_condition(doc, {"path": "s", "op": "contains", "value": "ELL"})
-    assert repo._matches_condition(doc, {"path": "s", "op": "starts_with", "value": "he"})
+    assert repo._matches_condition(
+        doc, {"path": "s", "op": "starts_with", "value": "he"}
+    )
     assert repo._matches_condition(doc, {"path": "s", "op": "ends_with", "value": "lo"})
     assert repo._matches_condition(doc, {"path": "n", "op": "in", "value": [5, 6]})
     assert repo._matches_condition(doc, {"path": "n", "op": "exists"})
-    assert repo._matches_condition(doc, {"path": "s", "op": "fulltext", "value": "hello"})
+    assert repo._matches_condition(
+        doc, {"path": "s", "op": "fulltext", "value": "hello"}
+    )
     assert repo._matches_condition(doc, {"path": "n", "op": "weird", "value": 1})
     assert not repo._matches_condition(doc, {"path": "missing", "op": "gt", "value": 1})
 

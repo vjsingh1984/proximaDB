@@ -33,7 +33,6 @@ from proximadb_sdk.chunking_strategies.document_parsers import (
 )
 from proximadb_sdk.chunking_strategies.parser_utils import ParseError, ParserError
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -336,9 +335,7 @@ def test_objdump_analyze(tmp_path, monkeypatch):
                     "0000 DF *UND* 0000 printf\n0000 g DF .text 0000 exported_fn"
                 )
             if flag == "-h":
-                return FakeCompleted(
-                    "Idx Name Size VMA\n 0 .text 00001000 00000000\n"
-                )
+                return FakeCompleted("Idx Name Size VMA\n 0 .text 00001000 00000000\n")
         if tool == "strings":
             return FakeCompleted("alpha\nbeta\n\n")
         return FakeCompleted("")
@@ -822,7 +819,5 @@ def test_dataclasses_defaults():
     assert cfg.min_string_length == 4
     occfg = OCRConfig()
     assert occfg.language == "eng" and occfg.pdf_dpi == 300
-    res = OCRResult(
-        file_path="f", document_type=DocumentType.PDF, text="t", pages=[]
-    )
+    res = OCRResult(file_path="f", document_type=DocumentType.PDF, text="t", pages=[])
     assert res.confidence == 0.0 and res.language == "eng"

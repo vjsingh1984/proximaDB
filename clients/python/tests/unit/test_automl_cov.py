@@ -20,7 +20,6 @@ from proximadb_sdk.automl import (
     WorkloadType,
 )
 
-
 # --------------------------------------------------------------------------
 # Dataclasses / enums
 # --------------------------------------------------------------------------
@@ -251,14 +250,19 @@ def test_selector_get_engine_recommendation_swift_constraint():
 
 def test_infer_workload_type_branches():
     s = EngineSelector()
-    assert s._infer_workload_type(WorkloadCharacteristics(write_ratio=0.9)) == "write_heavy"
+    assert (
+        s._infer_workload_type(WorkloadCharacteristics(write_ratio=0.9))
+        == "write_heavy"
+    )
     assert (
         s._infer_workload_type(WorkloadCharacteristics(read_ratio=0.9, write_ratio=0.1))
         == "read_heavy"
     )
     assert (
         s._infer_workload_type(
-            WorkloadCharacteristics(read_ratio=0.5, write_ratio=0.5, query_complexity=0.9)
+            WorkloadCharacteristics(
+                read_ratio=0.5, write_ratio=0.5, query_complexity=0.9
+            )
         )
         == "analytics"
     )
@@ -329,7 +333,9 @@ def test_generate_config_helix_low_dim_scattered():
 def test_generate_config_viper_large_and_small():
     s = EngineSelector()
     big = s._generate_config(
-        "viper", s.ENGINE_PROFILES["viper"], WorkloadCharacteristics(vector_count=200000)
+        "viper",
+        s.ENGINE_PROFILES["viper"],
+        WorkloadCharacteristics(vector_count=200000),
     )
     assert big["row_group_size"] == 100000
     assert big["enable_statistics"] is True
@@ -363,19 +369,25 @@ def test_generate_config_swift_exact_search_branches():
 def test_generate_config_raptor_hot_blocks():
     s = EngineSelector()
     hot = s._generate_config(
-        "raptor", s.ENGINE_PROFILES["raptor"], WorkloadCharacteristics(hot_data_ratio=0.5)
+        "raptor",
+        s.ENGINE_PROFILES["raptor"],
+        WorkloadCharacteristics(hot_data_ratio=0.5),
     )
     assert hot["adaptive_pruning"] is True
     assert hot["cache_hot_blocks"] is True
     cold = s._generate_config(
-        "raptor", s.ENGINE_PROFILES["raptor"], WorkloadCharacteristics(hot_data_ratio=0.1)
+        "raptor",
+        s.ENGINE_PROFILES["raptor"],
+        WorkloadCharacteristics(hot_data_ratio=0.1),
     )
     assert cold["cache_hot_blocks"] is False
 
 
 def test_generate_config_nova_empty():
     s = EngineSelector()
-    cfg = s._generate_config("nova", s.ENGINE_PROFILES["nova"], WorkloadCharacteristics())
+    cfg = s._generate_config(
+        "nova", s.ENGINE_PROFILES["nova"], WorkloadCharacteristics()
+    )
     assert cfg == {}
 
 
@@ -395,7 +407,9 @@ def test_generate_reasoning_all_engines():
 
 def test_generate_reasoning_balanced_no_goal_suffix():
     s = EngineSelector()
-    r = s._generate_reasoning("nova", WorkloadCharacteristics(), OptimizationGoal.BALANCED)
+    r = s._generate_reasoning(
+        "nova", WorkloadCharacteristics(), OptimizationGoal.BALANCED
+    )
     assert "Optimized for" not in r
 
 
@@ -408,7 +422,13 @@ def test_optimizer_searchable_params():
     opt = HyperparameterOptimizer()
     params = opt._get_searchable_params()
     names = {p.name for p in params}
-    assert names == {"ef_search", "ef_construction", "m", "bloom_filter_fpp", "block_size"}
+    assert names == {
+        "ef_search",
+        "ef_construction",
+        "m",
+        "bloom_filter_fpp",
+        "block_size",
+    }
 
 
 def test_optimizer_optimize_heuristic_no_client():
@@ -484,7 +504,9 @@ def test_optimizer_evaluate_with_client_and_queries():
 
     opt = HyperparameterOptimizer(client=FakeClient())
     queries = [[0.1, 0.2], [0.3, 0.4]]
-    score = opt._evaluate_config("col", {"ef_search": 64}, OptimizationGoal.LATENCY, queries)
+    score = opt._evaluate_config(
+        "col", {"ef_search": 64}, OptimizationGoal.LATENCY, queries
+    )
     assert calls["n"] == 2
     assert score > 0
 

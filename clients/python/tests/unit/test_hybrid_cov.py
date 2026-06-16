@@ -8,11 +8,10 @@ backend is a MagicMock / hand fake.
 
 from __future__ import annotations
 
+import asyncio
 import warnings
 from datetime import datetime
 from unittest.mock import MagicMock
-
-import asyncio
 
 import pytest
 
@@ -57,7 +56,6 @@ from proximadb_sdk.hybrid import (
     create_hybrid_api,
 )
 
-
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -77,8 +75,9 @@ def test_enums_values():
 
 
 def test_vector_result_to_dict():
-    r = VectorSearchResult(id="a", score=0.9, distance=0.1, rank=2,
-                           metadata={"k": "v"}, collection="c")
+    r = VectorSearchResult(
+        id="a", score=0.9, distance=0.1, rank=2, metadata={"k": "v"}, collection="c"
+    )
     d = r.to_dict()
     assert d["id"] == "a"
     assert d["score"] == 0.9
@@ -87,9 +86,15 @@ def test_vector_result_to_dict():
 
 
 def test_graph_result_to_dict():
-    r = GraphSearchResult(node_id="n1", score=0.5, path=["a", "b"],
-                          properties={"p": 1}, labels=["L"], edges=[{"e": 1}],
-                          collection="g")
+    r = GraphSearchResult(
+        node_id="n1",
+        score=0.5,
+        path=["a", "b"],
+        properties={"p": 1},
+        labels=["L"],
+        edges=[{"e": 1}],
+        collection="g",
+    )
     d = r.to_dict()
     assert d["node_id"] == "n1"
     assert d["id"] == "n1"
@@ -98,8 +103,14 @@ def test_graph_result_to_dict():
 
 
 def test_document_result_to_dict():
-    r = DocumentSearchResult(id="d1", score=0.7, rank=1, highlight=["h"],
-                             document={"content": "x"}, metadata={"m": 1})
+    r = DocumentSearchResult(
+        id="d1",
+        score=0.7,
+        rank=1,
+        highlight=["h"],
+        document={"content": "x"},
+        metadata={"m": 1},
+    )
     d = r.to_dict()
     assert d["id"] == "d1"
     assert d["model"] == "document"
@@ -108,8 +119,14 @@ def test_document_result_to_dict():
 
 def test_timeseries_result_to_dict_with_and_without_ts():
     ts = datetime(2024, 1, 2, 3, 4, 5)
-    r = TimeSeriesResult(id="m", score=0.3, timestamp=ts,
-                         values={"v": 1}, tags={"t": "x"}, collection="tsc")
+    r = TimeSeriesResult(
+        id="m",
+        score=0.3,
+        timestamp=ts,
+        values={"v": 1},
+        tags={"t": "x"},
+        collection="tsc",
+    )
     d = r.to_dict()
     assert d["timestamp"] == ts.isoformat()
     assert d["model"] == "timeseries"
@@ -370,7 +387,9 @@ def test_hybrid_resolve_fusion_variants():
     assert isinstance(h._resolve_fusion(FusionStrategy.RRF), ReciprocalRankFusion)
     assert isinstance(h._resolve_fusion(FusionStrategy.WEIGHTED), WeightedFusion)
     assert isinstance(h._resolve_fusion(FusionStrategy.CASCADE), CascadeFusion)
-    assert isinstance(h._resolve_fusion(FusionStrategy.PROJECTION), ReciprocalRankFusion)
+    assert isinstance(
+        h._resolve_fusion(FusionStrategy.PROJECTION), ReciprocalRankFusion
+    )
     inst = WeightedFusion()
     assert h._resolve_fusion(inst) is inst
     assert isinstance(h._resolve_fusion(None), ReciprocalRankFusion)
@@ -440,7 +459,10 @@ def test_hybrid_search_text_path_default_collection():
     client.query_documents.return_value = {"documents": [{"id": "d1"}]}
     h = ProximaDBHybrid(client=client)
     h.search(text_query="q")
-    assert client.query_documents.call_args.kwargs["collection_name"] == "hybrid_collection"
+    assert (
+        client.query_documents.call_args.kwargs["collection_name"]
+        == "hybrid_collection"
+    )
 
 
 def test_hybrid_search_combined_vector_and_text():
@@ -521,13 +543,17 @@ def test_hybrid_list_strategies():
 
 
 def test_create_hybrid_api():
-    api = create_hybrid_api(MagicMock(), cache_ttl=10, default_fusion=FusionStrategy.WEIGHTED)
+    api = create_hybrid_api(
+        MagicMock(), cache_ttl=10, default_fusion=FusionStrategy.WEIGHTED
+    )
     assert isinstance(api, ProximaDBHybrid)
     assert api._default_fusion == FusionStrategy.WEIGHTED
 
 
 def test_create_fusion_strategy_all():
-    assert isinstance(create_fusion_strategy(FusionStrategy.RRF, k=5), ReciprocalRankFusion)
+    assert isinstance(
+        create_fusion_strategy(FusionStrategy.RRF, k=5), ReciprocalRankFusion
+    )
     assert create_fusion_strategy(FusionStrategy.RRF, k=5).k == 5
     wf = create_fusion_strategy(FusionStrategy.WEIGHTED, weights={"vector": 1.0})
     assert isinstance(wf, WeightedFusion)

@@ -26,7 +26,6 @@ import uuid
 
 import pytest
 
-
 # ----------------------------------------------------------------------------
 # Client fixture
 # ----------------------------------------------------------------------------
@@ -262,9 +261,9 @@ def test_execute_sql_select_returns_dict_shape(query_client):
 
         # execute_sql may unwrap to either a dict result or, on the unified
         # client local fallback, a dict with 'rows'.
-        assert isinstance(result, (dict, list)), (
-            f"execute_sql must return a structured result, got {type(result)}"
-        )
+        assert isinstance(
+            result, (dict, list)
+        ), f"execute_sql must return a structured result, got {type(result)}"
         rows = _rows_of(result)
         assert isinstance(rows, list)
         if rows:
@@ -361,9 +360,9 @@ def test_explain_query_returns_plan_shape(query_client):
             pytest.skip(f"explain_query surfaced an error in embedded mode: {e}")
             return
 
-        assert isinstance(result, dict), (
-            f"explain_query must return a structured plan dict, got {type(result)}"
-        )
+        assert isinstance(
+            result, dict
+        ), f"explain_query must return a structured plan dict, got {type(result)}"
         # The plan dict should be non-empty (some plan/explain payload present).
         assert len(result) >= 0
     finally:

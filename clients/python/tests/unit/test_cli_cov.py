@@ -242,18 +242,31 @@ def test_collections_create_table(runner, fake_client):
     )
     assert result.exit_code == 0
     assert "created successfully" in result.output
-    assert ("create_collection", (), {
-        "name": "mycoll",
-        "dimension": 128,
-        "storage_engine": "sst",
-        "description": "desc",
-    }) in fake_client.calls
+    assert (
+        "create_collection",
+        (),
+        {
+            "name": "mycoll",
+            "dimension": 128,
+            "storage_engine": "sst",
+            "description": "desc",
+        },
+    ) in fake_client.calls
 
 
 def test_collections_create_json(runner, fake_client):
     result = runner.invoke(
         cli,
-        ["--json-output", "collections", "create", "mycoll", "-d", "32", "--engine", "nova"],
+        [
+            "--json-output",
+            "collections",
+            "create",
+            "mycoll",
+            "-d",
+            "32",
+            "--engine",
+            "nova",
+        ],
     )
     assert result.exit_code == 0
     assert json.loads(result.output)["name"] == "mycoll"
@@ -369,9 +382,7 @@ def test_vectors_insert_file(runner, fake_client, tmp_path):
             ]
         )
     )
-    result = runner.invoke(
-        cli, ["vectors", "insert", "-c", "coll", "-f", str(f)]
-    )
+    result = runner.invoke(cli, ["vectors", "insert", "-c", "coll", "-f", str(f)])
     assert result.exit_code == 0
     assert "Successfully inserted 2" in result.output
     # metadata key normalized to props
@@ -387,9 +398,7 @@ def test_vectors_insert_missing_input(runner, fake_client):
 
 def test_vectors_insert_error(runner, fake_client):
     # invalid JSON for --vector triggers exception path
-    result = runner.invoke(
-        cli, ["vectors", "insert", "-c", "coll", "-v", "not-json"]
-    )
+    result = runner.invoke(cli, ["vectors", "insert", "-c", "coll", "-v", "not-json"])
     assert result.exit_code == 1
     assert "Error inserting vectors" in result.output
 
@@ -401,9 +410,7 @@ def test_vectors_get_table(runner, fake_client):
 
 
 def test_vectors_get_json(runner, fake_client):
-    result = runner.invoke(
-        cli, ["--json-output", "vectors", "get", "-c", "coll", "v1"]
-    )
+    result = runner.invoke(cli, ["--json-output", "vectors", "get", "-c", "coll", "v1"])
     assert result.exit_code == 0
     assert json.loads(result.output)["id"] == "v1"
 
@@ -442,9 +449,7 @@ def test_vectors_delete_confirm_yes(runner, fake_client):
 
 
 def test_vectors_delete_force(runner, fake_client):
-    result = runner.invoke(
-        cli, ["vectors", "delete", "-c", "coll", "v1", "v2", "-f"]
-    )
+    result = runner.invoke(cli, ["vectors", "delete", "-c", "coll", "v1", "v2", "-f"])
     assert result.exit_code == 0
     assert "Deleted 2" in result.output
 
@@ -470,9 +475,7 @@ def test_vectors_delete_error(runner, monkeypatch):
 # Search
 # ---------------------------------------------------------------------------
 def test_search_table(runner, fake_client):
-    result = runner.invoke(
-        cli, ["search", "-c", "coll", "-q", "[1.0, 2.0]", "-k", "5"]
-    )
+    result = runner.invoke(cli, ["search", "-c", "coll", "-q", "[1.0, 2.0]", "-k", "5"])
     assert result.exit_code == 0
     assert "Search Results" in result.output
 
