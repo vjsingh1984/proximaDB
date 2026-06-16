@@ -579,6 +579,32 @@ impl DrPathBuilder {
         Ok(resolved)
     }
 
+    /// Build a validated [`DrResolvedPath`] from already-resolved parts, rather
+    /// than from a `CatalogNamespace`.
+    ///
+    /// Use this when the authoritative `tenant_id` comes from the request/connection
+    /// (TD-064 tenancy) while only the rename-stable `namespace_id` comes from the
+    /// catalog — e.g. warehouse materialization, where the catalog row may not yet
+    /// carry a `tenant_id` (the P0.5 backfill is a separate concern). Every segment
+    /// is run through the same [`validate_id`](Self::validate_id) guard as
+    /// [`build`](Self::build), so injection/traversal is rejected identically.
+    pub fn build_from_parts(
+        tenant_id: &str,
+        namespace_id: &str,
+        collection_id: &str,
+        storage_pool_class: StoragePoolClass,
+    ) -> Result<DrResolvedPath, PathResolverError> {
+        Self::validate_id("tenant_id", tenant_id)?;
+        Self::validate_id("namespace_id", namespace_id)?;
+        Self::validate_id("collection_id", collection_id)?;
+        Ok(DrResolvedPath {
+            tenant_id: tenant_id.to_string(),
+            namespace_id: namespace_id.to_string(),
+            collection_id: collection_id.to_string(),
+            storage_pool_class,
+        })
+    }
+
     /// Canonical validation for a single tenant-isolated path ID segment
     /// (tenant_id / namespace_id / collection_id). Rejects empty, non-ASCII,
     /// path-separator/NUL, whitespace, and `..` traversal. Public so callers
@@ -800,6 +826,18 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn build_from_parts_validates_each_segment() {
+        let pc = StoragePoolClass::default();
+        // Happy path → canonical prefix.
+        let ok = DrPathBuilder::build_from_parts("tnt_acme", "ns_42", "orders", pc).unwrap();
+        assert_eq!(ok.root_prefix(), "data/tnt_acme/ns_42/orders/");
+        // Each segment is guarded against traversal / separators / empty.
+        assert!(DrPathBuilder::build_from_parts("..", "ns_42", "orders", pc).is_err());
+        assert!(DrPathBuilder::build_from_parts("tnt_acme", "a/b", "orders", pc).is_err());
+        assert!(DrPathBuilder::build_from_parts("tnt_acme", "ns_42", "", pc).is_err());
     }
 
     #[test]

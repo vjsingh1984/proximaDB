@@ -76,6 +76,70 @@ fn validate_object_path_segments(
     Ok(())
 }
 
+/// `PROXIMADB_WAREHOUSE_DRPATH=1|true` opts warehouse materialization into the
+/// DrPathBuilder-native physical layout (`data/{tenant}/{namespace_id}/{table}/`
+/// — rename-stable opaque ids). Default OFF: flipping it changes on-disk paths
+/// and orphans snapshots written under the legacy `data/{tenant}/{ns.join}/{table}`
+/// layout, so it is opt-in for new deployments. Read once per process.
+fn warehouse_drpath_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_WAREHOUSE_DRPATH")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
+/// Resolve the tenant-isolated object prefix (no trailing `/`) for a warehouse
+/// snapshot. The `drpath_enabled` bool is passed in (not read from env) so this
+/// is deterministically unit-testable.
+///
+/// Layout selection:
+/// * DrPath (opt-in + a `namespace_id` is known): `data/{tenant}/{namespace_id}/{table}`
+///   via [`DrPathBuilder::build_from_parts`] — rename-stable, per-segment validated.
+/// * Legacy manual (default / no `namespace_id`): `data/{tenant}/{ns.join("/")}/{table}`
+///   with the same per-segment injection guards via [`validate_object_path_segments`].
+///
+/// In either layout, if the namespace carries an explicit owning `tenant_id` that
+/// differs from the request `tenant_id`, the materialize is refused (cross-tenant).
+fn resolve_materialize_prefix(
+    drpath_enabled: bool,
+    tenant_id: &str,
+    namespace_segments: &[String],
+    namespace_id: Option<&str>,
+    namespace_tenant_id: Option<&str>,
+    storage_pool_class: proximadb_catalog::StoragePoolClass,
+    table: &str,
+) -> Result<String> {
+    if let Some(owner) = namespace_tenant_id {
+        if owner != tenant_id {
+            return Err(anyhow!(
+                "refusing materialize: namespace is owned by tenant {owner:?} but the request \
+                 tenant is {tenant_id:?} (cross-tenant materialize)"
+            ));
+        }
+    }
+    if drpath_enabled {
+        if let Some(nsid) = namespace_id {
+            let resolved =
+                DrPathBuilder::build_from_parts(tenant_id, nsid, table, storage_pool_class)
+                    .map_err(|e| {
+                        anyhow!("refusing materialize: DrPathBuilder rejected path: {e}")
+                    })?;
+            // root_prefix() carries a trailing '/'; the caller appends `/data/...`.
+            return Ok(resolved.root_prefix().trim_end_matches('/').to_string());
+        }
+    }
+    validate_object_path_segments(tenant_id, namespace_segments, table)?;
+    let namespace = if namespace_segments.is_empty() {
+        "default".to_string()
+    } else {
+        namespace_segments.join("/")
+    };
+    Ok(format!("data/{tenant_id}/{namespace}/{table}"))
+}
+
 /// Comparison operators supported by the lightweight catalog-table SELECT path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationalSelectPredicateOperator {
@@ -946,13 +1010,22 @@ impl DmlService {
             .map(|tc| tc.tenant_id.as_str())
             .unwrap_or(DEFAULT_TENANT_PLACEHOLDER);
         let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
-        validate_object_path_segments(tenant_id, &table_id.namespace, &schema.name)?;
-        let namespace = if table_id.namespace.is_empty() {
-            "default".to_string()
-        } else {
-            table_id.namespace.join("/")
-        };
-        let prefix = format!("data/{tenant_id}/{namespace}/{}", schema.name);
+        // Best-effort namespace metadata: supplies the rename-stable `namespace_id`
+        // (DrPath layout) and the owning `tenant_id` (cross-tenant assertion). A
+        // lookup miss falls back to the validated manual layout.
+        let ns_meta = catalog.get_namespace(&table_id.namespace).await.ok();
+        let prefix = resolve_materialize_prefix(
+            warehouse_drpath_enabled(),
+            tenant_id,
+            &table_id.namespace,
+            ns_meta.as_ref().and_then(|n| n.namespace_id.as_deref()),
+            ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
+            ns_meta
+                .as_ref()
+                .map(|n| n.storage_pool_class)
+                .unwrap_or_default(),
+            &schema.name,
+        )?;
 
         // 4. Write the snapshot under `{prefix}/data/` — exactly where the OLAP reader
         //    lists `{location}/data/*.parquet`. Use the CATALOG-AUTHORITATIVE schema
@@ -3930,13 +4003,19 @@ impl DmlTableMaterializer {
 
 #[async_trait::async_trait]
 impl crate::services::ddl::TableMaterializer for DmlTableMaterializer {
-    async fn materialize(&self, table_name: &str) -> Result<String> {
+    async fn materialize(&self, table_name: &str, tenant: Option<&str>) -> Result<String> {
+        // Thread the request/connection tenant (TD-113) so the snapshot is scoped
+        // and the object prefix is tenant-isolated instead of landing under the
+        // DEFAULT_TENANT_PLACEHOLDER. Empty tenant ⇒ None (single-tenant/embedded).
+        let tenant_ctx = tenant
+            .filter(|t| !t.is_empty())
+            .map(|t| TenantContext::for_tenant_id(t));
         self.dml
             .materialize_table_to_parquet(
                 &*self.bridge,
                 &self.warehouse_root_url,
                 table_name,
-                None,
+                tenant_ctx.as_ref(),
             )
             .await
     }
@@ -3960,6 +4039,42 @@ mod tests {
         // Whitespace and empty ids are refused.
         assert!(validate_object_path_segments("tnt_acme", &[], "bad name").is_err());
         assert!(validate_object_path_segments("tnt_acme", &[], "").is_err());
+    }
+
+    #[test]
+    fn resolve_materialize_prefix_layouts_and_cross_tenant() {
+        use proximadb_catalog::StoragePoolClass;
+        let pc = StoragePoolClass::default();
+        let segs = vec!["sales".to_string()];
+        let resolve = |drpath, nsid, owner, segs: &[String]| {
+            resolve_materialize_prefix(drpath, "tnt_acme", segs, nsid, owner, pc, "orders")
+        };
+
+        // Flag OFF → legacy manual layout (namespace path joined).
+        assert_eq!(
+            resolve(false, Some("ns_1"), None, &segs).unwrap(),
+            "data/tnt_acme/sales/orders"
+        );
+        // Flag ON + namespace_id present → DrPath opaque-id layout.
+        assert_eq!(
+            resolve(true, Some("ns_1"), None, &segs).unwrap(),
+            "data/tnt_acme/ns_1/orders"
+        );
+        // Flag ON but no namespace_id → falls back to manual layout.
+        assert_eq!(
+            resolve(true, None, None, &segs).unwrap(),
+            "data/tnt_acme/sales/orders"
+        );
+        // Empty namespace → "default" segment.
+        assert_eq!(
+            resolve(false, None, None, &[]).unwrap(),
+            "data/tnt_acme/default/orders"
+        );
+        // Cross-tenant (namespace owned by another tenant) → refused in both layouts.
+        assert!(resolve(false, Some("ns_1"), Some("tnt_globex"), &segs).is_err());
+        assert!(resolve(true, Some("ns_1"), Some("tnt_globex"), &segs).is_err());
+        // Injection in a namespace segment → refused.
+        assert!(resolve(false, None, None, &["..".to_string()]).is_err());
     }
 
     use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
@@ -6145,6 +6260,72 @@ mod tests {
                 .is_err(),
             "MATERIALIZE without a configured materializer must error"
         );
+    }
+
+    /// TD-113: the same table materialized under two different request tenants
+    /// lands under disjoint, tenant-isolated object prefixes — never co-mingled
+    /// under the `default_tenant` placeholder. (Row-level tenant scoping is
+    /// covered by the TD-064 pgwire isolation suite; this pins the object prefix.)
+    #[tokio::test]
+    async fn materialize_is_tenant_isolated_by_request_tenant() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+        use crate::storage::tenant::context::TenantContext;
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-mat-tenant.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, qty INT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let insert = parser
+            .parse_dml("INSERT INTO inv (id, qty) VALUES ('i1', 5);")
+            .expect("parse insert")
+            .expect("insert stmt");
+        dml.execute(insert).await.expect("insert");
+
+        let bridge = Arc::new(IcebergObjectStoreBridge::from_url("memory:///wh").unwrap());
+        let acme = TenantContext::for_tenant_id("acmecorp");
+        let globex = TenantContext::for_tenant_id("globexco");
+        let acme_loc = dml
+            .materialize_table_to_parquet(&*bridge, "memory:///wh", "inv", Some(&acme))
+            .await
+            .expect("acmecorp materialize");
+        let globex_loc = dml
+            .materialize_table_to_parquet(&*bridge, "memory:///wh", "inv", Some(&globex))
+            .await
+            .expect("globexco materialize");
+
+        assert_eq!(acme_loc, "memory:///wh/data/acmecorp/default/inv");
+        assert_eq!(globex_loc, "memory:///wh/data/globexco/default/inv");
+        assert_ne!(acme_loc, globex_loc, "tenants must not share a prefix");
+        assert!(!acme_loc.contains("default_tenant"));
+        assert!(!globex_loc.contains("default_tenant"));
     }
 
     /// P3 end-to-end: materialize a table to a Parquet snapshot on a REOPENABLE

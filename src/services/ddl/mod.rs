@@ -443,7 +443,12 @@ impl DdlResult {
 #[async_trait::async_trait]
 pub trait TableMaterializer: Send + Sync {
     /// Materialize `table_name`'s current rows; returns the published location.
-    async fn materialize(&self, table_name: &str) -> Result<String>;
+    ///
+    /// `tenant` is the request/connection tenant (TD-064). It scopes the table
+    /// snapshot and the tenant-isolated object prefix; `None` means single-tenant
+    /// / embedded mode. Threading it (vs the old hardcoded `None`) is what makes
+    /// warehouse materialization tenant-isolated (TD-113).
+    async fn materialize(&self, table_name: &str, tenant: Option<&str>) -> Result<String>;
 }
 
 pub struct DdlService {
@@ -572,7 +577,7 @@ impl DdlService {
                          store (no table materializer is wired)"
                     )
                 })?;
-                let location = materializer.materialize(&name).await?;
+                let location = materializer.materialize(&name, tenant).await?;
                 Ok(DdlResult::success(format!(
                     "Materialized table '{name}' to '{location}'"
                 )))

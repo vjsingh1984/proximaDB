@@ -50,13 +50,14 @@ ALLOWLIST: dict[str, str] = {
 # until fixed. Any new, unlisted match is a hard ERROR.
 KNOWN_BYPASSES: dict[str, str] = {
     "src/services/dml/mod.rs": (
-        "Warehouse `materialize_table_to_parquet` builds the prefix manually "
-        "(does not yet route through DrPathBuilder::build). Hardened: each "
-        "segment is validated via DrPathBuilder::validate_id (no injection) and "
-        "the default tenant is a named constant. The remaining gap — threading a "
-        "real TenantContext through the DDL TableMaterializer trait and adopting "
-        "DrPathBuilder::build after the namespace-id backfill — is tracked; do "
-        "not add new direct-prefix sites."
+        "Warehouse `materialize_table_to_parquet` keeps a manual-prefix fallback "
+        "(`resolve_materialize_prefix`, legacy layout) used when the DrPath flag "
+        "is off or no namespace_id is known. TD-113 is otherwise closed: the real "
+        "TenantContext is threaded through the DDL TableMaterializer trait, each "
+        "segment is validated via DrPathBuilder::validate_id, and the opt-in "
+        "DrPathBuilder layout (PROXIMADB_WAREHOUSE_DRPATH) routes through "
+        "build_from_parts. This line is the tracked fallback; do not add new "
+        "direct-prefix sites."
     ),
 }
 
