@@ -970,6 +970,26 @@ impl DmlService {
         table_name: &str,
         tenant_context: Option<&TenantContext>,
     ) -> Result<String> {
+        // Production reads the rollout flag here; the inner takes it as a param so
+        // the DrPath layout is deterministically testable without process-global env.
+        self.materialize_table_to_parquet_inner(
+            bridge,
+            warehouse_root_url,
+            table_name,
+            tenant_context,
+            warehouse_drpath_enabled(),
+        )
+        .await
+    }
+
+    async fn materialize_table_to_parquet_inner(
+        &self,
+        bridge: &dyn ObjectStoreBridge,
+        warehouse_root_url: &str,
+        table_name: &str,
+        tenant_context: Option<&TenantContext>,
+        drpath_enabled: bool,
+    ) -> Result<String> {
         // 1. Snapshot the table's current rows (all columns, no predicate/limit).
         let (schema, rows) = self
             .scan_table_relational(table_name, None, None, None, tenant_context)
@@ -1030,7 +1050,7 @@ impl DmlService {
         // `tenant_id` (cross-tenant assertion). A miss falls back to the manual layout.
         let ns_meta = catalog.get_namespace(&table_id.namespace).await.ok();
         let prefix = resolve_materialize_prefix(
-            warehouse_drpath_enabled(),
+            drpath_enabled,
             tenant_id,
             &logical_namespace,
             ns_meta.as_ref().and_then(|n| n.namespace_id.as_deref()),
@@ -6347,6 +6367,97 @@ mod tests {
             locations[0], locations[1],
             "two tenants must materialize to disjoint prefixes"
         );
+    }
+
+    /// TD-113 Phase 2: with the DrPath layout enabled the snapshot prefix uses the
+    /// rename-stable opaque `namespace_id` (`data/{tenant}/{ns_<uuid>}/{table}`)
+    /// instead of the human namespace path. Driven via the inner (flag injected)
+    /// so it is deterministic regardless of the `PROXIMADB_WAREHOUSE_DRPATH` env.
+    #[tokio::test]
+    async fn materialize_drpath_layout_uses_opaque_namespace_id() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+        use crate::storage::tenant::context::TenantContext;
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-mat-drpath.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let create = parser
+            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, qty INT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute_scoped(create, Some("acmecorp"))
+            .await
+            .expect("create table");
+        let tctx = TenantContext::for_tenant_id("acmecorp");
+        let insert = parser
+            .parse_dml("INSERT INTO inv (id, qty) VALUES ('i1', 5);")
+            .expect("parse insert")
+            .expect("insert stmt");
+        dml.execute_scoped(insert, Some(&tctx)).await.expect("insert");
+
+        let bridge = Arc::new(IcebergObjectStoreBridge::from_url("memory:///wh").unwrap());
+        let loc = dml
+            .materialize_table_to_parquet_inner(&*bridge, "memory:///wh", "inv", Some(&tctx), true)
+            .await
+            .expect("materialize (drpath)");
+
+        assert!(
+            loc.starts_with("memory:///wh/data/acmecorp/ns_"),
+            "drpath layout must use the opaque namespace_id: {loc}"
+        );
+        assert!(loc.ends_with("/inv"), "loc={loc}");
+        assert!(!loc.contains("default_tenant"), "loc={loc}");
+    }
+
+    /// TD-113 Phase 2: a tenant-scoped CREATE records the owning tenant on the
+    /// namespace, so it becomes DR-addressable (both `namespace_id` and
+    /// `tenant_id` populated).
+    #[tokio::test]
+    async fn scoped_create_makes_namespace_dr_addressable() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let create = parser
+            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute_scoped(create, Some("acmecorp"))
+            .await
+            .expect("create table");
+
+        let (catalog, table_id) = manager
+            .resolve_table_scoped("inv", Some("acmecorp"))
+            .await
+            .expect("resolve scoped");
+        let ns = catalog
+            .get_namespace(&table_id.namespace)
+            .await
+            .expect("get namespace");
+        assert_eq!(ns.tenant_id.as_deref(), Some("acmecorp"));
+        assert!(ns.namespace_id.is_some());
+        assert!(ns.is_dr_addressable(), "namespace must be DR-addressable");
     }
 
     /// P3 end-to-end: materialize a table to a Parquet snapshot on a REOPENABLE

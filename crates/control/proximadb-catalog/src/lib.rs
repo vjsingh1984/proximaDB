@@ -3929,6 +3929,22 @@ pub trait Catalog: Send + Sync {
         properties: HashMap<String, String>,
     ) -> anyhow::Result<CatalogNamespace>;
 
+    /// Create a namespace owned by `tenant` (TD-064/TD-113). Backends that own
+    /// ProximaDB physical paths record `tenant_id` so the namespace is
+    /// DR-addressable (`is_dr_addressable`) and the warehouse path resolver can
+    /// assert tenant ownership / route by storage pool. The default implementation
+    /// ignores `tenant` and delegates to [`create_namespace`](Self::create_namespace),
+    /// so external/federated catalogs (which manage their own identity) are
+    /// unaffected.
+    async fn create_namespace_for_tenant(
+        &self,
+        namespace: &[String],
+        properties: HashMap<String, String>,
+        _tenant: Option<&str>,
+    ) -> anyhow::Result<CatalogNamespace> {
+        self.create_namespace(namespace, properties).await
+    }
+
     async fn drop_namespace(&self, namespace: &[String], cascade: bool) -> anyhow::Result<bool>;
     async fn list_namespaces(
         &self,

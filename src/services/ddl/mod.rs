@@ -825,8 +825,11 @@ impl DdlService {
         // explicitly creating a schema first. Keep the native catalog path
         // aligned with the OLTP catalog by materializing the resolved namespace.
         if !catalog.namespace_exists(&table_id.namespace).await? {
+            // Record the owning tenant on the auto-created namespace (TD-113) so it
+            // is DR-addressable and the warehouse path resolver can assert tenant
+            // ownership / route by storage pool.
             catalog
-                .create_namespace(&table_id.namespace, HashMap::new())
+                .create_namespace_for_tenant(&table_id.namespace, HashMap::new(), tenant)
                 .await?;
         }
 

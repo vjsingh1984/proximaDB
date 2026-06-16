@@ -316,6 +316,48 @@ impl NativeCatalog {
         format!("ns_{}", uuid::Uuid::new_v4())
     }
 
+    /// Shared namespace construction. `tenant_id` records the owning tenant when
+    /// the namespace is created in a tenant scope (TD-064/TD-113) so it is
+    /// DR-addressable; `None` for unscoped/single-tenant creates.
+    async fn create_namespace_inner(
+        &self,
+        namespace: &[String],
+        properties: HashMap<String, String>,
+        tenant_id: Option<String>,
+    ) -> Result<CatalogNamespace> {
+        let key = namespace.join(".");
+        if self.namespaces.read().await.contains_key(&key) {
+            return Err(anyhow!("Namespace '{}' already exists", key));
+        }
+
+        let now = Self::now_millis();
+        let ns = CatalogNamespace {
+            levels: namespace.to_vec(),
+            properties,
+            owner: None,
+            location: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+            // Opaque, rename-stable server-issued id that drives physical paths
+            // (DrPathBuilder). `tenant_id` is the owning tenant when created in a
+            // tenant scope; together they make the namespace DR-addressable.
+            namespace_id: Some(Self::new_namespace_id()),
+            tenant_id,
+            region_home: None,
+            default_dr_region_pair_id: None,
+            storage_pool_class: Default::default(),
+        };
+
+        self.namespaces
+            .write()
+            .await
+            .insert(key.clone(), ns.clone());
+        self.save_namespaces().await?;
+
+        info!("Created namespace: {}", key);
+        Ok(ns)
+    }
+
     /// Inherent accessor for the catalog metadata cache.
     /// Was a trait method before Option B consolidation; moved to inherent
     /// since the canonical `proximadb_catalog::Catalog` trait omits it.
@@ -343,40 +385,18 @@ impl Catalog for NativeCatalog {
         namespace: &[String],
         properties: HashMap<String, String>,
     ) -> Result<CatalogNamespace> {
-        let key = namespace.join(".");
+        self.create_namespace_inner(namespace, properties, None).await
+    }
 
-        // Check if already exists
-        if self.namespaces.read().await.contains_key(&key) {
-            return Err(anyhow!("Namespace '{}' already exists", key));
-        }
-
-        let now = Self::now_millis();
-        let ns = CatalogNamespace {
-            levels: namespace.to_vec(),
-            properties,
-            owner: None,
-            location: None,
-            created_at_ms: now,
-            updated_at_ms: now,
-            // Opaque, rename-stable server-issued id that drives physical paths
-            // (DrPathBuilder). `tenant_id` is intentionally left None here — for
-            // warehouse paths the request/connection tenant is authoritative
-            // (TD-113); the DR/CRR tenant_id backfill is a separate P0.5 concern.
-            namespace_id: Some(Self::new_namespace_id()),
-            tenant_id: None,
-            region_home: None,
-            default_dr_region_pair_id: None,
-            storage_pool_class: Default::default(),
-        };
-
-        self.namespaces
-            .write()
+    async fn create_namespace_for_tenant(
+        &self,
+        namespace: &[String],
+        properties: HashMap<String, String>,
+        tenant: Option<&str>,
+    ) -> Result<CatalogNamespace> {
+        let tenant_id = tenant.filter(|t| !t.is_empty()).map(str::to_string);
+        self.create_namespace_inner(namespace, properties, tenant_id)
             .await
-            .insert(key.clone(), ns.clone());
-        self.save_namespaces().await?;
-
-        info!("Created namespace: {}", key);
-        Ok(ns)
     }
 
     async fn drop_namespace(&self, namespace: &[String], cascade: bool) -> Result<bool> {
