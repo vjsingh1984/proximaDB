@@ -2906,10 +2906,12 @@ impl AxisManager {
     }
 
     /// Number of vectors currently registered in the in-memory store for a
-    /// collection. Test/diagnostic accessor used to assert that the flush path
-    /// populates AXIS (TD-112).
-    #[cfg(test)]
-    pub(crate) async fn registered_vector_count(&self, collection_id: &str) -> usize {
+    /// collection. Diagnostic accessor; also the "is this collection present in
+    /// AXIS" signal used by the lazy rebuild-from-SST path (TD-112). HNSW/IVF
+    /// structures are built lazily atop this store and are not a reliable
+    /// presence signal for small collections.
+    #[doc(hidden)]
+    pub async fn registered_vector_count(&self, collection_id: &str) -> usize {
         self.collection_vectors
             .read()
             .await
@@ -5152,12 +5154,10 @@ mod recluster_apply_tests {
     /// indexes the batch into the manager (here observed via `collection_vectors`,
     /// which `insert` populates).
     ///
-    /// The gap TD-112 tracks is purely the *call site*: at the time of writing the
-    /// SST flush coordinator does NOT call this (it has zero callers and the AXIS
-    /// `EventLogConsumer` is not booted), so post-flush search falls back to a
-    /// brute-force segment scan rather than the ANN index. If this test ever goes
-    /// red, the indexing primitive itself regressed; when index-on-flush is wired,
-    /// this remains the building-block guarantee.
+    /// The TD-112 live-path guard lives in SST's `do_flush` ->
+    /// `flush_implementation`; this test keeps the lower-level indexing
+    /// primitive locked down independently. If this test ever goes red, the
+    /// primitive itself regressed rather than the SST call site.
     #[tokio::test]
     async fn td112_handle_flushed_vectors_indexes_flushed_batch() {
         let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
@@ -5168,11 +5168,7 @@ mod recluster_apply_tests {
         let expected_oids: Vec<String> = flushed.iter().map(|r| r.oid.clone()).collect();
 
         manager
-            .handle_flushed_vectors(
-                collection,
-                flushed,
-                vec!["segment-000001.sst".to_string()],
-            )
+            .handle_flushed_vectors(collection, flushed, vec!["segment-000001.sst".to_string()])
             .await
             .expect("handle_flushed_vectors should index a small flushed batch");
 

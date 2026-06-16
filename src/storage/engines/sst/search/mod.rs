@@ -51,6 +51,16 @@ pub use coordinator::SearchCoordinator;
 pub use operations::SearchOperations;
 pub use optimizer::SearchOptimizer;
 
+/// TD-112: per-(process, collection) guard so the lazy rebuild-from-SST runs at
+/// most once per collection, even when several cold queries race.
+static AXIS_REBUILD_GUARD: std::sync::OnceLock<
+    tokio::sync::Mutex<std::collections::HashSet<String>>,
+> = std::sync::OnceLock::new();
+
+fn axis_rebuild_guard() -> &'static tokio::sync::Mutex<std::collections::HashSet<String>> {
+    AXIS_REBUILD_GUARD.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
 impl SstEngine {
     /// Main unified search implementation with orchestration
     ///
@@ -99,6 +109,12 @@ impl SstEngine {
 
         if has_axis_manager {
             debug!("🔍 SST: AXIS manager is available for HNSW/IVF search");
+            // TD-112: if the in-memory AXIS index is absent (e.g. after a
+            // restart), rebuild it from the durable SST segments before
+            // searching, so post-flush recall does not silently degrade to a
+            // brute-force segment scan.
+            self.ensure_axis_index_from_sst(collection_id, &storage_url)
+                .await;
         }
 
         if use_orchestration {
@@ -125,6 +141,100 @@ impl SstEngine {
                 filter_expression,
             )
             .await
+        }
+    }
+
+    /// TD-112: lazily rebuild a collection's AXIS index from its durable SST
+    /// segments when the in-memory index is absent.
+    ///
+    /// AXIS indexes are in-memory; after a restart they are empty and — for HNSW,
+    /// or IVF flushed in sub-train-threshold batches — are not persisted, so
+    /// post-flush search would silently degrade to a brute-force segment scan.
+    /// This reads the flushed records back from the segments and re-indexes them
+    /// through the same `handle_flushed_vectors` hook the flush path uses,
+    /// covering every index type (unlike the IVF-only persist+cold-load path).
+    /// Best-effort and guarded so the (potentially expensive) rebuild runs at
+    /// most once per (process, collection).
+    async fn ensure_axis_index_from_sst(&self, collection_id: &str, storage_url: &str) {
+        let Some(axis) = self.axis_manager() else {
+            return;
+        };
+        // Already present in the AXIS store (warm / cold-loaded / rebuilt)?
+        // Nothing to do. (We key on the store rather than HNSW/IVF presence,
+        // since those structures are built lazily and aren't a reliable signal
+        // for small collections.)
+        if axis.registered_vector_count(collection_id).await > 0 {
+            return;
+        }
+        // Attempt the rebuild at most once per collection, even under concurrent
+        // cold queries.
+        {
+            let mut guard = axis_rebuild_guard().lock().await;
+            if !guard.insert(collection_id.to_string()) {
+                return;
+            }
+        }
+
+        let files = match self.discover_sstable_files(storage_url).await {
+            Ok(files) if !files.is_empty() => files,
+            _ => return,
+        };
+
+        // An engine writes a single block format, so dispatch once rather than
+        // detecting per file.
+        let block_format = crate::storage::engines::sst::block_format::BlockFormat::parse_block_format(
+            &self.config().block_format,
+        );
+        let mut records: Vec<proximadb_records::ProximaRecord> = Vec::new();
+        for file in &files {
+            match self.read_segment_records(file, block_format).await {
+                Ok(mut recs) => records.append(&mut recs),
+                Err(e) => {
+                    tracing::warn!("TD-112 rebuild: failed reading segment {file}: {e}");
+                }
+            }
+        }
+        if records.is_empty() {
+            return;
+        }
+
+        let count = records.len();
+        match axis
+            .handle_flushed_vectors(collection_id, records, files.clone())
+            .await
+        {
+            Ok(()) => tracing::info!(
+                "TD-112: rebuilt AXIS index for '{collection_id}' from {count} vectors across {} segments",
+                files.len()
+            ),
+            Err(e) => tracing::warn!(
+                "TD-112 rebuild: AXIS rebuild-from-SST failed for '{collection_id}': {e}"
+            ),
+        }
+    }
+
+    /// Read all records from one SST segment, dispatching on the engine's block
+    /// format (an engine writes a single format, so no per-file detection).
+    async fn read_segment_records(
+        &self,
+        file: &str,
+        format: crate::storage::engines::sst::block_format::BlockFormat,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        use crate::storage::engines::sst::block_format::BlockFormat;
+        match format {
+            BlockFormat::ArrowBlock => {
+                let local = file.strip_prefix("file://").unwrap_or(file);
+                let reader = ArrowBlockReader::open(local)
+                    .map_err(|e| anyhow::anyhow!("open arrow segment {file}: {e}"))?;
+                reader
+                    .read_all()
+                    .map_err(|e| anyhow::anyhow!("read arrow segment {file}: {e}"))
+            }
+            BlockFormat::ProximaBlocks => {
+                self.sstable_reader()
+                    .read_all_records_for_compaction(&[file.to_string()])
+                    .await
+            }
         }
     }
 

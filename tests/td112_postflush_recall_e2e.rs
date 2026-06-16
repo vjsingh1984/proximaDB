@@ -99,7 +99,11 @@ fn oracle_topk(all: &[VectorRecord], query: &[f32], k: usize) -> Vec<String> {
         .map(|v| (euclidean_sq(&v.vector, query), v.id.as_str()))
         .collect();
     scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    scored.into_iter().take(k).map(|(_, id)| id.to_string()).collect()
+    scored
+        .into_iter()
+        .take(k)
+        .map(|(_, id)| id.to_string())
+        .collect()
 }
 
 async fn flush_batch(engine: &SstEngine, collection: &Collection, batch: Vec<VectorRecord>) {
@@ -162,7 +166,9 @@ async fn postflush_recall_within_band_after_multi_flush_and_compaction() {
 
     // Attach an AXIS manager so the orchestrated (ANN) search path is engaged;
     // each tests/ file is its own process, so this global is isolated here.
-    set_sst_axis_manager(Arc::new(AxisManager::new(AxisConfig::default()).await.unwrap()));
+    set_sst_axis_manager(Arc::new(
+        AxisManager::new(AxisConfig::default()).await.unwrap(),
+    ));
 
     let temp_dir = TempDir::new().unwrap();
     let collection = collection_config("td112_recall", &temp_dir);
@@ -190,7 +196,10 @@ async fn postflush_recall_within_band_after_multi_flush_and_compaction() {
         let query = probe.vector.clone();
 
         let got = search(&engine, &collection, query.clone()).await;
-        assert!(!got.is_empty(), "post-flush search returned no hits for cluster {c}");
+        assert!(
+            !got.is_empty(),
+            "post-flush search returned no hits for cluster {c}"
+        );
         assert!(
             got.contains(&probe.id),
             "the query's own vector {} must be retrievable post-flush (cluster {c})",
@@ -207,5 +216,54 @@ async fn postflush_recall_within_band_after_multi_flush_and_compaction() {
         recall >= RECALL_BAND,
         "post-flush top-k recall {recall:.3} below band {RECALL_BAND} \
          (≥2 flush cycles + compaction)"
+    );
+}
+
+/// TD-112 acceptance #4 (post-restart reload): when the in-memory AXIS index is
+/// lost — simulated here via `drop_collection`, which is exactly the post-restart
+/// state (the index is in-memory and HNSW/small-IVF batches are not persisted) —
+/// the next search must rebuild it from the durable SST segments and recover
+/// recall, rather than silently degrading to a brute-force scan.
+#[tokio::test]
+async fn axis_index_rebuilt_from_sst_after_loss() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    set_sst_axis_manager(Arc::new(
+        AxisManager::new(AxisConfig::default()).await.unwrap(),
+    ));
+
+    let temp_dir = TempDir::new().unwrap();
+    let collection = collection_config("td112_restart", &temp_dir);
+    let engine = SstEngine::new().await.unwrap();
+    let axis = proximadb::storage::engines::sst::core::get_sst_axis_manager()
+        .expect("axis manager attached");
+
+    let all = clustered_vectors();
+    flush_batch(&engine, &collection, all.clone()).await;
+
+    let probe = &all[PER_CLUSTER / 2];
+    let warm = search(&engine, &collection, probe.vector.clone()).await;
+    assert!(warm.contains(&probe.id), "warm search must find the probe");
+
+    // Simulate a restart: drop the in-memory AXIS index for the collection. The
+    // durable SST segments remain on disk.
+    axis.drop_collection(&collection.id).await.unwrap();
+    assert_eq!(
+        axis.registered_vector_count(&collection.id).await,
+        0,
+        "drop_collection must clear the in-memory AXIS store"
+    );
+
+    // The next search must rebuild the AXIS store from the SST segments and
+    // recover. The store being repopulated (vs. an empty store served only by a
+    // brute-force segment scan) is what proves the rebuild ran.
+    let recovered = search(&engine, &collection, probe.vector.clone()).await;
+    assert!(
+        recovered.contains(&probe.id),
+        "post-loss search must find the probe"
+    );
+    assert_eq!(
+        axis.registered_vector_count(&collection.id).await,
+        all.len(),
+        "the AXIS store must be rebuilt from SST after the recovering search"
     );
 }
