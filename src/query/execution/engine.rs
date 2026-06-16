@@ -224,6 +224,63 @@ impl NativeVolcanoEngine {
         ExecutionPipelineResult { schema, rows }.enforce_row_limit(controls.max_rows)
     }
 
+    /// Build and open a physical plan, then return its rows through the
+    /// schema-bearing stream contract instead of materializing them up front.
+    ///
+    /// The executor tree returned by `build_executor` is `'static + Send` and
+    /// owns its readers, so it can be moved directly into a row stream. Rows are
+    /// pulled lazily via `ExecNode::next_row`, keeping resident memory bounded by
+    /// one row rather than the whole result set. Cooperative cancellation is
+    /// re-checked before every pull so a cancelled request stops mid-stream.
+    ///
+    /// `controls.max_rows` is enforced defensively here as an error on overflow,
+    /// preserving the materialized path's semantics; plan-level limit pushdown and
+    /// truncate-vs-error modes are layered on in a later phase.
+    pub async fn execute_physical_stream<F: ReaderFactory>(
+        physical: PhysicalPlan,
+        factory: &F,
+        controls: ExecutionControls,
+    ) -> Result<ExecutionStreamResult, ExecutionError> {
+        controls.check_cancelled()?;
+        let mut exec = build_executor(physical, factory, &VolcanoExecutionContext::default())
+            .map_err(|e| ExecutionError::Execution(format!("build_executor: {e}")))?;
+        controls.check_cancelled()?;
+        exec.open()
+            .await
+            .map_err(|e| ExecutionError::Execution(format!("open: {e}")))?;
+        let schema = exec.schema().clone();
+
+        // State threaded through the stream: the owned executor, the request
+        // controls, and the count of rows already emitted (for the limit guard).
+        let rows = stream::try_unfold(
+            (exec, controls, 0usize),
+            |(mut exec, controls, emitted)| async move {
+                controls.check_cancelled()?;
+                match exec
+                    .next_row()
+                    .await
+                    .map_err(|e| ExecutionError::Execution(format!("scan: {e}")))?
+                {
+                    Some(row) => {
+                        if let Some(limit) = controls.max_rows
+                            && emitted >= limit
+                        {
+                            return Err(ExecutionError::RowLimitExceeded {
+                                limit,
+                                actual: emitted + 1,
+                            });
+                        }
+                        Ok(Some((row, (exec, controls, emitted + 1))))
+                    }
+                    None => Ok(None),
+                }
+            },
+        )
+        .boxed();
+
+        Ok(ExecutionStreamResult { schema, rows })
+    }
+
     /// Build, meter, open, and drain a physical plan through the Rust-native
     /// Volcano executor.
     ///
@@ -433,5 +490,87 @@ mod tests {
             rows,
             vec![vec![ProximaValue::Int64(7)], vec![ProximaValue::Int64(8)]]
         );
+    }
+
+    #[tokio::test]
+    async fn native_volcano_stream_yields_rows_incrementally() {
+        let result = NativeVolcanoEngine::execute_physical_stream(
+            values_plan(),
+            &EmptyReaderFactory,
+            ExecutionControls::default(),
+        )
+        .await
+        .expect("values plan should open for streaming");
+
+        // Schema is available before draining any row.
+        assert_eq!(result.schema.columns[0].name, "id");
+
+        let mut rows = result.rows;
+        let first = rows.next().await.expect("first row").expect("row ok");
+        assert_eq!(first, vec![ProximaValue::Int64(1)]);
+        let second = rows.next().await.expect("second row").expect("row ok");
+        assert_eq!(second, vec![ProximaValue::Int64(2)]);
+        assert!(rows.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn native_volcano_stream_honors_mid_stream_cancellation() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let controls = ExecutionControls {
+            cancellation_flag: Some(flag.clone()),
+            ..Default::default()
+        };
+        let result = NativeVolcanoEngine::execute_physical_stream(
+            values_plan(),
+            &EmptyReaderFactory,
+            controls,
+        )
+        .await
+        .expect("values plan should open for streaming");
+
+        let mut rows = result.rows;
+        let first = rows.next().await.expect("first row").expect("row ok");
+        assert_eq!(first, vec![ProximaValue::Int64(1)]);
+
+        // Cancel after the first row; the next pull must surface Cancelled rather
+        // than continuing to drain the plan.
+        flag.store(true, Ordering::Relaxed);
+        let err = rows
+            .next()
+            .await
+            .expect("a stream item")
+            .expect_err("cancelled mid-stream");
+        assert!(matches!(err, ExecutionError::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn native_volcano_stream_enforces_row_limit() {
+        let controls = ExecutionControls {
+            max_rows: Some(1),
+            ..Default::default()
+        };
+        let result = NativeVolcanoEngine::execute_physical_stream(
+            values_plan(),
+            &EmptyReaderFactory,
+            controls,
+        )
+        .await
+        .expect("values plan should open for streaming");
+
+        let mut rows = result.rows;
+        let first = rows.next().await.expect("first row").expect("row ok");
+        assert_eq!(first, vec![ProximaValue::Int64(1)]);
+        let err = rows
+            .next()
+            .await
+            .expect("a stream item")
+            .expect_err("row limit should reject the overflow row");
+        assert!(matches!(
+            err,
+            ExecutionError::RowLimitExceeded {
+                limit: 1,
+                actual: 2
+            }
+        ));
     }
 }
