@@ -31,7 +31,7 @@
 //! ```
 
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use std::collections::HashSet;
 
 /// Ground truth result: (vector_id, distance)

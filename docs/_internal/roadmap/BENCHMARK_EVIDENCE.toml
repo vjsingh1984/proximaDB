@@ -21,9 +21,9 @@
 # DO NOT promote an entry to `measured` without real provenance. Numbers in
 # README/BENCHMARKS are claims, not evidence, until an artifact backs them.
 
-as_of_date = "2026-06-15"
+as_of_date = "2026-06-16"
 source_of_truth = "benches/ + checked-in dated artifacts"
-header_status = "seeded-2026-06-15; most external claims are unverified pending dated artifacts"
+header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_2026_06_16.adoc): object_economy_e2e promoted to measured; the other e2e claims' benches measure COMPONENT kernels (fusion-merge µs, recall computation, quantization speed) or small-scale per-engine search, NOT the claimed end-to-end metric/scale — they stay unverified with corrected notes; real e2e benches are the follow-up"
 
 # ---------------------------------------------------------------------------
 # MEASURED — backed by a dated, checked-in artifact.
@@ -59,7 +59,7 @@ artifact = ""
 hardware = ""
 date = ""
 version = ""
-notes = "BENCHMARKS.adoc cites '10M vectors, 768-d, M1 Max' but its changelog date (2025-02-23) is inconsistent with the 2026 timeline and no reproducible artifact is checked in. README carries an explicit 'not an SLA / YMMV' caveat."
+notes = "Ran 2026-06-16: bench_04 measures per-engine search at only 128 vectors (SST pure ~1.44 ms, filtered ~1.42 ms) — it does NOT measure the '~8 ms p99 over 10M-vector HNSW' claim (scale + engine differ). A real 10M-scale HNSW latency bench is needed. README carries a 'not an SLA / YMMV' caveat."
 
 [[claims]]
 id = "ingest_throughput"
@@ -73,7 +73,7 @@ artifact = ""
 hardware = ""
 date = ""
 version = ""
-notes = "SST throughput benches exist; no dated artifact links the 125K figure to a specific run."
+notes = "Ran 2026-06-16: bench_08 measures the quantization-speed kernel (dim 128 ~1.02 ms … dim 1536 ~10.74 ms) and progressive-search latency (1024 → ~6.6 µs), NOT an end-to-end '~125K vectors/sec' ingest throughput. A real ingest-throughput bench is needed."
 
 [[claims]]
 id = "recall_at_10"
@@ -87,7 +87,7 @@ artifact = ""
 hardware = ""
 date = ""
 version = ""
-notes = "Dedicated recall@k bench (ground-truth vs approximate) exists. README states 'not an SLA'."
+notes = "Ran 2026-06-16: bench_23_recall_at_k was an orphan (no [[bench]] entry) with a stale import (`proximadb::core::VectorRecord`); now registered + fixed (→ proto VectorRecord) and runnable. BUT it benchmarks the recall-COMPUTATION utility over synthetic vectors + SIMULATED approximate results — it does NOT measure the ANN engine's actual Recall@10. A real index-vs-ground-truth recall bench is needed. README states 'not an SLA'."
 
 [[claims]]
 id = "hybrid_search_latency"
@@ -101,7 +101,7 @@ artifact = ""
 hardware = ""
 date = ""
 version = ""
-notes = "Fusion-strategy latency bench exists. Quality deltas (NDCG/recall improvement) need a labeled IR dataset and are NOT claimed here."
+notes = "Ran 2026-06-16: bench_21 measures the RRF fusion-merge kernel (k=10 → 1.77 µs, k=50 → 8.46 µs, k=100 → 17.27 µs), NOT the '~8 ms' end-to-end vector+BM25 hybrid search latency. A real e2e hybrid bench is needed; quality deltas (NDCG) need a labeled IR dataset and are not claimed here."
 
 [[claims]]
 id = "qps_throughput"
@@ -115,21 +115,21 @@ artifact = ""
 hardware = ""
 date = ""
 version = ""
-notes = "Broad throughput claim; needs full-scale validation and a dated artifact before it can be marketed."
+notes = "Ran 2026-06-16: bench_04 reports per-engine search latency at 128 vectors but no QPS-at-scale measurement; the '100K+ QPS' claim is unsubstantiated. Needs a full-scale throughput bench + dated artifact before it can be marketed."
 
 [[claims]]
 id = "object_economy_e2e_latency"
 claim = "Object-economy cold/warm end-to-end retrieval latency"
 metric = "e2e_latency_ms"
-status = "unverified"
+status = "measured"
 asserted_in = ["docs/_internal/status/OBJECT_ECONOMY_BENCH_REPORT_2026_05_28.adoc:154"]
 bench_source = "benches/bench_vector_object_economy_e2e.rs"
 bench_command = "cargo bench --bench bench_vector_object_economy_e2e"
-artifact = ""
-hardware = ""
-date = ""
-version = ""
-notes = "Bench is registered but was explicitly NOT run for v0.2 (per the object-economy report); e2e budget is dominated by object-store round trips."
+artifact = "docs/_internal/status/BENCH_RUN_2026_06_16.adoc"
+hardware = "Apple M1 Max, 64 GB, macOS 26.2 (shared dev machine — indicative, not an SLA)"
+date = "2026-06-16"
+version = "v0.2"
+notes = "Ran 2026-06-16 (10K vectors, dim 128, top_k 10): cold query p50 20.83 ms (p99 21.12), warm p50 19.97 ms (p99 20.44), ~50 QPS; setup insert 9 ms / flush 117 ms / 3.37 MB on-disk. Genuinely measures the route's e2e cold/warm latency. Indicative local baseline (shared machine, default 10K scale — below the 1M-doc headline), NOT an SLA."
 
 # ---------------------------------------------------------------------------
 # ASPIRATIONAL — target / acceptance-criterion only; no benchmark yet.
