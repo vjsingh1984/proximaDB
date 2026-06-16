@@ -83,6 +83,11 @@ pub struct PredicateDiagnostics {
     /// payload. See `src/index/turboquant_bridge.rs` for the 9-field
     /// schema.
     turboquant_hints: Mutex<Option<serde_json::Value>>,
+    /// TD-040: number of SST blocks skipped by per-block vector-bounds (L2
+    /// lower-bound) pruning before their data blocks were read. Accumulated
+    /// (summed) across any searches in the request — a count, not a one-shot
+    /// flag — then surfaced in EXPLAIN via the `vector_bounds_pruned` hint.
+    vector_bounds_pruned_blocks: Mutex<u64>,
 }
 
 impl PredicateDiagnostics {
@@ -173,6 +178,26 @@ impl PredicateDiagnostics {
             .unwrap_or_else(|p| p.into_inner())
             .take()
     }
+
+    /// Add to the running count of SST blocks skipped by vector-bounds pruning
+    /// (TD-040). Accumulates because one request may issue multiple searches.
+    pub fn record_vector_bounds_pruned(&self, blocks: u64) {
+        let mut g = self
+            .vector_bounds_pruned_blocks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        *g = g.saturating_add(blocks);
+    }
+
+    /// Atomically take the vector-bounds-pruned block count, resetting to 0.
+    pub fn take_vector_bounds_pruned(&self) -> u64 {
+        std::mem::take(
+            &mut *self
+                .vector_bounds_pruned_blocks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        )
+    }
 }
 
 /// Bind a fresh diagnostics container to `future` and await it.
@@ -258,6 +283,27 @@ pub fn take_turboquant_hints() -> Option<serde_json::Value> {
     PREDICATE_DIAGNOSTICS
         .try_with(|d| d.take_turboquant_hints())
         .unwrap_or(None)
+}
+
+/// Add `blocks` to the active container's vector-bounds-pruned count (TD-040).
+/// Silently no-ops outside an active [`scope`] — the `tracing::debug!` emitted
+/// by the prune path remains the operator-visible signal in that case.
+pub fn record_vector_bounds_pruned(blocks: u64) {
+    if blocks == 0 {
+        return;
+    }
+    let _ = PREDICATE_DIAGNOSTICS.try_with(|d| {
+        d.record_vector_bounds_pruned(blocks);
+    });
+}
+
+/// Take the accumulated vector-bounds-pruned block count. Returns 0 when there
+/// is no active scope OR nothing was pruned. Must be called inside the [`scope`]
+/// that wrapped the search.
+pub fn take_vector_bounds_pruned() -> u64 {
+    PREDICATE_DIAGNOSTICS
+        .try_with(|d| d.take_vector_bounds_pruned())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -385,6 +431,27 @@ mod tests {
             3,
             "inner scope must not leak into outer scope"
         );
+    }
+
+    #[tokio::test]
+    async fn vector_bounds_pruned_accumulates_and_take_clears() {
+        let (total, second) = scope(async {
+            assert_eq!(take_vector_bounds_pruned(), 0);
+            record_vector_bounds_pruned(3);
+            record_vector_bounds_pruned(5); // accumulates (count, not flag)
+            record_vector_bounds_pruned(0); // no-op
+            (take_vector_bounds_pruned(), take_vector_bounds_pruned())
+        })
+        .await;
+        assert_eq!(total, 8, "counts accumulate across records");
+        assert_eq!(second, 0, "take clears the counter");
+    }
+
+    #[tokio::test]
+    async fn vector_bounds_pruned_outside_scope_is_zero() {
+        // No scope wrapping — record no-ops, take yields 0 (never a panic).
+        record_vector_bounds_pruned(7);
+        assert_eq!(take_vector_bounds_pruned(), 0);
     }
 
     // ------------------------------------------------------------------

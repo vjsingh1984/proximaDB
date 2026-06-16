@@ -6031,6 +6031,15 @@ impl UnifiedSstableReader {
             }
         }
 
+        // TD-040 S3e: surface the vector-bounds prune count to the per-request
+        // diagnostics bus so EXPLAIN can disclose it. No-ops outside a scope
+        // (e.g. direct-engine tests); the `tracing::debug!` above stays the
+        // operator signal there. The non-stats caller drops `object_stats`, so
+        // this is the only channel that reaches the request boundary today.
+        crate::observability::predicate_diagnostics::record_vector_bounds_pruned(
+            object_stats.vector_bounds_pruned_blocks as u64,
+        );
+
         Ok((relevant_blocks, object_stats))
     }
 
