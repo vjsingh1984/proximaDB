@@ -185,9 +185,9 @@ func TestRateLimiterMiddleware(t *testing.T) {
 func TestRetryMiddleware(t *testing.T) {
 	config := &proximadb.RetryConfig{
 		MaxAttempts:     3,
-		InitialDelay:   10 * time.Millisecond,
-		MaxDelay:       100 * time.Millisecond,
-		Multiplier:     2.0,
+		InitialDelay:    10 * time.Millisecond,
+		MaxDelay:        100 * time.Millisecond,
+		Multiplier:      2.0,
 		RetryableErrors: proximadb.IsRetryable,
 	}
 
