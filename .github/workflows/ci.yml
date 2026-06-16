@@ -222,7 +222,7 @@ jobs:
           cd clients/python
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install pytest grpcio grpcio-tools protobuf pyyaml
+          python -m pip install pytest grpcio grpcio-tools protobuf pyyaml jsonschema
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-proto-compat"
@@ -986,13 +986,23 @@ jobs:
       - name: Install dependencies
         working-directory: clients/python
         run: |
-          pip install -e ".[dev]"
+          # Optional-feature deps exercised by *_cov tests (arrow/pandas/openapi
+          # contract/process metrics). Without them those modules fail to import
+          # and pytest aborts at collection.
+          pip install -e ".[dev]" pyarrow pandas jsonschema psutil
       - name: Run SDK unit tests
         working-directory: clients/python
         env:
           PROXIMADB_EMBEDDED: "0"
         run: |
-          pytest tests/unit/ -v --tb=short --timeout=120
+          # test_integrations_victor_cov imports the internal, unpublished
+          # `victor` package which isn't installable in CI; skip its collection.
+          # test_integrations_victor_cov imports the internal, unpublished
+          # `victor` package; test_chunking_code_cov needs tree-sitter language
+          # grammars that are intentionally not installed in CI. Skip both.
+          pytest tests/unit/ -v --tb=short --timeout=120 \
+            --ignore=tests/unit/test_integrations_victor_cov.py \
+            --ignore=tests/unit/test_chunking_code_cov.py
 
   # ============================================================================
   # INTEGRATION TESTS - Server + Python SDK
