@@ -579,7 +579,13 @@ impl DrPathBuilder {
         Ok(resolved)
     }
 
-    fn validate_id(field: &'static str, value: &str) -> Result<(), PathResolverError> {
+    /// Canonical validation for a single tenant-isolated path ID segment
+    /// (tenant_id / namespace_id / collection_id). Rejects empty, non-ASCII,
+    /// path-separator/NUL, whitespace, and `..` traversal. Public so callers
+    /// that must build a path before the full `CatalogNamespace` is available
+    /// (e.g. the warehouse materializer over the not-yet-backfilled native
+    /// catalog) can apply the same injection/traversal guard per segment.
+    pub fn validate_id(field: &'static str, value: &str) -> Result<(), PathResolverError> {
         if value.is_empty() {
             return Err(PathResolverError::InvalidId {
                 field,

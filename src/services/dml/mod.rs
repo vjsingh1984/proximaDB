@@ -33,6 +33,7 @@ use crate::query::table_write_plan::{
     WriteIntentOverrides, WriteMode,
 };
 use crate::storage::tenant::context::TenantContext;
+use crate::storage::trait_components::path_resolver::DrPathBuilder;
 use crate::services::operations::VectorOps;
 use crate::services::operations::vectors::RichSearchResult;
 use crate::services::record_store::{
@@ -45,6 +46,35 @@ use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLaneDecision, WriteLaneRouter, WriteOperationKind,
 };
 use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
+
+/// Placeholder tenant used by warehouse materialization when no `TenantContext`
+/// reaches it. This path does NOT yet enforce tenant isolation (see the note in
+/// [`DmlService::materialize_table_to_parquet`]); the placeholder is named and
+/// centralized so the gap is greppable and the eventual fix has one call site.
+const DEFAULT_TENANT_PLACEHOLDER: &str = "default_tenant";
+
+/// Apply DrPathBuilder's canonical per-segment ID validation to the components
+/// that form a warehouse object prefix (`data/{tenant}/{ns...}/{table}`).
+/// Defense-in-depth against `..` / path-separator / NUL / whitespace injection
+/// while the materialize path still builds the prefix manually instead of
+/// routing through `DrPathBuilder::build` (blocked on the namespace-id backfill;
+/// see [`DmlService::materialize_table_to_parquet`]).
+fn validate_object_path_segments(
+    tenant_id: &str,
+    namespace_segments: &[String],
+    table: &str,
+) -> Result<()> {
+    DrPathBuilder::validate_id("tenant_id", tenant_id)
+        .map_err(|e| anyhow!("refusing materialize: invalid tenant id for object path: {e}"))?;
+    for segment in namespace_segments {
+        DrPathBuilder::validate_id("namespace", segment).map_err(|e| {
+            anyhow!("refusing materialize: invalid namespace segment for object path: {e}")
+        })?;
+    }
+    DrPathBuilder::validate_id("table", table)
+        .map_err(|e| anyhow!("refusing materialize: invalid table name for object path: {e}"))?;
+    Ok(())
+}
 
 /// Comparison operators supported by the lightweight catalog-table SELECT path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -904,12 +934,19 @@ impl DmlService {
             .collect();
 
         // 3. Tenant-isolated object prefix (DrPathBuilder mandate: data/{tenant}/{ns}/{table}).
-        //    The namespace comes from the table's catalog identifier — not a hardcoded
-        //    default — so multi-tenant/multi-namespace tables don't collide.
+        //    NOTE (tracked tech-debt): this path does NOT yet route through
+        //    `DrPathBuilder::build`. The native catalog leaves `namespace_id`/`tenant_id`
+        //    unset (pending the P0.5 backfill), so the builder would fail-closed here, and
+        //    the DDL `TableMaterializer` trait does not yet thread a `TenantContext`
+        //    (production callers pass `None` -> `DEFAULT_TENANT_PLACEHOLDER`). Until that
+        //    multi-layer fix lands, isolation on this path is best-effort. We still apply
+        //    DrPathBuilder's canonical per-segment validation so a crafted tenant /
+        //    namespace / table id cannot inject `..` or path separators into the prefix.
         let tenant_id = tenant_context
             .map(|tc| tc.tenant_id.as_str())
-            .unwrap_or("default_tenant");
+            .unwrap_or(DEFAULT_TENANT_PLACEHOLDER);
         let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        validate_object_path_segments(tenant_id, &table_id.namespace, &schema.name)?;
         let namespace = if table_id.namespace.is_empty() {
             "default".to_string()
         } else {
@@ -3908,6 +3945,23 @@ impl crate::services::ddl::TableMaterializer for DmlTableMaterializer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn materialize_path_segments_reject_injection() {
+        let ns = |s: &str| vec![s.to_string()];
+        // Happy path: clean ASCII ids, with and without a namespace segment.
+        assert!(validate_object_path_segments("tnt_acme", &ns("sales"), "orders").is_ok());
+        assert!(validate_object_path_segments(DEFAULT_TENANT_PLACEHOLDER, &[], "orders").is_ok());
+        // `..` traversal anywhere is refused.
+        assert!(validate_object_path_segments("..", &ns("sales"), "orders").is_err());
+        assert!(validate_object_path_segments("tnt_acme", &ns(".."), "orders").is_err());
+        // Path-separator injection inside a segment is refused.
+        assert!(validate_object_path_segments("tnt_acme", &ns("a/b"), "orders").is_err());
+        // Whitespace and empty ids are refused.
+        assert!(validate_object_path_segments("tnt_acme", &[], "bad name").is_err());
+        assert!(validate_object_path_segments("tnt_acme", &[], "").is_err());
+    }
+
     use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
     use crate::services::operations::batch_result::OperationMetrics;
     use crate::services::record_store::{
