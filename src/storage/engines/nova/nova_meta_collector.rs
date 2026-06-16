@@ -391,3 +391,97 @@ pub struct NovaMetadata {
     /// Number of row groups per SuperBlock
     pub row_groups_per_superblock: usize,
 }
+
+/// Build a `.nova_meta` sidecar (serialized `NovaMetadata`) directly from the
+/// vectors of each PHYSICAL parquet row group (TD-040). Used at flush time,
+/// keyed off the written file's footer row-group counts, so the sidecar's
+/// row-group bounds line up exactly with the row groups the cold-read path
+/// fetches by index — unlike the streaming collector, whose row groups track
+/// logical write-batches, not the parquet's physical row groups.
+/// `row_group_vectors[i]` holds the fp32 vectors of physical row group `i`
+/// (in file order).
+pub fn nova_sidecar_from_row_groups(
+    dimension: usize,
+    row_group_vectors: &[Vec<Vec<f32>>],
+) -> Result<Vec<u8>> {
+    let row_group_stats: Vec<EnhancedRowGroupStats> = row_group_vectors
+        .iter()
+        .enumerate()
+        .map(|(rg_id, vectors)| EnhancedRowGroupStats {
+            row_group_id: rg_id as u32,
+            parquet_metadata: None,
+            vector_zone_map: zone_map_from_vectors(dimension, vectors),
+            quantized_selectivity: QuantizedSelectivity {
+                binary_effectiveness: 0.7,
+                int8_accuracy: 0.85,
+                pq_quality: 0.95,
+                progressive_efficiency: 0.75,
+            },
+            compression_ratio: 1.0,
+            search_cost_estimate: SearchCostEstimate {
+                io_cost: 0.0,
+                cpu_cost: vectors.len() as f32 * 0.1,
+                memory_cost: 0.0,
+                estimated_latency_ms: vectors.len() as f32 * 0.001,
+                confidence: 0.8,
+            },
+            access_stats: AccessStats {
+                access_count: vectors.len() as u64,
+                last_access: chrono::Utc::now(),
+                avg_selectivity: 0.5,
+                cache_hit_rate: 0.0,
+                access_frequency: 0.0,
+            },
+        })
+        .collect();
+
+    let metadata = NovaMetadata {
+        version: 1,
+        dimension,
+        row_group_stats,
+        superblocks: Vec::new(),
+        row_groups_per_superblock: 4,
+    };
+    bincode::serialize(&metadata).map_err(|e| anyhow::anyhow!("Serialization error: {}", e))
+}
+
+/// Per-dimension min/max + centroid + L2 norm bounds over a row group's vectors
+/// (mirrors `RowGroupBuilder::build_zone_map`). A row group with no usable
+/// vectors collapses to a zero box (L2 lower bound 0 ⇒ never wrongly pruned).
+fn zone_map_from_vectors(dimension: usize, vectors: &[Vec<f32>]) -> ZoneMap {
+    let mut min_values = vec![f32::MAX; dimension];
+    let mut max_values = vec![f32::MIN; dimension];
+    let mut sum = vec![0f64; dimension];
+    let mut count = 0u64;
+    for v in vectors {
+        if v.is_empty() {
+            continue;
+        }
+        count += 1;
+        for (i, &x) in v.iter().enumerate().take(dimension) {
+            if x < min_values[i] {
+                min_values[i] = x;
+            }
+            if x > max_values[i] {
+                max_values[i] = x;
+            }
+            sum[i] += x as f64;
+        }
+    }
+    if count == 0 {
+        min_values = vec![0.0; dimension];
+        max_values = vec![0.0; dimension];
+    }
+    let denom = count.max(1) as f64;
+    let centroid: Vec<f32> = sum.iter().map(|&s| (s / denom) as f32).collect();
+    let min_norm = min_values.iter().map(|&v| v * v).sum::<f32>().sqrt();
+    let max_norm = max_values.iter().map(|&v| v * v).sum::<f32>().sqrt();
+    ZoneMap {
+        min_values,
+        max_values,
+        centroid,
+        variance: vec![0.0; dimension],
+        norm_bounds: (min_norm, max_norm),
+        dimension,
+    }
+}
