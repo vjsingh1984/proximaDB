@@ -28,6 +28,10 @@ Instead of purely delegating large-scale transformations to external Spark clust
 * **Future-proofing:** The execution architecture will remain flexible via a pluggable engine trait, allowing us to swap or enhance DataFusion with custom Rust-based distributed workers for CPU-intensive (Monte Carlo style) jobs and async I/O heavy workloads.
 * **Why:** A unified Rust engine removes the JVM overhead of Spark, drastically lowers memory pressure, and simplifies the deployment topology while providing the same distributed data engineering capabilities.
 
+=== 1.5. MLflow & MLOps Model Management Natively
+To fully compete with Databricks in the data and AI space, the enterprise ML landscape (MLOps, MLflow, model management) must be integrated tightly into the data warehouse fabric. 
+* **Why:** Data engineering pipelines inevitably feed ML training and inference. By mapping the MLflow landscape directly into ProximaDB's `xCatalog` (under `mlops.*`), the system provides a zero-ETL path from Parquet/Iceberg data engineering to model registry and artifact management, utilizing the same single-node/pseudo-distributed Rust engine for processing.
+
 == 2. Blueprint for the MVP
 
 === 2.1. Pseudo-Distributed DataFusion Seam

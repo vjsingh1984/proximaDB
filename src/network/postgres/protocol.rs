@@ -39,6 +39,7 @@ use crate::services::{DdlService, DmlService};
 use crate::storage::document::DocumentService;
 use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
+use crate::query::execution::ExecutionPipelineResult;
 
 /// PostgreSQL protocol handler
 pub struct PostgresProtocol {
@@ -1409,8 +1410,9 @@ impl PostgresProtocol {
     /// format, then `CommandComplete("SELECT n")`.
     async fn emit_pipeline_result(
         &mut self,
-        result: super::relational_pipeline::PipelineResult,
-    ) -> Result<()> {
+        result: ExecutionPipelineResult,
+    ) -> anyhow::Result<()> {
+
         // RowDescription.
         let fields: Vec<crate::network::postgres::types::FieldDescription> = result
             .schema

@@ -76,7 +76,7 @@ fn grpc_roundtrip_sqlvalue_prost() {
         ],
         similarity: Some(0.99),
     };
-    let resp = v1::ExecuteSqlResponse {
+    let resp = v1::ExecuteQueryResponse {
         rows: vec![row],
         rows_scanned: 1,
         rows_returned: 1,
@@ -87,7 +87,7 @@ fn grpc_roundtrip_sqlvalue_prost() {
 
     let mut buf = Vec::new();
     resp.encode(&mut buf).unwrap();
-    let decoded = v1::ExecuteSqlResponse::decode(&*buf).unwrap();
+    let decoded = v1::ExecuteQueryResponse::decode(&*buf).unwrap();
     assert_eq!(decoded.rows.len(), 1);
     assert_eq!(decoded.rows[0].fields.len(), 8);
 }
@@ -122,7 +122,7 @@ fn rest_roundtrip_sqlvalue_json() {
         ],
         similarity: None,
     };
-    let resp = v1::ExecuteSqlResponse {
+    let resp = v1::ExecuteQueryResponse {
         rows: vec![row],
         rows_scanned: 1,
         rows_returned: 1,
@@ -134,7 +134,7 @@ fn rest_roundtrip_sqlvalue_json() {
     // Wrap in REST envelope and JSON round-trip
     #[derive(serde::Serialize, serde::Deserialize)]
     struct Wrapper {
-        data: v1::ExecuteSqlResponse,
+        data: v1::ExecuteQueryResponse,
         success: bool,
     }
     let w = Wrapper {

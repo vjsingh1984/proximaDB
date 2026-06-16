@@ -1791,6 +1791,24 @@ mod tests {
                 .push((path.clone(), data.to_vec()));
             Ok(())
         }
+
+        async fn latest_manifest_version(
+            &self,
+            _manifest_prefix: &str,
+        ) -> std::result::Result<Option<u64>, StorageError> {
+            Ok(None)
+        }
+
+        async fn publish_snapshot(
+            &self,
+            _data_prefix: &ObjectPath,
+            _manifest_prefix: &str,
+            _parent: Option<u64>,
+        ) -> std::result::Result<proximadb_storage_common::object_store_bridge::CommitOutcome, StorageError>
+        {
+            use proximadb_storage_common::object_store_bridge::CommitOutcome;
+            Ok(CommitOutcome::Committed(0))
+        }
     }
 
     #[async_trait]

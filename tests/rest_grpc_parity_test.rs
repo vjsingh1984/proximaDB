@@ -34,8 +34,8 @@ use proximadb::proto::proximadb_v1::{
     CreateNodeRequest,
     DistanceMetric,
     // SQL types
-    ExecuteSqlRequest,
-    ExecuteSqlResponse,
+    ExecuteQueryRequest,
+    ExecuteQueryResponse,
     GetCollectionRequest,
     GetNodeRequest,
     Node,
@@ -52,7 +52,7 @@ use proximadb::proto::proximadb_v1::{
 // gRPC service clients
 use proximadb::proto::proximadb_v1::{
     collection_service_client::CollectionServiceClient, graph_service_client::GraphServiceClient,
-    sql_service_client::SqlServiceClient, vector_service_client::VectorServiceClient,
+    query_service_client::QueryServiceClient, vector_service_client::VectorServiceClient,
 };
 
 // Constants for server endpoints
@@ -174,7 +174,7 @@ struct NormalizedSqlResult {
 }
 
 impl NormalizedSqlResult {
-    fn from_grpc(response: &ExecuteSqlResponse) -> Self {
+    fn from_grpc(response: &ExecuteQueryResponse) -> Self {
         let mut column_names = response.columns.clone();
         column_names.sort();
 
@@ -568,7 +568,7 @@ impl ParityTestHarness {
             .clone()
             .ok_or("gRPC SQL client not available")?;
 
-        let request = ExecuteSqlRequest {
+        let request = ExecuteQueryRequest {
             query: query.to_string(),
             parameters: vec![],
             collection: Some(self.test_collection_name.clone()),

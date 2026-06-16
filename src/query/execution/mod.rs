@@ -6,12 +6,23 @@
 //! instead of Vec<MetadataItem> linear scans, achieving 10x performance gain.
 
 pub mod datafusion_bridge;
+pub mod datafusion_engine;
+pub mod engine;
 pub mod executor;
 pub mod low_latency_executor;
 pub mod plan_cache;
 pub mod planner;
 pub mod set_operations;
 pub mod window_executor;
+
+// Re-export execution engine types
+pub use datafusion_engine::DataFusionLocalEngine;
+pub(crate) use engine::normalize_table_key;
+pub use engine::{
+    ExecutionControls, ExecutionEngine, ExecutionError, ExecutionPipelineResult,
+    ExecutionRowStream, ExecutionStreamResult, NativeVolcanoEngine, QueryExecutionContext,
+    execute_sql_stream_with_backend, execute_sql_with_backend,
+};
 
 // Re-export low-latency execution types
 pub use low_latency_executor::{

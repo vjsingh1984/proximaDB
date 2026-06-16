@@ -727,11 +727,10 @@ mod datafusion_tests {
     #[test]
     fn test_null_table_provider() {
         // NullProximaTableProvider is a no-op implementation for testing
-        let provider = NullProximaTableProvider;
+        let provider = NullProximaTableProvider::new();
 
         let info = provider.collection_info();
         assert_eq!(info.dimension, 0);
-        assert_eq!(info.total_rows, 0);
 
         let splits = provider.list_splits();
         assert!(splits.is_empty());
@@ -746,13 +745,11 @@ mod datafusion_tests {
         let info = CollectionInfo {
             collection_id: "test_collection".to_string(),
             dimension: 768,
-            total_rows: 1_000_000,
             engine_type: EngineType::Sst,
             base_path: "/data/collections/test".to_string(),
         };
 
         assert_eq!(info.dimension, 768);
-        assert_eq!(info.total_rows, 1_000_000);
         assert!(matches!(info.engine_type, EngineType::Sst));
     }
 }
