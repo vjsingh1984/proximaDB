@@ -145,6 +145,7 @@ pub trait TableRecordSourceReader: Send + Sync {
         source: &ReadSource,
         source_schema: Option<&CatalogTableSchema>,
         target_schema: &CatalogTableSchema,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
         cursor: &mut TableRecordSourceCursor,
     ) -> Result<Option<Vec<ProximaRecord>>>;
 }
@@ -203,6 +204,7 @@ impl TableRecordSourceReader for TableRecordStoreSourceReader {
         source: &ReadSource,
         source_schema: Option<&CatalogTableSchema>,
         target_schema: &CatalogTableSchema,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
         cursor: &mut TableRecordSourceCursor,
     ) -> Result<Option<Vec<ProximaRecord>>> {
         let ReadSource::CatalogTable { table, .. } = source else {
@@ -239,7 +241,9 @@ impl TableRecordSourceReader for TableRecordStoreSourceReader {
                         include_vector: true,
                         include_props: true,
                     },
-                    None,
+                    // TD-113 family: scope the SELECT-source scan to the tenant's
+                    // record partition (was `None` → unscoped/cross-tenant read).
+                    tenant_context,
                 )
                 .await?;
             cursor.buffered_records = Some(records);
@@ -331,6 +335,7 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
                 &request.routed_plan.plan.source,
                 request.source_schema,
                 request.target_schema,
+                request.tenant_context,
                 &mut cursor,
             )
             .await?
@@ -386,9 +391,11 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
                 .into_iter()
                 .map(|record| TableRecordMutation::new(mutation_kind, record))
                 .collect::<Vec<_>>();
+            // TD-113 family: thread the tenant so the bulk-append lands in the
+            // tenant's record partition (was `None` → unscoped/cross-tenant write).
             let result = self
                 .record_store
-                .write_mutations(request.target_schema, mutations, None)
+                .write_mutations(request.target_schema, mutations, request.tenant_context)
                 .await?;
             if !result.success {
                 return Err(anyhow!(
@@ -607,7 +614,7 @@ fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> 
         .or_else(|| schema.storage_layouts.first())
 }
 
-fn object_write_base_path(schema: &CatalogTableSchema) -> String {
+fn object_write_base_path(schema: &CatalogTableSchema, tenant: Option<&str>) -> String {
     primary_layout(schema)
         .and_then(|layout| match layout.physical_format {
             CatalogPhysicalFormat::Iceberg | CatalogPhysicalFormat::Parquet => {
@@ -618,7 +625,16 @@ fn object_write_base_path(schema: &CatalogTableSchema) -> String {
         .or(schema.location.as_deref())
         .map(normalize_object_path_prefix)
         .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| format!("tables/{}", sanitize_object_path_segment(&schema.name)))
+        .unwrap_or_else(|| {
+            // No explicit (materialize-set, already tenant-scoped) location → derive a
+            // fallback. Tenant-scope it (TD-113 family) so two tenants' same-named
+            // tables don't write/commit to a shared `tables/{name}` prefix.
+            let table = sanitize_object_path_segment(&schema.name);
+            match tenant.filter(|t| !t.is_empty()) {
+                Some(t) => format!("data/{}/tables/{table}", sanitize_object_path_segment(t)),
+                None => format!("tables/{table}"),
+            }
+        })
 }
 
 fn normalize_object_path_prefix(location: &str) -> String {
@@ -659,8 +675,9 @@ fn object_write_path(
     schema: &CatalogTableSchema,
     routed_plan: &RoutedExecutionPlan,
     batch_index: usize,
+    tenant: Option<&str>,
 ) -> Path {
-    let base = object_write_base_path(schema);
+    let base = object_write_base_path(schema, tenant);
     let table = sanitize_object_path_segment(&schema.name);
     let sequence = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -675,6 +692,23 @@ fn object_write_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_write_base_path_tenant_isolates_the_fallback() {
+        // No explicit location → fallback; the tenant scopes it so two tenants'
+        // same-named tables don't share a `tables/{name}` prefix (TD-113 family).
+        let schema = CatalogTableSchema::new("facts");
+        assert_eq!(object_write_base_path(&schema, None), "tables/facts");
+        assert_eq!(
+            object_write_base_path(&schema, Some("acmecorp")),
+            "data/acmecorp/tables/facts"
+        );
+        assert_ne!(
+            object_write_base_path(&schema, Some("acmecorp")),
+            object_write_base_path(&schema, Some("globexco")),
+        );
+    }
+
     use crate::query::table_write_plan::{
         CopyIntoPlan, CostEstimate, LogicalTableRef, TableWriteRouter, WriteIntentOverrides,
         WriteMode,
@@ -719,6 +753,7 @@ mod tests {
             _source: &ReadSource,
             _source_schema: Option<&CatalogTableSchema>,
             _target_schema: &CatalogTableSchema,
+            _tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
             _cursor: &mut TableRecordSourceCursor,
         ) -> Result<Option<Vec<ProximaRecord>>> {
             Ok(self.batches.lock().unwrap().pop())
@@ -1007,6 +1042,7 @@ mod tests {
                 &ReadSource::QuerySql("SELECT * FROM staging".to_string()),
                 None,
                 &schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -1033,6 +1069,7 @@ mod tests {
                 },
                 Some(&source_schema),
                 &target_schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -1377,6 +1414,7 @@ mod tests {
                 &read_source,
                 Some(&source_schema),
                 &target_schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -1387,6 +1425,7 @@ mod tests {
                 &read_source,
                 Some(&source_schema),
                 &target_schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -1397,6 +1436,7 @@ mod tests {
                 &read_source,
                 Some(&source_schema),
                 &target_schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -1926,6 +1966,7 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
                 &request.routed_plan.plan.source,
                 request.source_schema,
                 request.target_schema,
+                request.tenant_context,
                 &mut cursor,
             )
             .await?
@@ -1934,7 +1975,12 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
                 continue;
             }
             if is_bulk_append {
-                let path = object_write_path(request.target_schema, &request.routed_plan, batch_index);
+                let path = object_write_path(
+                    request.target_schema,
+                    &request.routed_plan,
+                    batch_index,
+                    request.tenant_context.map(|tc| tc.tenant_id.as_str()),
+                );
                 batch_index += 1;
 
                 let bridge = self.object_store_bridge.as_ref().ok_or_else(|| {
@@ -1963,9 +2009,11 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
                 .into_iter()
                 .map(|record| TableRecordMutation::new(mutation_kind, record))
                 .collect::<Vec<_>>();
+            // TD-113 family: thread the tenant so the non-bulk-append DataFusion
+            // route writes into the tenant's record partition (was `None`).
             let result = self
                 .record_store
-                .write_mutations(request.target_schema, mutations, None)
+                .write_mutations(request.target_schema, mutations, request.tenant_context)
                 .await?;
             if !result.success {
                 return Err(anyhow!(
@@ -1984,7 +2032,10 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
                     request.target_schema.name
                 )
             })?;
-            let base = object_write_base_path(request.target_schema);
+            let base = object_write_base_path(
+                request.target_schema,
+                request.tenant_context.map(|tc| tc.tenant_id.as_str()),
+            );
             let data_prefix = format!("{base}/data");
             let manifest_prefix = format!("{base}/_manifests");
 

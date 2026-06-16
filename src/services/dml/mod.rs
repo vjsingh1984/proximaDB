@@ -51,7 +51,7 @@ use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 /// reaches it. This path does NOT yet enforce tenant isolation (see the note in
 /// [`DmlService::materialize_table_to_parquet`]); the placeholder is named and
 /// centralized so the gap is greppable and the eventual fix has one call site.
-const DEFAULT_TENANT_PLACEHOLDER: &str = "default_tenant";
+pub(crate) const DEFAULT_TENANT_PLACEHOLDER: &str = "default_tenant";
 
 /// Apply DrPathBuilder's canonical per-segment ID validation to the components
 /// that form a warehouse object prefix (`data/{tenant}/{ns...}/{table}`).
@@ -81,7 +81,7 @@ fn validate_object_path_segments(
 /// — rename-stable opaque ids). Default OFF: flipping it changes on-disk paths
 /// and orphans snapshots written under the legacy `data/{tenant}/{ns.join}/{table}`
 /// layout, so it is opt-in for new deployments. Read once per process.
-fn warehouse_drpath_enabled() -> bool {
+pub(crate) fn warehouse_drpath_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
@@ -103,7 +103,7 @@ fn warehouse_drpath_enabled() -> bool {
 ///
 /// In either layout, if the namespace carries an explicit owning `tenant_id` that
 /// differs from the request `tenant_id`, the materialize is refused (cross-tenant).
-fn resolve_materialize_prefix(
+pub(crate) fn resolve_materialize_prefix(
     drpath_enabled: bool,
     tenant_id: &str,
     namespace_segments: &[String],
@@ -703,7 +703,10 @@ impl DmlService {
             }
             DmlStatement::InsertSelect { plan, columns }
             | DmlStatement::InsertOverwrite { plan, columns } => {
-                self.plan_table_write(&plan, &columns, None).await?
+                // TD-113 family: thread the connection tenant so the target table
+                // resolves within the tenant scope and the bulk-append writes into
+                // the tenant's partition (was `None` → cross-tenant / unscoped).
+                self.plan_table_write(&plan, &columns, tenant_context).await?
             }
         };
 
@@ -1468,9 +1471,17 @@ impl DmlService {
         tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
         let (table_schema, target_stats) = self
-            .resolve_table_metadata(&plan.target.qualified_name())
+            .resolve_table_metadata(
+                &plan.target.qualified_name(),
+                tenant_context.map(|tc| tc.tenant_id.as_str()),
+            )
             .await?;
-        let source_metadata = self.resolve_table_write_source_metadata(plan).await?;
+        let source_metadata = self
+            .resolve_table_write_source_metadata(
+                plan,
+                tenant_context.map(|tc| tc.tenant_id.as_str()),
+            )
+            .await?;
         let source_schema = source_metadata.as_ref().map(|(schema, _)| schema);
         let source_stats = source_metadata.as_ref().map(|(_, stats)| stats);
         let routed = self.route_table_write_with_schemas(
@@ -1512,8 +1523,11 @@ impl DmlService {
         write_intent_overrides: Option<&WriteIntentOverrides>,
     ) -> Result<RoutedExecutionPlan> {
         let target_table_name = plan.target.qualified_name();
-        let (table_schema, target_stats) = self.resolve_table_metadata(&target_table_name).await?;
-        let source_metadata = self.resolve_table_write_source_metadata(plan).await?;
+        // Route/EXPLAIN planning is not a write boundary; resolve unscoped (the
+        // execution path `plan_table_write` resolves scoped via the tenant).
+        let (table_schema, target_stats) =
+            self.resolve_table_metadata(&target_table_name, None).await?;
+        let source_metadata = self.resolve_table_write_source_metadata(plan, None).await?;
         let source_schema = source_metadata.as_ref().map(|(schema, _)| schema);
         let source_stats = source_metadata.as_ref().map(|(_, stats)| stats);
         self.route_table_write_with_schemas(
@@ -1530,8 +1544,14 @@ impl DmlService {
     async fn resolve_table_metadata(
         &self,
         table_name: &str,
+        tenant: Option<&str>,
     ) -> Result<(CatalogTableSchema, CatalogTableStatistics)> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        // Resolve within the tenant scope (TD-064/TD-113) so a tenant-scoped target
+        // table is addressed in the tenant's namespace, not the default one.
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
 
         if !catalog.table_exists(&table_id).await? {
             return Err(anyhow!("Table '{table_name}' does not exist"));
@@ -2047,15 +2067,18 @@ impl DmlService {
     async fn resolve_table_write_source_metadata(
         &self,
         plan: &CopyIntoPlan,
+        tenant: Option<&str>,
     ) -> Result<Option<(CatalogTableSchema, CatalogTableStatistics)>> {
         let ReadSource::CatalogTable { table, .. } = &plan.source else {
             return Ok(None);
         };
 
         let source_table_name = table.qualified_name();
+        // Resolve the SELECT source within the tenant scope (TD-064/TD-113) so a
+        // tenant reads its own source table, not the default namespace's.
         let (catalog, table_id) = self
             .catalog_manager
-            .resolve_table(&source_table_name)
+            .resolve_table_scoped(&source_table_name, tenant)
             .await?;
         if !catalog.table_exists(&table_id).await? {
             return Err(anyhow!(
