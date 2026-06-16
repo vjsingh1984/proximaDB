@@ -128,6 +128,7 @@ pub async fn try_run_select(
     #[cfg_attr(not(feature = "datafusion-integration"), allow(unused_variables))]
     vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
     tenant: Option<&str>,
+    controls: ExecutionControls,
 ) -> Option<Result<ExecutionPipelineResult, String>> {
     // TD-064: the connection's tenant scopes every snapshot read to the tenant's
     // record partition (carried into the SnapshotCatalog → DmlTableReader).
@@ -158,7 +159,7 @@ pub async fn try_run_select(
             caps: ReaderCapabilities::full(),
             pk_columns: Vec::new(),
         };
-        return Some(run_plan(&factory, resolver, logical).await);
+        return Some(run_plan(&factory, resolver, logical, controls).await);
     }
 
     // 2) Real-data path (gated, additive). Engage ONLY for queries the legacy
@@ -253,7 +254,7 @@ pub async fn try_run_select(
             vector_ops,
             tenant_id: tenant.map(str::to_string),
             allow_engine_sql_fallback: false,
-            controls: ExecutionControls::default(),
+            controls: controls.clone(),
         };
         return Some(
             execute_sql_with_backend(decision.backend.clone(), sql, context)
@@ -274,7 +275,7 @@ pub async fn try_run_select(
         Ok(p) => p,
         Err(e) => return Some(Err(e)),
     };
-    Some(execute_physical(physical, &snapshot).await)
+    Some(execute_physical(physical, &snapshot, controls).await)
 }
 
 /// Plan + build + drain an executor for `logical` against `factory`, using
@@ -284,10 +285,11 @@ async fn run_plan<F: ReaderFactory, R: CapabilityResolver>(
     factory: &F,
     resolver: R,
     logical: proximadb_relational_algebra::LogicalNode,
+    controls: ExecutionControls,
 ) -> Result<ExecutionPipelineResult, String> {
     let planner = Planner::new(resolver);
     let physical = planner.plan(logical).map_err(|e| format!("plan: {e}"))?;
-    execute_physical(physical, factory).await
+    execute_physical(physical, factory, controls).await
 }
 
 /// Build + open + drain an executor for an already-planned `physical` plan.
@@ -296,8 +298,9 @@ async fn run_plan<F: ReaderFactory, R: CapabilityResolver>(
 async fn execute_physical<F: ReaderFactory>(
     physical: PhysicalPlan,
     factory: &F,
+    controls: ExecutionControls,
 ) -> Result<ExecutionPipelineResult, String> {
-    NativeVolcanoEngine::execute_physical(physical, factory, ExecutionControls::default())
+    NativeVolcanoEngine::execute_physical(physical, factory, controls)
         .await
         .map_err(|e| e.to_string())
 }

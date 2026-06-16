@@ -112,10 +112,12 @@ make test-tdd-unit
 
 ```bash
 # Run pre-commit checks
-make tdd-precommit
+make work-commit-check
 
 # Or manually:
-make fmt && make clippy && make test
+make fmt-check
+cargo nextest run --lib --profile unit
+make deterministic-commit-contract-check
 ```
 
 ## Test Utilities
@@ -302,10 +304,21 @@ The **blocking** release gate is `.github/workflows/ci.yml`, aggregated by the `
 - `cargo clippy --lib --bins -- -D warnings`
 - **`cargo nextest run --lib --profile unit`** (the zero-retry unit contract)
 - proto / OpenAPI drift checks; targeted integration tests
+- `scripts/check_deterministic_commit_contract.py` (fast guard that verifies the zero-retry
+  policy, CI/Makefile wiring, architecture/support guard text, and conflict-marker absence)
 - `scripts/validate_capability_matrix.py` (capability + maturity-contract guard)
 - `scripts/check_workspace_boundaries.py` and `scripts/check_tenant_path_guard.py` (layering + DrPathBuilder mandate, via the Workspace Layering Check workflow)
 
 `.github/workflows/tdd.yml` is an **advisory** TDD suite (several steps are `continue-on-error`); a green `tdd.yml` is *not* the merge gate — `ci-success` is. Don't rely on tdd.yml to catch what the gate enforces.
+
+The local pre-push equivalent is:
+
+```bash
+make work-commit-check
+```
+
+That command intentionally avoids full integration/server smokes; use `make release-check` before
+a release cut or when touching release-facing protocol behavior.
 
 ### Pre-commit Hook
 

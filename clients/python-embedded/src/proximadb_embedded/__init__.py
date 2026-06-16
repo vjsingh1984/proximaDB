@@ -48,6 +48,17 @@ from ._proximadb_embedded import (
     StorageStats,
     StreamingSearchResult,
     init_logging,
+    # DataFusion DataFrame API
+    PyDataFrame as DataFrame,
+    PyDataFusionSession as DataFusionSession,
+    PyExpr as Expr,
+    py_col as col,
+    py_lit as lit,
+    py_count as count,
+    py_sum as sum,
+    py_avg as avg,
+    py_min as min,
+    py_max as max,
 )
 from .records import (
     ProximaRecord,
@@ -66,7 +77,6 @@ from .notebook import (
     ProximaFrame,
     ProximaSession,
     ProximaSessionBuilder,
-    col,
 )
 import time
 

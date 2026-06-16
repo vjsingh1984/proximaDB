@@ -1,7 +1,7 @@
 #[cfg(feature = "datafusion-integration")]
 use crate::query::execution::engine::normalize_table_key;
 use crate::query::execution::engine::{
-    ExecutionEngine, ExecutionError, ExecutionPipelineResult, QueryExecutionContext,
+    ExecutionEngine, ExecutionError, ExecutionPipelineResult, QueryExecutionContext, RowLimitMode,
 };
 use async_trait::async_trait;
 #[cfg(feature = "datafusion-integration")]
@@ -134,6 +134,17 @@ impl DataFusionLocalEngine {
                     .map_err(|e| ExecutionError::Execution(format!("sql: {e}")))?
             }
         };
+        let df = match context.controls.max_rows {
+            Some(max_rows) => {
+                let fetch = match context.controls.row_limit_mode {
+                    RowLimitMode::Truncate => max_rows,
+                    RowLimitMode::Error => max_rows.saturating_add(1),
+                };
+                df.limit(0, Some(fetch))
+                    .map_err(|e| ExecutionError::Planning(format!("apply row cap: {e}")))?
+            }
+            None => df,
+        };
 
         let arrow_schema = df.schema().as_arrow().clone();
         let batches = df
@@ -141,8 +152,11 @@ impl DataFusionLocalEngine {
             .await
             .map_err(|e| ExecutionError::Execution(format!("collect: {e}")))?;
         context.controls.check_cancelled()?;
-        record_batches_to_pipeline_result(&arrow_schema, &batches)
-            .enforce_row_limit(context.controls.max_rows)
+        let result = record_batches_to_pipeline_result(&arrow_schema, &batches);
+        match context.controls.row_limit_mode {
+            RowLimitMode::Error => result.enforce_row_limit(context.controls.max_rows),
+            RowLimitMode::Truncate => Ok(result),
+        }
     }
 }
 
@@ -161,7 +175,7 @@ impl proximadb_relational_frontend::CatalogLookup for ParquetSchemaCatalog {
 #[cfg(all(test, feature = "datafusion-integration"))]
 mod tests {
     use super::*;
-    use crate::query::execution::engine::ExecutionControls;
+    use crate::query::execution::engine::{ExecutionControls, RowLimitMode};
     use arrow_array::{Float64Array, Int64Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};
     use proximadb_data_model::{ProximaType, ProximaValue};
@@ -290,6 +304,30 @@ mod tests {
                 actual: 2
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn datafusion_engine_truncates_when_row_limit_mode_is_truncate() {
+        let (_tmp, location) = write_grouped_parquet();
+        let engine = DataFusionLocalEngine;
+        let result = engine
+            .execute_sql(
+                "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
+                QueryExecutionContext {
+                    parquet_tables: vec![("t".to_string(), location)],
+                    controls: ExecutionControls {
+                        max_rows: Some(1),
+                        row_limit_mode: RowLimitMode::Truncate,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("truncate mode should return a capped result");
+
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], ProximaValue::String("a".to_string()));
     }
 }
 

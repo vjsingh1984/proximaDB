@@ -21,7 +21,7 @@ pub(crate) use engine::normalize_table_key;
 pub use engine::{
     ExecutionControls, ExecutionEngine, ExecutionError, ExecutionPipelineResult,
     ExecutionRowStream, ExecutionStreamResult, NativeVolcanoEngine, QueryExecutionContext,
-    execute_sql_stream_with_backend, execute_sql_with_backend,
+    RowLimitMode, execute_sql_stream_with_backend, execute_sql_with_backend,
 };
 
 // Re-export low-latency execution types

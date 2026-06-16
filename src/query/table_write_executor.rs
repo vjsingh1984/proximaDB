@@ -628,10 +628,22 @@ fn object_write_base_path(schema: &CatalogTableSchema, tenant: Option<&str>) -> 
         .unwrap_or_else(|| {
             // No explicit (materialize-set, already tenant-scoped) location → derive a
             // fallback. Tenant-scope it (TD-113 family) so two tenants' same-named
-            // tables don't write/commit to a shared `tables/{name}` prefix.
+            // tables don't write/commit to a shared `tables/{name}` prefix. Route
+            // through DrPathBuilder (not a raw `data/{..}` literal) so the segments
+            // are validated and the path-resolver guard is satisfied; same shape
+            // (`data/{tenant}/tables/{name}`).
             let table = sanitize_object_path_segment(&schema.name);
             match tenant.filter(|t| !t.is_empty()) {
-                Some(t) => format!("data/{}/tables/{table}", sanitize_object_path_segment(t)),
+                Some(t) => {
+                    crate::storage::trait_components::path_resolver::DrPathBuilder::build_from_parts(
+                        t,
+                        "tables",
+                        &table,
+                        Default::default(),
+                    )
+                    .map(|resolved| resolved.root_prefix().trim_end_matches('/').to_string())
+                    .unwrap_or_else(|_| format!("tables/{table}"))
+                }
                 None => format!("tables/{table}"),
             }
         })

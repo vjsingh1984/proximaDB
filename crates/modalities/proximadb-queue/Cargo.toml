@@ -58,7 +58,7 @@ prometheus = "0.14"
 # Version pinned to match the workspace's other PyO3 consumer
 # (`src/embedded/python.rs` in the root proximadb crate) so both
 # resolve to the same `python` native links target.
-pyo3 = { version = "0.25", features = ["extension-module"], optional = true }
+pyo3 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "test-util", "rt-multi-thread"] }
