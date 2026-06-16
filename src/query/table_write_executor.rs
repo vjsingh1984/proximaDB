@@ -765,6 +765,9 @@ mod tests {
         store: Arc<dyn ObjectStore>,
         writes: Mutex<Vec<(Path, Vec<String>)>>,
         commits: Mutex<Vec<(Path, String, Option<u64>)>>,
+        /// When set, `publish_snapshot` always reports a conflict (recording each
+        /// attempt in `commits`) so tests can exercise the bounded-retry ceiling.
+        always_conflict: bool,
     }
 
     impl CapturingObjectStoreBridge {
@@ -773,6 +776,14 @@ mod tests {
                 store: Arc::new(InMemory::new()),
                 writes: Mutex::new(Vec::new()),
                 commits: Mutex::new(Vec::new()),
+                always_conflict: false,
+            }
+        }
+
+        fn new_always_conflict() -> Self {
+            Self {
+                always_conflict: true,
+                ..Self::new()
             }
         }
     }
@@ -841,6 +852,14 @@ mod tests {
         ) -> std::result::Result<proximadb_storage_common::object_store_bridge::CommitOutcome, StorageError>
         {
             use proximadb_storage_common::object_store_bridge::CommitOutcome;
+            if self.always_conflict {
+                self.commits.lock().unwrap().push((
+                    data_prefix.clone(),
+                    manifest_prefix.to_string(),
+                    parent,
+                ));
+                return Ok(CommitOutcome::Conflict { latest: parent });
+            }
             let next = parent.map(|p| p + 1).unwrap_or(0);
             self.commits.lock().unwrap().push((
                 data_prefix.clone(),
@@ -1784,7 +1803,70 @@ mod tests {
         assert_eq!(commits[0].1, "warehouse/facts/_manifests");
         assert_eq!(commits[0].2, Some(0)); // First version
     }
+
+    #[tokio::test]
+    async fn datafusion_bulk_append_errors_on_persistent_manifest_conflict() {
+        let schema = CatalogTableSchema::new("facts")
+            .with_workload_profile(CatalogWorkloadProfile::Olap)
+            .with_storage_layout(CatalogStorageLayout::projection_publication(
+                "primary",
+                CatalogPhysicalFormat::Iceberg,
+                "warehouse/facts",
+            ))
+            .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("facts"), "SELECT * FROM staging");
+        let overrides = WriteIntentOverrides {
+            row_count_hint: Some(DEFAULT_BULK_ROW_THRESHOLD),
+            batch_local_constraints_sufficient: Some(true),
+            ..Default::default()
+        };
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: &schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: Some(&overrides),
+                plan: &plan,
+            });
+
+        let source = Arc::new(VecSourceReader::new(vec![vec![test_record("r1")]]));
+        // Bridge that never lets the writer win the CAS — the commit loop must give
+        // up after MAX_MANIFEST_COMMIT_ATTEMPTS instead of spinning forever.
+        let bridge = Arc::new(CapturingObjectStoreBridge::new_always_conflict());
+        let err = DataFusionTableWriteExecutor::new(
+            source,
+            Arc::new(CapturingRecordStore {
+                writes: Mutex::new(Vec::new()),
+            }),
+        )
+        .with_object_store_bridge(bridge.clone())
+        .execute(TableWriteExecutionRequest {
+            target_schema: &schema,
+            source_schema: None,
+            routed_plan: routed,
+            tenant_context: None,
+        })
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("persistent snapshot conflict"));
+        // The data file was written, then exactly MAX attempts were made before bailing.
+        assert_eq!(bridge.writes.lock().unwrap().len(), 1);
+        assert_eq!(
+            bridge.commits.lock().unwrap().len(),
+            MAX_MANIFEST_COMMIT_ATTEMPTS
+        );
+    }
 }
+
+/// Upper bound on optimistic-concurrency manifest-commit retries. A healthy
+/// system rebases past a handful of concurrent committers within a few attempts;
+/// hitting this ceiling means the conflict is persistent (a wedged committer or a
+/// `latest` that never lets this writer win the CAS), which we surface as an error
+/// rather than spinning forever.
+const MAX_MANIFEST_COMMIT_ATTEMPTS: usize = 32;
 
 /// DataFusion-based executor for OLAP/table-to-table write workloads.
 ///
@@ -1896,24 +1978,40 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
         }
 
         if is_bulk_append && wrote_any_parquet {
-            let bridge = self.object_store_bridge.as_ref().unwrap();
+            let bridge = self.object_store_bridge.as_ref().ok_or_else(|| {
+                anyhow!(
+                    "DataFusion bulk append for '{}' wrote Parquet without an ObjectStoreBridge",
+                    request.target_schema.name
+                )
+            })?;
             let base = object_write_base_path(request.target_schema);
             let data_prefix = format!("{base}/data");
             let manifest_prefix = format!("{base}/_manifests");
 
-            // Optimistic concurrency retry loop
+            // Optimistic-concurrency commit: rebase onto the latest snapshot and retry
+            // on conflict, bounded so a persistent conflict surfaces as an error instead
+            // of spinning forever.
             let mut parent = bridge.latest_manifest_version(&manifest_prefix).await?;
-            loop {
+            let mut committed = false;
+            for _ in 0..MAX_MANIFEST_COMMIT_ATTEMPTS {
                 match bridge
                     .publish_snapshot(&Path::from(data_prefix.as_str()), &manifest_prefix, parent)
                     .await?
                 {
-                    CommitOutcome::Committed(_) => break,
-                    CommitOutcome::Conflict { latest } => {
-                        parent = latest;
-                        // TODO: Safety check to avoid infinite loop if conflict is persistent?
+                    CommitOutcome::Committed(_) => {
+                        committed = true;
+                        break;
                     }
+                    CommitOutcome::Conflict { latest } => parent = latest,
                 }
+            }
+            if !committed {
+                return Err(anyhow!(
+                    "DataFusion manifest commit for '{}' failed after {} attempts due to \
+                     persistent snapshot conflict",
+                    request.target_schema.name,
+                    MAX_MANIFEST_COMMIT_ATTEMPTS
+                ));
             }
         }
 
