@@ -1006,18 +1006,33 @@ impl DmlService {
         //    multi-layer fix lands, isolation on this path is best-effort. We still apply
         //    DrPathBuilder's canonical per-segment validation so a crafted tenant /
         //    namespace / table id cannot inject `..` or path separators into the prefix.
-        let tenant_id = tenant_context
-            .map(|tc| tc.tenant_id.as_str())
-            .unwrap_or(DEFAULT_TENANT_PLACEHOLDER);
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
-        // Best-effort namespace metadata: supplies the rename-stable `namespace_id`
-        // (DrPath layout) and the owning `tenant_id` (cross-tenant assertion). A
-        // lookup miss falls back to the validated manual layout.
+        let scope_tenant = tenant_context.map(|tc| tc.tenant_id.as_str());
+        let tenant_id = scope_tenant.unwrap_or(DEFAULT_TENANT_PLACEHOLDER);
+        // Resolve the table under the SAME tenant scope the snapshot scan used: a
+        // tenant-scoped table lives under a tenant-prefixed namespace, so the
+        // unscoped resolve would look in `default` and miss it.
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, scope_tenant)
+            .await?;
+        // `resolve_table_scoped` folds the tenant in as the leading namespace
+        // segment; strip it so the prefix carries the tenant exactly once
+        // (`data/{tenant}/{logical_ns}/{table}`), not twice. The None case keeps
+        // the original namespace unchanged.
+        let logical_namespace: Vec<String> = match scope_tenant {
+            Some(t) if table_id.namespace.first().map(String::as_str) == Some(t) => {
+                table_id.namespace[1..].to_vec()
+            }
+            _ => table_id.namespace.clone(),
+        };
+        // Best-effort namespace metadata (looked up by the FULL scoped namespace):
+        // supplies the rename-stable `namespace_id` (DrPath layout) and the owning
+        // `tenant_id` (cross-tenant assertion). A miss falls back to the manual layout.
         let ns_meta = catalog.get_namespace(&table_id.namespace).await.ok();
         let prefix = resolve_materialize_prefix(
             warehouse_drpath_enabled(),
             tenant_id,
-            &table_id.namespace,
+            &logical_namespace,
             ns_meta.as_ref().and_then(|n| n.namespace_id.as_deref()),
             ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
             ns_meta
@@ -6262,10 +6277,11 @@ mod tests {
         );
     }
 
-    /// TD-113: the same table materialized under two different request tenants
-    /// lands under disjoint, tenant-isolated object prefixes — never co-mingled
-    /// under the `default_tenant` placeholder. (Row-level tenant scoping is
-    /// covered by the TD-064 pgwire isolation suite; this pins the object prefix.)
+    /// TD-113: the same table name materialized under two different request
+    /// tenants lands under disjoint, tenant-isolated object prefixes — never
+    /// co-mingled under the `default_tenant` placeholder. CREATE + INSERT +
+    /// MATERIALIZE are all tenant-scoped (TD-064), so each tenant owns its row
+    /// and its snapshot prefix.
     #[tokio::test]
     async fn materialize_is_tenant_isolated_by_request_tenant() {
         use crate::services::record_store::DirectWalTableRecordStore;
@@ -6281,19 +6297,7 @@ mod tests {
             .await
             .expect("native catalog");
         let ddl = DdlService::new(manager.clone());
-        ddl.execute(DdlStatement::CreateNamespace {
-            namespace: vec!["default".to_string()],
-            if_not_exists: true,
-            properties: HashMap::new(),
-        })
-        .await
-        .expect("create namespace");
         let parser = crate::query::sql_frontend::SqlFrontendParser::new();
-        let ddl_stmt = parser
-            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, qty INT, PRIMARY KEY (id));")
-            .expect("parse ddl")
-            .expect("ddl stmt");
-        ddl.execute(ddl_stmt).await.expect("create table");
         let record_store = Arc::new(DirectWalTableRecordStore::new(
             Arc::new(MemtableRecordStorage::new()),
             Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
@@ -6303,29 +6307,46 @@ mod tests {
             record_store,
             Arc::new(PlannedOnlyTableWriteExecutor::new()),
         );
-        let insert = parser
-            .parse_dml("INSERT INTO inv (id, qty) VALUES ('i1', 5);")
-            .expect("parse insert")
-            .expect("insert stmt");
-        dml.execute(insert).await.expect("insert");
-
         let bridge = Arc::new(IcebergObjectStoreBridge::from_url("memory:///wh").unwrap());
-        let acme = TenantContext::for_tenant_id("acmecorp");
-        let globex = TenantContext::for_tenant_id("globexco");
-        let acme_loc = dml
-            .materialize_table_to_parquet(&*bridge, "memory:///wh", "inv", Some(&acme))
-            .await
-            .expect("acmecorp materialize");
-        let globex_loc = dml
-            .materialize_table_to_parquet(&*bridge, "memory:///wh", "inv", Some(&globex))
-            .await
-            .expect("globexco materialize");
 
-        assert_eq!(acme_loc, "memory:///wh/data/acmecorp/default/inv");
-        assert_eq!(globex_loc, "memory:///wh/data/globexco/default/inv");
-        assert_ne!(acme_loc, globex_loc, "tenants must not share a prefix");
-        assert!(!acme_loc.contains("default_tenant"));
-        assert!(!globex_loc.contains("default_tenant"));
+        let mut locations = Vec::new();
+        for tenant in ["acmecorp", "globexco"] {
+            let tctx = TenantContext::for_tenant_id(tenant);
+            let create = parser
+                .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, qty INT, PRIMARY KEY (id));")
+                .expect("parse ddl")
+                .expect("ddl stmt");
+            ddl.execute_scoped(create, Some(tenant))
+                .await
+                .expect("create table");
+            // Distinct PK per tenant: this low-level DirectWalTableRecordStore is
+            // not row-partitioned by tenant (that is TD-064's routing store), and
+            // TD-113 only governs the object prefix, not row isolation here.
+            let insert = parser
+                .parse_dml(&format!("INSERT INTO inv (id, qty) VALUES ('{tenant}', 5);"))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute_scoped(insert, Some(&tctx))
+                .await
+                .expect("insert");
+            let loc = dml
+                .materialize_table_to_parquet(&*bridge, "memory:///wh", "inv", Some(&tctx))
+                .await
+                .expect("materialize");
+            assert!(
+                loc.contains(&format!("/{tenant}/")),
+                "location must carry the tenant segment: {loc}"
+            );
+            assert!(
+                !loc.contains("default_tenant"),
+                "location must not use the default_tenant placeholder: {loc}"
+            );
+            locations.push(loc);
+        }
+        assert_ne!(
+            locations[0], locations[1],
+            "two tenants must materialize to disjoint prefixes"
+        );
     }
 
     /// P3 end-to-end: materialize a table to a Parquet snapshot on a REOPENABLE
