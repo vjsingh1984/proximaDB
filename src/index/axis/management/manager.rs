@@ -5132,6 +5132,51 @@ mod recluster_apply_tests {
         r
     }
 
+    /// TD-112 characterization lock-in.
+    ///
+    /// `handle_flushed_vectors` is the AXIS entry point that the flush/compaction
+    /// path is *meant* to call to register newly-flushed vectors into the ANN
+    /// index. This test proves the primitive works in isolation: when invoked, it
+    /// indexes the batch into the manager (here observed via `collection_vectors`,
+    /// which `insert` populates).
+    ///
+    /// The gap TD-112 tracks is purely the *call site*: at the time of writing the
+    /// SST flush coordinator does NOT call this (it has zero callers and the AXIS
+    /// `EventLogConsumer` is not booted), so post-flush search falls back to a
+    /// brute-force segment scan rather than the ANN index. If this test ever goes
+    /// red, the indexing primitive itself regressed; when index-on-flush is wired,
+    /// this remains the building-block guarantee.
+    #[tokio::test]
+    async fn td112_handle_flushed_vectors_indexes_flushed_batch() {
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        let collection = "td112_flush";
+        // Small batch: with the default `Synchronous` update mode, indexing
+        // completes before `handle_flushed_vectors` returns (no async race).
+        let flushed = batch("flushed", 4, 8, 0);
+        let expected_oids: Vec<String> = flushed.iter().map(|r| r.oid.clone()).collect();
+
+        manager
+            .handle_flushed_vectors(
+                collection,
+                flushed,
+                vec!["segment-000001.sst".to_string()],
+            )
+            .await
+            .expect("handle_flushed_vectors should index a small flushed batch");
+
+        let stored = manager.collection_vectors.read().await;
+        let collection_store = stored
+            .get(collection)
+            .expect("flushed vectors must be registered under the collection");
+        for oid in &expected_oids {
+            assert!(
+                collection_store.contains_key(oid),
+                "flushed vector {oid} must be indexed into AXIS by handle_flushed_vectors"
+            );
+        }
+        assert_eq!(collection_store.len(), expected_oids.len());
+    }
+
     /// TD-064 / 1.3 characterization: a selective metadata filter whose matches
     /// rank BEYOND the base 2× oversample window is still fully recovered by the
     /// predicate-aware HNSW walk — WITHOUT any oversample escalation. This is the
