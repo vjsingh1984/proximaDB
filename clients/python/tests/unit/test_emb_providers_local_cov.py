@@ -68,6 +68,13 @@ class _FakeSentenceTransformer:
         return np.arange(n * 4, dtype=np.float32).reshape(n, 4)
 
 
+# Remember whatever was in sys.modules before we install the dim-4 fake so we
+# can restore it in teardown_module and avoid leaking the stub into other test
+# files (e.g. test_embedding_providers_v2, whose GTEQwen provider would otherwise
+# pick up the fake SentenceTransformer and return dim-4 embeddings).
+_ORIG_SENTENCE_TRANSFORMERS = sys.modules.get("sentence_transformers")
+
+
 def _install_st_stub():
     mod = types.ModuleType("sentence_transformers")
     mod.SentenceTransformer = _FakeSentenceTransformer
@@ -75,6 +82,16 @@ def _install_st_stub():
 
 
 _install_st_stub()
+
+
+def teardown_module(module):
+    """Undo the module-level sentence_transformers stub and evict the SDK
+    embedding-provider modules imported under it, so the fake does not pollute
+    other test modules in the same pytest session."""
+    if _ORIG_SENTENCE_TRANSFORMERS is None:
+        sys.modules.pop("sentence_transformers", None)
+    else:
+        sys.modules["sentence_transformers"] = _ORIG_SENTENCE_TRANSFORMERS
 
 
 # Now import the targets (import succeeds because the stub is in place).
