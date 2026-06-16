@@ -43,7 +43,8 @@ use crate::services::record_store::{
     VectorOpsTableRecordStore, proxima_value_to_unique_text, record_unique_tuple,
 };
 use crate::services::{
-    WriteDurabilityRequirement, WriteIntent, WriteLaneDecision, WriteLaneRouter, WriteOperationKind,
+    WriteDurabilityRequirement, WriteIntent, WriteLane, WriteLaneDecision, WriteLaneRouter,
+    WriteOperationKind,
 };
 use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 
@@ -1493,6 +1494,30 @@ impl DmlService {
             source_stats,
             None,
         )?;
+
+        // Fold the namespace/DrPath-aware prefix into the warehouse bulk-append write
+        // so its object layout matches the materialize path
+        // (`data/{tenant}/{namespace}/{table}`) instead of the flat
+        // `data/{tenant}/tables/{name}` fallback the executor derives without
+        // namespace context. Only for the bulk-append lane, only under a tenant
+        // scope, and only when no location is already pinned (a materialize-set
+        // primary-layout location keeps precedence in the executor → no
+        // double-prefix). Set on the local, non-persisted schema copy.
+        let mut table_schema = table_schema;
+        if routed.write_lane_decision.lane == WriteLane::BulkAppendCommit
+            && table_schema.location.is_none()
+        {
+            if let Some(prefix) = self
+                .resolve_warehouse_object_prefix(
+                    &plan.target.qualified_name(),
+                    tenant_context.map(|tc| tc.tenant_id.as_str()),
+                )
+                .await?
+            {
+                table_schema.location = Some(prefix);
+            }
+        }
+
         let execution = self
             .table_write_executor
             .execute(TableWriteExecutionRequest {
@@ -1560,6 +1585,58 @@ impl DmlService {
         let schema = catalog.get_table(&table_id).await?;
         let stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
         Ok((schema, stats))
+    }
+
+    /// Resolve the tenant/namespace/DrPath-aware object base prefix for a warehouse
+    /// bulk-append target (`data/{tenant}/{namespace}/{table}`), so an
+    /// `INSERT ... SELECT` lands under the SAME object layout the materialize path
+    /// publishes instead of the flat `data/{tenant}/tables/{name}` fallback the
+    /// executor derives when it has no namespace context. Returns `None` when there
+    /// is no tenant scope (single-tenant / embedded keeps the legacy fallback).
+    ///
+    /// Reuses the canonical [`resolve_materialize_prefix`] so DrPath (opt-in) vs
+    /// legacy-layout selection, the cross-tenant ownership assertion, and per-segment
+    /// injection validation stay single-sourced with the materialize path. The
+    /// caller sets this on the (local, non-persisted) target-schema `location`,
+    /// where the executor consumes it at second priority — a materialize-set primary
+    /// layout location still wins, so this never double-prefixes a published table.
+    async fn resolve_warehouse_object_prefix(
+        &self,
+        table_name: &str,
+        tenant: Option<&str>,
+    ) -> Result<Option<String>> {
+        let Some(tenant_id) = tenant.filter(|t| !t.is_empty()) else {
+            return Ok(None);
+        };
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, Some(tenant_id))
+            .await?;
+        // `resolve_table_scoped` folds the tenant in as the leading namespace
+        // segment; strip it so the prefix carries the tenant exactly once.
+        let logical_namespace: Vec<String> =
+            if table_id.namespace.first().map(String::as_str) == Some(tenant_id) {
+                table_id.namespace[1..].to_vec()
+            } else {
+                table_id.namespace.clone()
+            };
+        // Namespace metadata supplies the rename-stable `namespace_id` (DrPath layout)
+        // and the owning `tenant_id` (cross-tenant assertion). A miss falls back to
+        // the legacy manual layout, still tenant-prefixed.
+        let ns_meta = catalog.get_namespace(&table_id.namespace).await.ok();
+        let prefix = resolve_materialize_prefix(
+            warehouse_drpath_enabled(),
+            tenant_id,
+            &logical_namespace,
+            ns_meta.as_ref().and_then(|n| n.namespace_id.as_deref()),
+            ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
+            ns_meta
+                .as_ref()
+                .map(|n| n.storage_pool_class)
+                .unwrap_or_default(),
+            &table_id.name,
+        )?;
+        Ok(Some(prefix))
     }
 
     fn route_table_write_with_schemas(
@@ -6447,6 +6524,67 @@ mod tests {
         );
         assert!(loc.ends_with("/inv"), "loc={loc}");
         assert!(!loc.contains("default_tenant"), "loc={loc}");
+    }
+
+    /// The bulk-append `INSERT ... SELECT` prefix resolver produces the SAME
+    /// namespace-aware, tenant-scoped layout as the materialize path
+    /// (`data/{tenant}/{namespace}/{table}`) — not the flat `tables/{name}`
+    /// fallback — and yields `None` (legacy fallback) when there is no tenant scope.
+    #[tokio::test]
+    async fn resolve_warehouse_object_prefix_is_namespace_aware_and_tenant_scoped() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-bulk-prefix.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL")),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let create = parser
+            .parse_ddl("CREATE TABLE facts (id TEXT NOT NULL, qty INT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute_scoped(create, Some("acmecorp"))
+            .await
+            .expect("create table");
+
+        // Tenant scope → namespace-aware, tenant-isolated prefix (NOT the flat fallback).
+        let prefix = dml
+            .resolve_warehouse_object_prefix("facts", Some("acmecorp"))
+            .await
+            .expect("resolve prefix")
+            .expect("a tenant scope yields a prefix");
+        assert!(
+            prefix.starts_with("data/acmecorp/"),
+            "prefix must be tenant-isolated: {prefix}"
+        );
+        assert!(prefix.ends_with("/facts"), "prefix must end with table: {prefix}");
+        assert!(
+            !prefix.contains("/tables/"),
+            "prefix must be namespace-aware, not the flat `tables/` fallback: {prefix}"
+        );
+        assert!(!prefix.contains("default_tenant"), "prefix={prefix}");
+
+        // No tenant scope → None (single-tenant/embedded keeps the legacy fallback).
+        assert!(
+            dml.resolve_warehouse_object_prefix("facts", None)
+                .await
+                .expect("resolve prefix (no tenant)")
+                .is_none()
+        );
     }
 
     /// TD-113 Phase 2: a tenant-scoped CREATE records the owning tenant on the
