@@ -53,7 +53,7 @@ use crate::storage::engines::core::formats::columnar::constants::DEFAULT_ROW_GRO
 ///
 /// ## Examples
 ///
-/// ```rust
+/// ```ignore
 /// use proximadb_quantization_types::QuantizationLevel as ApiQuantizationLevel;
 /// use crate::storage::engines::core::formats::common_quantization::StorageQuantizationFormat;
 ///
@@ -202,7 +202,7 @@ pub mod conversion {
     ///
     /// ## Examples
     ///
-    /// ```rust
+    /// ```ignore
     /// use proximadb_quantization_types::{QuantizationConfig, QuantizationLevel, QuantizationType};
     ///
     /// let config = QuantizationConfig {

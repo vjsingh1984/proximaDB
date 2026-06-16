@@ -15,7 +15,7 @@
 //! ```
 //!
 //! **Spark**
-//! ```
+//! ```text
 //! spark.conf.set("spark.sql.catalog.proximadb", "org.apache.iceberg.spark.SparkCatalog")
 //! spark.conf.set("spark.sql.catalog.proximadb.catalog-impl", "org.apache.iceberg.rest.RESTCatalog")
 //! spark.conf.set("spark.sql.catalog.proximadb.uri", "http://localhost:5678/iceberg/v1")

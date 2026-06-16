@@ -115,8 +115,10 @@ impl HybridFusionEngine {
     /// after BM25 and vector search have each returned ranked lists,
     /// we combine the post-retrieval scalar scores via
     ///
-    ///     score = bm25_norm * cos(theta) + vector_norm * sin(theta),
-    ///     where theta = alpha * pi/2.
+    /// ```text
+    /// score = bm25_norm * cos(theta) + vector_norm * sin(theta),
+    /// where theta = alpha * pi/2.
+    /// ```
     ///
     /// We min-max normalize before projection and apply a small
     /// diversity boost for documents present in both sets.
