@@ -767,8 +767,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
-      - name: Run Tests
-        run: cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
+      # Library unit tests run through nextest on the zero-retry `unit` profile
+      # (.config/nextest.toml). This makes the deliberate no-retry unit contract
+      # part of the blocking release gate (ci-success), not just advisory tdd.yml.
+      # nextest does not execute doctests, so the `doc` matrix leg keeps cargo test.
+      - name: Install cargo-nextest
+        if: matrix.test-type == 'unit'
+        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+
+      - name: Run Unit Tests (nextest, unit profile)
+        if: matrix.test-type == 'unit'
+        run: cargo nextest run --lib --profile unit
+
+      - name: Run Doctests
+        if: matrix.test-type == 'doc'
+        run: cargo test --doc -- --test-threads=${{ matrix.threads }}
 
   # Targeted integration tests based on changed components
   rust-integration-test-storage:

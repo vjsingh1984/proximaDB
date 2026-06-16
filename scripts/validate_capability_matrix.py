@@ -119,6 +119,46 @@ DRIFT_RULES = {
 }
 
 
+# Maturity-contract reconciliation guard. Unlike DRIFT_RULES, these are NOT tied to a
+# capability id -- they always run. They assert the doc-drift reconciliation between the
+# product support contract and the technical-debt register / PRD / VISION stays in place,
+# so a future edit cannot silently re-introduce "production-ready" claims that contradict
+# SUPPORTED_SURFACE. See docs/SUPPORTED_SURFACE.adoc "Authority Hierarchy".
+MATURITY_CONTRACT_RULES = [
+    {
+        "path": "docs/SUPPORTED_SURFACE.adoc",
+        "required_substrings": [
+            "== Authority Hierarchy",
+        ],
+    },
+    {
+        "path": "docs/10-quality/TECHNICAL_DEBT.adoc",
+        "required_substrings": [
+            # Banner: register tracks implementation state, not support level.
+            "This register tracks _implementation state_, not _product-support level_.",
+            # Relabeled contradiction cells, each cross-linked to its support tier.
+            "_Experimental in v0.2 (see SUPPORTED_SURFACE)_",  # external catalogs (TD-002)
+            "_Beta in v0.2 (see SUPPORTED_SURFACE)_",          # mTLS / TST / event (TD-006/009/010)
+            "Not a v0.2 supported surface (see SUPPORTED_SURFACE)",  # framework integrations (TD-011)
+        ],
+    },
+    {
+        "path": "docs/00-product/PRD.adoc",
+        "required_substrings": [
+            "shippable/supported surface for v0.2 is defined by",  # precedence banner
+            "v0.2 status: Beta",                  # TST + Event P0 notes
+            "v0.2 status: not a Supported surface",  # Framework integrations P0 note
+        ],
+    },
+    {
+        "path": "docs/00-product/VISION.adoc",
+        "required_substrings": [
+            "This document states the *broad, durable vision*",
+        ],
+    },
+]
+
+
 def parse_reference(ref: str) -> tuple[Path, int | None]:
     if ":" in ref:
         path_part, line_part = ref.rsplit(":", 1)
@@ -230,6 +270,10 @@ def main() -> int:
             continue
 
         evaluate_doc_rule(cap_id, rule, errors)
+
+    # Maturity-contract reconciliation guard (always evaluated).
+    for rule in MATURITY_CONTRACT_RULES:
+        evaluate_doc_rule("maturity_contract", rule, errors)
 
     if errors:
         print("Capability matrix validation failed:")
