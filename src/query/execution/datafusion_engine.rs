@@ -1,17 +1,20 @@
 #[cfg(feature = "datafusion-integration")]
 use crate::query::execution::engine::normalize_table_key;
 use crate::query::execution::engine::{
-    ExecutionEngine, ExecutionError, ExecutionPipelineResult, QueryExecutionContext, RowLimitMode,
+    ExecutionEngine, ExecutionError, ExecutionPipelineResult, ExecutionStreamResult,
+    QueryExecutionContext, RowLimitMode,
 };
 use async_trait::async_trait;
+#[cfg(feature = "datafusion-integration")]
+use futures::{StreamExt, stream};
 #[cfg(feature = "datafusion-integration")]
 use proximadb_data_model::TimeUnit;
 #[cfg(feature = "datafusion-integration")]
 use proximadb_relational_frontend::lower_sql;
 #[cfg(feature = "datafusion-integration")]
-use proximadb_relational_types::{ColumnInfo, RelationalSchema};
+use proximadb_relational_types::{ColumnInfo, RelationalRow, RelationalSchema};
 #[cfg(feature = "datafusion-integration")]
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// Execution engine backed by local DataFusion.
 ///
@@ -37,18 +40,47 @@ impl ExecutionEngine for DataFusionLocalEngine {
             Err(ExecutionError::FeatureDisabled("datafusion-integration"))
         }
     }
+
+    async fn execute_sql_stream(
+        &self,
+        sql: &str,
+        context: QueryExecutionContext,
+    ) -> Result<ExecutionStreamResult, ExecutionError> {
+        #[cfg(feature = "datafusion-integration")]
+        {
+            self.execute_datafusion_stream(sql, context).await
+        }
+        #[cfg(not(feature = "datafusion-integration"))]
+        {
+            let _ = (sql, context);
+            Err(ExecutionError::FeatureDisabled("datafusion-integration"))
+        }
+    }
 }
 
 #[cfg(feature = "datafusion-integration")]
 impl DataFusionLocalEngine {
-    async fn execute_datafusion(
+    /// Build, plan, and row-cap a DataFusion `DataFrame` for `sql`, shared by the
+    /// materialized and streaming execution paths.
+    ///
+    /// Returns the owning `SessionContext` alongside the frame so callers keep it
+    /// alive for the duration of execution. The row cap (if any) is pushed into
+    /// the plan here via `df.limit`, so the executor stops early instead of
+    /// materializing the whole result.
+    async fn prepare_dataframe(
         &self,
         sql: &str,
-        context: QueryExecutionContext,
-    ) -> Result<ExecutionPipelineResult, ExecutionError> {
+        context: &QueryExecutionContext,
+    ) -> Result<
+        (
+            datafusion::prelude::SessionContext,
+            datafusion::prelude::DataFrame,
+        ),
+        ExecutionError,
+    > {
         context.controls.check_cancelled()?;
         // F4: when the route owns the vector service, register the `vector_search` UDTF
-        let ctx = match context.vector_ops {
+        let ctx = match context.vector_ops.clone() {
             Some(ops) => crate::datafusion::create_session_context_with_vector_ops(ops),
             None => crate::datafusion::create_session_context(),
         }
@@ -146,6 +178,18 @@ impl DataFusionLocalEngine {
             None => df,
         };
 
+        Ok((ctx, df))
+    }
+
+    /// Execute a DataFusion query and fully materialize the result.
+    async fn execute_datafusion(
+        &self,
+        sql: &str,
+        context: QueryExecutionContext,
+    ) -> Result<ExecutionPipelineResult, ExecutionError> {
+        // `_ctx` is held until after collection: the frame's table providers were
+        // resolved against this session.
+        let (_ctx, df) = self.prepare_dataframe(sql, &context).await?;
         let arrow_schema = df.schema().as_arrow().clone();
         let batches = df
             .collect()
@@ -157,6 +201,78 @@ impl DataFusionLocalEngine {
             RowLimitMode::Error => result.enforce_row_limit(context.controls.max_rows),
             RowLimitMode::Truncate => Ok(result),
         }
+    }
+
+    /// Execute a DataFusion query and stream rows through the schema-bearing
+    /// contract without materializing the whole result.
+    ///
+    /// Uses DataFusion's native `execute_stream`, converting each `RecordBatch`
+    /// to rows lazily. The row cap is already pushed into the plan by
+    /// `prepare_dataframe`; in `Error` mode the (n+1)th row the plan lets through
+    /// is surfaced as an overflow here, matching the materialized path.
+    /// Cancellation is re-checked before every pull.
+    async fn execute_datafusion_stream(
+        &self,
+        sql: &str,
+        context: QueryExecutionContext,
+    ) -> Result<ExecutionStreamResult, ExecutionError> {
+        let (ctx, df) = self.prepare_dataframe(sql, &context).await?;
+        let arrow_schema = df.schema().as_arrow().clone();
+        let schema = arrow_schema_to_relational(&arrow_schema);
+
+        context.controls.check_cancelled()?;
+        let batch_stream = df
+            .execute_stream()
+            .await
+            .map_err(|e| ExecutionError::Execution(format!("execute_stream: {e}")))?;
+
+        // Stream state: the session (held alive for the stream's lifetime), the
+        // DataFusion batch stream, a row buffer drained from each batch, the count
+        // of rows already emitted (for the Error-mode guard), and the controls.
+        let rows = stream::try_unfold(
+            (
+                ctx,
+                batch_stream,
+                VecDeque::<RelationalRow>::new(),
+                0usize,
+                context.controls,
+            ),
+            |(_ctx, mut batch_stream, mut buffer, emitted, controls)| async move {
+                controls.check_cancelled()?;
+                // Refill the row buffer from batches until it has a row or the
+                // underlying stream is exhausted.
+                while buffer.is_empty() {
+                    match batch_stream.next().await {
+                        Some(Ok(batch)) => buffer.extend(record_batch_to_rows(&batch)),
+                        Some(Err(e)) => {
+                            return Err(ExecutionError::Execution(format!("scan: {e}")));
+                        }
+                        None => return Ok(None),
+                    }
+                }
+                match buffer.pop_front() {
+                    Some(row) => {
+                        if controls.row_limit_mode == RowLimitMode::Error
+                            && let Some(limit) = controls.max_rows
+                            && emitted >= limit
+                        {
+                            return Err(ExecutionError::RowLimitExceeded {
+                                limit,
+                                actual: emitted + 1,
+                            });
+                        }
+                        Ok(Some((
+                            row,
+                            (_ctx, batch_stream, buffer, emitted + 1, controls),
+                        )))
+                    }
+                    None => Ok(None),
+                }
+            },
+        )
+        .boxed();
+
+        Ok(ExecutionStreamResult { schema, rows })
     }
 }
 
@@ -329,6 +445,100 @@ mod tests {
         assert_eq!(result.rows.len(), 1);
         assert_eq!(result.rows[0][0], ProximaValue::String("a".to_string()));
     }
+
+    #[tokio::test]
+    async fn datafusion_engine_streams_sql_over_parquet() {
+        use futures::TryStreamExt;
+        let (_tmp, location) = write_grouped_parquet();
+        let engine = DataFusionLocalEngine;
+        let stream_result = engine
+            .execute_sql_stream(
+                "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
+                QueryExecutionContext {
+                    parquet_tables: vec![("t".to_string(), location)],
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("stream should execute");
+
+        // Schema is available before draining any row.
+        assert_eq!(stream_result.schema.columns[0].name, "k");
+        let rows = stream_result
+            .rows
+            .try_collect::<Vec<_>>()
+            .await
+            .expect("stream rows should be ok");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0][0], ProximaValue::String("a".to_string()));
+        assert_eq!(rows[0][1], ProximaValue::Float64(4.0));
+        assert_eq!(rows[1][0], ProximaValue::String("b".to_string()));
+    }
+
+    #[tokio::test]
+    async fn datafusion_engine_stream_truncates_without_error() {
+        use futures::TryStreamExt;
+        let (_tmp, location) = write_grouped_parquet();
+        let engine = DataFusionLocalEngine;
+        let stream_result = engine
+            .execute_sql_stream(
+                "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
+                QueryExecutionContext {
+                    parquet_tables: vec![("t".to_string(), location)],
+                    controls: ExecutionControls {
+                        max_rows: Some(1),
+                        row_limit_mode: RowLimitMode::Truncate,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("stream should execute");
+
+        let rows = stream_result
+            .rows
+            .try_collect::<Vec<_>>()
+            .await
+            .expect("truncate mode streams the capped rows without error");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], ProximaValue::String("a".to_string()));
+    }
+
+    #[tokio::test]
+    async fn datafusion_engine_stream_errors_on_overflow() {
+        use futures::TryStreamExt;
+        let (_tmp, location) = write_grouped_parquet();
+        let engine = DataFusionLocalEngine;
+        let stream_result = engine
+            .execute_sql_stream(
+                "SELECT k, SUM(x) as total FROM t GROUP BY k ORDER BY k",
+                QueryExecutionContext {
+                    parquet_tables: vec![("t".to_string(), location)],
+                    controls: ExecutionControls {
+                        max_rows: Some(1),
+                        row_limit_mode: RowLimitMode::Error,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("stream opens; the overflow surfaces while draining");
+
+        let err = stream_result
+            .rows
+            .try_collect::<Vec<_>>()
+            .await
+            .expect_err("draining should hit the row-limit overflow");
+        assert!(matches!(
+            err,
+            ExecutionError::RowLimitExceeded {
+                limit: 1,
+                actual: 2
+            }
+        ));
+    }
 }
 
 // Helpers copied from relational_pipeline.rs or shared utilities
@@ -359,12 +569,7 @@ fn arrow_type_to_proxima(dt: &arrow_schema::DataType) -> proximadb_data_model::P
 }
 
 #[cfg(feature = "datafusion-integration")]
-fn record_batches_to_pipeline_result(
-    arrow_schema: &arrow_schema::Schema,
-    batches: &[arrow_array::RecordBatch],
-) -> ExecutionPipelineResult {
-    use proximadb_relational_types::RelationalRow;
-
+fn arrow_schema_to_relational(arrow_schema: &arrow_schema::Schema) -> RelationalSchema {
     let columns: Vec<ColumnInfo> = arrow_schema
         .fields()
         .iter()
@@ -376,17 +581,32 @@ fn record_batches_to_pipeline_result(
             )
         })
         .collect();
-    let schema = RelationalSchema::new(columns);
+    RelationalSchema::new(columns)
+}
+
+#[cfg(feature = "datafusion-integration")]
+fn record_batch_to_rows(batch: &arrow_array::RecordBatch) -> Vec<RelationalRow> {
+    let ncols = batch.num_columns();
+    let mut rows: Vec<RelationalRow> = Vec::with_capacity(batch.num_rows());
+    for r in 0..batch.num_rows() {
+        let mut row: RelationalRow = Vec::with_capacity(ncols);
+        for c in 0..ncols {
+            row.push(arrow_cell_to_proxima(batch.column(c).as_ref(), r));
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+#[cfg(feature = "datafusion-integration")]
+fn record_batches_to_pipeline_result(
+    arrow_schema: &arrow_schema::Schema,
+    batches: &[arrow_array::RecordBatch],
+) -> ExecutionPipelineResult {
+    let schema = arrow_schema_to_relational(arrow_schema);
     let mut rows: Vec<RelationalRow> = Vec::new();
     for batch in batches {
-        let ncols = batch.num_columns();
-        for r in 0..batch.num_rows() {
-            let mut row: RelationalRow = Vec::with_capacity(ncols);
-            for c in 0..ncols {
-                row.push(arrow_cell_to_proxima(batch.column(c).as_ref(), r));
-            }
-            rows.push(row);
-        }
+        rows.extend(record_batch_to_rows(batch));
     }
     ExecutionPipelineResult { schema, rows }
 }
