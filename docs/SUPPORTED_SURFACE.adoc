@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: 2026-05-28
+:last-updated: 2026-06-15
 
 [.lead]
 Canonical product support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
@@ -16,6 +16,32 @@ This matrix is the product support contract.
 * Use link:./12-design/SUPPORTED_SURFACES.adoc[Supported Surfaces: API vs. Physical Projection Status] for the technical API/projection companion matrix.
 * Do not infer support level from code presence alone.
 ====
+
+== Authority Hierarchy
+
+To resolve "source of truth" questions, defer to the doc that owns each concern. Other docs
+(README, VISION, PRD, roadmap, design blueprints) must point into this chain or carry a banner
+marking themselves historical, aspirational, or implementation-only:
+
+[cols="1,3", options="header"]
+|===
+| Concern | Authority
+
+| Product / customer / release claims (what is *supported*)
+| *This document* (`docs/SUPPORTED_SURFACE.adoc`).
+
+| System architecture (the whole-system view)
+| link:./12-design/SYSTEM_MAP_2026_05_30.adoc[SYSTEM_MAP_2026_05_30.adoc].
+
+| Active architectural pivot (current mandate)
+| link:./12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc[DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc].
+
+| Release blockers / reconciliation
+| link:./_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc].
+|===
+
+The Technical Debt Register tracks _implementation state_, which can run ahead of support
+level; this contract wins on any disagreement about what is customer-facing.
 
 == Status Tiers
 

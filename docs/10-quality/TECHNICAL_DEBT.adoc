@@ -4,6 +4,18 @@
 
 Comprehensive register of technical debt items tracking gaps between current state and world-class targets.
 
+[IMPORTANT]
+====
+This register tracks _implementation state_, not _product-support level_.
+
+link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] is the authoritative product
+support contract and takes precedence for any customer, release-note, or marketing claim.
+A "Resolved" or "Production Ready" status in this register means the code path is complete
+in the working tree -- it does *not* by itself mean the capability is a Supported v0.2
+surface. Where this register and the support contract disagree, the support contract wins;
+the affected rows are relabeled with their `SUPPORTED_SURFACE.adoc` tier inline.
+====
+
 == Vision Phase Context
 
 Technical debt items are prioritized based on their impact on the four development phases:
@@ -44,7 +56,7 @@ Technical debt items are prioritized based on their impact on the four developme
 | *Resolved*
 | Cannot integrate with Iceberg/Delta data lakes
 | 3-4 months
-| *RESOLVED Mar 2026*: **External catalogs fully implemented**. All major catalog backends are production-ready:
+| *Implemented (engine), Mar 2026.* **v0.2 support tier: _Experimental in v0.2 (see SUPPORTED_SURFACE)_** -- external-table / external-catalog execution is not a v0.2 supported surface; do not market it as supported or production. _Implementation detail:_ all major catalog backends are code-complete:
 |  |  |  |  |  |
 |---|---|---|---|---
 | Catalog | Status | Location | Features |
@@ -97,7 +109,7 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot meet enterprise security requirements
 | 1 month
-| *RESOLVED Mar 2026*: **mTLS support fully implemented**. Complete enterprise-grade mutual TLS infrastructure:
+| *Implemented (engine), Mar 2026.* **v0.2 support tier: _Beta in v0.2 (see SUPPORTED_SURFACE)_** -- the security runtime is Beta; admin/status APIs and stronger online revocation policy remain incomplete. _Implementation detail:_ enterprise-grade mutual TLS infrastructure is code-complete:
 |  |  |  |  |
 |---|---|---|---
 | **Component** | **Status** | **Location** | **Features** |
@@ -147,7 +159,7 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot serve trading/IoT workloads. ibkrtrading forced to use PostgreSQL.
 | 3-4 months
-| *COMPLETED Feb 2025*: TST engine implemented in `src/storage/engines/impls/tst/` with time-partitioned storage (Arrow IPC I/O), OHLC downsampling with Gorilla compression, segment compaction. 6 integration tests passing. ASOF joins <1ms, >100K bars/second ingestion, >10:1 compression ratio.
+| *Implemented (engine).* **v0.2 support tier: _Beta in v0.2 (see SUPPORTED_SURFACE)_** -- time-series/event foundations are Beta; product packaging, API parity, and at-scale validation are still in progress. _Implementation detail:_ TST engine implemented in `src/storage/engines/impls/tst/` with time-partitioned storage (Arrow IPC I/O), OHLC downsampling with Gorilla compression, segment compaction. 6 integration tests passing. ASOF joins <1ms, >100K bars/second ingestion, >10:1 compression ratio.
 
 | TD-010
 | No event sourcing store
@@ -156,7 +168,7 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot provide immutable audit trails. ibkrtrading uses 119MB/day JSONL. MiFID II non-compliant.
 | 2-3 months
-| *COMPLETED Feb 2025*: EventLogEngine implemented in `src/storage/engines/impls/eventlog/` with append-only event log, indexed queries (by entity ID, event type, timestamp), temporal replay (point-in-time reconstruction), MiFID II compliance mode. JSON serialization for serde_json::Value compatibility. 7 integration tests passing. Monotonic sequence numbers, immutable audit trail, snapshot manager.
+| *Implemented (engine).* **v0.2 support tier: _Beta in v0.2 (see SUPPORTED_SURFACE)_** -- see TD-009; event sourcing shares the Beta time-series/event tier. _Implementation detail:_ EventLogEngine implemented in `src/storage/engines/impls/eventlog/` with append-only event log, indexed queries (by entity ID, event type, timestamp), temporal replay (point-in-time reconstruction), MiFID II compliance mode. JSON serialization for serde_json::Value compatibility. 7 integration tests passing. Monotonic sequence numbers, immutable audit trail, snapshot manager.
 
 | TD-011
 | No framework integrations
@@ -165,7 +177,7 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot be used with LangChain, LlamaIndex, Haystack, CrewAI without custom code. Every competitor has these.
 | 1-2 months
-| *RESOLVED Mar 2026*: **All major framework integrations complete**. 7 frameworks implemented:
+| *Implemented (SDK), Mar 2026.* **_Not a v0.2 supported surface (see SUPPORTED_SURFACE)_** -- framework integrations ship in the Python SDK but are not listed as a Supported v0.2 product surface; do not release-note them as production. _Implementation detail:_ 7 frameworks implemented:
 |  |  |  |  |
 |---|---|---|---|---
 | **Framework** | **Status** | **Location** | **Features** |
