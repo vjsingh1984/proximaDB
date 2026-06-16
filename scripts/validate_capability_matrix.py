@@ -53,7 +53,9 @@ DRIFT_RULES = {
     "graph_legacy_route_deprecation": {
         "doc_rules": [
             {
-                "path": "docs/api/graph.adoc",
+                # Relocated from docs/api/graph.adoc to docs/03-api-reference/ in the
+                # 2026-05 docs taxonomy reshuffle; all deprecation/redirect content moved with it.
+                "path": "docs/03-api-reference/graph.adoc",
                 "required_substrings": [
                     "Legacy Endpoint Deprecation And Migration",
                     "308 Permanent Redirect",
@@ -62,21 +64,10 @@ DRIFT_RULES = {
                     "`/api/v1/graph/graphs/default/nodes`",
                 ],
             },
-            {
-                "path": "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc",
-                "forbidden_substrings": [
-                    "http://localhost:5678/api/v1/graph/nodes",
-                    "http://localhost:5678/api/v1/graph/edges",
-                    "http://localhost:5678/api/v1/graph/query",
-                    "http://localhost:5678/api/v1/graph/stats?collection=",
-                    "http://localhost:5678/api/v1/graph/migrate",
-                ],
-                "required_substrings": [
-                    "http://localhost:5678/api/v1/graph/graphs/social_network/nodes",
-                    "http://localhost:5678/api/v1/graph/graphs/web_graph/pulsar/query",
-                    "http://localhost:5678/api/v1/graph/graphs/historical_events/quasar/migrate",
-                ],
-            },
+            # NOTE: the former GRAPH_ENGINES_GUIDE.adoc URL-example sub-rule was removed.
+            # That guide is now a conceptual runtime guide with no API examples; the
+            # multi-graph canonical-route requirement is covered by the graph.adoc rule
+            # above and the source-comment rule below.
             {
                 "path": "src/network/rest/v1/graph.rs",
                 "required_substrings": [
@@ -94,9 +85,12 @@ DRIFT_RULES = {
     "distributed_graph_engine_messaging": {
         "doc_rules": [
             {
+                # PULSAR/QUASAR moved past "experimental" to fully RETIRED (TD-001,
+                # Jun 2026); the guide now documents retirement, not experimentation.
                 "path": "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc",
                 "required_substrings": [
-                    "*WARNING*: PULSAR and QUASAR are experimental",
+                    "are retired graph engine names",
+                    "Do not document, demo, or release-note PULSAR or QUASAR as product engines",
                 ],
                 "forbidden_substrings": [
                     "PULSAR is production-ready",

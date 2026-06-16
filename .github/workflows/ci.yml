@@ -184,7 +184,11 @@ jobs:
     name: Capability Matrix
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    # Run on rust changes (evidence refs point at source) AND on docs changes:
+    # the validator now also guards the maturity-contract reconciliation in
+    # SUPPORTED_SURFACE / TECHNICAL_DEBT / PRD / VISION, so a docs-only PR that
+    # weakens those banners must trip this gate too.
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Validate capability matrix
