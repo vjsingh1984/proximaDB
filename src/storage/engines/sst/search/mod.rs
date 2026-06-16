@@ -275,6 +275,10 @@ impl SstEngine {
                 id_filters: Vec::new(),
                 top_k: k,
                 include_expired: false,
+                // Thread the accuracy-vs-latency knob into the AXIS query so the
+                // warm HNSW/IVF path honors `exact`/`approximate`/`approximate:N`
+                // (mapped to HNSW `ef` / IVF `nprobe`). `None` ⇒ index default.
+                search_effort: ctx.search_params.search_mode.to_search_effort(),
                 ..Default::default()
             };
 

@@ -101,6 +101,7 @@ mod tests {
             ann_filtering_mode: AnnFilteringMode::PostFilter,
             ann_filtering_policy: None,
             estimated_selectivity: None,
+            search_effort: None,
         };
 
         let result = manager.query(query).await.unwrap();
@@ -147,6 +148,7 @@ mod tests {
             ann_filtering_mode: AnnFilteringMode::PostFilter,
             ann_filtering_policy: None,
             estimated_selectivity: None,
+            search_effort: None,
         };
 
         // Verify both indexes are used

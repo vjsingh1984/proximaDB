@@ -1706,7 +1706,15 @@ impl AxisManager {
         if let Some(index) = indexes.get(collection_id) {
             // Extract query vector
             if let Some(VectorQuery::Dense { vector, .. }) = &query.vector_query {
-                let results = index.search(vector, query.top_k, None).await?;
+                // Map the caller's search effort onto the HNSW `ef` budget so
+                // `approximate`/`approximate:N` actually trade recall for
+                // latency on the warm path. `None` ⇒ index size-aware default.
+                let ef_override = query
+                    .search_effort
+                    .and_then(|effort| effort.hnsw_ef_override(query.top_k));
+                let results = index
+                    .search_with_effort(vector, query.top_k, ef_override, None)
+                    .await?;
                 let metric = index.distance_metric();
                 return Ok(results
                     .into_iter()
@@ -3979,6 +3987,12 @@ pub struct AxisHybridQuery {
     /// TD-064 / ADR-011: Pre-computed selectivity estimate from
     /// `FilterDiagnostics` or a sampler. Feeds `AnnFilteringPolicy::routing_mode`.
     pub estimated_selectivity: Option<f64>,
+    /// Per-query accuracy-vs-latency effort, derived from the caller's
+    /// `SearchMode`. `None` (the default) keeps each index's own size-aware
+    /// default, so existing callers are behavior-identical. When `Some`, the
+    /// HNSW/IVF dispatch maps it to a per-query `ef` / `nprobe` so the
+    /// `exact`/`approximate`/`approximate:N` knob actually controls recall.
+    pub search_effort: Option<crate::core::search::SearchEffort>,
 }
 
 /// Vector query types
@@ -5269,6 +5283,7 @@ mod recluster_apply_tests {
             ann_filtering_mode: AnnFilteringMode::Inline,
             ann_filtering_policy: None,
             estimated_selectivity: None,
+            search_effort: None,
         };
 
         let (results, _shortfall) = manager

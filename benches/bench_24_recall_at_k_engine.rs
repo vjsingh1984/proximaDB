@@ -125,11 +125,24 @@ fn main() {
     // make this bench meaningless. Override with PROXIMADB_BENCH_SEARCH_MODE.
     let search_mode =
         std::env::var("PROXIMADB_BENCH_SEARCH_MODE").unwrap_or_else(|_| "approximate".to_string());
-    let max_k = *KS.iter().max().unwrap();
+    // The set of k values to report Recall@k for. By default {1,10,100}. The
+    // single search runs at `max(ks)`, so with `approximate:N` the HNSW `ef`
+    // is floored at `max(ks)` — masking low-`ef` effects on small k. Set
+    // PROXIMADB_BENCH_TOPK=K to search at exactly K and report only Recall@K,
+    // which isolates the recall/latency curve at low effort (ef can drop to K).
+    let ks: Vec<usize> = match std::env::var("PROXIMADB_BENCH_TOPK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|k| *k >= 1)
+    {
+        Some(k) => vec![k],
+        None => KS.to_vec(),
+    };
+    let max_k = *ks.iter().max().expect("non-empty ks");
 
     println!("\n{}", "=".repeat(72));
     println!(
-        "  ENGINE RECALL@k BENCHMARK — {count} vectors, dim {DIMENSION}, engine {engine}, mode {search_mode}"
+        "  ENGINE RECALL@k BENCHMARK — {count} vectors, dim {DIMENSION}, engine {engine}, mode {search_mode}, top_k {max_k}"
     );
     println!("{}", "=".repeat(72));
 
@@ -156,7 +169,7 @@ fn main() {
     wait_for_search_ready(&db, &collection, &queries[0], max_k, &search_mode);
 
     // Recall@k accumulators + latency.
-    let mut recall_sums = [0.0f64; KS.len()];
+    let mut recall_sums = vec![0.0f64; ks.len()];
     let mut latencies_ms = Vec::with_capacity(NUM_QUERIES);
     let mut measured = 0usize;
     for (q_idx, query) in queries.iter().enumerate() {
@@ -177,7 +190,7 @@ fn main() {
         latencies_ms.push(start.elapsed().as_secs_f64() * 1000.0);
         measured += 1;
         let result_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
-        for (ki, &k) in KS.iter().enumerate() {
+        for (ki, &k) in ks.iter().enumerate() {
             let exact_k: HashSet<&String> = exact[q_idx].iter().take(k).collect();
             let got_k: HashSet<&String> = result_ids.iter().take(k).collect();
             // Recall@k vs an exact oracle of k neighbours.
@@ -196,7 +209,7 @@ fn main() {
         latencies_ms[((latencies_ms.len() as f64 * 0.99) as usize).min(latencies_ms.len() - 1)];
 
     println!("\n  Results ({measured} queries, exact brute-force oracle):");
-    for (ki, &k) in KS.iter().enumerate() {
+    for (ki, &k) in ks.iter().enumerate() {
         println!(
             "    Recall@{k:<4} {:.2}%",
             recall_sums[ki] / measured as f64 * 100.0

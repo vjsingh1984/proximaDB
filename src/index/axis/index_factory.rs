@@ -69,6 +69,30 @@ pub trait AxisVectorIndex: Send + Sync {
         filter: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<Vec<(String, f32)>>;
 
+    /// Search with an optional per-query accuracy-vs-latency budget.
+    ///
+    /// `ef_override` is the index-specific exploration budget for THIS query
+    /// (HNSW `ef`; analogous knobs for other graph indexes). `None` keeps the
+    /// index's own size-aware default — so the default search path is
+    /// behavior-identical. Indexes that have no per-query budget knob inherit
+    /// this default, which simply ignores the override and calls
+    /// [`AxisVectorIndex::search`]. Only `AxisHnswIndex` overrides it today.
+    ///
+    /// This is the seam that lets the caller's `SearchMode`/`SearchEffort`
+    /// (mapped via [`crate::core::search::SearchEffort::hnsw_ef_override`])
+    /// actually control recall on the warm AXIS path, which previously
+    /// discarded the knob entirely.
+    async fn search_with_effort(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        _ef_override: Option<usize>,
+        filter: Option<&std::collections::HashMap<String, String>>,
+    ) -> Result<Vec<(String, f32)>> {
+        // Default: no per-query budget knob — behave exactly like `search`.
+        self.search(query, top_k, filter).await
+    }
+
     /// TD-064: Search with predicate-aware metadata filter
     ///
     /// This method allows indexes to use cached metadata for early pruning.

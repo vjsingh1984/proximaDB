@@ -269,6 +269,87 @@ impl SearchMode {
             }
         }
     }
+
+    /// Map this mode to a per-query [`SearchEffort`] for the AXIS warm path.
+    ///
+    /// The warm (AXIS HNSW/IVF) search path historically ignored
+    /// `SearchMode`/`nprobe` entirely — `nprobe` was honored only by the
+    /// `fallback_to_direct_search` file-centroid pruning, which the engine
+    /// does not reach when an AXIS manager is present. This converter lets the
+    /// accuracy-vs-latency knob actually flow into the AXIS query (mapped to
+    /// HNSW `ef` / IVF `nprobe` by [`SearchEffort`]).
+    ///
+    /// - `Exact` ⇒ `Exact` (keeps the index's recall-maximizing default).
+    /// - `Approximate { nprobe }` ⇒ `Approximate { hint: nprobe }` — an
+    ///   explicit value is used directly as the HNSW `ef` / IVF `nprobe`.
+    /// - `Adaptive` ⇒ `None`: the index's own size-aware default already
+    ///   adapts to dataset size, and dataset size isn't known at this layer.
+    pub fn to_search_effort(&self) -> Option<SearchEffort> {
+        match self {
+            SearchMode::Exact => Some(SearchEffort::Exact),
+            SearchMode::Approximate { nprobe } => Some(SearchEffort::Approximate { hint: *nprobe }),
+            SearchMode::Adaptive { .. } => None,
+        }
+    }
+}
+
+/// Per-query search effort derived from [`SearchMode`], threaded into the AXIS
+/// query so the warm HNSW/IVF path honors the accuracy-vs-latency knob.
+///
+/// This decouples the *intent* (exact vs approximate, with an optional explicit
+/// budget) from the per-index *mechanism* (HNSW `ef`, IVF `nprobe`): the index
+/// boundary calls [`SearchEffort::hnsw_ef_override`] / [`SearchEffort::ivf_nprobe`].
+/// A `None` ef override preserves the index's own size-aware default, so the
+/// default (`Exact`) path is behavior-identical to before this knob existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SearchEffort {
+    /// Maximize recall: keep the index's full / size-aware effort.
+    Exact,
+    /// Trade recall for latency. `hint` is the caller's explicit budget
+    /// (interpreted as HNSW `ef` or IVF `nprobe`); `None` asks the engine for
+    /// a recall-trading default below the exact ceiling.
+    Approximate {
+        /// Explicit per-query effort budget (HNSW `ef` / IVF `nprobe`).
+        hint: Option<usize>,
+    },
+}
+
+impl SearchEffort {
+    /// Recall-trading HNSW `ef` floor for `Approximate { hint: None }`, as a
+    /// multiple of `top_k`. Chosen to sit below the size-aware exact ceiling
+    /// (`clamp(sqrt(N), 50, 500)`) at the scales we test so approximate mode
+    /// actually drops recall/latency; tuned empirically via `bench_24`.
+    const APPROX_EF_TOPK_MULT: usize = 2;
+    /// Absolute floor so tiny `top_k` still explores enough candidates.
+    const APPROX_EF_FLOOR: usize = 64;
+
+    /// HNSW per-query `ef` override. `None` ⇒ keep the index's own size-aware
+    /// default (today's recall-maximizing behavior — used for `Exact`).
+    pub fn hnsw_ef_override(&self, top_k: usize) -> Option<usize> {
+        match self {
+            // Exact keeps the index default, which is already recall-maximizing.
+            SearchEffort::Exact => None,
+            // Power user: the explicit budget IS the ef (floored at top_k so we
+            // never return fewer than the requested results).
+            SearchEffort::Approximate { hint: Some(ef) } => Some((*ef).max(top_k)),
+            // Auto-approximate: a recall-trading ef below the exact ceiling.
+            SearchEffort::Approximate { hint: None } => {
+                Some((top_k * Self::APPROX_EF_TOPK_MULT).max(Self::APPROX_EF_FLOOR))
+            }
+        }
+    }
+
+    /// IVF per-query `nprobe` given the configured `nlist` (partition count).
+    pub fn ivf_nprobe(&self, nlist: usize) -> usize {
+        match self {
+            SearchEffort::Exact => nlist.max(1),
+            SearchEffort::Approximate { hint: Some(n) } => (*n).clamp(1, nlist.max(1)),
+            // LanceDB-style sqrt(nlist) default, matching `effective_nprobe`.
+            SearchEffort::Approximate { hint: None } => {
+                1.max((nlist as f32).sqrt().ceil() as usize)
+            }
+        }
+    }
 }
 
 /// Backward-compatibility alias for [`UnifiedSearchParams`].
@@ -1578,6 +1659,85 @@ mod tests {
         let adaptive_above =
             SearchMode::Adaptive { threshold: 10_000 }.effective_nprobe(100, 50_000);
         assert_eq!(adaptive_above, 10); // sqrt(100) = 10
+    }
+
+    #[test]
+    fn test_search_mode_to_search_effort() {
+        // Exact maps to Exact effort (keeps the index recall-maximizing default).
+        assert_eq!(
+            SearchMode::Exact.to_search_effort(),
+            Some(SearchEffort::Exact)
+        );
+
+        // Approximate forwards the explicit/auto nprobe as the effort hint.
+        assert_eq!(
+            SearchMode::Approximate { nprobe: Some(8) }.to_search_effort(),
+            Some(SearchEffort::Approximate { hint: Some(8) })
+        );
+        assert_eq!(
+            SearchMode::Approximate { nprobe: None }.to_search_effort(),
+            Some(SearchEffort::Approximate { hint: None })
+        );
+
+        // Adaptive yields no per-query override (index self-adapts to N).
+        assert_eq!(
+            SearchMode::Adaptive { threshold: 10_000 }.to_search_effort(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_search_effort_hnsw_ef_override() {
+        let top_k = 10;
+
+        // Exact keeps the index default (no override) so the warm path is
+        // byte-identical to pre-knob behavior.
+        assert_eq!(SearchEffort::Exact.hnsw_ef_override(top_k), None);
+
+        // Explicit hint is used directly as ef, floored at top_k.
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(32) }.hnsw_ef_override(top_k),
+            Some(32)
+        );
+        // A hint below top_k is floored to top_k (never return fewer than k).
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(3) }.hnsw_ef_override(top_k),
+            Some(10)
+        );
+
+        // Auto-approximate uses a recall-trading ef below the exact ceiling.
+        let auto = SearchEffort::Approximate { hint: None }
+            .hnsw_ef_override(top_k)
+            .unwrap();
+        assert!(
+            auto >= top_k && auto < 500,
+            "auto ef {auto} should trade recall, below the 500 clamp"
+        );
+    }
+
+    #[test]
+    fn test_search_effort_ivf_nprobe() {
+        let nlist = 100;
+        // Exact probes all partitions.
+        assert_eq!(SearchEffort::Exact.ivf_nprobe(nlist), 100);
+        // Explicit hint is clamped to [1, nlist].
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(8) }.ivf_nprobe(nlist),
+            8
+        );
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(999) }.ivf_nprobe(nlist),
+            100
+        );
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(0) }.ivf_nprobe(nlist),
+            1
+        );
+        // Auto = sqrt(nlist).
+        assert_eq!(
+            SearchEffort::Approximate { hint: None }.ivf_nprobe(nlist),
+            10
+        );
     }
 
     #[test]
