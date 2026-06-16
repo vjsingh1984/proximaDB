@@ -829,8 +829,14 @@ impl RaftConsensus {
             drop(volatile);
 
             if new_commit > old_commit {
-                // After updating commit index, apply entries to state machine
+                // Release the `persistent` write lock before applying: the
+                // apply path re-acquires `persistent` as a reader, which would
+                // self-deadlock this RwLock if we still held the writer here.
+                let current_term = persistent.current_term;
+                drop(persistent);
+                // After updating commit index, apply entries to state machine.
                 self.apply_to_state_machine().await;
+                return (current_term, true);
             }
         }
 
