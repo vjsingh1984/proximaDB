@@ -50,6 +50,38 @@ pub use operations::FlushOperations;
 pub use optimizer::FlushOptimizer;
 
 impl SstEngine {
+    /// Register just-flushed vectors into the per-collection AXIS ANN index (TD-112).
+    ///
+    /// Without this, flushed/compacted vectors are never indexed, so post-flush
+    /// vector search falls back to a brute-force segment scan
+    /// (`sst/search` `fallback_to_direct_search`) and recall degrades as data
+    /// ages out of the WAL memtable. Best-effort: the segments are already
+    /// durable, so an indexing error is logged, not propagated. The per-collection
+    /// `IndexUpdateMode` governs whether this blocks flush completion
+    /// (Synchronous) or runs in the background. There is no double-index risk —
+    /// the live write path does not populate AXIS, so flush is the first
+    /// indexing point.
+    async fn index_flushed_into_axis(&self, params: &FlushParameters) {
+        let Some(axis_manager) = self.axis_manager() else {
+            return;
+        };
+        let Some(collection_id) = params.collection_id.as_ref() else {
+            return;
+        };
+        if params.vector_records.is_empty() {
+            return;
+        }
+        if let Err(e) = axis_manager
+            .handle_flushed_vectors(collection_id, params.vector_records.clone(), Vec::new())
+            .await
+        {
+            tracing::warn!(
+                "TD-112: AXIS index-on-flush failed for collection {collection_id}: {e} \
+                 (post-flush search will fall back to a segment scan)"
+            );
+        }
+    }
+
     /// Main flush operation for SST engine
     ///
     /// This method implements the core flush logic for the SST engine:
@@ -466,6 +498,10 @@ impl SstEngine {
         // Check if compaction should be triggered
         let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;
 
+        // TD-112: index the just-flushed vectors into AXIS so post-flush search is
+        // served by the ANN index rather than a brute-force segment scan.
+        self.index_flushed_into_axis(params).await;
+
         // Create flush result with file path for AXIS index building
         Ok(FlushResult {
             success: true,
@@ -569,5 +605,78 @@ mod tests {
             }],
             ..ProximaRecord::default()
         }
+    }
+
+    /// TD-112: the LIVE flush path (`do_flush` -> `flush_implementation`) must
+    /// register flushed vectors into the per-collection AXIS index, so post-flush
+    /// search is served by the ANN index instead of a brute-force segment scan.
+    /// (The `FlushCoordinator` is test-only scaffolding; the hook lives on the
+    /// real path exercised here.)
+    #[tokio::test]
+    async fn td112_live_flush_indexes_vectors_into_axis() {
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::management::manager::AxisManager;
+        use crate::index::axis::types::AxisConfig;
+        use crate::proto::proximadb_v1::{
+            Collection, CollectionConfig, StorageAssignment, StorageEngine,
+        };
+        use crate::storage::traits::UnifiedStorageEngine;
+
+        // Attach an AXIS manager (process-global OnceLock; a no-op if a prior test
+        // already set one). We read the effective manager back from the engine so
+        // the assertion targets whatever the live flush path will use.
+        crate::storage::engines::sst::core::set_sst_axis_manager(Arc::new(
+            AxisManager::new(AxisConfig::default()).await.unwrap(),
+        ));
+        let engine = create_test_engine().await;
+        let axis = engine
+            .axis_manager()
+            .expect("an AXIS manager must be attached for index-on-flush");
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let collection_id = "td112_live_flush";
+        let collection = Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 4,
+                distance_metric: Some(DistanceMetric::Cosine as i32),
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let records = vec![
+            create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+            create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+            create_test_vector("v2", vec![0.0, 0.0, 1.0, 0.0]),
+        ];
+
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            vector_records: records,
+            force: true,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(collection),
+            estimated_size: 0,
+        };
+
+        let result = engine.do_flush(&params).await.expect("flush should succeed");
+        assert!(result.success, "flush should succeed");
+
+        assert_eq!(
+            axis.registered_vector_count(collection_id).await,
+            3,
+            "the live flush path must index all flushed vectors into AXIS (TD-112)"
+        );
     }
 }
