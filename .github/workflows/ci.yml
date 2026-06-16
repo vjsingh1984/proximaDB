@@ -160,7 +160,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check for tracked artifact files
         run: |
-          bad_files=$(git ls-files | rg '(^|/)\\.victor($|/)|\\.bak[0-9]*$|\\.disabled$')
+          bad_files=$(git ls-files | grep -E '(^|/)\.victor($|/)|\.bak[0-9]*$|\.disabled$' || true)
           if [ -n "$bad_files" ]; then
             echo "::error::Forbidden tracked artifacts detected:"
             echo "$bad_files"
@@ -222,7 +222,7 @@ jobs:
           cd clients/python
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install pytest grpcio grpcio-tools protobuf
+          python -m pip install pytest grpcio grpcio-tools protobuf pyyaml
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-proto-compat"
@@ -938,6 +938,11 @@ jobs:
       - name: Generate Coverage
         env:
           CARGO_PROFILE_DEV_DEBUG: 0
+          # Serialize crate compilation: the root crate's instrumented test
+          # binary OOM-kills the 16GB runner (exit 143) during the build phase,
+          # before the `|| echo continuing` fallback can run. Same peak-rustc
+          # -memory issue mitigated in the unit-test job.
+          CARGO_BUILD_JOBS: 1
         run: |
           # Use --lib only and limit parallelism to avoid OOM on CI runners
           cargo tarpaulin --lib --timeout 600 \
@@ -968,7 +973,8 @@ jobs:
     needs: changes
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        # 3.9 dropped: the package declares requires-python ">=3.10".
+        python-version: ["3.10", "3.11", "3.12"]
     if: "!inputs.skip_tests"
     steps:
       - uses: actions/checkout@v4

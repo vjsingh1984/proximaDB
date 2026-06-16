@@ -17,33 +17,15 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /build
 
-# Copy manifests for dependency caching
-COPY Cargo.toml Cargo.lock build.rs ./
+# Copy the entire workspace. The root Cargo.toml declares many members under
+# apps/ and crates/, so a partial "deps-only" pre-build layer cannot resolve the
+# workspace (it failed reading apps/proximadb-bench/Cargo.toml). .dockerignore
+# keeps target/ and VCS noise out of the build context.
+COPY . .
 
-# Copy proto files (needed for build.rs)
-COPY proto/ ./proto/
-
-# Copy Rust SDK (workspace member required by Cargo.toml)
-COPY clients/rust/ ./clients/rust/
-
-# Create dummy source for dependency building
-RUN mkdir -p src/bin src/proto && \
-    echo 'fn main() {}' > src/bin/server.rs && \
-    echo 'fn main() {}' > src/lib.rs
-
-# Copy proto descriptor file (needed by build.rs)
-COPY src/proto/proximadb_descriptor.bin ./src/proto/
-
-# Build dependencies only (cached layer - reused when only source code changes)
-RUN cargo build --release --bin proximadb-server && \
-    rm -rf src target/release/deps/proximadb* target/release/proximadb-server
-
-# Copy actual source code
-COPY src/ ./src/
-
-# Build final optimized binary with real source code
-# GHA runners have 7GB RAM; use 2 parallel jobs with 4 codegen units
-# for a balance of speed (~3x faster than single-threaded) and memory safety
+# Build the optimized server binary.
+# GHA runners are memory-constrained; cap parallelism and codegen units for
+# memory safety while keeping a reasonable build speed.
 ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=4 \
     CARGO_PROFILE_RELEASE_OPT_LEVEL=1 \
     CARGO_PROFILE_RELEASE_LTO=false \
