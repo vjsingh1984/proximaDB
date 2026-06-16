@@ -399,6 +399,11 @@ pub struct ServiceIndexStats {
     /// Bytes read because selected blocks were coalesced across small gaps.
     #[serde(default)]
     pub object_overfetch_bytes: i64,
+    /// SST blocks skipped by per-block vector-bounds (L2 lower-bound) pruning,
+    /// before their data blocks were read (TD-040). Distinct from
+    /// `object_pruned_blocks`, which counts range-plan-level pruning.
+    #[serde(default)]
+    pub object_vector_bounds_pruned_blocks: i64,
 }
 
 /// Search debug information

@@ -67,7 +67,9 @@ use crate::storage::engines::core::formats::columnar::columnar_query_engine::vec
 use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Field, Schema};
 
-pub(crate) use super::block_pruning::{compute_query_zorder_code, select_blocks_by_centroid};
+pub(crate) use super::block_pruning::{
+    compute_query_zorder_code, metric_distance, select_blocks_by_centroid,
+};
 
 // Type alias for bloom filter
 type BloomFilter = SstableBloomFilter;
@@ -340,6 +342,10 @@ pub struct ObjectRangeExecutionStats {
     pub actual_remote_bytes: u64,
     pub useful_block_bytes: u64,
     pub overfetch_bytes: u64,
+    /// Blocks skipped by per-block vector-bounds (L2 lower-bound) pruning before
+    /// their data blocks were read (TD-040). Distinct from `pruned_blocks`,
+    /// which counts range-plan-level pruning.
+    pub vector_bounds_pruned_blocks: usize,
     pub rejected_route_reasons: Vec<String>,
 }
 
@@ -371,8 +377,122 @@ impl ObjectRangeExecutionStats {
             object_estimated_remote_bytes: self.estimated_remote_bytes as i64,
             object_actual_remote_bytes: self.actual_remote_bytes as i64,
             object_overfetch_bytes: self.overfetch_bytes as i64,
+            object_vector_bounds_pruned_blocks: self.vector_bounds_pruned_blocks as i64,
             ..Default::default()
         }
+    }
+}
+
+/// Operational kill-switch for TD-040 per-block vector-bounds pruning on the
+/// SST cold read path. Set `PROXIMADB_VECTOR_BOUNDS_PRUNE_DISABLE=1` (or
+/// `true`) to bypass the L2 lower-bound block-skip and read every selected
+/// block (byte-identical to the pre-TD-040 path). The prune is
+/// recall-preserving by construction, so this exists purely as an operational
+/// escape hatch. Read once per process.
+fn vector_bounds_prune_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_VECTOR_BOUNDS_PRUNE_DISABLE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
+/// Guard for TD-040 vector-bounds block pruning. Returns the query vector slice
+/// when pruning may engage, else `None` (caller then takes today's unchanged
+/// read path — byte-identical). ALL of the following must hold:
+/// - metric is `Euclidean` (the L2 lower bound is invalid for Cosine / inner
+///   product, where `should_prune_l2` would wrongly skip beating blocks),
+/// - `!block_prune.force_exact` (exact mode must scan every block),
+/// - `filter_expression.is_none()` (a metadata filter would make the
+///   provisional top-k threshold too tight — admitting filtered-out records —
+///   risking pruning the true filtered k-th; zone-map already prunes the
+///   filtered case at block granularity),
+/// - the kill-switch is unset,
+/// - a non-empty query vector is present.
+fn vector_bounds_prune_query(params: &SearchParams) -> Option<&[f32]> {
+    if vector_bounds_prune_disabled() || params.block_prune.force_exact {
+        return None;
+    }
+    if params.filter_expression.is_some() {
+        return None;
+    }
+    if !matches!(
+        params.distance_metric,
+        Some(crate::compute::distance_computation::DistanceMetric::Euclidean)
+    ) {
+        return None;
+    }
+    let query = params
+        .vector
+        .as_ref()
+        .or_else(|| params.query_vectors.as_ref().and_then(|v| v.first()))?;
+    if query.is_empty() {
+        return None;
+    }
+    Some(query.as_slice())
+}
+
+/// Minimum number of nearest-centroid blocks read in the TD-040 seed pass
+/// before a provisional top-k threshold is established. Keeps the seed from
+/// under-filling the queue (and thus producing no threshold) when the survivor
+/// set is small.
+const VECTOR_BOUNDS_PRUNE_SEED_FLOOR: usize = 4;
+
+/// Size of the seed pass for TD-040 two-pass pruning: `max(floor, ceil(sqrt(n)))`,
+/// clamped to the survivor count. Nearest-centroid blocks are read first because
+/// they are the most likely to hold the true top-k, tightening the provisional
+/// threshold early and maximizing how much of the remainder can be pruned.
+fn vector_bounds_prune_seed_size(survivors: usize) -> usize {
+    let sqrt = (survivors as f64).sqrt().ceil() as usize;
+    sqrt.max(VECTOR_BOUNDS_PRUNE_SEED_FLOOR).min(survivors)
+}
+
+/// Compute a recall-safe provisional top-k L2 distance threshold over the seed
+/// blocks. Scores every seed record's Euclidean distance into a top-k queue and,
+/// **only when the queue is full** (≥ k candidates), recovers the k-th-best raw
+/// L2 distance from the stored normalized score `s_k = 1/(1+d)` ⇒ `d = 1/s_k − 1`.
+/// Returns `None` when fewer than k seed candidates exist (threshold undefined ⇒
+/// caller prunes nothing). The returned distance is ≥ the final true k-th-best
+/// (a subset's k-th-best can only exceed the full set's), so pruning the
+/// remainder against it never drops a beating block.
+fn vector_bounds_provisional_threshold(
+    seed_blocks: &[ProximaDataBlock],
+    query: &[f32],
+    k: usize,
+) -> Option<f32> {
+    if k == 0 {
+        return None;
+    }
+    use crate::compute::distance_computation::DistanceMetric;
+    let distance_compute =
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+            DistanceMetric::Euclidean,
+        );
+    let mut queue = BoundedPriorityQueue::new(k);
+    for block in seed_blocks {
+        for record in &block.records {
+            let vector = record_vector(record);
+            if vector.is_empty() || vector.len() != query.len() {
+                continue;
+            }
+            let score = distance_compute
+                .calculate_distance(query, vector, &DistanceMetric::Euclidean)
+                .normalized_score;
+            if queue.would_accept(score) {
+                // Threshold only depends on the score; skip id/vector/metadata
+                // materialization that the real scorer does downstream.
+                queue.try_insert(OptimizedSearchRecord::new(String::new(), score));
+            }
+        }
+    }
+    let s_k = queue.min_score_threshold();
+    if s_k.is_finite() && s_k > 0.0 {
+        // Euclidean normalized score s = 1/(1+d) ⇒ d = 1/s − 1 (raw L2 distance).
+        Some(1.0 / s_k - 1.0)
+    } else {
+        None
     }
 }
 
@@ -1269,6 +1389,169 @@ impl ModularBlockReader {
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod vector_bounds_prune_tests {
+    use super::*;
+    use crate::compute::distance_computation::DistanceMetric;
+    use crate::core::search::{BlockPruneConfig, FilterExpression};
+
+    fn euclidean_params(query: Vec<f32>) -> SearchParams {
+        SearchParams {
+            vector: Some(query),
+            top_k: Some(10),
+            distance_metric: Some(DistanceMetric::Euclidean),
+            block_prune: BlockPruneConfig {
+                force_exact: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn centroid_entry(block_id: u32, centroid: Vec<f32>) -> IndexEntry {
+        IndexEntry {
+            block_id,
+            block_centroid: centroid,
+            block_centroid_fp16: None,
+            ..IndexEntry::default()
+        }
+    }
+
+    #[test]
+    fn seed_size_is_sqrt_floored_and_clamped() {
+        // Below the floor, clamped to the survivor count.
+        assert_eq!(vector_bounds_prune_seed_size(0), 0);
+        assert_eq!(vector_bounds_prune_seed_size(1), 1);
+        assert_eq!(vector_bounds_prune_seed_size(3), 3);
+        // At/above the floor, ceil(sqrt(n)) but never below the floor.
+        assert_eq!(vector_bounds_prune_seed_size(16), VECTOR_BOUNDS_PRUNE_SEED_FLOOR);
+        assert_eq!(vector_bounds_prune_seed_size(100), 10);
+        assert_eq!(vector_bounds_prune_seed_size(101), 11);
+    }
+
+    #[test]
+    fn prune_engages_only_for_unfiltered_exact_l2() {
+        // Unfiltered Euclidean, not force-exact → engages, returns the query.
+        let params = euclidean_params(vec![1.0, 2.0, 3.0]);
+        assert_eq!(vector_bounds_prune_query(&params), Some(&[1.0, 2.0, 3.0][..]));
+
+        // Cosine → the L2 lower bound is invalid → disabled.
+        let mut cosine = euclidean_params(vec![1.0, 2.0, 3.0]);
+        cosine.distance_metric = Some(DistanceMetric::Cosine);
+        assert!(vector_bounds_prune_query(&cosine).is_none());
+
+        // force_exact must scan every block → disabled.
+        let mut exact = euclidean_params(vec![1.0, 2.0, 3.0]);
+        exact.block_prune.force_exact = true;
+        assert!(vector_bounds_prune_query(&exact).is_none());
+
+        // A metadata filter would make the provisional threshold unsafe → disabled.
+        let mut filtered = euclidean_params(vec![1.0, 2.0, 3.0]);
+        filtered.filter_expression = Some(FilterExpression::And(vec![]));
+        assert!(vector_bounds_prune_query(&filtered).is_none());
+
+        // No query vector / empty query → nothing to prune against.
+        let mut no_vec = euclidean_params(vec![1.0]);
+        no_vec.vector = None;
+        no_vec.query_vectors = None;
+        assert!(vector_bounds_prune_query(&no_vec).is_none());
+        let empty = euclidean_params(vec![]);
+        assert!(vector_bounds_prune_query(&empty).is_none());
+    }
+
+    #[test]
+    fn prune_falls_back_to_first_query_vector() {
+        // When `vector` is unset, the first of `query_vectors` is used.
+        let mut params = euclidean_params(vec![]);
+        params.vector = None;
+        params.query_vectors = Some(vec![vec![4.0, 5.0], vec![9.0, 9.0]]);
+        assert_eq!(vector_bounds_prune_query(&params), Some(&[4.0, 5.0][..]));
+    }
+
+    #[test]
+    fn rerank_orders_by_centroid_distance_with_dim_mismatch_tail() {
+        let query = vec![0.0, 0.0];
+        // Centroid L2 distances to the origin: block 0 → 5, block 1 → 1, block 2 → 3.
+        // Block 3 has a dim-mismatched centroid and must sort to the tail.
+        let entries = vec![
+            centroid_entry(0, vec![3.0, 4.0]),
+            centroid_entry(1, vec![1.0, 0.0]),
+            centroid_entry(2, vec![0.0, 3.0]),
+            centroid_entry(3, vec![1.0, 1.0, 1.0]),
+        ];
+        let survivors = vec![0usize, 1, 2, 3];
+
+        let ordered =
+            UnifiedSstableReader::rerank_survivors_by_centroid(&entries, &survivors, &query);
+
+        // Nearest first (1 → 2 → 0), dim-mismatch (3) last.
+        assert_eq!(ordered, vec![1, 2, 0, 3]);
+    }
+
+    fn record_with_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {
+        crate::proto::proximadb_v1::VectorRecord {
+            id: id.to_string(),
+            vector,
+            metadata: std::collections::HashMap::new(),
+            version: None,
+            timestamp: None,
+            updated_at: None,
+            expires_at: None,
+            source: None,
+        }
+        .into()
+    }
+
+    #[test]
+    fn provisional_threshold_seeds_and_prunes_far_blocks() {
+        use proximadb_storage_common::writer_statistics::VectorBoundsPruner;
+        let dim = 4;
+        let query = vec![0.0_f32; dim];
+
+        // Seed of k=10 records hugging the query (L2 distances 0.00 .. 0.18).
+        let near: Vec<ProximaRecord> = (0..10)
+            .map(|i| record_with_vector(&format!("n{i}"), vec![0.01 * i as f32; dim]))
+            .collect();
+        let seed_blocks = vec![ProximaDataBlock {
+            records: near,
+            ..Default::default()
+        }];
+
+        // Queue fills (≥ k) → a finite, small provisional L2 threshold.
+        let tau = vector_bounds_provisional_threshold(&seed_blocks, &query, 10)
+            .expect("threshold is finite once the seed fills the queue");
+        assert!(tau.is_finite() && tau >= 0.0 && tau < 1.0, "tau={tau}");
+
+        // A far bounding box ([100,101]^dim) cannot hold a top-k candidate ⇒ pruned.
+        let far = VectorBoundsPruner::from_bounds(vec![100.0; dim], vec![101.0; dim]).unwrap();
+        assert!(
+            far.should_prune_l2(&query, tau),
+            "a block far from the query must be pruned"
+        );
+
+        // A box overlapping the query region ([-1,1]^dim) ⇒ never pruned.
+        let near_box = VectorBoundsPruner::from_bounds(vec![-1.0; dim], vec![1.0; dim]).unwrap();
+        assert!(
+            !near_box.should_prune_l2(&query, tau),
+            "a block overlapping the query must be kept"
+        );
+    }
+
+    #[test]
+    fn provisional_threshold_is_none_when_seed_underfills_queue() {
+        let query = vec![0.0_f32; 4];
+        // Only 3 records but k = 10 ⇒ queue never fills ⇒ no safe threshold.
+        let few: Vec<ProximaRecord> = (0..3)
+            .map(|i| record_with_vector(&format!("f{i}"), vec![i as f32; 4]))
+            .collect();
+        let seed_blocks = vec![ProximaDataBlock {
+            records: few,
+            ..Default::default()
+        }];
+        assert!(vector_bounds_provisional_threshold(&seed_blocks, &query, 10).is_none());
     }
 }
 
@@ -5697,44 +5980,39 @@ impl UnifiedSstableReader {
             }
 
             if !selected_after_zone_map.is_empty() {
-                if !route_options.enabled {
-                    let loaded_blocks = self
-                        .read_selected_blocks_individually(
+                // TD-040: when the search is an unfiltered exact-L2 query (and the
+                // kill-switch is unset), prune whole blocks whose per-dimension
+                // bounding box cannot hold a top-k candidate BEFORE reading them.
+                // Otherwise the read path is byte-identical to today.
+                let loaded_blocks = match vector_bounds_prune_query(search_params) {
+                    Some(query) => {
+                        self.read_with_vector_bounds_prune(
                             &block_reader,
                             &index_blocks,
                             &selected_after_zone_map,
+                            query,
+                            search_params,
+                            &route_options,
+                            context,
+                            file_path,
+                            &mut object_stats,
                         )
-                        .await?;
-                    relevant_blocks.extend(loaded_blocks);
-                    continue;
-                }
-
-                let policy = object_range_policy_from_context(context);
-                let range_plan = block_reader.plan_selected_block_ranges(
-                    &index_blocks,
-                    &selected_after_zone_map,
-                    &policy,
-                )?;
-                if let Err(e) = route_options.allows_plan(&range_plan) {
-                    object_stats.rejected_route_reasons.push(e.to_string());
-                    return Err(e);
-                }
-
-                tracing::debug!(
-                    "📦 SST object range plan: file={}, selected_blocks={}, ranges={}, estimated_bytes={}, useful_bytes={}, overfetch_bytes={}, pruned_blocks={}/{}",
-                    file_path,
-                    range_plan.selected_blocks.len(),
-                    range_plan.estimated_get_requests,
-                    range_plan.estimated_bytes,
-                    range_plan.useful_block_bytes,
-                    range_plan.overfetch_bytes,
-                    range_plan.pruned_blocks,
-                    range_plan.total_blocks
-                );
-
-                object_stats.record_plan(&range_plan);
-                let loaded_blocks = block_reader.read_blocks_by_range_plan(&range_plan).await?;
-                relevant_blocks.extend(loaded_blocks.into_iter().map(|(_, block)| block));
+                        .await?
+                    }
+                    None => {
+                        self.read_selected_block_set(
+                            &block_reader,
+                            &index_blocks,
+                            &selected_after_zone_map,
+                            &route_options,
+                            context,
+                            file_path,
+                            &mut object_stats,
+                        )
+                        .await?
+                    }
+                };
+                relevant_blocks.extend(loaded_blocks);
             }
 
             // Log zone map pruning effectiveness
@@ -5773,6 +6051,220 @@ impl UnifiedSstableReader {
             }
         }
 
+        Ok(blocks)
+    }
+
+    /// Read a selected set of blocks, choosing the individual-read path (local
+    /// FS) or the coalesced object-range plan (cloud object store) exactly as
+    /// the modular gather did inline. Extracted so the TD-040 two-pass prune can
+    /// reuse the identical read+accounting behavior for its seed and remainder
+    /// passes. `object_stats` accumulates range-plan accounting on the cloud path.
+    #[allow(clippy::too_many_arguments)]
+    async fn read_selected_block_set(
+        &self,
+        block_reader: &ModularBlockReader,
+        index_blocks: &[IndexEntry],
+        selected: &[usize],
+        route_options: &ObjectEconomyRouteOptions,
+        context: &SstQueryCollectionContext,
+        file_path: &str,
+        object_stats: &mut ObjectRangeExecutionStats,
+    ) -> Result<Vec<ProximaDataBlock>> {
+        if selected.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if !route_options.enabled {
+            return self
+                .read_selected_blocks_individually(block_reader, index_blocks, selected)
+                .await;
+        }
+
+        let policy = object_range_policy_from_context(context);
+        let range_plan =
+            block_reader.plan_selected_block_ranges(index_blocks, selected, &policy)?;
+        if let Err(e) = route_options.allows_plan(&range_plan) {
+            object_stats.rejected_route_reasons.push(e.to_string());
+            return Err(e);
+        }
+
+        tracing::debug!(
+            "📦 SST object range plan: file={}, selected_blocks={}, ranges={}, estimated_bytes={}, useful_bytes={}, overfetch_bytes={}, pruned_blocks={}/{}",
+            file_path,
+            range_plan.selected_blocks.len(),
+            range_plan.estimated_get_requests,
+            range_plan.estimated_bytes,
+            range_plan.useful_block_bytes,
+            range_plan.overfetch_bytes,
+            range_plan.pruned_blocks,
+            range_plan.total_blocks
+        );
+
+        object_stats.record_plan(&range_plan);
+        let loaded_blocks = block_reader.read_blocks_by_range_plan(&range_plan).await?;
+        Ok(loaded_blocks.into_iter().map(|(_, block)| block).collect())
+    }
+
+    /// Order survivor block indices by ascending centroid distance to `query`
+    /// under Euclidean. Blocks with a missing/dim-mismatched centroid sort to
+    /// the tail (treated as farthest) so they are never chosen as seed blocks.
+    /// Pure (no I/O); centroid distances were discarded by `select_blocks_for_search`.
+    fn rerank_survivors_by_centroid(
+        index_blocks: &[IndexEntry],
+        survivors: &[usize],
+        query: &[f32],
+    ) -> Vec<usize> {
+        use crate::compute::distance_computation::DistanceMetric;
+        let mut scored: Vec<(f32, usize)> = survivors
+            .iter()
+            .map(|&block_idx| {
+                let dist = match index_blocks.get(block_idx) {
+                    Some(entry) => {
+                        let centroid = super::super::get_centroid_fp32(
+                            &entry.block_centroid_fp16,
+                            &entry.block_centroid,
+                        );
+                        if centroid.len() != query.len() {
+                            f32::INFINITY
+                        } else {
+                            metric_distance(query, &centroid, DistanceMetric::Euclidean)
+                        }
+                    }
+                    None => f32::INFINITY,
+                };
+                (dist, block_idx)
+            })
+            .collect();
+        scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored.into_iter().map(|(_, block_idx)| block_idx).collect()
+    }
+
+    /// TD-040 two-pass, recall-preserving vector-bounds block prune (L2 only).
+    ///
+    /// 1. Order survivors by centroid distance and split into a nearest **seed**
+    ///    (`vector_bounds_prune_seed_size`) and a farther **remainder**.
+    /// 2. Read the seed (reusing the same coalesced/individual read path),
+    ///    score it, and recover a provisional top-k L2 threshold τ — finite only
+    ///    once ≥ k candidates exist.
+    /// 3. For each remainder block with persisted bounds, skip the read when its
+    ///    lower-bound L2 distance exceeds τ (`VectorBoundsPruner::should_prune_l2`).
+    ///    Legacy blocks without bounds, or any dim mismatch, are always read.
+    /// 4. Read the surviving remainder and return seed+remainder blocks (the
+    ///    caller re-scores everything, so results are identical to the no-prune
+    ///    path; the win is fewer block reads).
+    ///
+    /// Recall-safety: τ ≥ the file's full k-th-best (a subset's k-th-best can
+    /// only exceed the full set's), and the file's k-th-best ≥ the global
+    /// k-th-best (the global candidate set is a superset). `should_prune_l2` is
+    /// conservative (lower-bound based), so no block that could beat the final
+    /// top-k is ever skipped.
+    #[allow(clippy::too_many_arguments)]
+    async fn read_with_vector_bounds_prune(
+        &self,
+        block_reader: &ModularBlockReader,
+        index_blocks: &[IndexEntry],
+        survivors: &[usize],
+        query: &[f32],
+        search_params: &SearchParams,
+        route_options: &ObjectEconomyRouteOptions,
+        context: &SstQueryCollectionContext,
+        file_path: &str,
+        object_stats: &mut ObjectRangeExecutionStats,
+    ) -> Result<Vec<ProximaDataBlock>> {
+        let ordered = Self::rerank_survivors_by_centroid(index_blocks, survivors, query);
+        let seed_n = vector_bounds_prune_seed_size(ordered.len());
+
+        // Too few survivors to split: no remainder to prune — read all as today.
+        if ordered.len() <= seed_n {
+            return self
+                .read_selected_block_set(
+                    block_reader,
+                    index_blocks,
+                    &ordered,
+                    route_options,
+                    context,
+                    file_path,
+                    object_stats,
+                )
+                .await;
+        }
+
+        let (seed_idx, remainder_idx) = ordered.split_at(seed_n);
+
+        // Pass 1: read + score the seed to establish a provisional threshold.
+        let mut blocks = self
+            .read_selected_block_set(
+                block_reader,
+                index_blocks,
+                seed_idx,
+                route_options,
+                context,
+                file_path,
+                object_stats,
+            )
+            .await?;
+
+        let k = search_params.top_k.unwrap_or(10).max(1);
+        let threshold = vector_bounds_provisional_threshold(&blocks, query, k);
+
+        // Pass 2: prune the remainder against τ, then read the survivors.
+        let kept_remainder: Vec<usize> = match threshold {
+            Some(tau) => {
+                let mut kept = Vec::with_capacity(remainder_idx.len());
+                for &block_idx in remainder_idx {
+                    let Some(entry) = index_blocks.get(block_idx) else {
+                        continue;
+                    };
+                    let pruner = match (
+                        entry.block_component_min.clone(),
+                        entry.block_component_max.clone(),
+                    ) {
+                        (Some(min), Some(max)) => {
+                            proximadb_storage_common::writer_statistics::VectorBoundsPruner::from_bounds(
+                                min, max,
+                            )
+                        }
+                        _ => None,
+                    };
+                    let prune = pruner
+                        .as_ref()
+                        .is_some_and(|p| p.dim() == query.len() && p.should_prune_l2(query, tau));
+                    if prune {
+                        object_stats.vector_bounds_pruned_blocks += 1;
+                    } else {
+                        kept.push(block_idx);
+                    }
+                }
+                kept
+            }
+            // No threshold (seed under-filled the queue): cannot prune safely.
+            None => remainder_idx.to_vec(),
+        };
+
+        if object_stats.vector_bounds_pruned_blocks > 0 {
+            tracing::debug!(
+                "🎯 TD-040 vector-bounds prune: file={}, survivors={}, seed={}, remainder={}, pruned={}, kept_remainder={}",
+                file_path,
+                ordered.len(),
+                seed_idx.len(),
+                remainder_idx.len(),
+                object_stats.vector_bounds_pruned_blocks,
+                kept_remainder.len(),
+            );
+        }
+
+        let remainder_blocks = self
+            .read_selected_block_set(
+                block_reader,
+                index_blocks,
+                &kept_remainder,
+                route_options,
+                context,
+                file_path,
+                object_stats,
+            )
+            .await?;
+        blocks.extend(remainder_blocks);
         Ok(blocks)
     }
 
