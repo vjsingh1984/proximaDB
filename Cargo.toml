@@ -936,6 +936,14 @@ name = "bench_23_recall_at_k"
 harness = false
 path = "benches/bench_23_recall_at_k.rs"
 
+# Real engine Recall@k (index-vs-ground-truth) — builds a real ANN index via the
+# embedded engine and measures actual recall against a brute-force oracle, unlike
+# bench_23 which times the recall computation over simulated results.
+[[bench]]
+name = "bench_24_recall_at_k_engine"
+harness = false
+path = "benches/bench_24_recall_at_k_engine.rs"
+
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY
 # ============================================================================
