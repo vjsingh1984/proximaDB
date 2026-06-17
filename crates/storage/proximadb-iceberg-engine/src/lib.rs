@@ -213,6 +213,33 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         Ok(self.store.get(path).await?.to_vec())
     }
 
+    /// Metadata-only size (HEAD) — the prerequisite for footer-first ranged
+    /// reads; no object body is transferred.
+    async fn vector_segment_size(
+        &self,
+        path: &Path,
+        _tenant_id: Option<&str>,
+    ) -> Result<u64, StorageError> {
+        self.store.object_size(path).await
+    }
+
+    /// True ranged GET over object storage (`Range: bytes=offset-…`): only the
+    /// requested slice leaves the wire, so column/footer reads don't pull the
+    /// whole segment.
+    async fn fetch_vector_segment_range(
+        &self,
+        path: &Path,
+        offset: u64,
+        length: u64,
+        _tenant_id: Option<&str>,
+    ) -> Result<Vec<u8>, StorageError> {
+        Ok(self
+            .store
+            .get_range(path, offset..offset + length)
+            .await?
+            .to_vec())
+    }
+
     async fn persist_vector_segment(
         &self,
         path: &Path,

@@ -34,6 +34,7 @@ pub mod proxima_arrow;
 pub mod proxima_parquet;
 pub mod proxima_schema;
 pub mod query_metrics;
+pub mod ranged_segment;
 pub mod smart_io_metrics;
 pub mod spatial_encoding;
 pub mod storage_error;

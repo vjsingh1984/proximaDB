@@ -88,6 +88,35 @@ pub trait ObjectStoreBridge: Send + Sync {
         tenant_id: Option<&str>,
     ) -> Result<Vec<u8>, StorageError>;
 
+    /// Byte length of a PAX segment object without reading its body — the
+    /// prerequisite for footer-first ranged reads. The default falls back to a
+    /// whole-object fetch (no I/O saving); object-store-backed implementations
+    /// MUST override with a metadata-only `object_size`/HEAD.
+    async fn vector_segment_size(
+        &self,
+        path: &Path,
+        tenant_id: Option<&str>,
+    ) -> Result<u64, StorageError> {
+        Ok(self.fetch_vector_segment(path, tenant_id).await?.len() as u64)
+    }
+
+    /// Read a byte range `[offset, offset+length)` of a PAX segment — a true
+    /// ranged GET on object storage. The default falls back to a whole-object
+    /// fetch + slice (no I/O saving); object-store-backed implementations MUST
+    /// override with `get_range` so only the requested bytes leave the wire.
+    async fn fetch_vector_segment_range(
+        &self,
+        path: &Path,
+        offset: u64,
+        length: u64,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<u8>, StorageError> {
+        let whole = self.fetch_vector_segment(path, tenant_id).await?;
+        let start = (offset as usize).min(whole.len());
+        let end = ((offset + length) as usize).min(whole.len());
+        Ok(whole[start..end].to_vec())
+    }
+
     /// Persists a specialized PAX block or Segment to decoupled object storage.
     /// Implementers MUST emit `proximadb_object_store_ops_total` and `proximadb_storage_bytes_seconds` for billing.
     async fn persist_vector_segment(

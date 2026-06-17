@@ -109,6 +109,52 @@ impl SegmentIndex {
         }
         Ok(Self { blocks })
     }
+
+    /// Locate and parse the index at the tail of `before_magic` (the segment
+    /// bytes with the trailing [`SEGMENT_MAGIC`] removed). The index length is
+    /// not stored explicitly, so candidate counts are tried until the embedded
+    /// count + CRC validate. Shared by the whole-file scanner and the ranged
+    /// reader.
+    pub fn locate(before_magic: &[u8]) -> Result<Self> {
+        if before_magic.len() < 8 {
+            bail!("no room for segment index");
+        }
+        for candidate_n in 0usize..=(before_magic.len().saturating_sub(8) / 12) {
+            let index_len = 4 + candidate_n * 12 + 4;
+            if index_len > before_magic.len() {
+                break;
+            }
+            let idx_start = before_magic.len() - index_len;
+            let n_in_data = u32::from_le_bytes(
+                before_magic[idx_start..idx_start + 4]
+                    .try_into()
+                    .unwrap_or([0; 4]),
+            ) as usize;
+            if n_in_data == candidate_n
+                && let Ok(idx) = SegmentIndex::from_bytes(&before_magic[idx_start..])
+            {
+                return Ok(idx);
+            }
+        }
+        bail!("could not locate valid segment index");
+    }
+
+    /// Locate and parse the index from a file **suffix** that must contain the
+    /// trailing [`SEGMENT_MAGIC`] and the full index. Returns `Ok(None)` when the
+    /// suffix is too small to hold the whole index (the caller should re-read a
+    /// larger suffix), and `Err` only on a corrupt/invalid tail. This is the
+    /// footer-first entry point for object-storage ranged reads.
+    pub fn locate_in_suffix(suffix: &[u8]) -> Result<Option<Self>> {
+        if suffix.len() < 8 || &suffix[suffix.len() - 8..] != SEGMENT_MAGIC {
+            bail!("segment suffix missing magic (not a PAX segment tail)");
+        }
+        let before_magic = &suffix[..suffix.len() - 8];
+        match Self::locate(before_magic) {
+            Ok(idx) => Ok(Some(idx)),
+            // The index may simply not fit in this suffix yet — signal a re-read.
+            Err(_) => Ok(None),
+        }
+    }
 }
 
 // ── Segment metadata (returned from finish()) ──────────────────────────────────
@@ -360,33 +406,7 @@ impl PaxSegmentScanner {
     }
 
     fn parse_index(before_magic: &[u8]) -> Result<SegmentIndex> {
-        if before_magic.len() < 8 {
-            bail!("no room for segment index");
-        }
-        // Read block_count from various candidate positions.
-        // The index is at the END of `before_magic`. We know:
-        //   index_len = 4 + n * 12 + 4
-        // Try up to 1 MB of index (for up to ~87 000 blocks — well beyond normal).
-        for candidate_n in 0usize..=(before_magic.len().saturating_sub(8) / 12) {
-            let index_len = 4 + candidate_n * 12 + 4;
-            if index_len > before_magic.len() {
-                break;
-            }
-            let idx_start = before_magic.len() - index_len;
-            let n_in_data = u32::from_le_bytes(
-                before_magic[idx_start..idx_start + 4]
-                    .try_into()
-                    .unwrap_or([0; 4]),
-            ) as usize;
-            if n_in_data == candidate_n {
-                // Candidate matches — validate CRC
-                match SegmentIndex::from_bytes(&before_magic[idx_start..]) {
-                    Ok(idx) => return Ok(idx),
-                    Err(_) => continue,
-                }
-            }
-        }
-        bail!("could not locate valid segment index");
+        SegmentIndex::locate(before_magic)
     }
 
     /// Yield the next block that passes predicate pruning.
