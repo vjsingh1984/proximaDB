@@ -350,12 +350,16 @@ impl SharedServices {
         );
 
         // Initialize the process-global multitenant footer/index caches for the
-        // PAX v2 ranged read path (pooled 256 MiB, 64 MiB/tenant ceiling).
-        // ObjectStoreVectorRecordStore auto-picks these up.
-        crate::services::record_store::init_segment_caches(proximadb_cache::CacheBudget::new(
-            256 * 1024 * 1024,
-            64 * 1024 * 1024,
-        ));
+        // PAX v2 ranged read path. Work-conserving elasticity: 256 MiB pooled,
+        // an 8 MiB per-tenant floor (protected working set), and a 128 MiB (50%)
+        // hard ceiling as a runaway guard — a solo tenant borrows idle capacity
+        // up to 128 MiB; under pressure each is reclaimed toward the fair share
+        // (total / active tenants). ObjectStoreVectorRecordStore auto-picks up.
+        crate::services::record_store::init_segment_caches(
+            proximadb_cache::CacheBudget::new(256 * 1024 * 1024, /*hard*/ 128 * 1024 * 1024)
+                .with_floor(8 * 1024 * 1024)
+                .with_high_watermark(0.9),
+        );
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
 
