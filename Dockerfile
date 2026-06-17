@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     cmake \
     build-essential \
     git \
+    python3 \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
