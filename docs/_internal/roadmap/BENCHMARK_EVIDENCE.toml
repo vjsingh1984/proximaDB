@@ -81,13 +81,13 @@ claim = "~97% Recall@10 (HNSW, M=32)"
 metric = "recall_at_10_pct"
 status = "unverified"
 asserted_in = ["README.adoc:99", "docs/10-quality/benchmarks/BENCHMARKS.adoc:18"]
-bench_source = "benches/bench_23_recall_at_k.rs"
-bench_command = "cargo bench --bench bench_23_recall_at_k"
+bench_source = "benches/bench_24_recall_at_k_engine.rs"
+bench_command = "cargo bench --bench bench_24_recall_at_k_engine"
 artifact = ""
 hardware = ""
 date = ""
 version = ""
-notes = "Ran 2026-06-16: bench_23_recall_at_k was an orphan (no [[bench]] entry) with a stale import (`proximadb::core::VectorRecord`); now registered + fixed (→ proto VectorRecord) and runnable. BUT it benchmarks the recall-COMPUTATION utility over synthetic vectors + SIMULATED approximate results — it does NOT measure the ANN engine's actual Recall@10. A real index-vs-ground-truth recall bench is needed. README states 'not an SLA'."
+notes = "Ran 2026-06-16: bench_23_recall_at_k is registered and runnable but only benchmarks the recall-COMPUTATION utility over synthetic vectors + SIMULATED approximate results. A real index-vs-ground-truth bench now exists at benches/bench_24_recall_at_k_engine.rs with deterministic vectors and bounded search-readiness probing, but this claim stays UNVERIFIED until that bench is run on recorded hardware and its output is archived. README states 'not an SLA'."
 
 [[claims]]
 id = "hybrid_search_latency"

@@ -80,7 +80,7 @@ flowchart TB
 
   subgraph EXEC[Physical Execution]
     VOL["Native Volcano<br/>fresh relational / OLTP / WAL+RecordStorage"]:::svc
-    DF["DataFusionLocal<br/>OLAP/parquet path; distributed adapter planned"]:::svc
+    DF["DataFusionLocal<br/>OLAP/parquet path; vector_search UDTF; distributed adapter planned"]:::svc
     VEC["Vector engines<br/>SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR"]:::svc
     MOD["Modality runtimes<br/>document, ORION graph, observability, queue, rank"]:::svc
     IDX["AXIS / DiskANN indexes<br/>HNSW, IVF, PQ, Annoy, LSH, geo"]:::svc
@@ -135,6 +135,54 @@ shaping, not executor construction.
 boundary that bypasses tenant context or raw-builds paths is architectural debt.
 * Support level comes from link:../SUPPORTED_SURFACE.adoc[docs/SUPPORTED_SURFACE.adoc], not from the
 existence of modules, feature flags, or demos.
+
+=== ASCII architecture snapshot
+
+This text-only view is the quick terminal/agent map. The Mermaid diagram above is the canonical
+visual; this snapshot is kept in sync for reviews that cannot render diagrams.
+
+[source,text]
+----
+                         Clients / Embeddings / Tools
+        Python SDK + embedded | Rust SDK | Spark/JVM | HTTP/gRPC/pgwire/Flight
+                                      |
+                                      v
+        +--------------------- Protocol and API Edge ----------------------+
+        | network/ + api_handlers/ + proximadb-api                         |
+        | wire parsing, tenant extraction, auth, compatibility shaping      |
+        +-------------------------------+----------------------------------+
+                                        |
+                                        v
+        +--------------------- Runtime Composition ------------------------+
+        | proximadb-runtime + server/database wiring                        |
+        | lifecycle, ports, shared services, startup/shutdown               |
+        +-------------------------------+----------------------------------+
+                                        |
+                                        v
+        +----------------------- Logical Plane ----------------------------+
+        | services/               | query/ + query crates       | xCatalog  |
+        | DDL/DML/search/docs/... | SQL/AQL/UQL, routes, EXPLAIN| policy    |
+        +------------+------------+------------+----------------+-----------+
+                     |                         |
+                     v                         v
+        +---------------------- Physical Execution ------------------------+
+        | Native Volcano | DataFusionLocal | Vector engines | Modalities    |
+        | OLTP/fresh     | OLAP/Parquet +  | SST/HELIX/...  | document/     |
+        | record path    | vector_search   | AXIS/DiskANN   | ORION/obs     |
+        +------------+---+--------+--------+--------+-------+---------------+
+                     |            |                 |
+                     +------------+-----------------+
+                                  v
+        +----------------------- Durable Authority ------------------------+
+        | ProximaRecord / ProximaValue | canonical WAL/log/manifest         |
+        | DrPathBuilder tenant paths   | filesystem/object store/open format|
+        +------------------------------+------------------------------------+
+                                  ^
+                                  |
+        +----------------------- SaaS / Ops Guards ------------------------+
+        | TenantContext | billing metrics | security/audit | validation CI   |
+        +------------------------------------------------------------------+
+----
 
 [#components]
 == Component ownership and responsibilities
@@ -404,8 +452,13 @@ still TD-106/ADR-024 work.
 | Vector path
 | REST/gRPC v2 record CRUD and vector search are the supported product path. Multiple vector storage
 engines and AXIS index families exist; v1 vector APIs are compatibility facades.
+`bench_24_recall_at_k_engine` is registered as a real index-vs-ground-truth Recall@k benchmark with
+deterministic vectors, bounded search-readiness probing, and optional `PROXIMADB_BENCH_TOPK=K`
+single-K runs for isolating low-effort Recall@K/latency curves.
 | MVP-ready for single-node vector CRUD/search. Hybrid, filtered ANN policy, recall-gate enforcement,
-and object-economy claims stay Beta/Experimental unless explicitly scoped.
+and object-economy claims stay Beta/Experimental unless explicitly scoped. The real-engine recall
+benchmark is evidence plumbing, not a published recall SLA until run outputs are captured and
+reviewed.
 
 | Document / graph / observability
 | Document, ORION graph, and observability runtimes exist and are useful. ORION is the only graph
@@ -434,11 +487,21 @@ EXPLAIN work. Engine-native streaming portal cursors and backpressure remain sca
 | DataFusion integration, local Parquet registration, shared relational lowering, typed
 `ExecutionError`, request-scoped `ExecutionControls` (cooperative cancellation, row-limit
 truncate/error modes, and pre-collect row-cap pushdown), and the `DataFusionLocal` execution seam
-exist. The production route requires the shared logical plane by default; direct DataFusion SQL
-fallback is an explicit context flag for controlled compatibility gaps.
+exist. Live DataFusion contexts can register the `vector_search(collection, query, k)` table function
+when supplied a `VectorOpsPort`, making vector results joinable in SQL over the OLAP path. The
+production route requires the shared logical plane by default; direct DataFusion SQL fallback is an
+explicit context flag for controlled compatibility gaps. Embedded Python DataFrame sessions register
+collection schemas for DataFusion planning with a canonical vector-record fallback when no relational
+table schema exists; the Python facade exports the DataFrame expression helpers, supports sort
+expressions, exposes a DataFrame `vector_search()` bridge, makes table refresh idempotent for
+long-lived sessions, and returns typed empty PyArrow tables from `to_arrow()`. Blank SQL/table/column
+names, empty aggregate expression lists, keyless joins, and invalid vector-search arguments are
+rejected at the Python and/or DataFusion table-function boundary before execution. Scans still
+require embedded split discovery before collection reads can be claimed row-producing.
 | Local all-Parquet OLAP route is Beta. `DataFusionDistributed` remains route vocabulary only:
 Ballista execution, scheduler/executor deployment, engine-native streaming/backpressure,
-cross-engine joins, and no-overlap/failure tests are not complete.
+distributed cross-engine joins, embedded row-producing collection scans, and no-overlap/failure tests
+are not complete.
 
 | SaaS tenancy and billing boundaries
 | REST and pgwire surfaces propagate tenant identity into service/storage paths; storage has

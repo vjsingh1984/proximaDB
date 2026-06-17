@@ -68,7 +68,10 @@ fusion-merge kernel (k=10 → 1.77 µs, k=50 → 8.46 µs, k=100 → 17.27 µs),
 `bench_23_recall_at_k` was an orphan file (no `[[bench]]` entry); it is now
 registered and runnable. But it benchmarks the recall *computation* utility over
 synthetic vectors + simulated approximate results — it does **not** measure the
-ANN engine's actual Recall@10. A real index-vs-ground-truth recall bench is needed.
+ANN engine's actual Recall@10. `bench_24_recall_at_k_engine` now fills that
+bench shape with a real embedded index, exact brute-force ground truth, and a
+bounded readiness probe, but this claim remains unverified until that bench is
+run on recorded hardware and its output is archived.
 
 == Takeaway
 
